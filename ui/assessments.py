@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
 from theme_manager import ModernTheme
-import services.property_service as prop
+import api_clients.property_service as prop
 
 class AssessmentsPage:
     def __init__(self, parent, user):

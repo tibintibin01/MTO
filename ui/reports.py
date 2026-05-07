@@ -4,9 +4,9 @@ from tkinter import ttk, messagebox
 from datetime import datetime
 import threading
 from theme_manager import ModernTheme
-import services.billing_service as billing
-import services.property_service as prop
-import services.system_service as system
+import api_clients.billing_service as billing
+import api_clients.property_service as prop
+import api_clients.system_service as system
 from utils import format_curr
 
 class ReportsPage:

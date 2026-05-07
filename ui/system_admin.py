@@ -1,6 +1,6 @@
 import customtkinter as ctk
 from tkinter import messagebox
-import services.auth_service as auth
+import api_clients.auth_service as auth
 from ui.users import UserAccessPage
 from ui.logs import AuditLogsPage
 from ui.recycle import RecycleBinPage

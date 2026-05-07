@@ -2,8 +2,8 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from theme_manager import ModernTheme
-import services.auth_service as auth
-import services.system_service as system
+import api_clients.auth_service as auth
+import api_clients.system_service as system
 import threading
 
 class UserAccessPage:

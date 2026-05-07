@@ -4,9 +4,9 @@ import customtkinter as ctk
 from tkinter import messagebox, ttk
 import tkinter as tk
 from theme_manager import ModernTheme
-import services.payment_service as payment
-import services.auth_service as auth
-import services.system_service as system
+import api_clients.payment_service as payment
+import api_clients.auth_service as auth
+import api_clients.system_service as system
 from utils import format_curr
 from receipt_generator import generate_or_receipt
 

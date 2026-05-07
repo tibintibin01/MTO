@@ -6,10 +6,10 @@ from datetime import datetime
 from typing import Any, Optional, Dict
 from PIL import Image
 
-import services.auth_service as auth
-import services.property_service as prop
-import services.payment_service as payment
-import services.system_service as system
+import api_clients.auth_service as auth
+import api_clients.property_service as prop
+import api_clients.payment_service as payment
+import api_clients.system_service as system
 from theme_manager import setup_theme, ModernTheme
 from ui_components import ModernChartWidget, show_toast
 

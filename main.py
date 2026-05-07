@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import db_manager as db
-import services.auth_service as auth
-import services.system_service as system
-from services.auth_service import verify_user_login
+import api_clients.auth_service as auth
+import api_clients.system_service as system
+from api_clients.auth_service import verify_user_login
 from utils import log_error_to_file
 import dashboard
 from theme_manager import setup_theme, ModernTheme
