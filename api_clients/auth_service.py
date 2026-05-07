@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Client-side Auth Service (Thin Client)
-from services.api_helper import api_request, set_token
+from api_clients.api_helper import api_request, set_token
 
 ROLE_PERMISSIONS = {
     "admin": {
@@ -41,7 +41,7 @@ def verify_user_login(username, password):
         payload = {"username": username, "password": password}
         # FastAPI OAuth2 uses form data for /token
         import requests
-        from services.api_helper import API_BASE_URL
+        from api_clients.api_helper import API_BASE_URL
         response = requests.post(f"{API_BASE_URL}/token", data=payload)
         if response.status_code == 200:
             token_data = response.json()

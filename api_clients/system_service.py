@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Client-side System Service (Thin Client)
-from services.api_helper import api_request
+from api_clients.api_helper import api_request
 
 def get_dashboard_summary():
     return api_request("GET", "/billing/summary")

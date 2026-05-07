@@ -104,7 +104,6 @@ class SystemAdminPage:
             lbl.configure(text=val, text_color=color)
 
     def trigger_backup(self):
-        import backend.services.backup_service as backup_svc
         import threading
         
         if self.backup_btn.cget("state") == "disabled": return
@@ -113,10 +112,16 @@ class SystemAdminPage:
         
         def run():
             try:
-                success, msg = backup_svc.run_hybrid_backup(user=self.user)
+                import api_clients.system_service as system_svc
+                # Call the API endpoint instead of direct backend service
+                res = system_svc.trigger_backup()
+                
                 # Check if the UI still exists before updating
                 if self.container.winfo_exists():
-                    self.container.after(0, lambda: self._finalize_backup(success, msg))
+                    # API returns status: 'backup_started'
+                    is_ok = res.get("status") == "backup_started"
+                    msg = res.get("message", "Backup trigger failed")
+                    self.container.after(0, lambda: self._finalize_backup(is_ok, msg))
             except Exception as e:
                 err_msg = str(e)
                 try:
@@ -124,9 +129,6 @@ class SystemAdminPage:
                         self.container.after(0, lambda: self._finalize_backup(False, f"Thread Crash: {err_msg}"))
                 except:
                     pass
-            finally:
-                import db_manager as db
-                db.close_thread_connection()
             
         threading.Thread(target=run, daemon=True).start()
 

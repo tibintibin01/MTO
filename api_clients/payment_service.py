@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Client-side Payment Service (Thin Client)
-from services.api_helper import api_request
+from api_clients.api_helper import api_request
 
 def get_recent_payments(limit=8):
     return api_request("GET", "/payments/recent", params={"limit": limit})

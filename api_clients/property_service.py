@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Client-side Property Service (Thin Client)
-from services.api_helper import api_request
+from api_clients.api_helper import api_request
 
 def search_properties(term, limit=50, offset=0, kind=None, year_start=None, year_end=None):
     params = {"search": term, "limit": limit, "offset": offset}

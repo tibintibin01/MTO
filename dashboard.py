@@ -120,9 +120,6 @@ class DashboardHomePage:
         except Exception as e:
             # We don't want to spam the file for every refresh error, but we should log it
             print(f"Dashboard refresh error: {e}")
-        finally:
-            import db_manager as db
-            db.close_thread_connection()
 
     def _update_ui(self, summary, trend_rows):
         if not self.stat_cards["total_properties"].winfo_exists():

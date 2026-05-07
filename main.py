@@ -7,7 +7,6 @@ from PIL import Image
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-import db_manager as db
 import api_clients.auth_service as auth
 import api_clients.system_service as system
 from api_clients.auth_service import verify_user_login
@@ -106,8 +105,6 @@ class LoginApp(ctk.CTk):
             log_error_to_file("Login Background Task Failed", e)
             self.after(0, lambda: self.status_label.configure(text=f"Connection Error: {str(e)}"))
             self.after(0, lambda: self.login_btn.configure(state="normal", text="LOG IN"))
-        finally:
-            db.close_thread_connection()
 
     def handle_login_result(self, auth_result):
         if auth_result:
