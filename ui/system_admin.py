@@ -124,6 +124,9 @@ class SystemAdminPage:
                         self.container.after(0, lambda: self._finalize_backup(False, f"Thread Crash: {err_msg}"))
                 except:
                     pass
+            finally:
+                import db_manager as db
+                db.close_thread_connection()
             
         threading.Thread(target=run, daemon=True).start()
 

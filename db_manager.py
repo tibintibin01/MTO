@@ -94,8 +94,17 @@ def load_db_config():
     if missing:
         raise RuntimeError(f"Database configuration incomplete. Missing: {', '.join(missing)}")
     
-    try: runtime_config["port"] = int(runtime_config.get("port", 3306) or 3306)
-    except: runtime_config["port"] = 3306
+    try: 
+        runtime_config["port"] = int(runtime_config.get("port", 3306) or 3306)
+    except Exception as exc: 
+        log_error_to_file("Invalid database port in config", exc)
+        runtime_config["port"] = 3306
+    
+    # CRITICAL SECURITY CONTROL: Require a robust SECRET_KEY
+    raw_key = os.getenv("SECRET_KEY")
+    if not raw_key or len(raw_key) < 16:
+        raise RuntimeError("CRITICAL SECURITY ERROR: SECRET_KEY environment variable is missing or too short. "
+                           "The application requires a secure key (min 16 chars) to protect sensitive data.")
     
     return runtime_config
 
@@ -119,15 +128,19 @@ def _run_with_db_config(config, func):
     DB_CONFIG = config
     try:
         if hasattr(_db_state, "conn"):
-            try: _db_state.conn.close()
-            except: pass
+            try: 
+                _db_state.conn.close()
+            except Exception as e:
+                log_error_to_file("Failed to close connection in wrapper", e)
             _db_state.conn = None
         return func()
     finally:
         DB_CONFIG = old_config
         if hasattr(_db_state, "conn"):
-            try: _db_state.conn.close()
-            except: pass
+            try: 
+                _db_state.conn.close()
+            except Exception as e:
+                log_error_to_file("Failed to close connection in wrapper finally", e)
             _db_state.conn = None
 
 def _show_warning(title, message):
@@ -135,6 +148,19 @@ def _show_warning(title, message):
 
 _db_state = threading.local()
 DB_POOL = None
+
+def close_thread_connection():
+    """
+    Explicitly close and remove the thread-local connection, returning it to the pool.
+    MUST be called at the end of background threads (dashboard refresh, backup, etc.).
+    """
+    if hasattr(_db_state, "conn") and _db_state.conn:
+        try:
+            _db_state.conn.close()
+        except Exception as e:
+            log_error_to_file("Failed to close thread connection", e)
+        finally:
+            _db_state.conn = None
 
 def _init_pool():
     global DB_POOL
@@ -196,7 +222,9 @@ def record_audit_log(user, action, table_name=None, record_id=None, old_values=N
     def _to_json(val):
         if val is None: return None
         try: return json.dumps(val, default=str)
-        except: return str(val)
+        except Exception as e: 
+            log_error_to_file("JSON Audit Log encoding failure", e)
+            return str(val)
 
     def operation(cur):
         cur.execute(
@@ -235,7 +263,10 @@ def _connection_is_alive(conn):
         if hasattr(conn, "is_connected"): return bool(conn.is_connected())
         conn.ping(reconnect=True)
         return True
-    except: return False
+    except Exception as e: 
+        # Don't log this to file as it might spam during connection drops
+        print(f"Connection check failed: {e}")
+        return False
 
 def db_query(query, params=(), fetch=False, commit=True, dictionary=False):
     conn = get_db_connection()

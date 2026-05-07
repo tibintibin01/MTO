@@ -18,6 +18,12 @@ from theme_manager import setup_theme, ModernTheme
 # Initialize Theme
 setup_theme()
 
+# CRITICAL SECURITY CHECK
+if not os.getenv("SECRET_KEY") or len(os.getenv("SECRET_KEY", "")) < 16:
+    print("CRITICAL SECURITY ERROR: SECRET_KEY is missing or too weak (min 16 chars).")
+    print("Please set the SECRET_KEY environment variable in your .env file.")
+    sys.exit(1)
+
 def handle_global_exception(exc_type: type, exc_value: BaseException, exc_traceback: Any) -> None:
     traceback_text = ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback))
     log_path = log_error_to_file('Unhandled application error', exc_value, traceback_text=traceback_text)
@@ -25,8 +31,8 @@ def handle_global_exception(exc_type: type, exc_value: BaseException, exc_traceb
         suffix = f'\n\nLogged to:\n{log_path}' if log_path else ''
         from tkinter import messagebox
         messagebox.showerror('System Error', f'An unexpected error occurred.{suffix}')
-    except:
-        pass
+    except Exception as e:
+        print(f"FAILED TO SHOW ERROR MESSAGEBOX: {e}")
 
 sys.excepthook = handle_global_exception
 
@@ -53,7 +59,8 @@ class LoginApp(ctk.CTk):
                                         size=(400, 550))
             self.logo_label = ctk.CTkLabel(self.brand_frame, image=self.logo_img, text="")
             self.logo_label.pack(fill="both", expand=True)
-        except:
+        except Exception as e:
+            log_error_to_file("Failed to load side-branding image", e)
             self.logo_label = ctk.CTkLabel(self.brand_frame, text="REVENUE\nSYSTEM", font=("Segoe UI", 48, "bold"), text_color="white")
             self.logo_label.pack(expand=True)
             
@@ -96,8 +103,11 @@ class LoginApp(ctk.CTk):
             # Use after() to update UI from thread
             self.after(0, self.handle_login_result, auth_result)
         except Exception as e:
+            log_error_to_file("Login Background Task Failed", e)
             self.after(0, lambda: self.status_label.configure(text=f"Connection Error: {str(e)}"))
             self.after(0, lambda: self.login_btn.configure(state="normal", text="LOG IN"))
+        finally:
+            db.close_thread_connection()
 
     def handle_login_result(self, auth_result):
         if auth_result:

@@ -118,7 +118,11 @@ class DashboardHomePage:
             # Update UI in main thread
             self.parent.after(0, lambda: self._update_ui(summary, trend_rows))
         except Exception as e:
+            # We don't want to spam the file for every refresh error, but we should log it
             print(f"Dashboard refresh error: {e}")
+        finally:
+            import db_manager as db
+            db.close_thread_connection()
 
     def _update_ui(self, summary, trend_rows):
         if not self.stat_cards["total_properties"].winfo_exists():
