@@ -95,6 +95,10 @@ class PropertyPage:
         
         self.del_btn = ctk.CTkButton(actions, text="🗑️ DELETE", command=self.confirm_delete, fg_color="#e74c3c", state="disabled")
         self.del_btn.pack(side="right", padx=5)
+
+        self.export_btn = ctk.CTkButton(actions, text="📊 EXPORT LIST", command=self.do_export, 
+                                        fg_color="#e67e22", hover_color="#d35400")
+        self.export_btn.pack(side="left", padx=5)
         
         self.tree.bind("<<TreeviewSelect>>", self.on_selection_change)
         self.tree.bind("<Double-1>", lambda e: self.open_dossier())
@@ -103,6 +107,19 @@ class PropertyPage:
         has_sel = bool(self.tree.selection())
         self.edit_btn.configure(state="normal" if has_sel else "disabled")
         self.del_btn.configure(state="normal" if has_sel else "disabled")
+
+    def do_export(self):
+        from utils import export_data_to_excel
+        data = []
+        for child in self.tree.get_children():
+            data.append(self.tree.item(child)["values"])
+        
+        if not data:
+            from tkinter import messagebox
+            messagebox.showwarning("No Data", "There is no data in the table to export.")
+            return
+
+        export_data_to_excel(data, self.cols, filename_prefix="Properties")
 
     def refresh_table(self, reset_page=True):
         if reset_page: self.current_page = 0

@@ -170,6 +170,12 @@ class DashboardApp(ctk.CTk):
         
         self.title(f"Treasury Management System | {self.username}")
         self.geometry("1400x850")
+        self.resizable(True, True)
+        self.minsize(1100, 700)
+        
+        # Key Bindings (Keyboard Shortcuts for UX)
+        self.bind("<Control-f>", lambda e: self.open_command_palette())
+        self.bind("<Control-p>", lambda e: self.open_command_palette())
         
         # Auto-Maximize (Fullscreen) on Startup
         self.after(0, lambda: self.state('zoomed'))
@@ -257,6 +263,9 @@ class DashboardApp(ctk.CTk):
         if any(auth.has_permission(self.user_data, p) for p in ["manage_users", "view_logs"]):
             self.create_nav_btn("System Settings", lambda: self.load_page(SystemAdminPage))
         
+        ctk.CTkLabel(self.nav_scroll, text="RESOURCES", font=("Segoe UI", 10, "bold"), text_color="gray").pack(pady=(20, 5))
+        self.create_nav_btn("📖 System Help", lambda: self.load_page(SystemHelpPage))
+        
         # Logout at bottom
         self.logout_btn = ctk.CTkButton(self.sidebar, text="LOGOUT", fg_color="#e74c3c", hover_color="#c0392b",
                                         command=self.logout, font=ModernTheme.BUTTON)
@@ -281,3 +290,25 @@ class DashboardApp(ctk.CTk):
 def open_dashboard(user_data):
     app = DashboardApp(user_data)
     app.mainloop()
+
+class SystemHelpPage:
+    def __init__(self, parent, user):
+        self.container = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        self.container.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        ctk.CTkLabel(self.container, text="MTO Treasury System Help Guide", font=ModernTheme.H1).pack(anchor="w", pady=(0, 20))
+        
+        help_text = [
+            ("🏠 Dashboard", "View real-time revenue collection charts and protection status."),
+            ("📋 Property Records", "Search, edit, or delete property assessments. Use the 'Export' button to save to Excel."),
+            ("🏦 Unified Ledger", "View all payment history. Use 'View Receipt' to open a PDF copy."),
+            ("⌨️ Keyboard Shortcuts", "Ctrl + F: Quick Search\nCtrl + P: Command Palette\nCtrl + E: Export Table to Excel"),
+            ("🛡️ Data Protection", "The 'Restore Test' on the dashboard verifies that your backups are 100% healthy and ready for disaster recovery."),
+            ("💼 Audit Trail", "Administrators can view all changes made to any record in the System Settings > Audit Logs tab.")
+        ]
+        
+        for title, desc in help_text:
+            f = ctk.CTkFrame(self.container, fg_color="transparent")
+            f.pack(fill="x", pady=10)
+            ctk.CTkLabel(f, text=title, font=ModernTheme.H3, text_color="#3498db").pack(anchor="w")
+            ctk.CTkLabel(f, text=desc, font=ModernTheme.BODY, wraplength=800, justify="left").pack(anchor="w", padx=20)

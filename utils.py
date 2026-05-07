@@ -77,3 +77,39 @@ def log_error_to_file(context: str, error: Optional[Exception] = None, extra: Op
         return ERROR_LOG_PATH
     except Exception:
         return None
+
+def export_data_to_excel(data, columns, filename_prefix="Export"):
+    """
+    General purpose export tool. 
+    data: List of lists/tuples representing rows.
+    columns: List of column headers.
+    """
+    try:
+        from tkinter import filedialog, messagebox
+        import pandas as pd
+        
+        # Ask user for save location
+        default_name = f"{filename_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        save_path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("CSV files", "*.csv")],
+            initialfile=default_name
+        )
+        
+        if not save_path:
+            return None
+
+        df = pd.DataFrame(data, columns=columns)
+        
+        if save_path.endswith(".csv"):
+            df.to_csv(save_path, index=False)
+        else:
+            df.to_excel(save_path, index=False)
+            
+        messagebox.showinfo("Success", f"Data exported successfully to:\n{save_path}")
+        return save_path
+    except Exception as e:
+        log_error_to_file("Failed to export data", e)
+        from tkinter import messagebox
+        messagebox.showerror("Export Error", f"Failed to export data: {str(e)}")
+        return None

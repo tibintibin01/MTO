@@ -47,6 +47,10 @@ class LedgerPage:
                                       fg_color="#27ae60", hover_color="#219150", width=120, height=35, state="disabled")
         self.regen_btn.pack(side="right", padx=5)
 
+        self.export_btn = ctk.CTkButton(toolbar, text="📊 EXPORT DATA", command=self.do_export,
+                                        fg_color="#e67e22", hover_color="#d35400", width=120, height=35)
+        self.export_btn.pack(side="right", padx=5)
+
         # --- THE LEDGER TABLE ---
         t_frame = ctk.CTkFrame(self.container)
         t_frame.pack(fill="both", expand=True, pady=(0, 20))

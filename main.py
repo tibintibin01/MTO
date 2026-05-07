@@ -41,7 +41,8 @@ class LoginApp(ctk.CTk):
         
         self.title("Treasury Management System | Secure Access")
         self.geometry("800x550")
-        self.resizable(False, False)
+        self.resizable(True, True)
+        self.minsize(800, 550)
         
         # Grid layout (Mathematically Equal Split)
         self.grid_columnconfigure(0, weight=1, uniform="column") # Side image
