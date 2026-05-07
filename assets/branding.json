@@ -1,0 +1,15 @@
+{
+    "office_name": "MUNICIPAL TREASURY OFFICE",
+    "branding_colors": {
+        "primary": "#1f538d",
+        "secondary": "#7f8c8d",
+        "accent": "#d9e2f3",
+        "danger": "#c0392b",
+        "success": "#27ae60"
+    },
+    "fonts": {
+        "header": "Helvetica-Bold",
+        "body": "Helvetica"
+    },
+    "footer_text": "This document was generated electronically by the MTO System."
+}

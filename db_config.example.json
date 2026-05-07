@@ -1,0 +1,21 @@
+{
+  "runtime": {
+    "host": "YOUR_SERVER_IP_OR_HOSTNAME",
+    "port": 3306,
+    "user": "YOUR_RUNTIME_DB_USER",
+    "password": "YOUR_RUNTIME_DB_PASSWORD",
+    "database": "YOUR_DB_NAME",
+    "connect_timeout": 5,
+    "mysql_path": "C:\\xampp\\mysql\\bin\\mysql.exe",
+    "mysqldump_path": "C:\\xampp\\mysql\\bin\\mysqldump.exe"
+  },
+  "maintenance": {
+    "enabled": false,
+    "host": "YOUR_SERVER_IP_OR_HOSTNAME",
+    "port": 3306,
+    "user": "YOUR_MAINTENANCE_DB_USER",
+    "password": "YOUR_MAINTENANCE_DB_PASSWORD",
+    "database": "YOUR_DB_NAME",
+    "connect_timeout": 5
+  }
+}

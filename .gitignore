@@ -1,0 +1,35 @@
+# --- Security & Credentials ---
+.env
+db_config.json
+*.sql
+*.db
+*.sqlite
+
+# --- Sensitive Office Data ---
+backups/
+receipts/
+statements/
+temp_docs/
+logs/
+*.pdf
+*.png
+!assets/*.png
+!office_logo.png
+!bagongpilipinas.png
+
+# --- Python & Environment ---
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- IDEs & OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
