@@ -2,7 +2,7 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk, messagebox
 from theme_manager import ModernTheme
-import services.property_service as prop_svc
+import api_clients.property_service as prop_svc
 import threading
 
 class RecycleBinPage:

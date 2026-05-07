@@ -371,7 +371,7 @@ class PropertyEditModal(ctk.CTkToplevel):
         # 1. Standardize the Date Format
         raw_date = self.vars["or_date"].get().strip()
         clean_date = ""
-        from services.billing_service import normalize_date_input
+        from api_clients.billing_service import normalize_date_input
 
         if raw_date:
             clean_date = normalize_date_input(raw_date)

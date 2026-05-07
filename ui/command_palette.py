@@ -86,11 +86,9 @@ class CommandPalette(ctk.CTkToplevel):
         # but structured for easy migration to requests.get later
         def fetch():
             try:
-                # Construct API URL
-                api_url = f"http://localhost:8000/search/global?q={query}"
-                # In this implementation, we will call our search_service directly
-                # to avoid requiring the FastAPI server to be running during development
-                import backend.services.search_service as search_svc
+                # Use the API Client instead of direct backend import
+                import api_clients.search_service as search_svc
+                
                 if not query:
                     results = search_svc.get_quick_actions()
                 else:

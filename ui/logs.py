@@ -3,8 +3,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from theme_manager import ModernTheme
 import threading
-import services.auth_service as auth
-import services.system_service as system
+import api_clients.auth_service as auth
+import api_clients.system_service as system
 import json
 
 class AuditLogsPage:

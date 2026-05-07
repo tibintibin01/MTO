@@ -7,6 +7,9 @@ from PIL import Image
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import api_clients.auth_service as auth
 import api_clients.system_service as system
 from api_clients.auth_service import verify_user_login
