@@ -1,1 +1,0 @@
-# Removed vendor path hack
