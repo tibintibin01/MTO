@@ -5,6 +5,7 @@ import threading
 import api_clients.property_service as prop_svc
 import api_clients.api_helper as api
 from ui.dossier import PropertyDossierModal
+from ui.import_wizard import ImportWizardModal
 
 
 class PropertyPage:
@@ -58,6 +59,14 @@ class PropertyPage:
                 text="+ ADD PROPERTY",
                 command=self.open_add_modal,
                 fg_color="#2ecc71",
+                width=150,
+            ).pack(side="right", padx=(10, 0))
+
+            ctk.CTkButton(
+                header_fr,
+                text="🚀 BULK IMPORT",
+                command=self.open_import_wizard,
+                fg_color="#3498db",
                 width=150,
             ).pack(side="right")
 
@@ -358,6 +367,9 @@ class PropertyPage:
         PropertyEditModal(
             self.parent, "Add Property", None, self.refresh_table, user=self.user
         )
+
+    def open_import_wizard(self):
+        ImportWizardModal(self.container.winfo_toplevel())
 
     def open_bulk_update(self):
         BulkBarangayUpdateModal(self.parent, self.refresh_table)

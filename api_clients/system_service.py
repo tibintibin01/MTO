@@ -38,3 +38,14 @@ def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit
 
 def get_audit_users():
     return api_request("GET", "/system/audit-users")
+
+
+def validate_import(file_path):
+    import os
+    with open(file_path, "rb") as f:
+        files = {"file": (os.path.basename(file_path), f)}
+        return api_request("POST", "/system/import/validate", files=files)
+
+
+def commit_import(data):
+    return api_request("POST", "/system/import/commit", data=data)

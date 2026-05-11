@@ -640,6 +640,28 @@ async def get_backup_health(current_user: dict = Depends(get_current_user)):
     return get_backup_status()
 
 
+@app.post("/system/import/validate", tags=["System"], dependencies=[Depends(write_access)])
+async def validate_bulk_import(
+    file: UploadFile = File(...), current_user: dict = Depends(get_current_user)
+):
+    import os
+    from backend.services.import_service import validate_property_import
+
+    content = await file.read()
+    ext = os.path.splitext(file.filename)[1]
+    return validate_property_import(content, ext)
+
+
+@app.post("/system/import/commit", tags=["System"], dependencies=[Depends(write_access)])
+async def commit_bulk_import(
+    data: List[dict], current_user: dict = Depends(get_current_user)
+):
+    from backend.services.import_service import commit_property_import
+
+    count = commit_property_import(data, current_user)
+    return {"status": "success", "imported": count}
+
+
 @app.post("/system/logs")
 async def log_system_action(
     log: LogActionSchema, current_user: dict = Depends(get_current_user)
