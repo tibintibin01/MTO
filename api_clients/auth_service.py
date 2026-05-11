@@ -41,8 +41,11 @@ def verify_user_login(username, password):
         payload = {"username": username, "password": password}
         # FastAPI OAuth2 uses form data for /token
         import requests
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
         from api_clients.api_helper import API_BASE_URL
-        response = requests.post(f"{API_BASE_URL}/token", data=payload)
+        response = requests.post(f"{API_BASE_URL}/token", data=payload, verify=False)
         if response.status_code == 200:
             token_data = response.json()
             set_token(token_data["access_token"])
