@@ -45,19 +45,23 @@ backup_status = {
 
 
 def get_backup_status():
-    """Fetches the latest backup status from the database."""
+    """Fetches the latest backup status from the database and maps it to UI keys."""
     try:
         query = "SELECT timestamp, checksum, health FROM backup_history ORDER BY id DESC LIMIT 1"
         res = db.db_query(query, fetch=True, commit=False)
         if res:
             row = res[0]
+            ts_str = row[0].strftime("%Y-%m-%d %H:%M:%S") if row[0] else "Never"
             backup_status.update({
-                "last_success": row[0].strftime("%Y-%m-%d %H:%M:%S") if row[0] else "Never",
-                "checksum": row[1] or "None",
+                "last_local": ts_str,
+                "last_usb": ts_str,  # Assuming hybrid backup includes both
+                "last_cloud": ts_str,
+                "last_verify": "Success" if (row[2] == "OK") else f"Issue: {row[2]}",
+                "last_checksum": row[1] or "None",
                 "health": row[2] or "UNKNOWN"
             })
-    except:
-        pass
+    except Exception as e:
+        print(f"Error fetching backup status: {e}")
     return backup_status
 
 
@@ -161,9 +165,10 @@ def run_hybrid_backup(user=None):
         
         # 6. Store in Database
         try:
+            health_status = "OK" if backup_status["last_verify"] == "Success" else "FAIL"
             db.db_query(
                 "INSERT INTO backup_history (filename, file_path, checksum, status, health, user_name) VALUES (%s, %s, %s, %s, %s, %s)",
-                (filename, local_path, checksum, "SUCCESS", "OK", user_name)
+                (filename, local_path, checksum, "SUCCESS", health_status, user_name)
             )
         except Exception as db_err:
             print(f"Failed to log backup to DB: {db_err}")
