@@ -64,8 +64,8 @@ class LoginApp(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
 
         # --- Sidebar / Branding ---
-        # Using a darker color to match the image background perfectly (#0b162c)
-        self.brand_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="#0b162c", border_width=0)
+        # Using a deeper shadow color (#050c17) for perfect blending
+        self.brand_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="#050c17", border_width=0)
         self.brand_frame.grid(row=0, column=0, sticky="nsew")
 
         try:
@@ -73,7 +73,7 @@ class LoginApp(ctk.CTk):
             self.logo_img = ctk.CTkImage(
                 light_image=Image.open(logo_path),
                 dark_image=Image.open(logo_path),
-                size=(460, 610), # Precision fit to overfill the 450x600 space
+                size=(600, 800), # Massive overfill to guarantee zero gaps on high-DPI screens
             )
             # Removed visible 'MTO Logo' text to fix the hanging text issue
             self.logo_label = ctk.CTkLabel(self.brand_frame, image=self.logo_img, text="")
