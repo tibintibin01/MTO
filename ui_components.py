@@ -178,3 +178,44 @@ def show_toast(master, message, type="info"):
     master.after(
         0, lambda: ToastNotification(master, message, colors.get(type, "#3498db"))
     )
+
+class ErrorDialog(ctk.CTkToplevel):
+    def __init__(self, master, title, message, retry_callback=None):
+        super().__init__(master)
+        self.title(title)
+        self.geometry("400x200")
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self.grab_set() # Modal behavior
+        
+        # Center in parent
+        self.update_idletasks()
+        pw = master.winfo_width()
+        ph = master.winfo_height()
+        px = master.winfo_rootx()
+        py = master.winfo_rooty()
+        x = px + (pw // 2) - 200
+        y = py + (ph // 2) - 100
+        self.geometry(f"+{x}+{y}")
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        # Header with icon-ish label
+        header = ctk.CTkLabel(self, text="⚠️", font=("Segoe UI", 32))
+        header.grid(row=0, column=0, pady=(20, 0))
+
+        msg_label = ctk.CTkLabel(self, text=message, font=ModernTheme.BODY, wraplength=350)
+        msg_label.grid(row=1, column=0, padx=20, pady=10)
+
+        btn_fr = ctk.CTkFrame(self, fg_color="transparent")
+        btn_fr.grid(row=2, column=0, pady=20)
+
+        if retry_callback:
+            from utils import tr
+            self.retry_btn = ctk.CTkButton(btn_fr, text=tr("common.retry"), command=lambda: [self.destroy(), retry_callback()])
+            self.retry_btn.pack(side="left", padx=10)
+        
+        from utils import tr
+        self.ok_btn = ctk.CTkButton(btn_fr, text=tr("common.ok"), command=self.destroy, fg_color="transparent", border_width=1)
+        self.ok_btn.pack(side="left", padx=10)

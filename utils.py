@@ -78,6 +78,47 @@ def log_error_to_file(context: str, error: Optional[Exception] = None, extra: Op
     except Exception:
         return None
 
+import json
+from pathlib import Path
+
+class LocalizationManager:
+    _instance = None
+    _strings = {}
+    _current_locale = "en"
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(LocalizationManager, cls).__new__(cls)
+            cls._instance._load_strings()
+        return cls._instance
+
+    def _load_strings(self):
+        try:
+            # Assumes utils.py is in project root or near it
+            base_path = Path(__file__).resolve().parent
+            locale_path = base_path / "locales" / f"{self._current_locale}.json"
+            if locale_path.exists():
+                with open(locale_path, "r", encoding="utf-8") as f:
+                    self._strings = json.load(f)
+            else:
+                print(f"CRITICAL: Locale file not found at {locale_path}")
+        except Exception as e:
+            print(f"CRITICAL: Failed to load strings: {e}")
+
+    def get(self, key, default=None):
+        keys = key.split(".")
+        val = self._strings
+        try:
+            for k in keys:
+                val = val[k]
+            return val
+        except (KeyError, TypeError):
+            return default or key
+
+def tr(key, default=None):
+    """Global helper for translation."""
+    return LocalizationManager().get(key, default)
+
 def export_data_to_excel(data, columns, filename_prefix="Export"):
     """
     General purpose export tool. 

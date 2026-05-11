@@ -1,0 +1,22 @@
+{
+    "login": {
+        "title": "MTO Access Portal",
+        "subtitle": "Enter credentials to proceed",
+        "username": "Username",
+        "password": "Password",
+        "button": "LOG IN",
+        "authenticating": "AUTHENTICATING",
+        "error_invalid": "Invalid Username or Password",
+        "error_required": "Required",
+        "error_network": "Network Error",
+        "toggle_theme": "🌓 Toggle Theme"
+    },
+    "common": {
+        "ok": "OK",
+        "cancel": "Cancel",
+        "retry": "Retry",
+        "error": "Error",
+        "success": "Success",
+        "system_error": "System Error"
+    }
+}

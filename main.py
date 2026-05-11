@@ -1,3 +1,4 @@
+from pathlib import Path
 import sys
 import traceback
 import os
@@ -11,160 +12,169 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Step 1: Define absolute paths
+BASE_DIR = Path(__file__).resolve().parent
+ASSETS_DIR = BASE_DIR # In this repo, assets are currently in root
+
 import api_clients.auth_service as auth
 import api_clients.system_service as system
 from api_clients.auth_service import verify_user_login
-from utils import log_error_to_file
+from utils import log_error_to_file, tr
 import dashboard
 from theme_manager import setup_theme, ModernTheme
+from ui_components import ErrorDialog
 
 # Initialize Theme
-setup_theme()
+setup_theme("dark")
 
 # CRITICAL SECURITY CHECK
 if not os.getenv("SECRET_KEY") or len(os.getenv("SECRET_KEY", "")) < 16:
     print("CRITICAL SECURITY ERROR: SECRET_KEY is missing or too weak (min 16 chars).")
-    print("Please set the SECRET_KEY environment variable in your .env file.")
     sys.exit(1)
 
-
-def handle_global_exception(
-    exc_type: type, exc_value: BaseException, exc_traceback: Any
-) -> None:
-    traceback_text = "".join(
-        traceback.format_exception(exc_type, exc_value, exc_traceback)
-    )
-    log_path = log_error_to_file(
-        "Unhandled application error", exc_value, traceback_text=traceback_text
-    )
+def handle_global_exception(exc_type, exc_value, exc_traceback):
+    traceback_text = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    log_path = log_error_to_file("Unhandled application error", exc_value, traceback_text=traceback_text)
+    
+    # Use the new ErrorDialog
     try:
-        suffix = f"\n\nLogged to:\n{log_path}" if log_path else ""
+        from main import app
+        ErrorDialog(app, tr("common.system_error"), f"An unexpected error occurred.\n\nLogged to: {log_path}")
+    except:
         from tkinter import messagebox
-
-        messagebox.showerror("System Error", f"An unexpected error occurred.{suffix}")
-    except Exception as e:
-        print(f"FAILED TO SHOW ERROR MESSAGEBOX: {e}")
-
+        messagebox.showerror(tr("common.system_error"), "A critical system error occurred.")
 
 sys.excepthook = handle_global_exception
-
 
 class LoginApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
 
-        self.title("Treasury Management System | Secure Access")
-        self.geometry("800x550")
-        self.resizable(True, True)
-        self.minsize(800, 550)
+        self.title(f"Treasury Management System | {tr('common.error') if not auth else 'Secure Access'}")
+        self.geometry("900x600")
+        self.minsize(500, 500)
+        
+        # Step 2: Bind resize for responsiveness
+        self.bind("<Configure>", self._on_resize)
+        self.is_dark = True
 
-        # Grid layout (Mathematically Equal Split)
-        self.grid_columnconfigure(0, weight=1, uniform="column")  # Side image
-        self.grid_columnconfigure(1, weight=1, uniform="column")  # Login form
+        # Grid layout
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
         # --- Sidebar / Branding ---
-        self.brand_frame = ctk.CTkFrame(
-            self, corner_radius=0, fg_color="#1f538d", border_width=0
-        )
+        self.brand_frame = ctk.CTkFrame(self, corner_radius=0, fg_color=ModernTheme.PRIMARY, border_width=0)
         self.brand_frame.grid(row=0, column=0, sticky="nsew")
 
         try:
+            logo_path = ASSETS_DIR / "bagongpilipinas.png"
             self.logo_img = ctk.CTkImage(
-                light_image=Image.open("bagongpilipinas.png"),
-                dark_image=Image.open("bagongpilipinas.png"),
+                light_image=Image.open(logo_path),
+                dark_image=Image.open(logo_path),
                 size=(400, 550),
             )
-            self.logo_label = ctk.CTkLabel(
-                self.brand_frame, image=self.logo_img, text=""
-            )
+            # Step 6: Logo Alt-text via text attribute (useful for accessibility)
+            self.logo_label = ctk.CTkLabel(self.brand_frame, image=self.logo_img, text="MTO Logo")
             self.logo_label.pack(fill="both", expand=True)
         except Exception as e:
-            log_error_to_file("Failed to load side-branding image", e)
-            self.logo_label = ctk.CTkLabel(
-                self.brand_frame,
-                text="REVENUE\nSYSTEM",
-                font=("Segoe UI", 48, "bold"),
-                text_color="white",
-            )
+            self.logo_label = ctk.CTkLabel(self.brand_frame, text="MTO\nTREASURY", font=ModernTheme.H1, text_color="white")
             self.logo_label.pack(expand=True)
 
         # --- Login Form ---
-        self.login_frame = ctk.CTkFrame(self, corner_radius=0, border_width=0)
+        self.login_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.login_frame.grid(row=0, column=1, sticky="nsew")
 
         self.content_frame = ctk.CTkFrame(self.login_frame, fg_color="transparent")
         self.content_frame.place(relx=0.5, rely=0.5, anchor="center")
 
-        ctk.CTkLabel(self.content_frame, text="Welcome Back", font=ModernTheme.H1).pack(
-            pady=(0, 5)
-        )
-        ctk.CTkLabel(
-            self.content_frame,
-            text="Enter your credentials to access the system",
-            font=ModernTheme.BODY,
-            text_color="gray",
-        ).pack(pady=(0, 30))
+        # Step 7: Use tr() for all strings
+        ctk.CTkLabel(self.content_frame, text=tr("login.title"), font=ModernTheme.H1).pack(pady=(0, 5))
+        ctk.CTkLabel(self.content_frame, text=tr("login.subtitle"), font=ModernTheme.BODY, text_color=ModernTheme.TEXT_GRAY).pack(pady=(0, 30))
 
-        self.ue = ctk.CTkEntry(
-            self.content_frame,
-            width=300,
-            height=45,
-            placeholder_text="Username",
-            font=ModernTheme.BODY,
-        )
-        self.ue.pack(pady=10)
+        # Fields
+        self.ue = ctk.CTkEntry(self.content_frame, width=320, height=50, placeholder_text=tr("login.username"), font=ModernTheme.BODY)
+        self.ue.pack(pady=5)
+        self.u_err = ctk.CTkLabel(self.content_frame, text="", text_color=ModernTheme.DANGER, font=ModernTheme.BODY_SMALL)
+        self.u_err.pack()
 
-        self.pe = ctk.CTkEntry(
-            self.content_frame,
-            width=300,
-            height=45,
-            placeholder_text="Password",
-            show="*",
-            font=ModernTheme.BODY,
-        )
-        self.pe.pack(pady=10)
+        self.pe = ctk.CTkEntry(self.content_frame, width=320, height=50, placeholder_text=tr("login.password"), show="*", font=ModernTheme.BODY)
+        self.pe.pack(pady=5)
+        self.p_err = ctk.CTkLabel(self.content_frame, text="", text_color=ModernTheme.DANGER, font=ModernTheme.BODY_SMALL)
+        self.p_err.pack()
 
         self.login_btn = ctk.CTkButton(
-            self.content_frame,
-            text="LOG IN",
-            command=self.start_login_thread,
-            width=300,
-            height=45,
-            font=ModernTheme.BUTTON,
-            corner_radius=8,
+            self.content_frame, text=tr("login.button"), command=self.start_login_thread,
+            width=320, height=50, font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY, hover_color=ModernTheme.PRIMARY_HOVER
         )
-        self.login_btn.pack(pady=(30, 10))
+        self.login_btn.pack(pady=(20, 10))
+        
+        self.theme_btn = ctk.CTkButton(self.content_frame, text=tr("login.toggle_theme"), command=self.toggle_theme, width=120, height=30, fg_color="transparent", text_color=ModernTheme.TEXT_GRAY)
+        self.theme_btn.pack()
 
-        self.status_label = ctk.CTkLabel(
-            self.content_frame, text="", text_color="#e74c3c", font=ModernTheme.BODY
-        )
-        self.status_label.pack()
-
+        # Step 6: Keyboard shortcuts
         self.bind("<Return>", lambda e: self.start_login_thread())
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def _on_resize(self, event):
+        """Responsive behavior: Hide sidebar on narrow screens."""
+        if event.widget == self:
+            if event.width < 750:
+                self.brand_frame.grid_remove()
+                self.login_frame.grid_configure(column=0, columnspan=2)
+            else:
+                self.brand_frame.grid()
+                self.login_frame.grid_configure(column=1, columnspan=1)
+
+    def toggle_theme(self):
+        self.is_dark = not self.is_dark
+        setup_theme("dark" if self.is_dark else "light")
 
     def start_login_thread(self):
-        """Asynchronous UI: Performs login in a thread to keep UI fluid."""
-        self.login_btn.configure(state="disabled", text="AUTHENTICATING...")
-        self.status_label.configure(text="")
+        # Step 4: Inline Validation
+        u, p = self.ue.get().strip(), self.pe.get().strip()
+        has_err = False
+        
+        self.u_err.configure(text="")
+        self.p_err.configure(text="")
+        
+        if not u:
+            self.u_err.configure(text=tr("login.error_required"))
+            has_err = True
+        if not p:
+            self.p_err.configure(text=tr("login.error_required"))
+            has_err = True
+        
+        if has_err: return
 
-        u, p = self.ue.get(), self.pe.get()
+        # Step 5: Loading Overlay
+        self._show_overlay()
         threading.Thread(target=self.do_login, args=(u, p), daemon=True).start()
+
+    def _show_overlay(self):
+        self.overlay = ctk.CTkFrame(self, fg_color=("white", "black"), corner_radius=0)
+        self.overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.overlay.configure(background_corner_colors=(None, None, None, None))
+        
+        inner = ctk.CTkFrame(self.overlay, fg_color="transparent")
+        inner.place(relx=0.5, rely=0.5, anchor="center")
+        
+        ctk.CTkLabel(inner, text=tr("login.authenticating"), font=ModernTheme.H2).pack(pady=10)
+        self.progress = ctk.CTkProgressBar(inner, mode="indeterminate", width=250)
+        self.progress.pack(pady=10)
+        self.progress.start()
 
     def do_login(self, u, p) -> None:
         try:
             auth_result = verify_user_login(u, p)
-            # Use after() to update UI from thread
             self.after(0, self.handle_login_result, auth_result)
         except Exception as e:
             log_error_to_file("Login Background Task Failed", e)
-            self.after(
-                0,
-                lambda: self.status_label.configure(text=f"Connection Error: {str(e)}"),
-            )
-            self.after(
-                0, lambda: self.login_btn.configure(state="normal", text="LOG IN")
-            )
+            self.after(0, lambda: self._hide_overlay_with_error(f"{tr('login.error_network')}: {str(e)}"))
+
+    def _hide_overlay_with_error(self, msg):
+        self.overlay.destroy()
+        self.p_err.configure(text=msg)
 
     def handle_login_result(self, auth_result):
         if auth_result:
@@ -172,9 +182,8 @@ class LoginApp(ctk.CTk):
             self.destroy()
             dashboard.open_dashboard(auth_result)
         else:
-            self.status_label.configure(text="Invalid Username or Password")
-            self.login_btn.configure(state="normal", text="LOG IN")
-
+            self.overlay.destroy()
+            self.p_err.configure(text=tr("login.error_invalid"))
 
 if __name__ == "__main__":
     app = LoginApp()
