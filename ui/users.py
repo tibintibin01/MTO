@@ -2,6 +2,7 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from theme_manager import ModernTheme
+from utils import tr
 import api_clients.auth_service as auth
 import api_clients.system_service as system
 import threading
@@ -28,19 +29,19 @@ class UserAccessPage:
         directory_fr = ctk.CTkFrame(self.container)
         directory_fr.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         
-        ctk.CTkLabel(directory_fr, text="USER DIRECTORY", font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=20, pady=(15, 10))
+        ctk.CTkLabel(directory_fr, text=tr("users.title"), font=ModernTheme.BODY_BOLD).pack(anchor="w", padx=20, pady=(15, 10))
         
         # Action Bar in directory
         dir_actions = ctk.CTkFrame(directory_fr, fg_color="transparent")
         dir_actions.pack(fill="x", padx=20, pady=(0, 10))
         
         if self.can_manage_users:
-            ctk.CTkButton(dir_actions, text="+ REGISTER NEW USER", command=self.open_register_modal,
-                          fg_color="#3498db", hover_color="#2980b9", height=32, font=("Segoe UI", 10, "bold")).pack(side="left")
+            ctk.CTkButton(dir_actions, text=f"+ {tr('users.btn_register')}", command=self.open_register_modal,
+                          fg_color=ModernTheme.PRIMARY, height=32, font=ModernTheme.BUTTON_SMALL).pack(side="left")
 
-        ctk.CTkButton(dir_actions, text="🔄 REFRESH", command=self.refresh_users,
-                      fg_color="transparent", border_width=1, border_color="#34495e", 
-                      text_color="#34495e", width=100, height=32).pack(side="right")
+        ctk.CTkButton(dir_actions, text=f"🔄 {tr('users.btn_refresh')}", command=self.refresh_users,
+                      fg_color="transparent", border_width=1, border_color=ModernTheme.SECONDARY, 
+                      text_color=ModernTheme.PRIMARY, width=100, height=32, font=ModernTheme.BUTTON_SMALL).pack(side="right")
         
         # Table Styling
         style = ttk.Style()
@@ -48,19 +49,27 @@ class UserAccessPage:
         style.configure("User.Treeview", rowheight=40, font=("Segoe UI", 10), background="#2b2b2b", fieldbackground="#2b2b2b", foreground="white")
         style.configure("User.Treeview.Heading", font=("Segoe UI", 10, "bold"), background="#333333", foreground="white")
 
-        self.tree = ttk.Treeview(directory_fr, columns=("ID", "Status", "Full Name", "Username", "Role", "Last Login"), show="headings", style="User.Treeview")
-        self.tree.heading("ID", text="ID")
-        self.tree.heading("Status", text="STATUS")
-        self.tree.heading("Full Name", text="FULL NAME")
-        self.tree.heading("Username", text="USERNAME")
-        self.tree.heading("Role", text="ROLE")
-        self.tree.heading("Last Login", text="LAST LOGIN")
+        self.tree = ttk.Treeview(directory_fr, columns=(
+            "id", "status", "name", "username", "role", "login"
+        ), show="headings", style="User.Treeview")
         
-        self.tree.column("ID", width=0, stretch=tk.NO)
-        self.tree.column("Status", width=100, anchor="center")
-        self.tree.column("Full Name", width=250)
-        self.tree.column("Username", width=150)
-        self.tree.column("Role", width=120, anchor="center")
+        col_map = {
+            "id": tr("users.table.id"),
+            "status": tr("users.table.status"),
+            "name": tr("users.table.name"),
+            "username": tr("users.table.username"),
+            "role": tr("users.table.role"),
+            "login": tr("users.table.login")
+        }
+
+        for cid, label in col_map.items():
+            self.tree.heading(cid, text=label.upper())
+        
+        self.tree.column("id", width=0, stretch=tk.NO)
+        self.tree.column("status", width=100, anchor="center")
+        self.tree.column("name", width=250)
+        self.tree.column("username", width=150)
+        self.tree.column("role", width=120, anchor="center")
         
         scrolly = ttk.Scrollbar(directory_fr, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrolly.set)
@@ -79,18 +88,18 @@ class UserAccessPage:
         self.admin_panel.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
         
         if not self.can_manage_users:
-            ctk.CTkLabel(self.admin_panel, text="ADMIN ONLY AREA", font=("Segoe UI", 11, "bold"), text_color="gray").pack(pady=50)
+            ctk.CTkLabel(self.admin_panel, text=tr("users.admin_panel.restricted"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(pady=50)
             return
 
-        ctk.CTkLabel(self.admin_panel, text="ADMIN COMMAND CENTER", font=("Segoe UI", 12, "bold"), text_color="#2980b9").pack(pady=(15, 20))
+        ctk.CTkLabel(self.admin_panel, text=tr("users.admin_panel.title"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.PRIMARY).pack(pady=(15, 20))
 
         # Selected User Info Card
         self.user_card = ctk.CTkFrame(self.admin_panel)
         self.user_card.pack(fill="x", padx=15, pady=(0, 20))
         
-        self.name_lbl = ctk.CTkLabel(self.user_card, text="Select a user...", font=("Segoe UI", 12, "bold"))
+        self.name_lbl = ctk.CTkLabel(self.user_card, text=tr("users.admin_panel.hint"), font=ModernTheme.H3)
         self.name_lbl.pack(pady=(15, 5))
-        self.role_lbl = ctk.CTkLabel(self.user_card, text="", font=("Segoe UI", 10), text_color="gray")
+        self.role_lbl = ctk.CTkLabel(self.user_card, text="", font=ModernTheme.BODY, text_color=ModernTheme.TEXT_GRAY)
         self.role_lbl.pack(pady=(0, 15))
 
         # Action Panel Inner
@@ -98,28 +107,28 @@ class UserAccessPage:
         self.action_fr.pack(fill="both", expand=True, padx=15)
         
         # Role Change
-        ctk.CTkLabel(self.action_fr, text="SYSTEM ROLE", font=("Segoe UI", 9, "bold"), text_color="gray").pack(anchor="w")
-        self.role_cb = ctk.CTkComboBox(self.action_fr, values=["admin", "cashier", "encoder", "viewer"], height=35)
+        ctk.CTkLabel(self.action_fr, text=tr("users.admin_panel.role_label"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
+        self.role_cb = ctk.CTkComboBox(self.action_fr, values=["admin", "cashier", "encoder", "viewer"], height=35, font=ModernTheme.BODY)
         self.role_cb.pack(fill="x", pady=(5, 15))
         
         # Account Status
-        ctk.CTkLabel(self.action_fr, text="ACCOUNT STATUS", font=("Segoe UI", 9, "bold"), text_color="gray").pack(anchor="w")
+        ctk.CTkLabel(self.action_fr, text=tr("users.admin_panel.status_label"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
         self.status_var = tk.BooleanVar(value=True)
-        self.status_sw = ctk.CTkSwitch(self.action_fr, text="Account Enabled", variable=self.status_var, command=self.toggle_account_status)
+        self.status_sw = ctk.CTkSwitch(self.action_fr, text=tr("users.admin_panel.status_sw"), variable=self.status_var, command=self.toggle_account_status, font=ModernTheme.BODY)
         self.status_sw.pack(anchor="w", pady=(5, 25))
 
         # High-Security Actions
-        ctk.CTkLabel(self.action_fr, text="SECURITY ACTIONS", font=("Segoe UI", 9, "bold"), text_color="gray").pack(anchor="w")
+        ctk.CTkLabel(self.action_fr, text=tr("users.admin_panel.security_label"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
         
-        ctk.CTkButton(self.action_fr, text="FORCE PASSWORD RESET", command=self.reset_password, 
-                      fg_color="#e67e22", hover_color="#d35400", height=40).pack(fill="x", pady=(10, 10))
+        ctk.CTkButton(self.action_fr, text=tr("users.admin_panel.btn_reset"), command=self.reset_password, 
+                      font=ModernTheme.BUTTON, fg_color=ModernTheme.WARNING).pack(fill="x", pady=(10, 10))
         
-        self.save_changes_btn = ctk.CTkButton(self.action_fr, text="APPLY ROLE CHANGE", command=self.apply_role_change,
-                                               fg_color="#2ecc71", hover_color="#27ae60", height=40)
+        self.save_changes_btn = ctk.CTkButton(self.action_fr, text=tr("users.admin_panel.btn_apply"), command=self.apply_role_change,
+                                               font=ModernTheme.BUTTON, fg_color=ModernTheme.SUCCESS)
         self.save_changes_btn.pack(fill="x", pady=(10, 30))
 
         # Mini Activity Trace (Audit Logs for this user)
-        ctk.CTkLabel(self.action_fr, text="LATEST ACTIVITY TRACE", font=("Segoe UI", 9, "bold"), text_color="gray").pack(anchor="w")
+        ctk.CTkLabel(self.action_fr, text=tr("users.admin_panel.activity_label"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
         self.audit_tree = ttk.Treeview(self.action_fr, columns=("Action"), show="", height=5)
         self.audit_tree.column("#0", width=0, stretch=tk.NO)
         self.audit_tree.column("Action", width=200)
@@ -148,7 +157,7 @@ class UserAccessPage:
     def _update_user_table(self, users):
         for row in self.tree.get_children(): self.tree.delete(row)
         for i, u in enumerate(users):
-            status_text = "🟢 ACTIVE" if u["is_active"] else "🔴 DISABLED"
+            status_text = tr("users.table.status_active") if u["is_active"] else tr("users.table.status_disabled")
             ts_raw = u.get("last_login")
             if isinstance(ts_raw, str):
                 login_time = ts_raw.replace("T", " ")[:16]
@@ -197,7 +206,7 @@ class UserAccessPage:
         if not self.selected_user: return
         new_status = self.status_var.get()
         msg = "Enable this account?" if new_status else "Disable this account? User will be blocked from logging in."
-        if not messagebox.askyesno("Confirm Status Change", msg):
+        if not messagebox.askyesno(tr("users.messages.confirm_status"), msg):
             self.status_var.set(not new_status)
             return
         
@@ -211,32 +220,32 @@ class UserAccessPage:
     def apply_role_change(self):
         if not self.selected_user: return
         new_role = self.role_cb.get()
-        if not messagebox.askyesno("Confirm Role Change", f"Change {self.selected_user['username']}'s role to {new_role.upper()}?"):
+        if not messagebox.askyesno(tr("users.messages.confirm_role"), tr("users.messages.confirm_role_msg").replace("{user}", self.selected_user['username']).replace("{role}", new_role.upper())):
             return
         
         try:
             auth.update_user(self.selected_user["id"], role=new_role)
             self.refresh_users()
             self.refresh_audit_trace(self.selected_user["id"])
-            messagebox.showinfo("Success", "Role updated successfully.")
+            show_toast(self.container.winfo_toplevel(), tr("users.messages.success_role"), type="success")
         except Exception as e:
-            messagebox.showerror("Update Error", str(e))
+            ErrorDialog(self.container.winfo_toplevel(), tr("common.error"), str(e))
 
     def reset_password(self):
         if not self.selected_user: return
-        new_pass = simpledialog.askstring("Reset Password", f"Enter new password for {self.selected_user['username']}:", show="*")
+        new_pass = simpledialog.askstring(tr("users.messages.reset_title"), tr("users.messages.reset_prompt").replace("{user}", self.selected_user['username']), show="*")
         if not new_pass: return
         
         if len(new_pass) < 6:
-            messagebox.showerror("Error", "Password must be at least 6 characters.")
+            ErrorDialog(self.container.winfo_toplevel(), tr("common.error"), tr("users.messages.error_password"))
             return
             
         try:
             auth.reset_user_password(self.selected_user["id"], new_pass)
-            messagebox.showinfo("Success", "Password reset successfully.")
+            show_toast(self.container.winfo_toplevel(), tr("users.messages.success_reset"), type="success")
             self.refresh_audit_trace(self.selected_user["id"])
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            ErrorDialog(self.container.winfo_toplevel(), tr("common.error"), str(e))
 
     def refresh_audit_trace(self, user_id):
         def worker():
@@ -260,7 +269,7 @@ class UserAccessPage:
 class RegisterUserModal(ctk.CTkToplevel):
     def __init__(self, parent, callback):
         super().__init__(parent)
-        self.title("New User Registration")
+        self.title(tr("users.modal.title"))
         self.geometry("450x600")
         self.resizable(False, False)
         self.callback = callback
@@ -280,40 +289,40 @@ class RegisterUserModal(ctk.CTkToplevel):
         self.configure(fg_color="white")
         
         # Header
-        header_fr = ctk.CTkFrame(self, fg_color="#3498db", height=100, corner_radius=0)
+        header_fr = ctk.CTkFrame(self, fg_color=ModernTheme.PRIMARY, height=100, corner_radius=0)
         header_fr.pack(fill="x")
-        ctk.CTkLabel(header_fr, text="👤 REGISTER NEW PERSONNEL", font=("Segoe UI", 16, "bold"), text_color="white").pack(pady=35)
+        ctk.CTkLabel(header_fr, text=f"👤 {tr('users.modal.header')}", font=ModernTheme.H3, text_color="white").pack(pady=35)
 
         form = ctk.CTkFrame(self, fg_color="transparent")
         form.pack(fill="both", expand=True, padx=40, pady=30)
 
         # Full Name
-        ctk.CTkLabel(form, text="FULL NAME", font=("Segoe UI", 9, "bold"), text_color="gray").pack(anchor="w")
-        self.name_ent = ctk.CTkEntry(form, placeholder_text="e.g. Juan Dela Cruz", height=40)
+        ctk.CTkLabel(form, text=tr("users.modal.fields.name"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
+        self.name_ent = ctk.CTkEntry(form, placeholder_text="e.g. Juan Dela Cruz", height=40, font=ModernTheme.BODY)
         self.name_ent.pack(fill="x", pady=(5, 15))
 
         # Username
-        ctk.CTkLabel(form, text="USERNAME", font=("Segoe UI", 9, "bold"), text_color="gray").pack(anchor="w")
-        self.user_ent = ctk.CTkEntry(form, placeholder_text="e.g. juandc", height=40)
+        ctk.CTkLabel(form, text=tr("users.modal.fields.username"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
+        self.user_ent = ctk.CTkEntry(form, placeholder_text="e.g. juandc", height=40, font=ModernTheme.BODY)
         self.user_ent.pack(fill="x", pady=(5, 15))
 
         # Role
-        ctk.CTkLabel(form, text="SYSTEM ROLE", font=("Segoe UI", 9, "bold"), text_color="gray").pack(anchor="w")
-        self.role_cb = ctk.CTkComboBox(form, values=["cashier", "encoder", "viewer", "admin"], height=40)
+        ctk.CTkLabel(form, text=tr("users.modal.fields.role"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
+        self.role_cb = ctk.CTkComboBox(form, values=["cashier", "encoder", "viewer", "admin"], height=40, font=ModernTheme.BODY)
         self.role_cb.set("cashier")
         self.role_cb.pack(fill="x", pady=(5, 15))
 
         # Initial Password
-        ctk.CTkLabel(form, text="INITIAL PASSWORD", font=("Segoe UI", 9, "bold"), text_color="gray").pack(anchor="w")
-        self.pass_ent = ctk.CTkEntry(form, placeholder_text="At least 6 characters", height=40, show="*")
+        ctk.CTkLabel(form, text=tr("users.modal.fields.password"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
+        self.pass_ent = ctk.CTkEntry(form, placeholder_text=tr("users.messages.error_password"), height=40, show="*", font=ModernTheme.BODY)
         self.pass_ent.pack(fill="x", pady=(5, 30))
 
         # Buttons
         btn_fr = ctk.CTkFrame(self, fg_color="transparent")
         btn_fr.pack(fill="x", side="bottom", pady=30, padx=40)
 
-        ctk.CTkButton(btn_fr, text="CANCEL", command=self.destroy, fg_color="#95a5a6", height=40, width=100).pack(side="left")
-        ctk.CTkButton(btn_fr, text="CREATE ACCOUNT", command=self.save, fg_color="#2ecc71", height=40, width=250).pack(side="right")
+        ctk.CTkButton(btn_fr, text=tr("users.modal.btn_cancel"), command=self.destroy, fg_color=ModernTheme.SECONDARY, height=40, width=100, font=ModernTheme.BUTTON).pack(side="left")
+        ctk.CTkButton(btn_fr, text=tr("users.modal.btn_create"), command=self.save, fg_color=ModernTheme.SUCCESS, height=40, width=250, font=ModernTheme.BUTTON).pack(side="right")
 
     def save(self):
         name = self.name_ent.get().strip()
@@ -322,20 +331,20 @@ class RegisterUserModal(ctk.CTkToplevel):
         pwd = self.pass_ent.get().strip()
 
         if not name or not user or not pwd:
-            messagebox.showerror("Error", "All fields are required!")
+            ErrorDialog(self, tr("common.error"), tr("users.messages.error_fields"))
             return
         
         if len(pwd) < 6:
-            messagebox.showerror("Error", "Password must be at least 6 characters.")
+            ErrorDialog(self, tr("common.error"), tr("users.messages.error_password"))
             return
 
         try:
             res = auth.create_user(name, user, pwd, role)
             if res.get("status") == "created":
-                messagebox.showinfo("Success", f"User {user} registered successfully.")
+                show_toast(self.master.winfo_toplevel(), tr("users.messages.success_register").replace("{user}", user), type="success")
                 self.callback()
                 self.destroy()
             else:
-                messagebox.showerror("Error", "Failed to create account.")
+                ErrorDialog(self, tr("common.error"), "Failed to create account.")
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            ErrorDialog(self, tr("common.error"), str(e))

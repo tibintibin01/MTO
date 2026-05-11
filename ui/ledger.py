@@ -7,7 +7,7 @@ from theme_manager import ModernTheme
 import api_clients.payment_service as payment
 import api_clients.auth_service as auth
 import api_clients.system_service as system
-from utils import format_curr, export_data_to_excel
+from utils import format_curr, export_data_to_excel, tr
 from receipt_generator import generate_or_receipt
 
 class LedgerPage:
@@ -24,40 +24,40 @@ class LedgerPage:
         # Header
         header = ctk.CTkFrame(self.container, fg_color="transparent")
         header.pack(fill="x", pady=(0, 20))
-        ctk.CTkLabel(header, text="Unified Financial Ledger", font=ModernTheme.H2).pack(side="left")
-        ctk.CTkLabel(header, text="Integrated Payment & Receipt History", font=ModernTheme.BODY, text_color="gray").pack(side="left", padx=20)
+        ctk.CTkLabel(header, text=tr("ledger.title"), font=ModernTheme.H2).pack(side="left")
+        ctk.CTkLabel(header, text=tr("ledger.subtitle"), font=ModernTheme.BODY, text_color=ModernTheme.TEXT_GRAY).pack(side="left", padx=20)
 
         # Toolbar
         toolbar = ctk.CTkFrame(self.container, fg_color="transparent")
         toolbar.pack(fill="x", pady=(0, 15))
 
-        self.search_ent = ctk.CTkEntry(toolbar, placeholder_text="Search TD Number, Owner, or OR Number...", width=450, height=35)
+        self.search_ent = ctk.CTkEntry(toolbar, placeholder_text=tr("ledger.search_placeholder"), width=450, height=35, font=ModernTheme.BODY)
         self.search_ent.pack(side="left")
         self.search_ent.bind("<Return>", lambda e: self.load_ledger())
 
-        self.search_btn = ctk.CTkButton(toolbar, text="🔍 FETCH HISTORY", command=self.load_ledger, width=150, height=35)
+        self.search_btn = ctk.CTkButton(toolbar, text=f"🔍 {tr('ledger.btn_fetch')}", command=self.load_ledger, width=150, height=35, font=ModernTheme.BUTTON)
         self.search_btn.pack(side="left", padx=10)
 
         # Action Buttons
-        self.view_btn = ctk.CTkButton(toolbar, text="📄 VIEW RECEIPT", command=self.open_receipt, 
-                                     fg_color="#3498db", hover_color="#2980b9", width=120, height=35, state="disabled")
+        self.view_btn = ctk.CTkButton(toolbar, text=f"📄 {tr('ledger.btn_view')}", command=self.open_receipt, 
+                                     font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY, width=120, height=35, state="disabled")
         self.view_btn.pack(side="right", padx=5)
         
         if auth.has_permission(self.user, "receipt_generate"):
             self.regen_btn = ctk.CTkButton(
                 toolbar,
-                text="♻️ REGENERATE",
+                text=f"♻️ {tr('ledger.btn_regen')}",
                 command=self.regenerate_receipt,
-                fg_color="#27ae60",
-                hover_color="#219150",
+                font=ModernTheme.BUTTON,
+                fg_color=ModernTheme.SUCCESS,
                 width=120,
                 height=35,
                 state="disabled",
             )
             self.regen_btn.pack(side="right", padx=5)
 
-        self.export_btn = ctk.CTkButton(toolbar, text="📊 EXPORT DATA", command=self.do_export,
-                                        fg_color="#e67e22", hover_color="#d35400", width=120, height=35)
+        self.export_btn = ctk.CTkButton(toolbar, text=f"📊 {tr('ledger.btn_export')}", command=self.do_export,
+                                        font=ModernTheme.BUTTON, fg_color=ModernTheme.WARNING, width=120, height=35)
         self.export_btn.pack(side="right", padx=5)
 
         # --- THE LEDGER TABLE ---
@@ -66,11 +66,24 @@ class LedgerPage:
 
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Treeview", rowheight=35, font=("Segoe UI", 10), background="#2b2b2b", fieldbackground="#2b2b2b", foreground="white")
-        style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"), background="#333333", foreground="white")
+        style.configure("Treeview", rowheight=35, font=ModernTheme.BODY, background="#1e1e1e", fieldbackground="#1e1e1e", foreground="white")
+        style.configure("Treeview.Heading", font=ModernTheme.BODY_BOLD, background="#333333", foreground="white")
+        style.map("Treeview", background=[("selected", ModernTheme.PRIMARY)])
 
         # Internal ID, Date, OR, Year, Basic, SEF, Penalty, Discount, Total, PostedBy, FilePath
-        self.cols = ("ID", "Date", "OR Number", "Tax Year", "Basic", "SEF", "Penalty", "Discount", "Total Paid", "Posted By", "File Status")
+        self.cols = (
+            tr("property.table.id"),
+            tr("ledger.table.date"),
+            tr("ledger.table.or"),
+            tr("ledger.table.year"),
+            tr("ledger.table.basic"),
+            tr("ledger.table.sef"),
+            tr("ledger.table.penalty"),
+            tr("ledger.table.discount"),
+            tr("ledger.table.total"),
+            tr("ledger.table.posted"),
+            tr("ledger.table.status")
+        )
         self.tree = ttk.Treeview(t_frame, columns=self.cols, show="headings")
         
         for col in self.cols:
@@ -97,11 +110,11 @@ class LedgerPage:
         self.tree.bind("<Double-1>", lambda e: self.open_receipt())
 
         # --- FOOTER SUMMARY ---
-        self.footer = ctk.CTkFrame(self.container, height=60, fg_color="#2ecc71", corner_radius=8)
+        self.footer = ctk.CTkFrame(self.container, height=60, fg_color=ModernTheme.SUCCESS, corner_radius=8)
         self.footer.pack(fill="x", side="bottom")
         
-        self.total_lbl = ctk.CTkLabel(self.footer, text="Lifetime Payments: ₱ 0.00", 
-                                      font=("Segoe UI", 15, "bold"), text_color="white")
+        self.total_lbl = ctk.CTkLabel(self.footer, text=tr("ledger.footer.total").replace("{value}", "₱ 0.00"), 
+                                      font=ModernTheme.H3, text_color="white")
         self.total_lbl.pack(side="right", padx=30, pady=15)
 
     def on_selection_change(self, event=None):
@@ -117,7 +130,7 @@ class LedgerPage:
     def load_ledger(self):
         term = self.search_ent.get().strip()
         if not term:
-            messagebox.showwarning("Input Required", "Please enter a TD Number, Owner Name, or OR Number.")
+            ErrorDialog(self.parent.winfo_toplevel(), tr("ledger.errors.input_req"), tr("ledger.errors.input_req_msg"))
             return
 
         if self.is_loading: return
@@ -147,7 +160,7 @@ class LedgerPage:
                 # r: 0:pay_id, 1:date, 2:or, 3:year, 4:basic, 5:sef, 6:pen, 7:disc, 8:amt, 9:user, 10:path, 11:rid
                 f_r = list(r[:10]) # Get core 10 columns (ID to Posted By)
                 # Status based on file_path (which is index 10 in r)
-                status = "📄 READY" if r[10] and os.path.exists(r[10]) else "❌ MISSING"
+                status = tr("ledger.table.status_ready") if r[10] and os.path.exists(r[10]) else tr("ledger.table.status_missing")
                 f_r.append(status)
                 
                 # Format Currencies
@@ -161,10 +174,10 @@ class LedgerPage:
                 self.tree.insert("", "end", values=f_r, tags=(r[10], tag)) # Store path and zebra tag
                 try: grand_total += float(r[8])
                 except: pass
-            self.total_lbl.configure(text=f"Lifetime Payments for Record: ₱ {grand_total:,.2f}")
+            self.total_lbl.configure(text=tr("ledger.footer.total").replace("{value}", f"₱ {grand_total:,.2f}"))
         else:
-            messagebox.showinfo("Not Found", f"No financial history found for '{term}'.")
-            self.total_lbl.configure(text="Lifetime Payments: ₱ 0.00")
+            ErrorDialog(self.parent.winfo_toplevel(), tr("ledger.errors.not_found"), tr("ledger.errors.not_found_msg").replace("{term}", term))
+            self.total_lbl.configure(text=tr("ledger.footer.total").replace("{value}", "₱ 0.00"))
         self.on_selection_change()
 
     def open_receipt(self):
@@ -179,7 +192,7 @@ class LedgerPage:
             try: os.startfile(file_path)
             except Exception as e: messagebox.showerror("Error", f"Could not open PDF: {e}")
         else:
-            if messagebox.askyesno("Receipt Missing", "PDF file not found. Generate it now?"):
+            if messagebox.askyesno(tr("ledger.errors.receipt_missing"), tr("ledger.errors.receipt_missing_msg")):
                 self.regenerate_receipt()
 
     def regenerate_receipt(self):

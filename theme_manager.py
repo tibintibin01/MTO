@@ -23,8 +23,10 @@ class ModernTheme:
     H2 = (FONT_FAMILY, 20, "bold")
     H3 = (FONT_FAMILY, 16, "bold")
     BODY = (FONT_FAMILY, 13)
+    BODY_BOLD = (FONT_FAMILY, 13, "bold")
     BODY_SMALL = (FONT_FAMILY, 11)
     BUTTON = (FONT_FAMILY, 13, "bold")
+    BUTTON_SMALL = (FONT_FAMILY, 11, "bold")
 
 def setup_theme(mode="dark"):
     """

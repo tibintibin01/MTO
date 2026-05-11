@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
 import api_clients.system_service as system
+from utils import tr
 
 class ImportWizardModal(ctk.CTkToplevel):
     def __init__(self, parent, mode="property"):

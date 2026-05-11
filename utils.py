@@ -1,8 +1,58 @@
+import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
 import os
 import traceback
 import pandas as pd
-from typing import Optional, Any
+import json
+import uuid
+import time
+import threading
+from typing import Optional, Any, Dict
+
+# --- OBSERVABILITY CONTEXT ---
+_context = threading.local()
+
+def set_request_id(request_id: str = None):
+    _context.request_id = request_id or str(uuid.uuid4())
+
+def get_request_id():
+    return getattr(_context, 'request_id', 'SYSTEM')
+
+class ContextFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = get_request_id()
+        return True
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_record = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "request_id": getattr(record, "request_id", "SYSTEM"),
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            log_record["traceback"] = self.formatException(record.exc_info)
+        return json.dumps(log_record)
+
+class MetricsManager:
+    _metrics = {"request_count": 0, "error_count": 0, "latency_sum": 0.0, "last_updated": None}
+    _lock = threading.Lock()
+
+    @classmethod
+    def record_request(cls, latency_ms: float, is_error: bool = False):
+        with cls._lock:
+            cls._metrics["request_count"] += 1
+            cls._metrics["latency_sum"] += latency_ms
+            if is_error: cls._metrics["error_count"] += 1
+            cls._metrics["last_updated"] = datetime.now().isoformat()
+            try:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                path = os.path.join(base_dir, "logs", "metrics.json")
+                with open(path, "w") as f: json.dump(cls._metrics, f)
+            except: pass
 
 def format_date_for_db(date_str: Optional[str]) -> Optional[str]:
     if not date_str: return None
@@ -40,21 +90,30 @@ def clean_num(val: Any) -> float:
         log_error_to_file(f"Number clean warning: {val}", error=e)
         return 0.0
 
-import logging
-from logging.handlers import RotatingFileHandler
+# Path Configuration
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
 ERROR_LOG_PATH = os.path.join(LOGS_DIR, "system.log")
 
-# Setup professional rotating logger (5MB per file, keep last 5 backups)
+# Setup professional rotating JSON logger
 logger = logging.getLogger("MTOSystem")
 logger.setLevel(logging.INFO)
 handler = RotatingFileHandler(ERROR_LOG_PATH, maxBytes=5*1024*1024, backupCount=5, encoding="utf-8")
-formatter = logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-handler.setFormatter(formatter)
+handler.addFilter(ContextFilter())
+handler.setFormatter(JSONFormatter(datefmt='%Y-%m-%d %H:%M:%S'))
 logger.addHandler(handler)
+
+# Also log to console for development visibility
+console = logging.StreamHandler()
+console.addFilter(ContextFilter())
+console.setFormatter(logging.Formatter('[%(asctime)s] [%(request_id)s] %(levelname)s: %(message)s'))
+logger.addHandler(console)
+
+def log_critical_event(event_type: str, message: str, user: str = "SYSTEM"):
+    """Logs a critical event for monitoring and alerting tools."""
+    logger.critical(f"EVENT_TYPE={event_type} | USER={user} | MESSAGE={message}")
 
 def log_error_to_file(context: str, error: Optional[Exception] = None, extra: Optional[Any] = None, traceback_text: Optional[str] = None) -> Optional[str]:
     """Professional wrapper for the system logger to maintain compatibility."""
@@ -78,7 +137,6 @@ def log_error_to_file(context: str, error: Optional[Exception] = None, extra: Op
     except Exception:
         return None
 
-import json
 from pathlib import Path
 
 class LocalizationManager:
@@ -114,6 +172,13 @@ class LocalizationManager:
             return val
         except (KeyError, TypeError):
             return default or key
+
+    def set_locale(self, locale):
+        """Switches the current locale and reloads strings."""
+        if locale == self._current_locale:
+            return
+        self._current_locale = locale
+        self._load_strings()
 
 def tr(key, default=None):
     """Global helper for translation."""

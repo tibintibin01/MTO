@@ -7,7 +7,7 @@ from theme_manager import ModernTheme
 import api_clients.billing_service as billing
 import api_clients.property_service as prop
 import api_clients.system_service as system
-from utils import format_curr
+from utils import format_curr, tr
 
 
 class ReportsPage:
@@ -23,27 +23,27 @@ class ReportsPage:
         # Header
         ctk.CTkLabel(
             self.container,
-            text="COLLECTION AND RECEIVABLES ANALYTICS",
+            text=tr("reports.title"),
             font=ModernTheme.H2,
         ).pack(anchor="w", pady=(0, 20))
 
         self.tabview = ctk.CTkTabview(self.container)
         self.tabview.pack(fill="both", expand=True)
 
-        self.collection_tab = self.tabview.add("Collection Report")
-        self.receivables_tab = self.tabview.add("RPT Receivables Summary")
-        self.barangay_tab = self.tabview.add("Receivables by Barangay")
+        self.collection_tab = self.tabview.add(tr("reports.tabs.collection"))
+        self.receivables_tab = self.tabview.add(tr("reports.tabs.receivables"))
+        self.barangay_tab = self.tabview.add(tr("reports.tabs.barangay"))
 
         self.setup_collection_tab()
         self.setup_receivables_tab()
         self.setup_barangay_tab()
 
     def setup_collection_tab(self):
-        filter_fr = ctk.CTkFrame(self.collection_tab)
+        filter_fr = ctk.CTkFrame(self.collection_tab, fg_color=ModernTheme.SECONDARY, corner_radius=8)
         filter_fr.pack(fill="x", padx=10, pady=10)
 
         ctk.CTkLabel(
-            filter_fr, text="Filter by Month/Year", font=("Segoe UI", 12, "bold")
+            filter_fr, text=tr("reports.collection.filter_label"), font=ModernTheme.BODY_BOLD, text_color="white"
         ).pack(side="left", padx=10)
 
         self.month_cb = ctk.CTkComboBox(
@@ -62,7 +62,8 @@ class ReportsPage:
         self.year_cb.pack(side="left", padx=5)
 
         ctk.CTkButton(
-            filter_fr, text="GENERATE", command=self.generate_collection_report
+            filter_fr, text=tr("reports.collection.btn_generate"), command=self.generate_collection_report,
+            font=ModernTheme.BUTTON, fg_color=ModernTheme.SUCCESS
         ).pack(side="left", padx=10)
 
         self.coll_table_fr = ctk.CTkFrame(self.collection_tab)
@@ -73,22 +74,31 @@ class ReportsPage:
         style.configure(
             "Treeview",
             rowheight=35,
-            font=("Segoe UI", 10),
-            background="#2b2b2b",
-            fieldbackground="#2b2b2b",
+            font=ModernTheme.BODY,
+            background="#1e1e1e",
+            fieldbackground="#1e1e1e",
             foreground="white",
         )
         style.configure(
             "Treeview.Heading",
-            font=("Segoe UI", 10, "bold"),
+            font=ModernTheme.BODY_BOLD,
             background="#333333",
             foreground="white",
         )
 
-        cols = ("Date", "OR", "TD", "Owner", "Kind", "Year", "Amount", "Posted By")
+        cols = (
+            tr("reports.collection.table.date"),
+            tr("reports.collection.table.or"),
+            tr("reports.collection.table.td"),
+            tr("reports.collection.table.owner"),
+            tr("reports.collection.table.kind"),
+            tr("reports.collection.table.year"),
+            tr("reports.collection.table.amount"),
+            tr("reports.collection.table.posted")
+        )
         self.coll_tree = ttk.Treeview(self.coll_table_fr, columns=cols, show="headings")
         for col in cols:
-            self.coll_tree.heading(col, text=col)
+            self.coll_tree.heading(col, text=col.upper())
             self.coll_tree.column(col, width=100, anchor="center")
         self.coll_tree.pack(fill="both", expand=True)
 
@@ -113,13 +123,14 @@ class ReportsPage:
         self.receiv_year_cb.pack(side="left", padx=10)
 
         ctk.CTkButton(
-            filter_fr, text="LOAD SUMMARY", command=self.generate_receivables_report
+            filter_fr, text=tr("reports.receivables.btn_load"), command=self.generate_receivables_report,
+            font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY
         ).pack(side="left")
 
-        self.receiv_content = ctk.CTkFrame(receiv_fr)
+        self.receiv_content = ctk.CTkFrame(receiv_fr, fg_color="transparent")
         self.receiv_content.pack(fill="both", expand=True)
         self.receiv_label = ctk.CTkLabel(
-            self.receiv_content, text="Click Load Summary to view report."
+            self.receiv_content, text=tr("reports.receivables.hint"), font=ModernTheme.BODY, text_color=ModernTheme.TEXT_GRAY
         )
         self.receiv_label.pack(pady=50)
 
@@ -133,17 +144,18 @@ class ReportsPage:
 
         ctk.CTkLabel(
             top_fr,
-            text="JURISDICTION BREAKDOWN",
-            font=("Segoe UI", 16, "bold"),
-            text_color="#3498db",
+            text=tr("reports.barangay.title"),
+            font=ModernTheme.H3,
+            text_color=ModernTheme.PRIMARY,
         ).pack(side="left")
         ctk.CTkButton(
             top_fr,
-            text="🔄 REFRESH BREAKDOWN",
+            text=f"🔄 {tr('reports.barangay.btn_refresh')}",
             command=self.generate_barangay_receivables,
             width=200,
             height=35,
             font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.SECONDARY,
         ).pack(side="right")
 
         # Table Container
@@ -151,13 +163,13 @@ class ReportsPage:
         t_container.pack(fill="both", expand=True)
 
         cols = (
-            "Barangay",
-            "Total Assessed",
-            "Total Due",
-            "Total Penalty",
-            "Total Discount",
-            "Total Collected",
-            "Total Receivable",
+            tr("reports.barangay.table.barangay"),
+            tr("reports.barangay.table.assessed"),
+            tr("reports.barangay.table.due"),
+            tr("reports.barangay.table.penalty"),
+            tr("reports.barangay.table.discount"),
+            tr("reports.barangay.table.collected"),
+            tr("reports.barangay.table.receivable"),
         )
         self.brgy_tree = ttk.Treeview(t_container, columns=cols, show="headings")
         for col in cols:
@@ -190,9 +202,9 @@ class ReportsPage:
 
         self.brgy_total_lbl = ctk.CTkLabel(
             self.brgy_summary,
-            text="Total Jurisdiction Receivable: P 0.00",
-            font=("Segoe UI", 13, "bold"),
-            text_color="#ecf0f1",
+            text=tr("reports.barangay.total").replace("{value}", "P 0.00"),
+            font=ModernTheme.H3,
+            text_color="white",
         )
         self.brgy_total_lbl.pack(side="right", padx=30, pady=10)
 
@@ -216,9 +228,7 @@ class ReportsPage:
             self.coll_tree.delete(item)
 
         if not data:
-            messagebox.showinfo(
-                "Report", "No collection records found for the selected period."
-            )
+            ErrorDialog(self.parent.winfo_toplevel(), tr("reports.tabs.collection"), tr("reports.errors.no_collection"))
             return
 
         for i, row in enumerate(data):
@@ -249,9 +259,7 @@ class ReportsPage:
             child.destroy()
 
         if not data:
-            messagebox.showinfo(
-                "Report", "No assessment data available for the selected year."
-            )
+            ErrorDialog(self.parent.winfo_toplevel(), tr("reports.tabs.receivables"), tr("reports.errors.no_receivables"))
             return
 
         # --- DATA PREP ---
@@ -271,15 +279,17 @@ class ReportsPage:
         header_fr.pack(fill="x", pady=(0, 20))
         ctk.CTkLabel(
             header_fr,
-            text=f"FISCAL YEAR {year} PERFORMANCE",
-            font=("Segoe UI", 18, "bold"),
-            text_color="#3498db",
+            text=tr("reports.receivables.performance_title").replace("{year}", str(year)),
+            font=ModernTheme.H2,
+            text_color=ModernTheme.PRIMARY,
         ).pack(side="left")
+        
+        eff_color = ModernTheme.SUCCESS if efficiency > 50 else ModernTheme.WARNING
         ctk.CTkLabel(
             header_fr,
-            text=f"Efficiency: {efficiency:.1f}%",
-            font=("Segoe UI", 16, "bold"),
-            text_color="#2ecc71" if efficiency > 50 else "#e67e22",
+            text=tr("reports.receivables.efficiency").replace("{value}", f"{efficiency:.1f}"),
+            font=ModernTheme.H3,
+            text_color=eff_color,
         ).pack(side="right")
 
         # --- CARDS GRID ---
@@ -295,13 +305,13 @@ class ReportsPage:
             ctk.CTkLabel(
                 card,
                 text=title.upper(),
-                font=("Segoe UI", 10, "bold"),
-                text_color="gray",
+                font=ModernTheme.BODY_BOLD,
+                text_color=ModernTheme.TEXT_GRAY,
             ).pack(pady=(20, 5))
             ctk.CTkLabel(
                 card,
                 text=f"P {value:,.2f}",
-                font=("Segoe UI", 20, "bold"),
+                font=ModernTheme.H2,
                 text_color=color,
             ).pack(pady=(0, 20))
 
@@ -309,17 +319,17 @@ class ReportsPage:
             indicator = ctk.CTkFrame(card, height=4, fg_color=color, corner_radius=0)
             indicator.pack(fill="x", side="bottom")
 
-        make_card(grid_fr, 0, 0, "Beginning Balance", beg, "#7f8c8d")
-        make_card(grid_fr, 0, 1, "Current Assessment", curr, "#3498db")
-        make_card(grid_fr, 0, 2, "Adjustments", adj, "#9b59b6")
+        make_card(grid_fr, 0, 0, tr("reports.receivables.cards.beginning"), beg, ModernTheme.TEXT_GRAY)
+        make_card(grid_fr, 0, 1, tr("reports.receivables.cards.assessment"), curr, ModernTheme.PRIMARY)
+        make_card(grid_fr, 0, 2, tr("reports.receivables.cards.adjustments"), adj, "#9b59b6")
 
         # Lower Row
         grid_fr_2 = ctk.CTkFrame(self.receiv_content, fg_color="transparent")
         grid_fr_2.pack(fill="x")
         grid_fr_2.grid_columnconfigure((0, 1), weight=1)
 
-        make_card(grid_fr_2, 0, 0, "Total Collections", coll, "#2ecc71")
-        make_card(grid_fr_2, 0, 1, "Ending Receivable", end, "#e74c3c")
+        make_card(grid_fr_2, 0, 0, tr("reports.receivables.cards.collections"), coll, ModernTheme.SUCCESS)
+        make_card(grid_fr_2, 0, 1, tr("reports.receivables.cards.ending"), end, ModernTheme.DANGER)
 
         # --- VISUAL EFFICIENCY METER ---
         meter_fr = ctk.CTkFrame(self.receiv_content, height=80, corner_radius=15)
@@ -327,15 +337,15 @@ class ReportsPage:
 
         ctk.CTkLabel(
             meter_fr,
-            text="COLLECTION TARGET PROGRESS",
-            font=("Segoe UI", 11, "bold"),
-            text_color="gray",
+            text=tr("reports.receivables.target_progress"),
+            font=ModernTheme.BODY_BOLD,
+            text_color=ModernTheme.TEXT_GRAY,
         ).pack(pady=(15, 5), padx=30, anchor="w")
 
         prog_bar = ctk.CTkProgressBar(meter_fr, height=12, corner_radius=6)
         prog_bar.pack(fill="x", padx=30, pady=(5, 15))
         prog_bar.set(min(1.0, efficiency / 100))
-        prog_bar.configure(progress_color="#2ecc71" if efficiency > 70 else "#f1c40f")
+        prog_bar.configure(progress_color=ModernTheme.SUCCESS if efficiency > 70 else ModernTheme.WARNING)
 
     def generate_barangay_receivables(self):
         def worker():
@@ -354,8 +364,8 @@ class ReportsPage:
             self.brgy_tree.delete(item)
 
         if not data:
-            messagebox.showinfo("Report", "No barangay-level receivables data found.")
-            self.brgy_total_lbl.configure(text="Total Jurisdiction Receivable: P 0.00")
+            ErrorDialog(self.parent.winfo_toplevel(), tr("reports.tabs.barangay"), tr("reports.errors.no_barangay"))
+            self.brgy_total_lbl.configure(text=tr("reports.barangay.total").replace("{value}", "P 0.00"))
             return
 
         grand_total = 0.0
@@ -377,5 +387,5 @@ class ReportsPage:
             self.brgy_tree.insert("", "end", values=f_row, tags=(tag,))
 
         self.brgy_total_lbl.configure(
-            text=f"Total Jurisdiction Receivable: P {grand_total:,.2f}"
+            text=tr("reports.barangay.total").replace("{value}", f"P {grand_total:,.2f}")
         )

@@ -74,20 +74,37 @@ def api_request(
         # If 'data' is provided, it uses 'application/json'
         # verify=False is used because we are using a self-signed certificate for local dev
         import urllib3
+        import time
+        from utils import set_request_id, logger, MetricsManager
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
+        
+        # 1. Telemetry: Generate Request ID and start timer
+        set_request_id() 
+        start_time = time.perf_counter()
+        
         response = requests.request(
             method,
             url,
-            json=data if not files else None,  # JSON ignored if uploading files
-            data=data if files else None,  # Form data used if files present
+            json=data if not files else None,
+            data=data if files else None,
             params=params,
-            files=files,
             headers=headers,
             timeout=120,
             verify=False,
         )
+
+        # 2. Telemetry: Measure Latency
+        latency = (time.perf_counter() - start_time) * 1000
+        MetricsManager.record_request(latency, is_error=not response.ok)
+        
+        # 3. Log structured telemetry
+        logger.info(f"API {method} {endpoint} completed", extra={"extra_data": {
+            "latency_ms": round(latency, 2),
+            "status": response.status_code,
+            "method": method,
+            "endpoint": endpoint
+        }})
 
         if raw_response:
             return response

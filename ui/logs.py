@@ -2,6 +2,7 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk, messagebox
 from theme_manager import ModernTheme
+from utils import tr
 import threading
 import api_clients.auth_service as auth
 import api_clients.system_service as system
@@ -19,27 +20,27 @@ class AuditLogsPage:
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
         # Header
-        ctk.CTkLabel(self.container, text="System Audit Engine", font=ModernTheme.H2).pack(anchor="w", pady=(0, 20))
+        ctk.CTkLabel(self.container, text=tr("technical_logs.title"), font=ModernTheme.H2).pack(anchor="w", pady=(0, 20))
 
         # Stats Area
         stats_fr = ctk.CTkFrame(self.container, fg_color="transparent")
         stats_fr.pack(fill="x", pady=(0, 15))
         stats_fr.grid_columnconfigure((0, 1, 2), weight=1)
 
-        self.total_logs_lbl = self._create_stat_card(stats_fr, "TOTAL ACTIONS", "#34495e", 0)
-        self.today_logs_lbl = self._create_stat_card(stats_fr, "TODAY", "#27ae60", 1)
-        self.active_users_lbl = self._create_stat_card(stats_fr, "AUDITED ENTITIES", "#2980b9", 2)
+        self.total_logs_lbl = self._create_stat_card(stats_fr, tr("technical_logs.stats.total"), ModernTheme.PRIMARY, 0)
+        self.today_logs_lbl = self._create_stat_card(stats_fr, tr("technical_logs.stats.today"), ModernTheme.SUCCESS, 1)
+        self.active_users_lbl = self._create_stat_card(stats_fr, tr("technical_logs.stats.entities"), ModernTheme.SECONDARY, 2)
 
         # Toolbar
         toolbar = ctk.CTkFrame(self.container, fg_color="transparent")
         toolbar.pack(fill="x", pady=(0, 15))
 
-        ctk.CTkLabel(toolbar, text="FILTER BY USER", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 10))
-        self.user_cb = ctk.CTkComboBox(toolbar, values=["All Users"], width=200, height=35)
-        self.user_cb.set("All Users")
+        ctk.CTkLabel(toolbar, text=tr("technical_logs.toolbar.filter"), font=ModernTheme.BODY_BOLD).pack(side="left", padx=(0, 10))
+        self.user_cb = ctk.CTkComboBox(toolbar, values=[tr("technical_logs.toolbar.all_users")], width=200, height=35, font=ModernTheme.BODY)
+        self.user_cb.set(tr("technical_logs.toolbar.all_users"))
         self.user_cb.pack(side="left")
         
-        self.refresh_btn = ctk.CTkButton(toolbar, text="REFRESH TRACE", command=self.refresh, fg_color="#3498db", width=120, height=35)
+        self.refresh_btn = ctk.CTkButton(toolbar, text=f"🔄 {tr('technical_logs.toolbar.btn_refresh')}", command=self.refresh, fg_color=ModernTheme.PRIMARY, width=150, height=35, font=ModernTheme.BUTTON_SMALL)
         self.refresh_btn.pack(side="left", padx=10)
 
         # Table Area
@@ -51,17 +52,25 @@ class AuditLogsPage:
         style.configure("Treeview", rowheight=35, font=("Segoe UI", 10), background="#2b2b2b", fieldbackground="#2b2b2b", foreground="white")
         style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"), background="#333333", foreground="white")
 
-        self.cols = ("ID", "Timestamp", "User", "Action", "Target", "Old Values", "New Values")
+        self.cols = (
+            tr("technical_logs.table.id"),
+            tr("technical_logs.table.timestamp"),
+            tr("technical_logs.table.user"),
+            tr("technical_logs.table.action"),
+            tr("technical_logs.table.target"),
+            tr("technical_logs.table.old"),
+            tr("technical_logs.table.new")
+        )
         self.tree = ttk.Treeview(table_fr, columns=self.cols, show="headings", height=15)
         
         for col in self.cols:
             self.tree.heading(col, text=col.upper())
             self.tree.column(col, anchor="center", width=120)
         
-        self.tree.column("ID", width=0, stretch=tk.NO)
-        self.tree.column("Action", width=300, anchor="w")
-        self.tree.column("Old Values", width=200)
-        self.tree.column("New Values", width=200)
+        self.tree.column(tr("technical_logs.table.id"), width=0, stretch=tk.NO)
+        self.tree.column(tr("technical_logs.table.action"), width=300, anchor="w")
+        self.tree.column(tr("technical_logs.table.old"), width=200)
+        self.tree.column(tr("technical_logs.table.new"), width=200)
 
         # Zebra Tags
         self.tree.tag_configure('oddrow', background="#2b2b2b", foreground="white")
@@ -81,10 +90,10 @@ class AuditLogsPage:
         self.tree.bind("<Double-1>", self.show_detailed_diff)
 
     def _create_stat_card(self, parent, title, color, col):
-        card = ctk.CTkFrame(parent)
+        card = ctk.CTkFrame(parent, fg_color=ModernTheme.SECONDARY)
         card.grid(row=0, column=col, padx=10, sticky="nsew")
-        ctk.CTkLabel(card, text=title, font=("Segoe UI", 10, "bold"), text_color="gray").pack(pady=(15, 0))
-        value_lbl = ctk.CTkLabel(card, text="0", font=("Segoe UI", 24, "bold"), text_color=color)
+        ctk.CTkLabel(card, text=title, font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(pady=(15, 0))
+        value_lbl = ctk.CTkLabel(card, text="0", font=ModernTheme.H1, text_color=color)
         value_lbl.pack(pady=(0, 15))
         return value_lbl
 
@@ -97,7 +106,7 @@ class AuditLogsPage:
                 
                 # Load users for filter
                 users = auth.get_all_users()
-                user_list = ["All Users"] + [u["username"] for u in users]
+                user_list = [tr("technical_logs.toolbar.all_users")] + [u["username"] for u in users]
                 
                 # Zombie Fix: Guard against destroyed widget if user switched pages
                 def update_cb():
@@ -108,7 +117,7 @@ class AuditLogsPage:
                 # Load logs
                 selected_username = self.user_cb.get()
                 user_id = None
-                if selected_username != "All Users":
+                if selected_username != tr("technical_logs.toolbar.all_users"):
                     user_match = next((u for u in users if u["username"] == selected_username), None)
                     if user_match: user_id = user_match["id"]
                 
@@ -154,36 +163,36 @@ class AuditLogsPage:
         if not old_v and not new_v: return
         
         diff_window = ctk.CTkToplevel(self.container)
-        diff_window.title("Activity Detail: Before vs After")
-        diff_window.geometry("600x400")
+        diff_window.title(tr("technical_logs.detail.title"))
+        diff_window.geometry("800x600")
         diff_window.attributes("-topmost", True)
         
-        ctk.CTkLabel(diff_window, text="DATA TRACEBACK", font=("Segoe UI", 12, "bold")).pack(pady=15)
+        ctk.CTkLabel(diff_window, text=tr("technical_logs.detail.header"), font=ModernTheme.H3, text_color=ModernTheme.PRIMARY).pack(pady=15)
         
         main_fr = ctk.CTkFrame(diff_window, fg_color="transparent")
         main_fr.pack(fill="both", expand=True, padx=20, pady=10)
         main_fr.grid_columnconfigure((0, 1), weight=1)
         
         # Old values
-        old_fr = ctk.CTkFrame(main_fr)
+        old_fr = ctk.CTkFrame(main_fr, fg_color=ModernTheme.SECONDARY)
         old_fr.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
-        ctk.CTkLabel(old_fr, text="ORIGINAL STATE", font=("Segoe UI", 9, "bold"), text_color="#e74c3c").pack(pady=5)
-        old_txt = tk.Text(old_fr, font=("Consolas", 9), wrap="word", bg="#2d3436", fg="white", bd=0)
+        ctk.CTkLabel(old_fr, text=tr("technical_logs.detail.original"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.DANGER).pack(pady=5)
+        old_txt = tk.Text(old_fr, font=("Consolas", 10), wrap="word", bg="#1a1a1a", fg="white", bd=0, padx=10, pady=10)
         old_txt.insert("1.0", self._format_json(old_v))
         old_txt.configure(state="disabled")
         old_txt.pack(fill="both", expand=True, padx=5, pady=5)
         
         # New values
-        new_fr = ctk.CTkFrame(main_fr)
+        new_fr = ctk.CTkFrame(main_fr, fg_color=ModernTheme.SECONDARY)
         new_fr.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
-        ctk.CTkLabel(new_fr, text="MODIFIED STATE", font=("Segoe UI", 9, "bold"), text_color="#2ecc71").pack(pady=5)
-        new_txt = tk.Text(new_fr, font=("Consolas", 9), wrap="word", bg="#2d3436", fg="white", bd=0)
+        ctk.CTkLabel(new_fr, text=tr("technical_logs.detail.modified"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.SUCCESS).pack(pady=5)
+        new_txt = tk.Text(new_fr, font=("Consolas", 10), wrap="word", bg="#1a1a1a", fg="white", bd=0, padx=10, pady=10)
         new_txt.insert("1.0", self._format_json(new_v))
         new_txt.configure(state="disabled")
         new_txt.pack(fill="both", expand=True, padx=5, pady=5)
 
     def _format_json(self, val):
-        if not val: return "No data recorded."
+        if not val: return tr("technical_logs.detail.no_data")
         try:
             data = json.loads(val) if isinstance(val, str) else val
             return json.dumps(data, indent=2)

@@ -2,6 +2,7 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from theme_manager import ModernTheme
+from utils import tr
 import api_clients.property_service as prop_svc
 import api_clients.api_helper as api
 from ui.dossier import PropertyDossierModal
@@ -114,7 +115,23 @@ class AssessmentRollPage:
             command=self.open_import_wizard,
             fg_color="#3498db",
             width=120,
-        ).pack(side="right", padx=10)
+        ).pack(side="right", padx=5)
+
+        ctk.CTkButton(
+            filters_fr,
+            text="📄 BULK PRINT SOA",
+            command=lambda: self.start_bulk_print("SOA"),
+            fg_color="#e67e22",
+            width=130,
+        ).pack(side="right", padx=5)
+
+        ctk.CTkButton(
+            filters_fr,
+            text="⚠️ BULK NOTICES",
+            command=lambda: self.start_bulk_print("NOTICE"),
+            fg_color="#c0392b",
+            width=130,
+        ).pack(side="right", padx=5)
         ctk.CTkButton(
             header,
             text="+ ADD RECORD",
@@ -360,6 +377,71 @@ class AssessmentRollPage:
                         messagebox.showerror("Dossier Error", str(e)),
                     ],
                 )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def start_bulk_print(self, mode="SOA"):
+        """Orchestrates the bulk generation process with a progress overlay."""
+        sel_count = len(self.tree.get_children())
+        if sel_count == 0:
+            messagebox.showwarning("Bulk Print", "No records found in the current view. Please search or refresh first.")
+            return
+
+        if not messagebox.askyesno("Bulk Print", f"Are you sure you want to generate {mode}s for all {sel_count} properties in the current view? This may take a moment."):
+            return
+
+        # 1. Loading Overlay
+        overlay = ctk.CTkToplevel(self.parent)
+        overlay.overrideredirect(True)
+        overlay.geometry("400x150")
+        overlay.attributes("-topmost", True)
+        
+        sw, sh = overlay.winfo_screenwidth(), overlay.winfo_screenheight()
+        overlay.geometry(f"+{(sw-400)//2}+{(sh-150)//2}")
+
+        ctk.CTkLabel(overlay, text=f"⚡ GENERATING BULK {mode}s...", font=("Segoe UI", 14, "bold"), text_color="#d35400").pack(pady=(20, 5))
+        prog = ctk.CTkProgressBar(overlay, width=300)
+        prog.pack(pady=10)
+        prog.set(0)
+        status_lbl = ctk.CTkLabel(overlay, text="Initializing engine...", font=("Segoe UI", 10))
+        status_lbl.pack()
+
+        def worker():
+            try:
+                from api_clients.billing_service import get_property_statement_data
+                from receipt_generator import bulk_generate_soa, generate_delinquency_notice
+                import os
+
+                base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+                data_list = []
+                
+                # We need to fetch full statement data for each property
+                children = self.tree.get_children()
+                total = len(children)
+                
+                for i, child in enumerate(children):
+                    td_number = self.tree.item(child)["values"][1]
+                    # We need the property ID, but the tree has ID at index 0
+                    prop_id = self.tree.item(child)["values"][0]
+                    
+                    self.container.after(0, lambda v=i/total, t=f"Processing {td_number}...": [prog.set(v), status_lbl.configure(text=t)])
+                    
+                    stmt_data = get_property_statement_data(prop_id)
+                    if stmt_data:
+                        data_list.append(stmt_data)
+                
+                self.container.after(0, lambda: status_lbl.configure(text="Finalizing PDF stream..."))
+                
+                if mode == "SOA":
+                    output_path = bulk_generate_soa(data_list, base_dir)
+                else:
+                    # For notices, we reuse the same logic but a different prefix
+                    output_path = bulk_generate_soa(data_list, base_dir, filename_prefix="BULK_NOTICES")
+                
+                self.container.after(0, lambda: [overlay.destroy(), os.startfile(output_path), messagebox.showinfo("Success", f"Bulk {mode} generation complete!\n\nFile saved to receipts folder.")])
+                
+            except Exception as e:
+                self.container.after(0, lambda err=e: [overlay.destroy(), messagebox.showerror("Bulk Print Error", str(err))])
 
         threading.Thread(target=worker, daemon=True).start()
 

@@ -1,0 +1,114 @@
+{
+    "login": {
+        "title": "MTO Access Portal",
+        "subtitle": "I-enter ang credentials upang magpatuloy",
+        "username": "Pangalan ng User",
+        "password": "Password",
+        "button": "MAG-LOGIN",
+        "authenticating": "NAGBE-BERIPIKA",
+        "error_invalid": "Maling Pangalan ng User o Password",
+        "error_required": "Kailangan",
+        "error_network": "Error sa Network",
+        "toggle_theme": "🌓 Palitan ang Tema"
+    },
+    "common": {
+        "ok": "OK",
+        "cancel": "Kanselahin",
+        "retry": "Subukan muli",
+        "error": "Error",
+        "success": "Tagumpay",
+        "system_error": "Error sa System",
+        "logout_confirm": "Kumpirmahin ang Pag-logout",
+        "logout_msg": "Sigurado ka bang nais mong mag-logout sa system?"
+    },
+    "dashboard": {
+        "title": "Dashboard ng Koleksyon",
+        "subtitle": "Real-time na pagsubaybay sa koleksyon at analytics",
+        "stats": {
+            "total_properties": "Kabuuang Ari-arian",
+            "collections_today": "Koleksyon Ngayon",
+            "collections_month": "Buwanang Kabuuan"
+        },
+        "charts": {
+            "revenue_month": "Kita bawat Buwan",
+            "collection_trend": "Trend ng Koleksyon"
+        },
+        "backup": {
+            "title": "STATUS NG PROTEKSYON NG DATA",
+            "local": "Local na Backup",
+            "usb": "USB Mirror",
+            "cloud": "Cloud Sync",
+            "verify": "Test ng Restore",
+            "run_now": "MAG-BACKUP NGAYON",
+            "running": "KASALUKUYANG NAG-BABACKUP...",
+            "success_toast": "Nagsimula na ang hybrid backup sa background",
+            "refresh_toast": "Na-refresh na ang data sa dashboard"
+        },
+        "nav": {
+            "dashboard": "Dashboard",
+            "property": "Talaan ng Ari-arian",
+            "ledger": "Ledger ng Pagbabayad",
+            "reports": "Mga Ulat",
+            "analytics": "Hub ng Analytics",
+            "assessment": "Tax Roll",
+            "audit": "Audit Trail",
+            "settings": "System Settings",
+            "help": "Tulong",
+            "logout": "MAG-LOGOUT"
+        }
+    },
+    "property": {
+        "title": "DIREKTORYO NG ARI-ARIAN",
+        "search_placeholder": "Maghanap ng TD Number o Pangalan...",
+        "btn_search": "MAGHANAP",
+        "btn_cleanup": "PAGLILINIS NG DATA",
+        "btn_add": "MAGDAGDAG",
+        "btn_import": "BULK IMPORT",
+        "filters": {
+            "barangay": "BARANGAY:",
+            "year_from": "SIMULA NG TAON:",
+            "year_to": "HANGGANG:",
+            "apply": "GAMITIN ANG FILTER"
+        },
+        "table": {
+            "id": "ID",
+            "td": "Numero ng TD",
+            "owner": "Pangalan ng May-ari",
+            "location": "Lokasyon",
+            "value": "Assessed Value",
+            "penalty": "Penalti",
+            "discount": "Diskwento",
+            "due": "Kabuuang Bayarin",
+            "last_or": "Huling OR",
+            "or_date": "Petsa ng OR"
+        },
+        "pagination": {
+            "prev": "NAKARAAN",
+            "next": "SUSUNOD",
+            "page": "Pahina"
+        },
+        "actions": {
+            "edit": "I-EDIT",
+            "delete": "BURAHIN",
+            "export": "I-EXPORT ANG LISTAHAN"
+        },
+        "fields": {
+            "td_number": "Numero ng TD *",
+            "owner_name": "Pangalan ng May-ari *",
+            "payor_name": "Pangalan ng Nagbabayad",
+            "lot_number": "Numero ng Lote",
+            "area": "Laki (sqm)",
+            "location": "Lokasyon (Barangay)",
+            "kind": "Uri ng Ari-arian",
+            "tax_year": "Taon ng Buwis",
+            "or_number": "Numero ng OR",
+            "or_date": "Petsa ng OR",
+            "value": "Assessed Value *",
+            "penalty": "Penalti",
+            "discount": "Diskwento",
+            "paid": "Halaga ng Ibinayad",
+            "total": "KABUUANG BAYARIN",
+            "btn_save": "I-SAVE ANG ARI-ARIAN"
+        }
+    }
+}

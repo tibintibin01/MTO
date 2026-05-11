@@ -5,6 +5,7 @@ from ui.users import UserAccessPage
 from ui.logs import AuditLogsPage
 from ui.recycle import RecycleBinPage
 from theme_manager import ModernTheme
+from utils import tr
 
 
 class SystemAdminPage:
@@ -19,7 +20,7 @@ class SystemAdminPage:
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
         ctk.CTkLabel(
-            self.container, text="SYSTEM ADMINISTRATION", font=ModernTheme.H2
+            self.container, text=tr("admin.title"), font=ModernTheme.H2
         ).pack(anchor="w", pady=(0, 20))
 
         self.tabview = ctk.CTkTabview(self.container)
@@ -27,25 +28,25 @@ class SystemAdminPage:
 
         # User Management
         if auth.has_permission(self.user, "manage_users"):
-            tab = self.tabview.add("User Management")
+            tab = self.tabview.add(tr("admin.tabs.users"))
             self.user_page = UserAccessPage(tab, self.user)
             self.pages.append(self.user_page)
 
         # Audit Logs
         if auth.has_permission(self.user, "view_logs"):
-            tab = self.tabview.add("Audit Logs")
+            tab = self.tabview.add(tr("admin.tabs.audit"))
             self.logs_page = AuditLogsPage(tab, self.user)
             self.pages.append(self.logs_page)
 
         # Recycle Bin
         if auth.has_permission(self.user, "recycle_manage"):
-            tab = self.tabview.add("Recycle Bin")
+            tab = self.tabview.add(tr("admin.tabs.recycle"))
             self.recycle_page = RecycleBinPage(tab, self.user)
             self.pages.append(self.recycle_page)
 
         # Database Tab
         if auth.has_permission(self.user, "backup_restore"):
-            tab = self.tabview.add("Database & Backup")
+            tab = self.tabview.add(tr("admin.tabs.db"))
             self.setup_db_tab(tab)
 
     def setup_db_tab(self, parent):
@@ -64,15 +65,15 @@ class SystemAdminPage:
 
         ctk.CTkLabel(
             card,
-            text="HYBRID BACKUP ORCHESTRATOR",
-            font=("Segoe UI", 16, "bold"),
-            text_color=("#1f538d", "#3498db"),
+            text=tr("admin.db.title"),
+            font=ModernTheme.H3,
+            text_color=ModernTheme.PRIMARY,
         ).pack(pady=(20, 5))
         ctk.CTkLabel(
             card,
-            text="Secures your database to Local Storage, USB Drive, and Cloud Sync.",
-            font=("Segoe UI", 11),
-            text_color=("#7f8c8d", "#bdc3c7"),
+            text=tr("admin.db.subtitle"),
+            font=ModernTheme.BODY,
+            text_color=ModernTheme.TEXT_GRAY,
         ).pack(pady=(0, 20))
 
         btn_fr = ctk.CTkFrame(card, fg_color="transparent")
@@ -80,35 +81,34 @@ class SystemAdminPage:
 
         self.backup_btn = ctk.CTkButton(
             btn_fr,
-            text="🚀 START HYBRID BACKUP",
+            text=f"🚀 {tr('admin.db.btn_start')}",
             command=self.trigger_backup,
             height=45,
             width=220,
-            font=("Segoe UI", 12, "bold"),
-            fg_color="#27ae60",
-            hover_color="#219150",
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.SUCCESS,
         )
         self.backup_btn.pack(side="left", padx=5)
 
         self.view_btn = ctk.CTkButton(
             btn_fr,
-            text="📁 VIEW BACKUPS",
+            text=f"📁 {tr('admin.db.btn_view')}",
             command=self.open_backup_folder,
             height=45,
             width=150,
-            font=("Segoe UI", 12, "bold"),
-            fg_color="#34495e",
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.SECONDARY,
         )
         self.view_btn.pack(side="left", padx=5)
 
         self.restore_btn = ctk.CTkButton(
             btn_fr,
-            text="⏮️ RESTORE",
+            text=f"⏮️ {tr('admin.db.btn_restore')}",
             command=self.restore_backup,
             height=45,
             width=120,
-            font=("Segoe UI", 12, "bold"),
-            fg_color="#7f8c8d",
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.TEXT_GRAY,
         )
         self.restore_btn.pack(side="left", padx=5)
 
@@ -120,17 +120,17 @@ class SystemAdminPage:
 
         ctk.CTkLabel(
             status_fr,
-            text="BACKUP ECOSYSTEM STATUS",
-            font=("Segoe UI", 11, "bold"),
-            text_color=("#2f3640", "#ecf0f1"),
+            text=tr("admin.db.status_title"),
+            font=ModernTheme.BODY_BOLD,
+            text_color=ModernTheme.PRIMARY,
         ).pack(anchor="w", padx=20, pady=(15, 10))
 
         self.status_labels = {}
         status_items = [
-            ("Local SQL Dump", "last_local"),
-            ("USB Drive Mirror", "last_usb"),
-            ("Cloud Synchronization", "last_cloud"),
-            ("Data Integrity Check", "last_verify"),
+            (tr("admin.db.items.local"), "last_local"),
+            (tr("admin.db.items.usb"), "last_usb"),
+            (tr("admin.db.items.cloud"), "last_cloud"),
+            (tr("admin.db.items.verify"), "last_verify"),
         ]
 
         for label, key in status_items:
@@ -140,14 +140,14 @@ class SystemAdminPage:
             ctk.CTkLabel(
                 row,
                 text=label,
-                font=("Segoe UI", 11),
-                text_color=("#2c3e50", "#ecf0f1"),
+                font=ModernTheme.BODY,
+                text_color=ModernTheme.TEXT_GRAY,
             ).pack(side="left")
             self.status_labels[key] = ctk.CTkLabel(
                 row,
-                text="Scanning...",
-                font=("Segoe UI", 11, "bold"),
-                text_color=("#34495e", "#bdc3c7"),
+                text=tr("admin.db.scanning"),
+                font=ModernTheme.BODY_BOLD,
+                text_color=ModernTheme.PRIMARY,
             )
             self.status_labels[key].pack(side="right")
 
@@ -160,7 +160,7 @@ class SystemAdminPage:
             for key, lbl in self.status_labels.items():
                 val = status.get(key, "Unknown")
                 # Highlight green for success/timestamps, orange for unknown/failed
-                color = "#27ae60" if ("Success" in val or ":" in val or "OK" in val) else "#e67e22"
+                color = ModernTheme.SUCCESS if ("Success" in val or ":" in val or "OK" in val) else ModernTheme.WARNING
                 lbl.configure(text=val, text_color=color)
         except:
             pass
@@ -176,7 +176,7 @@ class SystemAdminPage:
             return
 
         self.backup_btn.configure(
-            state="disabled", text="🛡️ BACKUP IN PROGRESS...", fg_color="#95a5a6"
+            state="disabled", text=f"🛡️ {tr('admin.db.progress')}", fg_color=ModernTheme.TEXT_GRAY
         )
 
         def run():
@@ -209,17 +209,14 @@ class SystemAdminPage:
 
     def _finalize_backup(self, success, msg):
         self.backup_btn.configure(
-            state="normal", text="🚀 START HYBRID BACKUP", fg_color="#27ae60"
+            state="normal", text=f"🚀 {tr('admin.db.btn_start')}", fg_color=ModernTheme.SUCCESS
         )
         self.update_status_display()
         if success:
-            messagebox.showinfo(
-                "Backup Success",
-                "🎉 All systems secured!\n\nLocation: C:\\MTO\\backups\\local\n\n1. Local SQL Dump Created\n2. USB Drive Synced\n3. Cloud Push Completed",
-            )
+            show_toast(self.container.winfo_toplevel(), tr("admin.db.success"), type="success")
             self.open_backup_folder()
         else:
-            messagebox.showerror("Backup Failed", f"Critical Error: {msg}")
+            ErrorDialog(self.container.winfo_toplevel(), tr("admin.db.failed"), tr("admin.db.failed_msg").replace("{msg}", msg))
 
     def open_backup_folder(self):
         import os
@@ -235,7 +232,7 @@ class SystemAdminPage:
         
         # 1. Pick the file
         file_path = filedialog.askopenfilename(
-            title="SELECT BACKUP FILE TO RESTORE",
+            title=tr("admin.db.restore.title"),
             initialdir=r"C:\MTO\backups\local",
             filetypes=[("SQL Backup", "*.sql"), ("All Files", "*.*")]
         )
@@ -245,10 +242,8 @@ class SystemAdminPage:
             
         # 2. Critical Warning
         confirm = messagebox.askyesno(
-            "⚠️ CRITICAL WARNING",
-            "This operation will OVERWRITE your current database with the selected backup.\n\n"
-            "All data entered AFTER this backup was created will be PERMANENTLY LOST.\n\n"
-            "Do you want to proceed with the safety verification?",
+            tr("admin.db.restore.warning"),
+            tr("admin.db.restore.warning_msg"),
             icon="warning"
         )
         
@@ -257,13 +252,13 @@ class SystemAdminPage:
             
         # 3. Double-Lock Confirmation
         user_input = simpledialog.askstring(
-            "FINAL VERIFICATION",
-            "To prevent accidental data loss, please type 'RESTORE' to confirm:",
+            tr("admin.db.restore.verify"),
+            tr("admin.db.restore.verify_msg"),
             parent=self.container
         )
         
         if user_input != "RESTORE":
-            messagebox.showinfo("Cancelled", "Restoration cancelled. Verification string did not match.")
+            messagebox.showinfo(tr("admin.db.restore.cancelled"), tr("admin.db.restore.cancelled_msg"))
             return
             
         # 4. Trigger Restore
@@ -278,11 +273,8 @@ class SystemAdminPage:
                     data = res.get("data", {})
                     safety = data.get("safety_backup", "Unknown")
                     messagebox.showinfo(
-                        "RESTORE COMPLETE",
-                        f"🎉 System has been successfully rolled back.\n\n"
-                        f"Restored: {file_path}\n"
-                        f"Safety Copy Created: {safety}\n\n"
-                        "Please RESTART the application to ensure all data is reloaded."
+                        tr("admin.db.restore.success_title"),
+                        tr("admin.db.restore.success_msg").replace("{path}", file_path).replace("{safety}", safety)
                     )
                 else:
                     messagebox.showerror("Restore Error", f"The server failed to restore: {res.get('detail', 'Unknown error')}")

@@ -111,7 +111,7 @@ class AnalyticsDashboardPage:
 
         canvas = FigureCanvasTkAgg(fig, master=self.trend_card)
         canvas.draw()
-        canvas.get_tkwidget().pack(fill="both", expand=True, padx=10, pady=10)
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
 
     def _plot_barangay(self, brgy_data):
         for widget in self.brgy_card.winfo_children():

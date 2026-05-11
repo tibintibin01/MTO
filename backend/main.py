@@ -47,8 +47,16 @@ from backend.schemas import (
 
 app = FastAPI(title="Treasury Management API", version="2.0.0")
 
-# Rate Limiter Configuration
-limiter = Limiter(key_func=get_remote_address)
+# Rate Limiter Configuration - Supports Redis for Multi-Instance Scaling
+REDIS_URL = os.getenv("REDIS_URL")
+if REDIS_URL:
+    from slowapi.util import get_remote_address
+    limiter = Limiter(key_func=get_remote_address, storage_uri=REDIS_URL)
+    print(f"INFO: Rate Limiter is BACKED BY REDIS: {REDIS_URL}")
+else:
+    limiter = Limiter(key_func=get_remote_address)
+    print("INFO: Rate Limiter is using IN-MEMORY storage.")
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -202,6 +210,35 @@ async def login_for_access_token(
             detail=str(e),
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+@app.get("/healthz", tags=["System"])
+async def health_check():
+    """Enterprise-grade health check for orchestration tools."""
+    health = {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    
+    # 1. Check Database
+    try:
+        db.db_query("SELECT 1", fetch=True, commit=False)
+        health["database"] = "connected"
+    except Exception as e:
+        health["status"] = "unhealthy"
+        health["database"] = f"disconnected: {str(e)}"
+        
+    # 2. Check Last Backup
+    try:
+        from backend.services.backup_service import get_backup_status
+        status = get_backup_status()
+        health["last_backup"] = status.get("health", "UNKNOWN")
+        if health["last_backup"] != "OK":
+            health["status"] = "degraded"
+    except:
+        health["last_backup"] = "error_fetching"
+
+    if health["status"] == "unhealthy":
+        raise HTTPException(status_code=503, detail=health)
+        
+    return health
 
 
 @app.get("/me", tags=["Auth"])
@@ -362,8 +399,11 @@ async def get_property(
 
 
 @app.post("/properties")
+@limiter.limit("15/minute")
 async def create_property(
-    data: PropertySaveSchema, current_user: dict = Depends(write_access)
+    request: Request,
+    data: PropertySaveSchema, 
+    current_user: dict = Depends(write_access)
 ):
     # Convert Pydantic model to dict for the service layer
     payload = data.dict(by_alias=True)
@@ -385,7 +425,9 @@ async def create_property(
 
 
 @app.put("/properties/{property_id}")
+@limiter.limit("20/minute")
 async def update_property(
+    request: Request,
     property_id: int,
     data: PropertySaveSchema,
     current_user: dict = Depends(write_access),
@@ -612,8 +654,11 @@ async def get_receivables_by_barangay(current_user: dict = Depends(get_current_u
 
 
 @app.post("/system/backup/trigger", tags=["System"])
+@limiter.limit("1/minute")
 async def trigger_backup(
-    background_tasks: BackgroundTasks, current_user: dict = Depends(admin_only)
+    request: Request,
+    background_tasks: BackgroundTasks, 
+    current_user: dict = Depends(admin_only)
 ):
     """Triggers the hybrid backup process in the background."""
     from backend.services.backup_service import run_hybrid_backup

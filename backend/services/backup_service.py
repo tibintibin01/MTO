@@ -160,15 +160,32 @@ def run_hybrid_backup(user=None):
         print(
             f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Step 5/5: Syncing to Cloud..."
         )
-        _sync_to_cloud(local_path)
-        backup_status["last_cloud"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cloud_success = False
+        retries = 3
+        for attempt in range(retries):
+            try:
+                if _sync_to_cloud(local_path):
+                    cloud_success = True
+                    break
+            except Exception as cloud_err:
+                print(f"Cloud attempt {attempt+1} failed: {cloud_err}")
+                import time
+                time.sleep(2)
+        
+            if cloud_success:
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Cloud Sync Successful.")
+            else:
+                _alert_failure("Cloud Sync Failed after 3 retries", user_name)
+        
+        backup_status["last_cloud"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if cloud_success else "FAILED"
         
         # 6. Store in Database
         try:
             health_status = "OK" if backup_status["last_verify"] == "Success" else "FAIL"
+            cloud_status = "SYNCED" if cloud_success else "PENDING"
             db.db_query(
                 "INSERT INTO backup_history (filename, file_path, checksum, status, health, user_name) VALUES (%s, %s, %s, %s, %s, %s)",
-                (filename, local_path, checksum, "SUCCESS", health_status, user_name)
+                (filename, local_path, checksum, cloud_status, health_status, user_name)
             )
         except Exception as db_err:
             print(f"Failed to log backup to DB: {db_err}")
@@ -181,6 +198,7 @@ def run_hybrid_backup(user=None):
     except Exception as e:
         log_error_to_file("Hybrid Backup Orchestrator Error", e)
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] CRITICAL: {str(e)}")
+        _alert_failure(f"Hybrid Backup Orchestrator Error: {str(e)}", user_name)
         return False, str(e)
 
     finally:
@@ -269,3 +287,9 @@ def _generate_checksum(file_path):
         for byte_block in iter(lambda: f.read(4096), b""):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
+
+def _alert_failure(message, user="System"):
+    """Dispatches a critical alert event for monitoring tools."""
+    from utils import log_critical_event
+    print(f"!!! ALERT !!! {message} (Triggered by {user})")
+    log_critical_event("BACKUP_FAILURE", message, user)

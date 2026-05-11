@@ -351,31 +351,95 @@ class DashboardApp(ctk.CTk):
             text_color="gray",
             anchor="w"
         ).pack(fill="x")
-        
         # Subtle Separator
         line = ctk.CTkFrame(self.sidebar, height=1, fg_color="gray30")
         line.pack(fill="x", padx=30, pady=(0, 20))
 
-        # Profile Section
-        ctk.CTkLabel(self.sidebar, text=self.username, font=ModernTheme.BODY).pack()
-        ctk.CTkLabel(
-            self.sidebar,
-            text=auth.get_user_role(self.user_data).upper(),
-            font=("Segoe UI", 10, "bold"),
-            text_color="gray",
-        ).pack(pady=(0, 10))
-
-        # Theme Toggle in Sidebar
-        self.theme_btn = ctk.CTkButton(
+        # --- PREMIUM PROFILE CARD ---
+        self.profile_card = ctk.CTkFrame(
             self.sidebar, 
-            text=tr("login.toggle_theme"), 
-            command=self.toggle_theme, 
-            width=120, 
-            height=30, 
-            fg_color="transparent", 
-            text_color=ModernTheme.TEXT_GRAY
+            fg_color=("#f1f2f6", "#1a2634"), 
+            corner_radius=15,
+            border_width=1,
+            border_color=("#d1d8e0", "#2c3e50")
         )
-        self.theme_btn.pack(pady=(0, 20))
+        self.profile_card.pack(fill="x", padx=20, pady=(0, 25))
+
+        # Avatar & Identity Row
+        id_fr = ctk.CTkFrame(self.profile_card, fg_color="transparent")
+        id_fr.pack(fill="x", padx=15, pady=15)
+
+        # Stylized Avatar (Circle-like)
+        avatar_val = self.username[0].upper() if self.username else "U"
+        avatar_fr = ctk.CTkFrame(
+            id_fr, 
+            width=42, 
+            height=42, 
+            corner_radius=21, 
+            fg_color=ModernTheme.PRIMARY
+        )
+        avatar_fr.pack(side="left", padx=(0, 12))
+        avatar_fr.pack_propagate(False)
+        
+        ctk.CTkLabel(
+            avatar_fr, 
+            text=avatar_val, 
+            font=("Segoe UI", 18, "bold"), 
+            text_color="white"
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        # Name & Role Info
+        info_fr = ctk.CTkFrame(id_fr, fg_color="transparent")
+        info_fr.pack(side="left", fill="both", expand=True)
+
+        ctk.CTkLabel(
+            info_fr, 
+            text=self.username.lower(), 
+            font=("Segoe UI", 14, "bold"), 
+            anchor="w"
+        ).pack(fill="x")
+        
+        role_label = ctk.CTkLabel(
+            info_fr, 
+            text=auth.get_user_role(self.user_data).upper(), 
+            font=("Segoe UI", 9, "bold"), 
+            text_color=ModernTheme.PRIMARY,
+            anchor="w"
+        )
+        role_label.pack(fill="x")
+
+        # Theme & Language Row
+        toggle_fr = ctk.CTkFrame(self.profile_card, fg_color="transparent")
+        toggle_fr.pack(fill="x", padx=10, pady=(0, 10))
+
+        # Theme Toggle (Integrated Sleek Link)
+        self.theme_btn = ctk.CTkButton(
+            toggle_fr, 
+            text="🌓", 
+            command=self.toggle_theme, 
+            width=40,
+            height=32, 
+            fg_color="transparent", 
+            text_color=ModernTheme.TEXT_GRAY,
+            font=("Segoe UI", 14, "bold"),
+            hover_color=("#d1d8e0", "#2c3e50")
+        )
+        self.theme_btn.pack(side="left", padx=2)
+
+        # Language Toggle
+        from utils import LocalizationManager
+        current_lang = LocalizationManager()._current_locale.upper()
+        self.lang_btn = ctk.CTkButton(
+            toggle_fr, 
+            text=f"🌏 {current_lang}", 
+            command=self.toggle_language, 
+            height=32, 
+            fg_color="transparent", 
+            text_color=ModernTheme.TEXT_GRAY,
+            font=("Segoe UI", 11, "bold"),
+            hover_color=("#d1d8e0", "#2c3e50")
+        )
+        self.lang_btn.pack(side="left", fill="x", expand=True)
 
         # Scrollable area for buttons
         self.nav_scroll = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent")
@@ -395,7 +459,7 @@ class DashboardApp(ctk.CTk):
 
         ctk.CTkLabel(
             self.nav_scroll,
-            text="ADVANCED",
+            text=tr("reports.title").split()[0], # Grouping label
             font=("Segoe UI", 10, "bold"),
             text_color="gray",
         ).pack(pady=(20, 5))
@@ -426,7 +490,7 @@ class DashboardApp(ctk.CTk):
 
         ctk.CTkLabel(
             self.nav_scroll,
-            text="RESOURCES",
+            text=tr("dashboard.nav.help").upper(),
             font=("Segoe UI", 10, "bold"),
             text_color="gray",
         ).pack(pady=(20, 5))
@@ -471,6 +535,23 @@ class DashboardApp(ctk.CTk):
         current = ctk.get_appearance_mode()
         new_mode = "light" if current == "Dark" else "dark"
         setup_theme(new_mode)
+
+    def toggle_language(self):
+        """Switches between English and Tagalog and refreshes the UI."""
+        from utils import LocalizationManager
+        mgr = LocalizationManager()
+        new_lang = "tl" if mgr._current_locale == "en" else "en"
+        mgr.set_locale(new_lang)
+        
+        # Refresh Sidebar
+        for widget in self.sidebar.winfo_children():
+            widget.destroy()
+        self.setup_sidebar()
+        
+        # Refresh current page if possible, or go home
+        self.load_page(DashboardHomePage)
+        
+        show_toast(self, f"Language switched to {new_lang.upper()}", type="success")
 
     def logout(self):
         if ErrorDialog(self, tr("common.logout_confirm"), tr("common.logout_msg"), retry_callback=None):

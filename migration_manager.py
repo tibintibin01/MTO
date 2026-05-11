@@ -47,6 +47,17 @@ def apply_migration(version, name, sql_content):
         print(f"Successfully applied {name}")
         return True
     except Exception as e:
+        error_str = str(e)
+        # Check for specific "Already Exists" errors in MySQL/PyMySQL
+        # 1060: Duplicate column name
+        # 1061: Duplicate key name (Index)
+        if "1060" in error_str or "Duplicate column name" in error_str:
+            print(f"NOTICE: Columns in {name} already exist. Marking as applied.")
+            return True
+        if "1061" in error_str or "Duplicate key name" in error_str:
+            print(f"NOTICE: Indices in {name} already exist. Marking as applied.")
+            return True
+            
         print(f"FAILED to apply migration {name}: {e}")
         return False
 

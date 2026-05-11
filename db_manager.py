@@ -7,6 +7,12 @@ import sys
 from utils import log_error_to_file
 
 try:
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.pool import QueuePool
+except ImportError:
+    pass
+
+try:
     from dotenv import load_dotenv
 
     load_dotenv()
@@ -183,7 +189,7 @@ def _show_warning(title, message):
 
 
 _db_state = threading.local()
-DB_POOL = None
+DB_ENGINE = None
 
 
 def close_thread_connection():
@@ -201,34 +207,37 @@ def close_thread_connection():
 
 
 def _init_pool():
-    global DB_POOL
-    if DB_POOL is not None or CONNECT_FN is None or DB_DRIVER != "mysql.connector":
+    global DB_ENGINE
+    if DB_ENGINE is not None:
         return
 
     try:
-        from mysql.connector import pooling
-
-        # Filter config for connection-only params
-        pool_params = {
-            k: v
-            for k, v in DB_CONFIG.items()
-            if k not in ("mysql_path", "mysqldump_path", "password_encrypted")
-        }
-
-        DB_POOL = pooling.MySQLConnectionPool(
-            pool_name="mto_pool",
-            pool_size=10,  # Maintain up to 10 ready connections
-            pool_reset_session=True,
-            **pool_params,
+        # Construct SQLAlchemy URI
+        user = DB_CONFIG["user"]
+        password = DB_CONFIG["password"]
+        host = DB_CONFIG["host"]
+        port = DB_CONFIG["port"]
+        database = DB_CONFIG["database"]
+        
+        # Using PyMySQL as the driver for robust pooling
+        uri = f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
+        
+        DB_ENGINE = create_engine(
+            uri,
+            poolclass=QueuePool,
+            pool_size=10,
+            max_overflow=5,
+            pool_recycle=3600,
+            pool_pre_ping=True  # Automatic recovery from drops
         )
-        print("Database Connection Pool initialized (Size: 10)")
+        print(f"SQLAlchemy Connection Pool initialized (Size: 10 + 5 Overflow)")
     except Exception as e:
-        log_error_to_file("Failed to initialize connection pool", e)
-        DB_POOL = None
+        log_error_to_file("Failed to initialize SQLAlchemy engine", e)
+        DB_ENGINE = None
 
 
 def get_db_connection():
-    if DB_CONFIG is None or CONNECT_FN is None:
+    if DB_CONFIG is None:
         return None
 
     # Try to get from thread-local first (for transaction continuity)
@@ -236,16 +245,18 @@ def get_db_connection():
     if conn is not None and _connection_is_alive(conn):
         return conn
 
-    # Try to get from pool
-    global DB_POOL
-    if DB_POOL is None:
+    # Try to get from engine
+    global DB_ENGINE
+    if DB_ENGINE is None:
         _init_pool()
 
     try:
-        if DB_POOL:
-            conn = DB_POOL.get_connection()
+        if DB_ENGINE:
+            # get a raw DB-API connection from the pool
+            conn = DB_ENGINE.raw_connection()
         else:
-            # Fallback to direct connection if pool failed
+            # Fallback to direct connection if engine failed
+            if CONNECT_FN is None: return None
             conn_params = {
                 k: v
                 for k, v in DB_CONFIG.items()

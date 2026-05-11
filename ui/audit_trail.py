@@ -5,6 +5,7 @@ import threading
 from datetime import datetime
 import api_clients.system_service as sys_svc
 from theme_manager import ModernTheme
+from utils import tr
 
 class AuditTrailPage:
     def __init__(self, parent, user=None):
@@ -26,77 +27,103 @@ class AuditTrailPage:
         header_fr.pack(fill="x", pady=(0, 20))
 
         ctk.CTkLabel(
-            header_fr, text="SYSTEM AUDIT TRAIL", font=("Segoe UI", 24, "bold")
+            header_fr, text=tr("audit.title"), font=ModernTheme.H2
         ).pack(side="left")
 
         self.export_btn = ctk.CTkButton(
             header_fr,
-            text="📊 EXPORT LOGS",
+            text=f"📊 {tr('audit.btn_export')}",
             command=self.export_to_excel,
-            fg_color="#e67e22",
-            hover_color="#d35400",
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.WARNING,
             width=150
         )
         self.export_btn.pack(side="right")
 
         # --- ADVANCED FILTER BAR ---
-        filter_bar = ctk.CTkFrame(self.container, fg_color="#34495e", corner_radius=8)
+        filter_bar = ctk.CTkFrame(self.container, fg_color=ModernTheme.SECONDARY, corner_radius=8)
         filter_bar.pack(fill="x", pady=(0, 15), padx=5)
 
         # User Filter
         ctk.CTkLabel(
-            filter_bar, text="USER:", font=("Segoe UI", 11, "bold"), text_color="white"
+            filter_bar, text=tr("audit.filters.user"), font=ModernTheme.BODY_BOLD, text_color="white"
         ).pack(side="left", padx=(15, 5))
         self.user_cmb = ctk.CTkComboBox(
-            filter_bar, values=["ALL"], width=150, height=28
+            filter_bar, values=["ALL"], width=150, height=28, font=ModernTheme.BODY
         )
         self.user_cmb.pack(side="left", padx=5, pady=8)
 
         # Keyword Search
         ctk.CTkLabel(
-            filter_bar, text="SEARCH:", font=("Segoe UI", 11, "bold"), text_color="white"
+            filter_bar, text=tr("audit.filters.search"), font=ModernTheme.BODY_BOLD, text_color="white"
         ).pack(side="left", padx=(15, 5))
-        self.search_ent = ctk.CTkEntry(filter_bar, placeholder_text="Action/Record ID...", width=200, height=28)
+        self.search_ent = ctk.CTkEntry(filter_bar, placeholder_text=tr("audit.filters.search_placeholder"), width=200, height=28, font=ModernTheme.BODY)
         self.search_ent.pack(side="left", padx=5)
         self.search_ent.bind("<Return>", lambda e: self.refresh_table())
 
         # Date Range
         ctk.CTkLabel(
-            filter_bar, text="FROM:", font=("Segoe UI", 11, "bold"), text_color="white"
+            filter_bar, text=tr("audit.filters.from"), font=ModernTheme.BODY_BOLD, text_color="white"
         ).pack(side="left", padx=(15, 5))
-        self.date_from_ent = ctk.CTkEntry(filter_bar, placeholder_text="YYYY-MM-DD", width=100, height=28)
+        self.date_from_ent = ctk.CTkEntry(filter_bar, placeholder_text="YYYY-MM-DD", width=100, height=28, font=ModernTheme.BODY)
         self.date_from_ent.pack(side="left", padx=5)
 
         ctk.CTkLabel(
-            filter_bar, text="TO:", font=("Segoe UI", 11, "bold"), text_color="white"
+            filter_bar, text=tr("audit.filters.to"), font=ModernTheme.BODY_BOLD, text_color="white"
         ).pack(side="left", padx=(5, 5))
-        self.date_to_ent = ctk.CTkEntry(filter_bar, placeholder_text="YYYY-MM-DD", width=100, height=28)
+        self.date_to_ent = ctk.CTkEntry(filter_bar, placeholder_text="YYYY-MM-DD", width=100, height=28, font=ModernTheme.BODY)
         self.date_to_ent.pack(side="left", padx=5)
 
         ctk.CTkButton(
             filter_bar,
-            text="🔍 FILTER",
+            text=f"🔍 {tr('audit.filters.btn_filter')}",
             command=self.refresh_table,
             width=100,
             height=28,
-            fg_color="#27ae60",
-            hover_color="#219150",
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SUCCESS,
         ).pack(side="right", padx=15)
 
         # --- TABLE ---
         table_fr = ctk.CTkFrame(self.container, fg_color="white", corner_radius=12)
         table_fr.pack(fill="both", expand=True)
 
-        self.cols = ("TIMESTAMP", "USER", "ACTION", "TABLE", "ID", "IP ADDRESS")
+        self.cols = (
+            tr("audit.table.timestamp"),
+            tr("audit.table.user"),
+            tr("audit.table.action"),
+            tr("audit.table.table"),
+            tr("audit.table.id"),
+            tr("audit.table.ip"),
+        )
+        
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(
+            "Custom.Treeview",
+            rowheight=35,
+            font=ModernTheme.BODY,
+            background="#1e1e1e",
+            fieldbackground="#1e1e1e",
+            foreground="white",
+        )
+        style.configure(
+            "Custom.Treeview.Heading",
+            font=ModernTheme.BODY_BOLD,
+            background="#333333",
+            foreground="white",
+        )
+        style.map("Custom.Treeview", background=[("selected", ModernTheme.PRIMARY)])
+
         self.tree = ttk.Treeview(table_fr, columns=self.cols, show="headings", style="Custom.Treeview")
         
         # Configure columns
         col_widths = [160, 100, 350, 100, 60, 120]
         for i, col in enumerate(self.cols):
-            self.tree.heading(col, text=col)
+            self.tree.heading(col, text=col.upper())
             self.tree.column(col, width=col_widths[i], anchor="center")
         
-        self.tree.column("ACTION", anchor="w") # Action should be left-aligned
+        self.tree.column(tr("audit.table.action"), anchor="w") # Action should be left-aligned
         
         # Scrollbar
         scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview)
@@ -109,13 +136,13 @@ class AuditTrailPage:
         self.pag_fr = ctk.CTkFrame(self.container, fg_color="transparent")
         self.pag_fr.pack(fill="x", pady=10)
 
-        self.prev_btn = ctk.CTkButton(self.pag_fr, text="◀ PREV", command=self.prev_page, width=80, fg_color="#34495e")
+        self.prev_btn = ctk.CTkButton(self.pag_fr, text=f"◀ {tr('audit.pagination.prev')}", command=self.prev_page, width=80, font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.SECONDARY)
         self.prev_btn.pack(side="left")
 
-        self.page_lbl = ctk.CTkLabel(self.pag_fr, text="PAGE 1", font=("Segoe UI", 12, "bold"))
+        self.page_lbl = ctk.CTkLabel(self.pag_fr, text=f"{tr('audit.pagination.page')} 1", font=ModernTheme.BODY_BOLD)
         self.page_lbl.pack(side="left", expand=True)
 
-        self.next_btn = ctk.CTkButton(self.pag_fr, text="NEXT ▶", command=self.next_page, width=80, fg_color="#34495e")
+        self.next_btn = ctk.CTkButton(self.pag_fr, text=f"{tr('audit.pagination.next')} ▶", command=self.next_page, width=80, font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.SECONDARY)
         self.next_btn.pack(side="right")
 
     def refresh_table(self, reset_page=True):
@@ -140,12 +167,12 @@ class AuditTrailPage:
                 
                 self.container.after(0, lambda: self._update_table(logs))
             except Exception as e:
-                self.container.after(0, lambda err=e: messagebox.showerror("Error", f"Failed to load logs: {err}"))
+                self.container.after(0, lambda err=e: ErrorDialog(self.parent.winfo_toplevel(), tr("common.system_error"), tr("audit.messages.load_error").replace("{err}", str(err))))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _update_table(self, logs):
-        self.page_lbl.configure(text=f"PAGE {self.current_page + 1}")
+        self.page_lbl.configure(text=f"{tr('audit.pagination.page')} {self.current_page + 1}")
         self.prev_btn.configure(state="normal" if self.current_page > 0 else "disabled")
         self.next_btn.configure(state="normal" if len(logs) >= self.page_size else "disabled")
 
@@ -187,11 +214,11 @@ class AuditTrailPage:
             data.append(self.tree.item(child)["values"])
             
         if not data:
-            messagebox.showwarning("Export", "No data to export.")
+            ErrorDialog(self.parent.winfo_toplevel(), tr("audit.messages.export_error"), tr("property.errors.no_data_msg"))
             return
             
         try:
             export_data_to_excel(data, self.cols, filename_prefix="AuditLogs")
-            messagebox.showinfo("Export Success", "Audit logs exported successfully.")
+            show_toast(self.parent.winfo_toplevel(), tr("audit.messages.export_success"), type="success")
         except Exception as e:
-            messagebox.showerror("Export Error", str(e))
+            ErrorDialog(self.parent.winfo_toplevel(), tr("audit.messages.export_error"), str(e))

@@ -216,18 +216,11 @@ def _draw_soa_table_header(c, left_x, top_y, columns):
     return top_y - 10 * mm
 
 
-def generate_statement_of_account(statement_data, base_dir):
-    statements_dir = os.path.join(base_dir, "statements")
-    os.makedirs(statements_dir, exist_ok=True)
+    c.save()
+    return output_path
 
-    td_number = _safe_text(statement_data.get("td_number")) or "NO_TD"
-    date_part = datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_name = f"SOA_{_safe_filename(td_number)}_{date_part}.pdf"
-    output_path = os.path.join(statements_dir, file_name)
 
-    c = canvas.Canvas(output_path, pagesize=A4)
-    width, height = A4
-    margin_x = 15 * mm
+def _draw_soa_page(c, statement_data, width, height, margin_x):
     current_y = height - 20 * mm
 
     c.setFillColor(colors.HexColor(BRANDING["branding_colors"]["primary"]))
@@ -275,11 +268,11 @@ def generate_statement_of_account(statement_data, base_dir):
     ]
     table_width = sum(item[1] for item in columns)
 
-    def draw_page_header(y_pos):
+    def draw_table_header(y_pos):
         c.setFont("Helvetica", 8)
         return _draw_soa_table_header(c, margin_x, y_pos, columns)
 
-    current_y = draw_page_header(current_y)
+    current_y = draw_table_header(current_y)
     c.setFont("Helvetica", 8)
     c.setStrokeColor(colors.HexColor("#d9e2f3"))
 
@@ -287,7 +280,7 @@ def generate_statement_of_account(statement_data, base_dir):
         if current_y < 35 * mm:
             c.showPage()
             current_y = height - 20 * mm
-            current_y = draw_page_header(current_y)
+            current_y = draw_table_header(current_y)
             c.setFont("Helvetica", 8)
             c.setStrokeColor(colors.HexColor("#d9e2f3"))
 
@@ -335,7 +328,41 @@ def generate_statement_of_account(statement_data, base_dir):
     c.setFont(BRANDING["fonts"]["body"], 8)
     c.setFillColor(colors.HexColor(BRANDING["branding_colors"]["secondary"]))
     c.drawString(margin_x, current_y, BRANDING["footer_text"])
-    current_y -= 5 * mm
+    return current_y
+
+
+def generate_statement_of_account(statement_data, base_dir):
+    statements_dir = os.path.join(base_dir, "statements")
+    os.makedirs(statements_dir, exist_ok=True)
+
+    td_number = _safe_text(statement_data.get("td_number")) or "NO_TD"
+    date_part = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_name = f"SOA_{_safe_filename(td_number)}_{date_part}.pdf"
+    output_path = os.path.join(statements_dir, file_name)
+
+    c = canvas.Canvas(output_path, pagesize=A4)
+    _draw_soa_page(c, statement_data, A4[0], A4[1], 15 * mm)
+    c.save()
+    return output_path
+
+
+def bulk_generate_soa(data_list, base_dir, filename_prefix="BULK_SOA"):
+    """Generates multiple SOAs into a single PDF file for high-speed printing."""
+    statements_dir = os.path.join(base_dir, "statements")
+    os.makedirs(statements_dir, exist_ok=True)
+
+    date_part = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_name = f"{filename_prefix}_{date_part}.pdf"
+    output_path = os.path.join(statements_dir, file_name)
+
+    c = canvas.Canvas(output_path, pagesize=A4)
+    width, height = A4
+    margin_x = 15 * mm
+
+    for index, statement_data in enumerate(data_list):
+        if index > 0:
+            c.showPage()
+        _draw_soa_page(c, statement_data, width, height, margin_x)
 
     c.save()
     return output_path

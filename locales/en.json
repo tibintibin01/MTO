@@ -56,5 +56,355 @@
             "help": "System Help",
             "logout": "LOGOUT"
         }
+    },
+    "property": {
+        "title": "PROPERTY DIRECTORY",
+        "search_placeholder": "Search TD Number or Owner Name...",
+        "btn_search": "SEARCH",
+        "btn_cleanup": "DATA CLEANUP",
+        "btn_add": "ADD PROPERTY",
+        "btn_import": "BULK IMPORT",
+        "filters": {
+            "barangay": "BARANGAY:",
+            "year_from": "YEAR FROM:",
+            "year_to": "TO:",
+            "apply": "APPLY FILTERS"
+        },
+        "table": {
+            "id": "ID",
+            "td": "TD Number",
+            "owner": "Owner Name",
+            "location": "Location",
+            "value": "Assessed Value",
+            "penalty": "Penalty",
+            "discount": "Discount",
+            "due": "Total Due",
+            "last_or": "Last OR",
+            "or_date": "OR Date"
+        },
+        "pagination": {
+            "prev": "PREVIOUS",
+            "next": "NEXT",
+            "page": "Page"
+        },
+        "actions": {
+            "edit": "EDIT",
+            "delete": "DELETE",
+            "export": "EXPORT LIST"
+        },
+        "errors": {
+            "no_data": "No Data",
+            "no_data_msg": "There is no data in the table to export."
+        },
+        "fields": {
+            "td_number": "TD Number *",
+            "owner_name": "Owner Name *",
+            "payor_name": "Payor Name",
+            "lot_number": "Lot Number",
+            "area": "Area (sqm)",
+            "location": "Location (Barangay)",
+            "kind": "Kind of Property",
+            "tax_year": "Tax Year(s)",
+            "or_number": "OR Number",
+            "or_date": "OR Date",
+            "value": "Assessed Value *",
+            "penalty": "Penalty",
+            "discount": "Discount",
+            "paid": "Amount Paid",
+            "total": "TOTAL TAX DUE",
+            "btn_save": "SAVE PROPERTY"
+        }
+    },
+    "ledger": {
+        "title": "Unified Financial Ledger",
+        "subtitle": "Integrated Payment & Receipt History",
+        "search_placeholder": "Search TD Number, Owner, or OR Number...",
+        "btn_fetch": "FETCH HISTORY",
+        "btn_view": "VIEW RECEIPT",
+        "btn_regen": "REGENERATE",
+        "btn_export": "EXPORT DATA",
+        "table": {
+            "date": "Date",
+            "or": "OR Number",
+            "year": "Tax Year",
+            "basic": "Basic",
+            "sef": "SEF",
+            "penalty": "Penalty",
+            "discount": "Discount",
+            "total": "Total Paid",
+            "posted": "Posted By",
+            "status": "File Status",
+            "status_ready": "📄 READY",
+            "status_missing": "❌ MISSING"
+        },
+        "footer": {
+            "total": "Lifetime Payments: {value}"
+        },
+        "errors": {
+            "input_req": "Input Required",
+            "input_req_msg": "Please enter a TD Number, Owner Name, or OR Number.",
+            "not_found": "Not Found",
+            "not_found_msg": "No financial history found for '{term}'.",
+            "receipt_missing": "Receipt Missing",
+            "receipt_missing_msg": "PDF file not found. Generate it now?",
+            "gen_error": "Generation Error"
+        }
+    },
+    "reports": {
+        "title": "COLLECTION AND RECEIVABLES ANALYTICS",
+        "tabs": {
+            "collection": "Collection Report",
+            "receivables": "RPT Receivables Summary",
+            "barangay": "Receivables by Barangay"
+        },
+        "collection": {
+            "filter_label": "Filter by Month/Year",
+            "btn_generate": "GENERATE",
+            "table": {
+                "date": "Date",
+                "or": "OR",
+                "td": "TD",
+                "owner": "Owner",
+                "kind": "Kind",
+                "year": "Year",
+                "amount": "Amount",
+                "posted": "Posted By"
+            }
+        },
+        "receivables": {
+            "btn_load": "LOAD SUMMARY",
+            "hint": "Click Load Summary to view report.",
+            "performance_title": "FISCAL YEAR {year} PERFORMANCE",
+            "efficiency": "Efficiency: {value}%",
+            "cards": {
+                "beginning": "Beginning Balance",
+                "assessment": "Current Assessment",
+                "adjustments": "Adjustments",
+                "collections": "Total Collections",
+                "ending": "Ending Receivable"
+            },
+            "target_progress": "COLLECTION TARGET PROGRESS"
+        },
+        "barangay": {
+            "title": "JURISDICTION BREAKDOWN",
+            "btn_refresh": "REFRESH BREAKDOWN",
+            "table": {
+                "barangay": "Barangay",
+                "assessed": "Total Assessed",
+                "due": "Total Due",
+                "penalty": "Total Penalty",
+                "discount": "Total Discount",
+                "collected": "Total Collected",
+                "receivable": "Total Receivable"
+            },
+            "total": "Total Jurisdiction Receivable: {value}"
+        },
+        "errors": {
+            "no_collection": "No collection records found for the selected period.",
+            "no_receivables": "No assessment data available for the selected year.",
+            "no_barangay": "No barangay-level receivables data found."
+        }
+    },
+    "audit": {
+        "title": "SYSTEM AUDIT TRAIL",
+        "btn_export": "EXPORT LOGS",
+        "filters": {
+            "user": "USER:",
+            "search": "SEARCH:",
+            "search_placeholder": "Action/Record ID...",
+            "from": "FROM:",
+            "to": "TO:",
+            "btn_filter": "FILTER"
+        },
+        "table": {
+            "timestamp": "TIMESTAMP",
+            "user": "USER",
+            "action": "ACTION",
+            "table": "TABLE",
+            "id": "ID",
+            "ip": "IP ADDRESS"
+        },
+        "pagination": {
+            "prev": "PREV",
+            "next": "NEXT",
+            "page": "PAGE"
+        },
+        "messages": {
+            "export_success": "Audit logs exported successfully.",
+            "export_error": "Export Error",
+            "load_error": "Failed to load logs: {err}"
+        }
+    },
+    "assessments": {
+        "title": "ASSESSMENTS AND TAX ROLL",
+        "tabs": {
+            "roll": "Assessment Roll",
+            "delinquency": "Delinquency Management"
+        },
+        "roll": {
+            "btn_load": "LOAD ASSESSMENT ROLL",
+            "table": {
+                "td": "TD Number",
+                "owner": "Owner Name",
+                "location": "Location",
+                "kind": "Kind",
+                "value": "Assessed Value",
+                "basic": "Basic Tax",
+                "sef": "SEF Tax"
+            }
+        },
+        "delinquency": {
+            "btn_fetch": "FETCH DELINQUENT ACCOUNTS",
+            "table": {
+                "td": "TD Number",
+                "owner": "Owner Name",
+                "location": "Location",
+                "value": "Assessed Value",
+                "years": "Years Delinq",
+                "total": "Total Due"
+            }
+        }
+    },
+    "admin": {
+        "title": "SYSTEM ADMINISTRATION",
+        "tabs": {
+            "users": "User Management",
+            "audit": "Audit Logs",
+            "recycle": "Recycle Bin",
+            "db": "Database & Backup"
+        },
+        "db": {
+            "title": "HYBRID BACKUP ORCHESTRATOR",
+            "subtitle": "Secures your database to Local Storage, USB Drive, and Cloud Sync.",
+            "btn_start": "START HYBRID BACKUP",
+            "btn_view": "VIEW BACKUPS",
+            "btn_restore": "RESTORE",
+            "status_title": "BACKUP ECOSYSTEM STATUS",
+            "items": {
+                "local": "Local SQL Dump",
+                "usb": "USB Drive Mirror",
+                "cloud": "Cloud Synchronization",
+                "verify": "Data Integrity Check"
+            },
+            "scanning": "Scanning...",
+            "progress": "BACKUP IN PROGRESS...",
+            "success": "Backup Success",
+            "success_msg": "🎉 All systems secured!\n\nLocation: C:\\MTO\\backups\\local\n\n1. Local SQL Dump Created\n2. USB Drive Synced\n3. Cloud Push Completed",
+            "failed": "Backup Failed",
+            "failed_msg": "Critical Error: {msg}",
+            "restore": {
+                "title": "SELECT BACKUP FILE TO RESTORE",
+                "warning": "⚠️ CRITICAL WARNING",
+                "warning_msg": "This operation will OVERWRITE your current database with the selected backup.\n\nAll data entered AFTER this backup was created will be PERMANENTLY LOST.\n\nDo you want to proceed with the safety verification?",
+                "verify": "FINAL VERIFICATION",
+                "verify_msg": "To prevent accidental data loss, please type 'RESTORE' to confirm:",
+                "cancelled": "Cancelled",
+                "cancelled_msg": "Restoration cancelled. Verification string did not match.",
+                "success_title": "RESTORE COMPLETE",
+                "success_msg": "🎉 System has been successfully rolled back.\n\nRestored: {path}\nSafety Copy Created: {safety}\n\nPlease RESTART the application to ensure all data is reloaded."
+            }
+        }
+    },
+    "users": {
+        "title": "USER DIRECTORY",
+        "btn_register": "REGISTER NEW USER",
+        "btn_refresh": "REFRESH",
+        "table": {
+            "id": "ID",
+            "status": "STATUS",
+            "name": "FULL NAME",
+            "username": "USERNAME",
+            "role": "ROLE",
+            "login": "LAST LOGIN",
+            "status_active": "🟢 ACTIVE",
+            "status_disabled": "🔴 DISABLED"
+        },
+        "admin_panel": {
+            "title": "ADMIN COMMAND CENTER",
+            "restricted": "ADMIN ONLY AREA",
+            "hint": "Select a user...",
+            "role_label": "SYSTEM ROLE",
+            "status_label": "ACCOUNT STATUS",
+            "status_sw": "Account Enabled",
+            "security_label": "SECURITY ACTIONS",
+            "btn_reset": "FORCE PASSWORD RESET",
+            "btn_apply": "APPLY ROLE CHANGE",
+            "activity_label": "LATEST ACTIVITY TRACE"
+        },
+        "modal": {
+            "title": "New User Registration",
+            "header": "REGISTER NEW PERSONNEL",
+            "fields": {
+                "name": "FULL NAME",
+                "username": "USERNAME",
+                "role": "SYSTEM ROLE",
+                "password": "INITIAL PASSWORD"
+            },
+            "btn_cancel": "CANCEL",
+            "btn_create": "CREATE ACCOUNT"
+        },
+        "messages": {
+            "confirm_status": "Confirm Status Change",
+            "confirm_role": "Confirm Role Change",
+            "confirm_role_msg": "Change {user}'s role to {role}?",
+            "reset_title": "Reset Password",
+            "reset_prompt": "Enter new password for {user}:",
+            "success_role": "Role updated successfully.",
+            "success_reset": "Password reset successfully.",
+            "success_register": "User {user} registered successfully.",
+            "error_fields": "All fields are required!",
+            "error_password": "Password must be at least 6 characters."
+        }
+    },
+    "recycle": {
+        "title": "Recycle Bin",
+        "subtitle": "Deleted records can be recovered here.",
+        "btn_refresh": "REFRESH",
+        "btn_restore": "RESTORE SELECTED",
+        "btn_purge": "PURGE PERMANENTLY",
+        "table": {
+            "id": "ID",
+            "td": "TD Number",
+            "owner": "Owner Name",
+            "location": "Location",
+            "value": "Last Value"
+        },
+        "messages": {
+            "confirm_restore": "Confirm Restore",
+            "confirm_restore_msg": "Restore property record for '{name}'?",
+            "confirm_purge": "DANGER: PERMANENT PURGE",
+            "confirm_purge_msg": "WARNING: Permanent Purge\n\nYou are about to permanently delete the record for '{name}'.\n\nTHIS ACTION CANNOT BE UNDONE. ALL HISTORY WILL BE LOST.\n\nContinue?",
+            "success_restore": "Record restored successfully.",
+            "success_purge": "Record purged from database."
+        }
+    },
+    "technical_logs": {
+        "title": "System Audit Engine",
+        "stats": {
+            "total": "TOTAL ACTIONS",
+            "today": "TODAY",
+            "entities": "AUDITED ENTITIES"
+        },
+        "toolbar": {
+            "filter": "FILTER BY USER",
+            "all_users": "All Users",
+            "btn_refresh": "REFRESH TRACE"
+        },
+        "table": {
+            "id": "ID",
+            "timestamp": "Timestamp",
+            "user": "User",
+            "action": "Action",
+            "target": "Target",
+            "old": "Old Values",
+            "new": "New Values"
+        },
+        "detail": {
+            "title": "Activity Detail: Before vs After",
+            "header": "DATA TRACEBACK",
+            "original": "ORIGINAL STATE",
+            "modified": "MODIFIED STATE",
+            "no_data": "No data recorded."
+        }
     }
 }

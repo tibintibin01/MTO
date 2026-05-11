@@ -32,17 +32,18 @@ class PropertyPage:
 
         # Search Box with hint
         self.search_ent = ctk.CTkEntry(
-            header_fr, placeholder_text="Search TD Number or Owner Name...", width=350
+            header_fr, placeholder_text=tr("property.search_placeholder"), width=350, font=ModernTheme.BODY
         )
         self.search_ent.pack(side="right", padx=(10, 0))
         self.search_ent.bind("<Return>", lambda e: self.refresh_table())
 
         ctk.CTkButton(
             header_fr,
-            text="🔍 SEARCH",
+            text=f"🔍 {tr('property.btn_search')}",
             command=self.refresh_table,
             width=100,
-            fg_color="#34495e",
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.SECONDARY,
         ).pack(side="right", padx=10)
 
         import api_clients.auth_service as auth
@@ -50,62 +51,65 @@ class PropertyPage:
         if auth.has_permission(self.user, "property_edit"):
             ctk.CTkButton(
                 header_fr,
-                text="🧹 DATA CLEANUP",
+                text=f"🧹 {tr('property.btn_cleanup')}",
                 command=self.open_bulk_update,
-                fg_color="#e67e22",
+                font=ModernTheme.BUTTON,
+                fg_color=ModernTheme.WARNING,
                 width=150,
             ).pack(side="right", padx=10)
 
             ctk.CTkButton(
                 header_fr,
-                text="+ ADD PROPERTY",
+                text=f"+ {tr('property.btn_add')}",
                 command=self.open_add_modal,
-                fg_color="#2ecc71",
+                font=ModernTheme.BUTTON,
+                fg_color=ModernTheme.SUCCESS,
                 width=150,
             ).pack(side="right", padx=(10, 0))
 
             ctk.CTkButton(
                 header_fr,
-                text="🚀 BULK IMPORT",
+                text=f"🚀 {tr('property.btn_import')}",
                 command=self.open_import_wizard,
-                fg_color="#3498db",
+                font=ModernTheme.BUTTON,
+                fg_color=ModernTheme.PRIMARY,
                 width=150,
             ).pack(side="right")
 
         # --- ADVANCED FILTER BAR ---
-        filter_bar = ctk.CTkFrame(self.container, fg_color="#34495e", corner_radius=8)
+        filter_bar = ctk.CTkFrame(self.container, fg_color=ModernTheme.SECONDARY, corner_radius=8)
         filter_bar.pack(fill="x", pady=(0, 15), padx=5)
 
         # Barangay Filter
         ctk.CTkLabel(
-            filter_bar, text="BARANGAY:", font=("Segoe UI", 11, "bold"), text_color="white"
+            filter_bar, text=tr("property.filters.barangay"), font=ModernTheme.BODY_BOLD, text_color="white"
         ).pack(side="left", padx=(15, 5))
         self.barangay_cmb = ctk.CTkComboBox(
-            filter_bar, values=["ALL"], width=180, height=28
+            filter_bar, values=["ALL"], width=180, height=28, font=ModernTheme.BODY
         )
         self.barangay_cmb.pack(side="left", padx=5, pady=8)
 
         # Tax Year Range
         ctk.CTkLabel(
-            filter_bar, text="YEAR FROM:", font=("Segoe UI", 11, "bold"), text_color="white"
+            filter_bar, text=tr("property.filters.year_from"), font=ModernTheme.BODY_BOLD, text_color="white"
         ).pack(side="left", padx=(15, 5))
-        self.year_from_ent = ctk.CTkEntry(filter_bar, width=80, height=28)
+        self.year_from_ent = ctk.CTkEntry(filter_bar, width=80, height=28, font=ModernTheme.BODY)
         self.year_from_ent.pack(side="left", padx=5)
 
         ctk.CTkLabel(
-            filter_bar, text="TO:", font=("Segoe UI", 11, "bold"), text_color="white"
+            filter_bar, text=tr("property.filters.year_to"), font=ModernTheme.BODY_BOLD, text_color="white"
         ).pack(side="left", padx=(5, 5))
-        self.year_to_ent = ctk.CTkEntry(filter_bar, width=80, height=28)
+        self.year_to_ent = ctk.CTkEntry(filter_bar, width=80, height=28, font=ModernTheme.BODY)
         self.year_to_ent.pack(side="left", padx=5)
 
         ctk.CTkButton(
             filter_bar,
-            text="🎯 APPLY FILTERS",
+            text=f"🎯 {tr('property.filters.apply')}",
             command=self.refresh_table,
             width=120,
             height=28,
-            fg_color="#27ae60",
-            hover_color="#219150",
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SUCCESS,
         ).pack(side="right", padx=15)
 
         # Table Container
@@ -118,30 +122,30 @@ class PropertyPage:
         style.configure(
             "Prop.Treeview",
             rowheight=35,
-            font=("Segoe UI", 10),
-            background="#2b2b2b",
-            fieldbackground="#2b2b2b",
+            font=ModernTheme.BODY,
+            background="#1e1e1e",
+            fieldbackground="#1e1e1e",
             foreground="white",
         )
         style.configure(
             "Prop.Treeview.Heading",
-            font=("Segoe UI", 10, "bold"),
+            font=ModernTheme.BODY_BOLD,
             background="#333333",
             foreground="white",
         )
-        style.map("Prop.Treeview", background=[("selected", "#3498db")])
+        style.map("Prop.Treeview", background=[("selected", ModernTheme.PRIMARY)])
 
         self.cols = (
-            "ID",
-            "TD Number",
-            "Owner Name",
-            "Location",
-            "Assessed Value",
-            "Penalty",
-            "Discount",
-            "Total Due",
-            "Last OR",
-            "OR Date",
+            tr("property.table.id"),
+            tr("property.table.td"),
+            tr("property.table.owner"),
+            tr("property.table.location"),
+            tr("property.table.value"),
+            tr("property.table.penalty"),
+            tr("property.table.discount"),
+            tr("property.table.due"),
+            tr("property.table.last_or"),
+            tr("property.table.or_date"),
         )
         self.tree = ttk.Treeview(
             table_fr, columns=self.cols, show="headings", style="Prop.Treeview"
@@ -178,24 +182,26 @@ class PropertyPage:
 
         self.prev_btn = ctk.CTkButton(
             self.pag_fr,
-            text="◀ PREVIOUS",
+            text=f"◀ {tr('property.pagination.prev')}",
             command=self.prev_page,
             width=100,
-            fg_color="#34495e",
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SECONDARY,
         )
         self.prev_btn.pack(side="left", padx=10)
 
         self.page_lbl = ctk.CTkLabel(
-            self.pag_fr, text="Page 1", font=("Segoe UI", 12, "bold")
+            self.pag_fr, text=f"{tr('property.pagination.page')} 1", font=ModernTheme.BODY_BOLD
         )
         self.page_lbl.pack(side="left", expand=True)
 
         self.next_btn = ctk.CTkButton(
             self.pag_fr,
-            text="NEXT ▶",
+            text=f"{tr('property.pagination.next')} ▶",
             command=self.next_page,
             width=100,
-            fg_color="#34495e",
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SECONDARY,
         )
         self.next_btn.pack(side="right", padx=10)
 
@@ -208,9 +214,10 @@ class PropertyPage:
         if auth.has_permission(self.user, "property_edit"):
             self.edit_btn = ctk.CTkButton(
                 actions,
-                text="✏️ EDIT",
+                text=f"✏️ {tr('property.actions.edit')}",
                 command=self.open_edit_modal,
-                fg_color="#3498db",
+                font=ModernTheme.BUTTON,
+                fg_color=ModernTheme.PRIMARY,
                 state="disabled",
             )
             self.edit_btn.pack(side="right", padx=5)
@@ -218,19 +225,20 @@ class PropertyPage:
         if auth.has_permission(self.user, "property_delete"):
             self.del_btn = ctk.CTkButton(
                 actions,
-                text="🗑️ DELETE",
+                text=f"🗑️ {tr('property.actions.delete')}",
                 command=self.confirm_delete,
-                fg_color="#e74c3c",
+                font=ModernTheme.BUTTON,
+                fg_color=ModernTheme.DANGER,
                 state="disabled",
             )
             self.del_btn.pack(side="right", padx=5)
 
         self.export_btn = ctk.CTkButton(
             actions,
-            text="📊 EXPORT LIST",
+            text=f"📊 {tr('property.actions.export')}",
             command=self.do_export,
-            fg_color="#e67e22",
-            hover_color="#d35400",
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.WARNING,
         )
         self.export_btn.pack(side="left", padx=5)
 
@@ -250,11 +258,7 @@ class PropertyPage:
             data.append(self.tree.item(child)["values"])
 
         if not data:
-            from tkinter import messagebox
-
-            messagebox.showwarning(
-                "No Data", "There is no data in the table to export."
-            )
+            ErrorDialog(self.parent.winfo_toplevel(), tr("property.errors.no_data"), tr("property.errors.no_data_msg"))
             return
 
         export_data_to_excel(data, self.cols, filename_prefix="Properties")
@@ -503,20 +507,20 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.scroll_form.pack(fill="both", expand=True, padx=20, pady=(20, 10))
 
         fields = [
-            ("TD Number *", "td_number"),
-            ("Owner Name *", "owner_name"),
-            ("Payor Name", "payor_name"),
-            ("Lot Number", "lot_number"),
-            ("Area (sqm)", "area"),
-            ("Location", "location"),
-            ("Kind of Property", "kind_of_property"),
-            ("Tax Year(s)", "tax_year"),
-            ("OR Number", "or_number"),
-            ("OR Date", "or_date"),
-            ("Assessed Value *", "assessed_value"),
-            ("Penalty", "penalty"),
-            ("Discount", "discount"),
-            ("Amount Paid", "amount_paid"),
+            (tr("property.fields.td_number"), "td_number"),
+            (tr("property.fields.owner_name"), "owner_name"),
+            (tr("property.fields.payor_name"), "payor_name"),
+            (tr("property.fields.lot_number"), "lot_number"),
+            (tr("property.fields.area"), "area"),
+            (tr("property.fields.location"), "location"),
+            (tr("property.fields.kind"), "kind_of_property"),
+            (tr("property.fields.tax_year"), "tax_year"),
+            (tr("property.fields.or_number"), "or_number"),
+            (tr("property.fields.or_date"), "or_date"),
+            (tr("property.fields.value"), "assessed_value"),
+            (tr("property.fields.penalty"), "penalty"),
+            (tr("property.fields.discount"), "discount"),
+            (tr("property.fields.paid"), "amount_paid"),
         ]
 
         placeholders = {
@@ -540,7 +544,7 @@ class PropertyEditModal(ctk.CTkToplevel):
             self.vars[key] = tk.StringVar()
 
             if key == "location":
-                self.vars[key].set("SELECT BARANGAY")
+                self.vars[key].set(tr("property.fields.location"))
                 drop = ctk.CTkComboBox(
                     self.scroll_form,
                     values=self.barangays,
@@ -572,7 +576,7 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.calc_box.pack(fill="x", padx=10, pady=15)
         self.total_lbl = ctk.CTkLabel(
             self.calc_box,
-            text="TOTAL TAX DUE: 0.00",
+            text=f"{tr('property.fields.total')}: 0.00",
             font=("Segoe UI", 12, "bold"),
             text_color="#1f538d",
         )
@@ -581,11 +585,11 @@ class PropertyEditModal(ctk.CTkToplevel):
         footer = ctk.CTkFrame(self, fg_color="transparent")
         footer.pack(fill="x", padx=20, pady=20)
         ctk.CTkButton(
-            footer, text="CANCEL", command=self.destroy, fg_color="#95a5a6", width=120
+            footer, text=tr("common.cancel").upper(), command=self.destroy, fg_color="#95a5a6", width=120
         ).pack(side="left")
         self.save_btn = ctk.CTkButton(
             footer,
-            text="SAVE PROPERTY",
+            text=tr("property.fields.btn_save"),
             command=self.save,
             fg_color="#2ecc71",
             width=200,
