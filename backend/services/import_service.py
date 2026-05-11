@@ -1,11 +1,10 @@
 import pandas as pd
 from datetime import datetime
-from db_manager import (
-    execute_transaction, db_query
-)
+from db_manager import execute_transaction, db_query
 import backend.services.billing_service as billing_svc
 import backend.services.payment_service as payment_svc
 from backend.services.auth_service import require_permission
+
 
 def _normalize_header(value):
     text = str(value).strip().lower()
@@ -33,14 +32,22 @@ def _clean_text(value):
 def _clean_number(value):
     if pd.isna(value) or value == "":
         return 0.0
-    cleaned = str(value).replace(",", "").replace("PHP", "").replace("P", "").replace("₱", "").replace("â‚±", "").strip()
+    cleaned = (
+        str(value)
+        .replace(",", "")
+        .replace("PHP", "")
+        .replace("P", "")
+        .replace("₱", "")
+        .replace("â‚±", "")
+        .strip()
+    )
     return float(cleaned) if cleaned else 0.0
 
 
 def _clean_excel_date(value):
     if pd.isna(value) or value == "":
         return None
-    
+
     # Handle numeric values (like years stored as 2023 or 2023.0)
     if isinstance(value, (int, float)):
         try:
@@ -131,7 +138,11 @@ def import_properties_from_excel(file_path, user_name):
         "tax_year": ["tax_year"],
     }
 
-    missing = [label for label, aliases in required_groups.items() if not any(alias in df.columns for alias in aliases)]
+    missing = [
+        label
+        for label, aliases in required_groups.items()
+        if not any(alias in df.columns for alias in aliases)
+    ]
     if missing:
         pretty = ", ".join(missing)
         return {
@@ -143,7 +154,14 @@ def import_properties_from_excel(file_path, user_name):
             "errors": [f"Missing required Excel column(s): {pretty}"],
         }
 
-    summary = {"inserted": 0, "updated": 0, "skipped": 0, "failed": 0, "duplicates": 0, "errors": []}
+    summary = {
+        "inserted": 0,
+        "updated": 0,
+        "skipped": 0,
+        "failed": 0,
+        "duplicates": 0,
+        "errors": [],
+    }
 
     for row_number, raw_row in enumerate(df.to_dict(orient="records"), start=2):
         td_number = _clean_text(_pick_field(raw_row, required_groups["td_number"]))
@@ -155,15 +173,25 @@ def import_properties_from_excel(file_path, user_name):
 
         if not td_number or not owner_name:
             summary["failed"] += 1
-            summary["errors"].append(f"Row {row_number}: TD Number and Owner Name are required.")
+            summary["errors"].append(
+                f"Row {row_number}: TD Number and Owner Name are required."
+            )
             continue
 
         try:
-            assessed_value = _clean_number(_pick_field(raw_row, required_groups["assessed_value"], 0))
+            assessed_value = _clean_number(
+                _pick_field(raw_row, required_groups["assessed_value"], 0)
+            )
             penalty = _clean_number(_pick_field(raw_row, ["penalty", "penalties"], 0))
-            or_number = _clean_import_or_number(_pick_field(raw_row, required_groups["or_number"], ""))
-            or_date = _normalize_import_date(_pick_field(raw_row, required_groups["or_date"], ""))
-            tax_year_raw = _clean_import_tax_year(_pick_field(raw_row, required_groups["tax_year"], ""))
+            or_number = _clean_import_or_number(
+                _pick_field(raw_row, required_groups["or_number"], "")
+            )
+            or_date = _normalize_import_date(
+                _pick_field(raw_row, required_groups["or_date"], "")
+            )
+            tax_year_raw = _clean_import_tax_year(
+                _pick_field(raw_row, required_groups["tax_year"], "")
+            )
             tax_year_check = billing_svc.validate_tax_year_text(tax_year_raw)
 
             if not or_number:
@@ -184,17 +212,33 @@ def import_properties_from_excel(file_path, user_name):
             total_amount = (assessed_value * 0.01) + (assessed_value * 0.01) + penalty
 
             # Smart mapping for location/barangay
-            loc_val = _clean_text(_pick_field(raw_row, ["location", "barangay", "address"], ""))
-            
+            loc_val = _clean_text(
+                _pick_field(raw_row, ["location", "barangay", "address"], "")
+            )
+
             property_values = (
                 td_number,
                 owner_name,
-                _clean_text(_pick_field(raw_row, ["payor", "payor_name", "paid_by"], owner_name)),
+                _clean_text(
+                    _pick_field(raw_row, ["payor", "payor_name", "paid_by"], owner_name)
+                ),
                 _clean_text(_pick_field(raw_row, ["lot_number", "lot_no", "lot"], "")),
                 _clean_text(_pick_field(raw_row, ["area"], "")),
-                loc_val, # For 'location' column
-                _clean_text(_pick_field(raw_row, ["kind_of_property", "property_kind", "property_type", "kind"], "")),
-                _clean_text(_pick_field(raw_row, ["accountable_officer", "posted_by", "officer"], user_name)),
+                loc_val,  # For 'location' column
+                _clean_text(
+                    _pick_field(
+                        raw_row,
+                        ["kind_of_property", "property_kind", "property_type", "kind"],
+                        "",
+                    )
+                ),
+                _clean_text(
+                    _pick_field(
+                        raw_row,
+                        ["accountable_officer", "posted_by", "officer"],
+                        user_name,
+                    )
+                ),
                 assessed_value,
                 penalty,
                 or_number,
@@ -202,13 +246,20 @@ def import_properties_from_excel(file_path, user_name):
                 normalized_tax_year_text,
                 _clean_text(_pick_field(raw_row, ["pin", "property_index_number"], "")),
                 _clean_text(_pick_field(raw_row, ["block_number", "block"], "")),
-                _clean_text(_pick_field(raw_row, ["prev_td_number", "previous_td"], "")),
-                _clean_text(_pick_field(raw_row, ["effectivity_date", "effectivity"], "")),
-                loc_val # For 'barangay' column
+                _clean_text(
+                    _pick_field(raw_row, ["prev_td_number", "previous_td"], "")
+                ),
+                _clean_text(
+                    _pick_field(raw_row, ["effectivity_date", "effectivity"], "")
+                ),
+                loc_val,  # For 'barangay' column
             )
 
             def import_row_transaction(cur):
-                cur.execute("SELECT id FROM properties WHERE td_number = %s LIMIT 1", (td_number,))
+                cur.execute(
+                    "SELECT id FROM properties WHERE td_number = %s LIMIT 1",
+                    (td_number,),
+                )
                 existing = cur.fetchone()
                 property_id = existing[0] if existing else None
 
@@ -263,7 +314,10 @@ def import_properties_from_excel(file_path, user_name):
                 property_id = cur.lastrowid
                 action = "inserted"
 
-                cur.execute("SELECT id FROM payments WHERE property_id = %s ORDER BY id DESC LIMIT 1", (property_id,))
+                cur.execute(
+                    "SELECT id FROM payments WHERE property_id = %s ORDER BY id DESC LIMIT 1",
+                    (property_id,),
+                )
                 payment_row = cur.fetchone()
                 payment_values = (
                     total_amount,
@@ -303,9 +357,15 @@ def import_properties_from_excel(file_path, user_name):
                     payment_id = cur.lastrowid
 
                 billing_rows = []
-                assessed_shares = billing_svc.split_amount_across_years(assessed_value, len(tax_years))
-                penalty_shares = billing_svc.split_amount_across_years(penalty, len(tax_years))
-                for tax_year, assessed_share, penalty_share in zip(tax_years, assessed_shares, penalty_shares):
+                assessed_shares = billing_svc.split_amount_across_years(
+                    assessed_value, len(tax_years)
+                )
+                penalty_shares = billing_svc.split_amount_across_years(
+                    penalty, len(tax_years)
+                )
+                for tax_year, assessed_share, penalty_share in zip(
+                    tax_years, assessed_shares, penalty_shares
+                ):
                     billing_rows.append(
                         billing_svc.sync_property_billing(
                             cur,
@@ -317,14 +377,22 @@ def import_properties_from_excel(file_path, user_name):
                         )
                     )
 
-                allocated_billing_rows = billing_svc.allocate_payment_amount(billing_rows, total_amount)
+                allocated_billing_rows = billing_svc.allocate_payment_amount(
+                    billing_rows, total_amount
+                )
                 if not payment_id:
-                    raise ValueError("Payment record could not be verified after import.")
-                billing_svc.sync_payment_billings(cur, payment_id, allocated_billing_rows)
+                    raise ValueError(
+                        "Payment record could not be verified after import."
+                    )
+                billing_svc.sync_payment_billings(
+                    cur, payment_id, allocated_billing_rows
+                )
 
                 return action
 
-            result = execute_transaction(import_row_transaction, show_errors=False, return_error=True)
+            result = execute_transaction(
+                import_row_transaction, show_errors=False, return_error=True
+            )
             if result == "inserted":
                 summary["inserted"] += 1
             elif result == "updated":
@@ -361,6 +429,7 @@ def import_properties_from_excel(file_path, user_name):
 def import_assessment_roll_from_excel(file_path, user):
     """Imports or Updates property records specifically for the Assessment Roll using a single fast transaction."""
     import db_manager as db
+
     try:
         df = pd.read_excel(file_path)
     except Exception as e:
@@ -380,7 +449,7 @@ def import_assessment_roll_from_excel(file_path, user):
         "classification": ["classification", "kind", "kind_of_property"],
         "assessed_value": ["assessed_value", "av", "assessed_val"],
         "prev_td": ["previous_td", "prev_td", "prev_td_no"],
-        "effectivity": ["effectivity", "fiscal_effectivity", "eff_date"]
+        "effectivity": ["effectivity", "fiscal_effectivity", "eff_date"],
     }
 
     summary = {"inserted": 0, "updated": 0, "failed": 0, "errors": []}
@@ -391,7 +460,7 @@ def import_assessment_roll_from_excel(file_path, user):
             try:
                 td = _clean_text(_pick_field(row, field_map["td_number"]))
                 owner = _clean_text(_pick_field(row, field_map["owner_name"]))
-                
+
                 if not td or not owner:
                     summary["failed"] += 1
                     summary["errors"].append(f"Row {row_idx+2}: Missing TD or Owner.")
@@ -411,16 +480,27 @@ def import_assessment_roll_from_excel(file_path, user):
                     "lot_number": lot,
                     "block_number": blk,
                     "barangay": _clean_text(_pick_field(row, field_map["barangay"])),
-                    "kind_of_property": _clean_text(_pick_field(row, field_map["classification"])),
-                    "assessed_value": _clean_number(_pick_field(row, field_map["assessed_value"])),
-                    "prev_td_number": _clean_text(_pick_field(row, field_map["prev_td"])),
-                    "effectivity_date": _clean_excel_date(_pick_field(row, field_map["effectivity"]))
+                    "kind_of_property": _clean_text(
+                        _pick_field(row, field_map["classification"])
+                    ),
+                    "assessed_value": _clean_number(
+                        _pick_field(row, field_map["assessed_value"])
+                    ),
+                    "prev_td_number": _clean_text(
+                        _pick_field(row, field_map["prev_td"])
+                    ),
+                    "effectivity_date": _clean_excel_date(
+                        _pick_field(row, field_map["effectivity"])
+                    ),
                 }
 
                 # High-speed upsert check
-                cur.execute("SELECT id FROM properties WHERE td_number = %s AND is_deleted = 0", (td,))
+                cur.execute(
+                    "SELECT id FROM properties WHERE td_number = %s AND is_deleted = 0",
+                    (td,),
+                )
                 exists = cur.fetchone()
-                
+
                 if exists:
                     query = """
                         UPDATE properties SET 
@@ -429,11 +509,21 @@ def import_assessment_roll_from_excel(file_path, user):
                         prev_td_number=%s, effectivity_date=%s
                         WHERE id=%s
                     """
-                    cur.execute(query, (
-                        data["owner_name"], data["pin"], data["lot_number"], data["block_number"],
-                        data["barangay"], data["kind_of_property"], data["assessed_value"],
-                        data["prev_td_number"], data["effectivity_date"], exists[0]
-                    ))
+                    cur.execute(
+                        query,
+                        (
+                            data["owner_name"],
+                            data["pin"],
+                            data["lot_number"],
+                            data["block_number"],
+                            data["barangay"],
+                            data["kind_of_property"],
+                            data["assessed_value"],
+                            data["prev_td_number"],
+                            data["effectivity_date"],
+                            exists[0],
+                        ),
+                    )
                     summary["updated"] += 1
                 else:
                     query = """
@@ -443,17 +533,26 @@ def import_assessment_roll_from_excel(file_path, user):
                             prev_td_number, effectivity_date
                         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """
-                    cur.execute(query, (
-                        data["td_number"], data["owner_name"], data["pin"], 
-                        data["lot_number"], data["block_number"], data["barangay"], 
-                        data["kind_of_property"], data["assessed_value"], 
-                        data["prev_td_number"], data["effectivity_date"]
-                    ))
+                    cur.execute(
+                        query,
+                        (
+                            data["td_number"],
+                            data["owner_name"],
+                            data["pin"],
+                            data["lot_number"],
+                            data["block_number"],
+                            data["barangay"],
+                            data["kind_of_property"],
+                            data["assessed_value"],
+                            data["prev_td_number"],
+                            data["effectivity_date"],
+                        ),
+                    )
                     property_id = cur.lastrowid
                     if not property_id:
                         cur.execute("SELECT LAST_INSERT_ID()")
                         property_id = cur.fetchone()[0]
-                    
+
                     # NEW: Auto-generate billing based on Effectivity Year (if available) or current year
                     eff_date = data["effectivity_date"]
                     billing_year = datetime.now().year
@@ -462,13 +561,18 @@ def import_assessment_roll_from_excel(file_path, user):
                             # Try to extract year from string or date object
                             if isinstance(eff_date, str) and len(eff_date) >= 4:
                                 billing_year = int(eff_date[:4])
-                            elif hasattr(eff_date, 'year'):
+                            elif hasattr(eff_date, "year"):
                                 billing_year = eff_date.year
-                        except: pass
+                        except:
+                            pass
 
                     billing_svc.sync_property_billing(
-                        cur, property_id, billing_year, 
-                        data["assessed_value"], 0.0, has_payment=False
+                        cur,
+                        property_id,
+                        billing_year,
+                        data["assessed_value"],
+                        0.0,
+                        has_payment=False,
                     )
                     summary["inserted"] += 1
 

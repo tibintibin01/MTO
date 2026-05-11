@@ -17,38 +17,43 @@ key = rsa.generate_private_key(
 )
 
 # Generate a self-signed certificate
-subject = issuer = x509.Name([
-    x509.NameAttribute(NameOID.COUNTRY_NAME, u"PH"),
-    x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"Manila"),
-    x509.NameAttribute(NameOID.LOCALITY_NAME, u"QC"),
-    x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"MTO Treasury"),
-    x509.NameAttribute(NameOID.COMMON_NAME, u"localhost"),
-])
-cert = x509.CertificateBuilder().subject_name(
-    subject
-).issuer_name(
-    issuer
-).public_key(
-    key.public_key()
-).serial_number(
-    x509.random_serial_number()
-).not_valid_before(
-    datetime.datetime.utcnow()
-).not_valid_after(
-    # Our certificate will be valid for 10 years
-    datetime.datetime.utcnow() + datetime.timedelta(days=3650)
-).add_extension(
-    x509.SubjectAlternativeName([x509.DNSName(u"localhost")]),
-    critical=False,
-).sign(key, hashes.SHA256())
+subject = issuer = x509.Name(
+    [
+        x509.NameAttribute(NameOID.COUNTRY_NAME, "PH"),
+        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Manila"),
+        x509.NameAttribute(NameOID.LOCALITY_NAME, "QC"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "MTO Treasury"),
+        x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+    ]
+)
+cert = (
+    x509.CertificateBuilder()
+    .subject_name(subject)
+    .issuer_name(issuer)
+    .public_key(key.public_key())
+    .serial_number(x509.random_serial_number())
+    .not_valid_before(datetime.datetime.utcnow())
+    .not_valid_after(
+        # Our certificate will be valid for 10 years
+        datetime.datetime.utcnow()
+        + datetime.timedelta(days=3650)
+    )
+    .add_extension(
+        x509.SubjectAlternativeName([x509.DNSName("localhost")]),
+        critical=False,
+    )
+    .sign(key, hashes.SHA256())
+)
 
 # Write private key to file
 with open(os.path.join(cert_dir, "key.pem"), "wb") as f:
-    f.write(key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.TraditionalOpenSSL,
-        encryption_algorithm=serialization.NoEncryption(),
-    ))
+    f.write(
+        key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
 
 # Write certificate to file
 with open(os.path.join(cert_dir, "cert.pem"), "wb") as f:

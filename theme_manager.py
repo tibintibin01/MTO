@@ -8,9 +8,13 @@ DANGER = "#e74c3c"
 BG_DARK = "#1a1a1a"
 BG_LIGHT = "#f5f6fa"
 
+
 def setup_theme():
     ctk.set_appearance_mode("dark")  # "System" (standard), "Dark", "Light"
-    ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
+    ctk.set_default_color_theme(
+        "blue"
+    )  # Themes: "blue" (standard), "green", "dark-blue"
+
 
 class ModernTheme:
     FONT_FAMILY = "Segoe UI"

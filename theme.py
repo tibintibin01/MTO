@@ -1,20 +1,20 @@
 class Theme:
     # Palette
     COLORS = {
-        "primary": "#34495e",      # Dark blue-gray
-        "secondary": "#2c3e50",    # Deeper blue-gray
-        "accent": "#f4d35e",      # Gold/Yellow
+        "primary": "#34495e",  # Dark blue-gray
+        "secondary": "#2c3e50",  # Deeper blue-gray
+        "accent": "#f4d35e",  # Gold/Yellow
         "background": "#f4f1ea",  # Off-white/Cream
-        "surface": "#ffffff",      # Pure white
-        "surface_light": "#f5f6fa",# Very light gray
-        "surface_dark": "#f1f2f6", # Light gray (readonly)
-        "success": "#27ae60",      # Green
-        "error": "#c0392b",        # Red
-        "warning": "#e76f51",      # Orange
-        "text_main": "#2c3e50",    # Dark text
-        "text_muted": "#7f8c8d",   # Gray text
-        "text_on_primary": "#ffffff",# White text on dark bg
-        "border": "#d8d2c5",       # Muted border
+        "surface": "#ffffff",  # Pure white
+        "surface_light": "#f5f6fa",  # Very light gray
+        "surface_dark": "#f1f2f6",  # Light gray (readonly)
+        "success": "#27ae60",  # Green
+        "error": "#c0392b",  # Red
+        "warning": "#e76f51",  # Orange
+        "text_main": "#2c3e50",  # Dark text
+        "text_muted": "#7f8c8d",  # Gray text
+        "text_on_primary": "#ffffff",  # White text on dark bg
+        "border": "#d8d2c5",  # Muted border
     }
 
     # Typography

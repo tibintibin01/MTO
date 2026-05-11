@@ -3,9 +3,14 @@ import re
 from db_manager import db_query
 from decimal import Decimal, ROUND_HALF_UP
 
-def sync_property_billing(cur, property_id, tax_year, assessed_value, penalty, discount=0.0, has_payment=False):
+
+def sync_property_billing(
+    cur, property_id, tax_year, assessed_value, penalty, discount=0.0, has_payment=False
+):
     """Creates or updates the billing snapshot for one property and one tax year."""
-    normalized_tax_year = str(tax_year).strip() if str(tax_year).strip() else str(datetime.now().year)
+    normalized_tax_year = (
+        str(tax_year).strip() if str(tax_year).strip() else str(datetime.now().year)
+    )
     assessed_value = float(assessed_value or 0)
     penalty = float(penalty or 0)
     discount = float(discount or 0)
@@ -82,11 +87,15 @@ def allocate_payment_amount(billing_rows, amount_paid):
 
 def split_amount_across_years(total_amount, year_count):
     count = max(1, int(year_count or 1))
-    total = Decimal(str(total_amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    total = Decimal(str(total_amount or 0)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
     if count == 1:
         return [float(total)]
 
-    shared_amount = (total / Decimal(count)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    shared_amount = (total / Decimal(count)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
     amounts = [shared_amount for _ in range(count)]
     difference = total - sum(amounts, Decimal("0.00"))
     penny = Decimal("0.01")
@@ -162,27 +171,52 @@ def validate_tax_year_text(value):
     for part in parts:
         if "-" in part:
             if not re.fullmatch(r"\d{4}-\d{4}", part):
-                return {"ok": False, "message": f"Invalid tax year range: {part}. Use YYYY or YYYY-YYYY."}
+                return {
+                    "ok": False,
+                    "message": f"Invalid tax year range: {part}. Use YYYY or YYYY-YYYY.",
+                }
             start_year, end_year = [int(piece) for piece in part.split("-", 1)]
             if end_year < start_year:
-                return {"ok": False, "message": f"Invalid tax year range: {part}. End year must not be earlier than start year."}
+                return {
+                    "ok": False,
+                    "message": f"Invalid tax year range: {part}. End year must not be earlier than start year.",
+                }
             if start_year < 1900 or end_year > current_year:
-                return {"ok": False, "message": f"Tax year range {part} is outside the allowed office range."}
+                return {
+                    "ok": False,
+                    "message": f"Tax year range {part} is outside the allowed office range.",
+                }
             if (end_year - start_year) > 10:
-                return {"ok": False, "message": f"Tax year range {part} is too wide. Use up to 10 years at a time."}
+                return {
+                    "ok": False,
+                    "message": f"Tax year range {part} is too wide. Use up to 10 years at a time.",
+                }
             continue
 
         if not re.fullmatch(r"\d{4}", part):
-            return {"ok": False, "message": f"Invalid tax year: {part}. Use 4-digit years like 2025."}
+            return {
+                "ok": False,
+                "message": f"Invalid tax year: {part}. Use 4-digit years like 2025.",
+            }
 
         year = int(part)
         if year < 1900 or year > current_year:
-            return {"ok": False, "message": f"Tax year {part} is outside the allowed office range."}
+            return {
+                "ok": False,
+                "message": f"Tax year {part} is outside the allowed office range.",
+            }
         if part in seen:
-            return {"ok": False, "message": f"Tax year {part} is repeated. Remove duplicate years before saving."}
+            return {
+                "ok": False,
+                "message": f"Tax year {part} is repeated. Remove duplicate years before saving.",
+            }
         seen.add(part)
 
-    return {"ok": True, "years": normalize_tax_years(text), "text": format_tax_years(text)}
+    return {
+        "ok": True,
+        "years": normalize_tax_years(text),
+        "text": format_tax_years(text),
+    }
 
 
 def looks_like_valid_or_number(value):
@@ -202,8 +236,10 @@ def recalculate_billing_balances(cur, billing_ids):
 
     for billing_id in seen:
         # Lock the row for update to prevent race conditions
-        cur.execute("SELECT id FROM property_billings WHERE id = %s FOR UPDATE", (billing_id,))
-        
+        cur.execute(
+            "SELECT id FROM property_billings WHERE id = %s FOR UPDATE", (billing_id,)
+        )
+
         cur.execute(
             """
             SELECT COALESCE(SUM(amount_paid), 0)
@@ -229,7 +265,9 @@ def sync_payment_billings(cur, payment_id, billing_rows):
     if not payment_id:
         return
 
-    cur.execute("SELECT billing_id FROM payment_billings WHERE payment_id = %s", (payment_id,))
+    cur.execute(
+        "SELECT billing_id FROM payment_billings WHERE payment_id = %s", (payment_id,)
+    )
     previous_links = [row[0] for row in cur.fetchall() or []]
     cur.execute("DELETE FROM payment_billings WHERE payment_id = %s", (payment_id,))
     affected_billing_ids = list(previous_links)
@@ -239,7 +277,9 @@ def sync_payment_billings(cur, payment_id, billing_rows):
                 f"Missing billing link for tax year {billing_row.get('tax_year', 'unknown')}. "
                 "The yearly billing record was not created correctly."
             )
-        applied_amount = float(billing_row.get("applied_amount", billing_row.get("total_amount", 0)) or 0)
+        applied_amount = float(
+            billing_row.get("applied_amount", billing_row.get("total_amount", 0)) or 0
+        )
         affected_billing_ids.append(billing_row["billing_id"])
         if applied_amount <= 0:
             continue
@@ -286,7 +326,9 @@ def get_property_billing_history(property_id=None, term=None, limit=50):
     elif term:
         like_term = f"%{term}%"
         query += " AND (prop.td_number LIKE %s OR prop.owner_name LIKE %s OR prop.location LIKE %s OR COALESCE(prop.or_number, '') LIKE %s OR COALESCE(prop.tax_year, '') LIKE %s OR prop.accountable_officer LIKE %s)"
-        params.extend([like_term, like_term, like_term, like_term, like_term, like_term])
+        params.extend(
+            [like_term, like_term, like_term, like_term, like_term, like_term]
+        )
     else:
         return []
 
@@ -357,6 +399,7 @@ def get_property_statement_data(property_id):
         "grand_total": grand_total,
     }
 
+
 def get_report_details(selected_month="All", selected_year="All"):
     filters = []
     params = []
@@ -368,7 +411,8 @@ def get_report_details(selected_month="All", selected_year="All"):
         params.append(int(selected_year))
 
     where_clause = "WHERE prop.is_deleted = 0"
-    if filters: where_clause += " AND " + " AND ".join(filters)
+    if filters:
+        where_clause += " AND " + " AND ".join(filters)
 
     return db_query(
         f"""
@@ -383,6 +427,7 @@ def get_report_details(selected_month="All", selected_year="All"):
         fetch=True,
         commit=False,
     )
+
 
 def get_rpt_receivables_summary(report_year):
     try:
@@ -409,12 +454,13 @@ def get_rpt_receivables_summary(report_year):
         fetch=True,
         commit=False,
     )
-    if not res: return None
+    if not res:
+        return None
     row = res[0]
     beg = float(row[0] or 0)
     curr_ass = float(row[1] or 0)
     coll = float(row[2] or 0)
-    adj = 0.0 # Placeholder
+    adj = 0.0  # Placeholder
     end = beg + curr_ass - coll + adj
 
     return {
@@ -425,5 +471,3 @@ def get_rpt_receivables_summary(report_year):
         "adjustments": adj,
         "ending_receivable": end,
     }
-
-

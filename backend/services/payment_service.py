@@ -4,7 +4,10 @@ import db_manager as db
 from services.auth_service import get_username, require_permission
 from services.billing_service import format_tax_years, normalize_date_input
 
-def find_duplicate_payment(property_id, or_number, tax_year_text, exclude_payment_id=None, cur=None):
+
+def find_duplicate_payment(
+    property_id, or_number, tax_year_text, exclude_payment_id=None, cur=None
+):
     normalized_years = format_tax_years(tax_year_text)
     if not property_id or not or_number or not normalized_years:
         return None
@@ -21,10 +24,12 @@ def find_duplicate_payment(property_id, or_number, tax_year_text, exclude_paymen
     if cur is not None:
         cur.execute(query, tuple(params))
         row = cur.fetchone()
-        if not row: return None
+        if not row:
+            return None
     else:
         rows = db.db_query(query, tuple(params), fetch=True, commit=False)
-        if not rows: return None
+        if not rows:
+            return None
         row = rows[0]
     return {
         "payment_id": row[0],
@@ -34,7 +39,10 @@ def find_duplicate_payment(property_id, or_number, tax_year_text, exclude_paymen
         "date_paid": row[4],
     }
 
-def find_duplicate_payment_entry(td_number, or_number, or_date, tax_year_text, exclude_payment_id=None, cur=None):
+
+def find_duplicate_payment_entry(
+    td_number, or_number, or_date, tax_year_text, exclude_payment_id=None, cur=None
+):
     td_text = str(td_number or "").strip()
     or_text = str(or_number or "").strip()
     date_text = normalize_date_input(or_date)
@@ -59,10 +67,12 @@ def find_duplicate_payment_entry(td_number, or_number, or_date, tax_year_text, e
     if cur is not None:
         cur.execute(query, tuple(params))
         row = cur.fetchone()
-        if not row: return None
+        if not row:
+            return None
     else:
         rows = db.db_query(query, tuple(params), fetch=True, commit=False)
-        if not rows: return None
+        if not rows:
+            return None
         row = rows[0]
     return {
         "payment_id": row[0],
@@ -74,6 +84,7 @@ def find_duplicate_payment_entry(td_number, or_number, or_date, tax_year_text, e
         "tax_year": row[6],
         "amount": float(row[7] or 0),
     }
+
 
 def get_existing_payment_amount(property_id, or_number, or_date, tax_year_text):
     normalized_years = format_tax_years(tax_year_text)
@@ -95,17 +106,24 @@ def get_existing_payment_amount(property_id, or_number, or_date, tax_year_text):
         fetch=True,
         commit=False,
     )
-    if not rows: return None
+    if not rows:
+        return None
     return float(rows[0][0] or 0)
 
+
 def acquire_payment_post_lock(property_id, user_name, stale_minutes=30):
-    return db._acquire_named_lock("payment_post_locks", "property_id", property_id, user_name, stale_minutes)
+    return db._acquire_named_lock(
+        "payment_post_locks", "property_id", property_id, user_name, stale_minutes
+    )
+
 
 def release_payment_post_lock(property_id, user_name):
     db._release_named_lock("payment_post_locks", "property_id", property_id, user_name)
 
+
 def release_all_payment_post_locks(user_name):
     db._release_all_named_locks("payment_post_locks", user_name)
+
 
 def get_next_or_number(default_prefix="OR-"):
     rows = db.db_query(
@@ -122,16 +140,19 @@ def get_next_or_number(default_prefix="OR-"):
     for row in rows or []:
         current = str(row[0]).strip()
         match = re.search(r"^(.*?)(\d+)$", current)
-        if not match: continue
+        if not match:
+            continue
         prefix, digits = match.groups()
         next_value = int(digits) + 1
         return f"{prefix}{next_value:0{len(digits)}d}"
     return f"{default_prefix}000001"
 
+
 def get_recent_payments(limit=8):
     safe_limit = max(1, int(limit))
-    rows = db.db_query(
-        f"""
+    rows = (
+        db.db_query(
+            f"""
         SELECT pay.date_paid, pay.or_number, prop.td_number, prop.owner_name, pay.tax_year, pay.amount
         FROM payments pay
         JOIN properties prop ON prop.id = pay.property_id
@@ -139,19 +160,23 @@ def get_recent_payments(limit=8):
         ORDER BY COALESCE(pay.date_paid, DATE(pay.created_at)) DESC, pay.id DESC
         LIMIT {safe_limit}
         """,
-        fetch=True,
-        commit=False,
-    ) or []
+            fetch=True,
+            commit=False,
+        )
+        or []
+    )
     cleaned = []
     for row in rows:
         if isinstance(row, (list, tuple)) and len(row) >= 6:
             cleaned.append(row)
     return cleaned
 
+
 def get_monthly_collection_trend(months=6):
     safe_months = max(1, int(months))
-    rows = db.db_query(
-        f"""
+    rows = (
+        db.db_query(
+            f"""
         SELECT DATE_FORMAT(bucket.month_start, '%%Y-%%m') AS month_key,
                COALESCE(SUM(pay.amount), 0) AS total_amount
         FROM (
@@ -168,14 +193,17 @@ def get_monthly_collection_trend(months=6):
         GROUP BY bucket.month_start
         ORDER BY bucket.month_start
         """,
-        fetch=True,
-        commit=False,
-    ) or []
+            fetch=True,
+            commit=False,
+        )
+        or []
+    )
     cleaned = []
     for row in rows:
         if isinstance(row, (list, tuple)) and len(row) >= 2:
             cleaned.append({"month": row[0] or "", "total": float(row[1] or 0)})
     return cleaned
+
 
 def get_unified_payment_history(term):
     """
@@ -211,6 +239,7 @@ def get_unified_payment_history(term):
     params = (term, like_term, like_term)
     return db.db_query(query, params, fetch=True, commit=False) or []
 
+
 def get_payment_ledger(td_number):
     """
     Specific ledger query for the Dossier UI.
@@ -232,10 +261,12 @@ def get_payment_ledger(td_number):
     """
     return db.db_query(query, (td_number,), fetch=True, commit=False) or []
 
+
 def get_payment_receipt_records(term):
     like_term = f"%{term}%"
-    return db.db_query(
-        """
+    return (
+        db.db_query(
+            """
         SELECT pay.id, pay.date_paid, prop.td_number, prop.owner_name,
                prop.kind_of_property, pay.or_number, pay.tax_year, pay.amount,
                rh.file_path, rh.generated_by, rh.status, rh.id as rh_id
@@ -246,10 +277,13 @@ def get_payment_receipt_records(term):
           AND (prop.td_number LIKE %s OR prop.owner_name LIKE %s OR pay.or_number LIKE %s)
         ORDER BY pay.date_paid DESC, pay.id DESC
         """,
-        (like_term, like_term, like_term),
-        fetch=True,
-        commit=False,
-    ) or []
+            (like_term, like_term, like_term),
+            fetch=True,
+            commit=False,
+        )
+        or []
+    )
+
 
 def get_payment_receipt_details(payment_id):
     rows = db.db_query(
@@ -268,19 +302,35 @@ def get_payment_receipt_details(payment_id):
         fetch=True,
         commit=False,
     )
-    if not rows: return None
+    if not rows:
+        return None
     r = rows[0]
     return {
-        "property_id": r[0], "td_number": r[1], "owner_name": r[2], "payor_name": r[3],
-        "lot_number": r[4], "area": r[5], "location": r[6], "kind_of_property": r[7],
-        "accountable_officer": r[8], "assessed_value": float(r[9] or 0),
-        "penalty": float(r[10] or 0), "payment_id": r[11], "amount": float(r[12] or 0),
-        "or_number": r[13], "date_paid": r[14], "tax_year": r[15], "file_path": r[16],
-        "receipt_history_id": r[17]
+        "property_id": r[0],
+        "td_number": r[1],
+        "owner_name": r[2],
+        "payor_name": r[3],
+        "lot_number": r[4],
+        "area": r[5],
+        "location": r[6],
+        "kind_of_property": r[7],
+        "accountable_officer": r[8],
+        "assessed_value": float(r[9] or 0),
+        "penalty": float(r[10] or 0),
+        "payment_id": r[11],
+        "amount": float(r[12] or 0),
+        "or_number": r[13],
+        "date_paid": r[14],
+        "tax_year": r[15],
+        "file_path": r[16],
+        "receipt_history_id": r[17],
     }
 
+
 @require_permission("receipt_generate")
-def save_receipt_record(property_id, payment_id, details, file_path, user_name, **kwargs):
+def save_receipt_record(
+    property_id, payment_id, details, file_path, user_name, **kwargs
+):
     def operation(cur):
         cur.execute(
             """
@@ -288,7 +338,16 @@ def save_receipt_record(property_id, payment_id, details, file_path, user_name, 
             VALUES (%s, %s, %s, %s, %s, 'PDF READY')
             ON DUPLICATE KEY UPDATE file_path=%s, generated_by=%s, generated_at=NOW(), status='PDF READY'
             """,
-            (property_id, payment_id, details.get("or_number"), file_path, get_username(user_name), file_path, get_username(user_name)),
+            (
+                property_id,
+                payment_id,
+                details.get("or_number"),
+                file_path,
+                get_username(user_name),
+                file_path,
+                get_username(user_name),
+            ),
         )
         return {"lastrowid": cur.lastrowid}
+
     return db.execute_transaction(operation)

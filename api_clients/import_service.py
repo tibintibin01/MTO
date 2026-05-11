@@ -1,11 +1,18 @@
 import pandas as pd
 from datetime import datetime
 from db_manager import (
-    validate_tax_year_text, normalize_date_input, looks_like_valid_or_number,
-    find_duplicate_payment_entry, find_duplicate_payment, execute_transaction,
-    split_amount_across_years, sync_property_billing, allocate_payment_amount,
-    sync_payment_billings
+    validate_tax_year_text,
+    normalize_date_input,
+    looks_like_valid_or_number,
+    find_duplicate_payment_entry,
+    find_duplicate_payment,
+    execute_transaction,
+    split_amount_across_years,
+    sync_property_billing,
+    allocate_payment_amount,
+    sync_payment_billings,
 )
+
 
 def _normalize_header(value):
     text = str(value).strip().lower()
@@ -33,7 +40,15 @@ def _clean_text(value):
 def _clean_number(value):
     if pd.isna(value) or value == "":
         return 0.0
-    cleaned = str(value).replace(",", "").replace("PHP", "").replace("P", "").replace("₱", "").replace("â‚±", "").strip()
+    cleaned = (
+        str(value)
+        .replace(",", "")
+        .replace("PHP", "")
+        .replace("P", "")
+        .replace("₱", "")
+        .replace("â‚±", "")
+        .strip()
+    )
     return float(cleaned) if cleaned else 0.0
 
 
@@ -113,7 +128,11 @@ def import_properties_from_excel(file_path, user_name):
         "tax_year": ["tax_year"],
     }
 
-    missing = [label for label, aliases in required_groups.items() if not any(alias in df.columns for alias in aliases)]
+    missing = [
+        label
+        for label, aliases in required_groups.items()
+        if not any(alias in df.columns for alias in aliases)
+    ]
     if missing:
         pretty = ", ".join(missing)
         return {
@@ -125,7 +144,14 @@ def import_properties_from_excel(file_path, user_name):
             "errors": [f"Missing required Excel column(s): {pretty}"],
         }
 
-    summary = {"inserted": 0, "updated": 0, "skipped": 0, "failed": 0, "duplicates": 0, "errors": []}
+    summary = {
+        "inserted": 0,
+        "updated": 0,
+        "skipped": 0,
+        "failed": 0,
+        "duplicates": 0,
+        "errors": [],
+    }
 
     for row_number, raw_row in enumerate(df.to_dict(orient="records"), start=2):
         td_number = _clean_text(_pick_field(raw_row, required_groups["td_number"]))
@@ -137,15 +163,25 @@ def import_properties_from_excel(file_path, user_name):
 
         if not td_number or not owner_name:
             summary["failed"] += 1
-            summary["errors"].append(f"Row {row_number}: TD Number and Owner Name are required.")
+            summary["errors"].append(
+                f"Row {row_number}: TD Number and Owner Name are required."
+            )
             continue
 
         try:
-            assessed_value = _clean_number(_pick_field(raw_row, required_groups["assessed_value"], 0))
+            assessed_value = _clean_number(
+                _pick_field(raw_row, required_groups["assessed_value"], 0)
+            )
             penalty = _clean_number(_pick_field(raw_row, ["penalty", "penalties"], 0))
-            or_number = _clean_import_or_number(_pick_field(raw_row, required_groups["or_number"], ""))
-            or_date = _normalize_import_date(_pick_field(raw_row, required_groups["or_date"], ""))
-            tax_year_raw = _clean_import_tax_year(_pick_field(raw_row, required_groups["tax_year"], ""))
+            or_number = _clean_import_or_number(
+                _pick_field(raw_row, required_groups["or_number"], "")
+            )
+            or_date = _normalize_import_date(
+                _pick_field(raw_row, required_groups["or_date"], "")
+            )
+            tax_year_raw = _clean_import_tax_year(
+                _pick_field(raw_row, required_groups["tax_year"], "")
+            )
             tax_year_check = validate_tax_year_text(tax_year_raw)
 
             if not or_number:
@@ -168,12 +204,26 @@ def import_properties_from_excel(file_path, user_name):
             property_values = (
                 td_number,
                 owner_name,
-                _clean_text(_pick_field(raw_row, ["payor", "payor_name", "paid_by"], owner_name)),
+                _clean_text(
+                    _pick_field(raw_row, ["payor", "payor_name", "paid_by"], owner_name)
+                ),
                 _clean_text(_pick_field(raw_row, ["lot_number", "lot_no", "lot"], "")),
                 _clean_text(_pick_field(raw_row, ["area"], "")),
                 _clean_text(_pick_field(raw_row, ["location", "address"], "")),
-                _clean_text(_pick_field(raw_row, ["kind_of_property", "property_kind", "property_type", "kind"], "")),
-                _clean_text(_pick_field(raw_row, ["accountable_officer", "posted_by", "officer"], user_name)),
+                _clean_text(
+                    _pick_field(
+                        raw_row,
+                        ["kind_of_property", "property_kind", "property_type", "kind"],
+                        "",
+                    )
+                ),
+                _clean_text(
+                    _pick_field(
+                        raw_row,
+                        ["accountable_officer", "posted_by", "officer"],
+                        user_name,
+                    )
+                ),
                 assessed_value,
                 penalty,
                 or_number,
@@ -182,7 +232,10 @@ def import_properties_from_excel(file_path, user_name):
             )
 
             def import_row_transaction(cur):
-                cur.execute("SELECT id FROM properties WHERE td_number = %s LIMIT 1", (td_number,))
+                cur.execute(
+                    "SELECT id FROM properties WHERE td_number = %s LIMIT 1",
+                    (td_number,),
+                )
                 existing = cur.fetchone()
                 property_id = existing[0] if existing else None
 
@@ -235,7 +288,10 @@ def import_properties_from_excel(file_path, user_name):
                 property_id = cur.lastrowid
                 action = "inserted"
 
-                cur.execute("SELECT id FROM payments WHERE property_id = %s ORDER BY id DESC LIMIT 1", (property_id,))
+                cur.execute(
+                    "SELECT id FROM payments WHERE property_id = %s ORDER BY id DESC LIMIT 1",
+                    (property_id,),
+                )
                 payment_row = cur.fetchone()
                 payment_values = (
                     total_amount,
@@ -275,9 +331,13 @@ def import_properties_from_excel(file_path, user_name):
                     payment_id = cur.lastrowid
 
                 billing_rows = []
-                assessed_shares = split_amount_across_years(assessed_value, len(tax_years))
+                assessed_shares = split_amount_across_years(
+                    assessed_value, len(tax_years)
+                )
                 penalty_shares = split_amount_across_years(penalty, len(tax_years))
-                for tax_year, assessed_share, penalty_share in zip(tax_years, assessed_shares, penalty_shares):
+                for tax_year, assessed_share, penalty_share in zip(
+                    tax_years, assessed_shares, penalty_shares
+                ):
                     billing_rows.append(
                         sync_property_billing(
                             cur,
@@ -289,14 +349,20 @@ def import_properties_from_excel(file_path, user_name):
                         )
                     )
 
-                allocated_billing_rows = allocate_payment_amount(billing_rows, total_amount)
+                allocated_billing_rows = allocate_payment_amount(
+                    billing_rows, total_amount
+                )
                 if not payment_id:
-                    raise ValueError("Payment record could not be verified after import.")
+                    raise ValueError(
+                        "Payment record could not be verified after import."
+                    )
                 sync_payment_billings(cur, payment_id, allocated_billing_rows)
 
                 return action
 
-            result = execute_transaction(import_row_transaction, show_errors=False, return_error=True)
+            result = execute_transaction(
+                import_row_transaction, show_errors=False, return_error=True
+            )
             if result == "inserted":
                 summary["inserted"] += 1
             elif result == "updated":
@@ -327,5 +393,3 @@ def import_properties_from_excel(file_path, user_name):
             summary["errors"].append(f"Row {row_number}: {error_text}")
 
     return summary
-
-
