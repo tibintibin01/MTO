@@ -141,4 +141,5 @@ class ToastNotification(ctk.CTkToplevel):
 
 def show_toast(master, message, type="info"):
     colors = {"info": "#3498db", "success": "#2ecc71", "error": "#e74c3c", "warning": "#f39c12"}
-    ToastNotification(master, message, colors.get(type, "#3498db"))
+    # Centralized UI thread safety: ensure windows are only created in the main thread
+    master.after(0, lambda: ToastNotification(master, message, colors.get(type, "#3498db")))

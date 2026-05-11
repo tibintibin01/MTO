@@ -5,6 +5,7 @@ import customtkinter as ctk
 from datetime import datetime
 from typing import Any, Optional, Dict
 from PIL import Image
+from pathlib import Path
 
 import api_clients.auth_service as auth
 import api_clients.property_service as prop
@@ -236,8 +237,20 @@ class DashboardApp(ctk.CTk):
         self.sidebar = ctk.CTkFrame(self, width=280, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         
+        # Logo Section with Robust Path Management
+        try:
+            logo_path = Path(__file__).parent / "bagongpilipinas.png"
+            if logo_path.exists():
+                self.logo_img = ctk.CTkImage(Image.open(str(logo_path)), size=(180, 180))
+                self.logo_lbl = ctk.CTkLabel(self.sidebar, image=self.logo_img, text="")
+                self.logo_lbl.pack(pady=(30, 10))
+            else:
+                raise FileNotFoundError
+        except:
+            # Professional Fallback Placeholder
+            ctk.CTkLabel(self.sidebar, text="TREASURY SYSTEM", font=ModernTheme.H2, text_color="#3498db").pack(pady=(30, 10))
+
         # Profile Section
-        ctk.CTkLabel(self.sidebar, text="TREASURY SYSTEM", font=ModernTheme.H2, text_color="#3498db").pack(pady=(30, 10))
         ctk.CTkLabel(self.sidebar, text=self.username, font=ModernTheme.BODY).pack()
         ctk.CTkLabel(self.sidebar, text=auth.get_user_role(self.user_data).upper(), font=("Segoe UI", 10, "bold"), text_color="gray").pack(pady=(0, 30))
         
