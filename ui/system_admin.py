@@ -231,7 +231,66 @@ class SystemAdminPage:
             messagebox.showerror("Error", f"Backup folder not found at {path}")
 
     def restore_backup(self):
-        messagebox.showwarning(
-            "Access Restricted",
-            "Restoring a database is a high-risk operation.\n\nPlease contact System Support to verify the SQL manifest.",
+        from tkinter import filedialog, simpledialog
+        
+        # 1. Pick the file
+        file_path = filedialog.askopenfilename(
+            title="SELECT BACKUP FILE TO RESTORE",
+            initialdir=r"C:\MTO\backups\local",
+            filetypes=[("SQL Backup", "*.sql"), ("All Files", "*.*")]
         )
+        
+        if not file_path:
+            return
+            
+        # 2. Critical Warning
+        confirm = messagebox.askyesno(
+            "⚠️ CRITICAL WARNING",
+            "This operation will OVERWRITE your current database with the selected backup.\n\n"
+            "All data entered AFTER this backup was created will be PERMANENTLY LOST.\n\n"
+            "Do you want to proceed with the safety verification?",
+            icon="warning"
+        )
+        
+        if not confirm:
+            return
+            
+        # 3. Double-Lock Confirmation
+        user_input = simpledialog.askstring(
+            "FINAL VERIFICATION",
+            "To prevent accidental data loss, please type 'RESTORE' to confirm:",
+            parent=self.container
+        )
+        
+        if user_input != "RESTORE":
+            messagebox.showinfo("Cancelled", "Restoration cancelled. Verification string did not match.")
+            return
+            
+        # 4. Trigger Restore
+        self.restore_btn.configure(state="disabled", text="⏮️ RESTORING...")
+        
+        def run_restore():
+            try:
+                import api_clients.system_service as system_svc
+                res = system_svc.restore_backup(file_path)
+                
+                if res.get("status") == "success":
+                    data = res.get("data", {})
+                    safety = data.get("safety_backup", "Unknown")
+                    messagebox.showinfo(
+                        "RESTORE COMPLETE",
+                        f"🎉 System has been successfully rolled back.\n\n"
+                        f"Restored: {file_path}\n"
+                        f"Safety Copy Created: {safety}\n\n"
+                        "Please RESTART the application to ensure all data is reloaded."
+                    )
+                else:
+                    messagebox.showerror("Restore Error", f"The server failed to restore: {res.get('detail', 'Unknown error')}")
+            except Exception as e:
+                messagebox.showerror("Disaster Recovery Error", f"CRITICAL FAILURE: {str(e)}")
+            finally:
+                if self.container.winfo_exists():
+                    self.restore_btn.configure(state="normal", text="⏮️ RESTORE")
+
+        import threading
+        threading.Thread(target=run_restore, daemon=True).start()

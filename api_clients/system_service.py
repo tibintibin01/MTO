@@ -49,3 +49,7 @@ def validate_import(file_path, mode="property"):
 
 def commit_import(data, mode="property"):
     return api_request("POST", f"/system/import/commit?mode={mode}", data=data)
+
+
+def restore_backup(file_path):
+    return api_request("POST", f"/system/restore?file_path={file_path}")

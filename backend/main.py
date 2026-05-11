@@ -750,6 +750,20 @@ async def get_backup_verification_status(current_user: dict = Depends(get_curren
     return get_backup_status()
 
 
+@app.post("/system/restore", tags=["System"], dependencies=[Depends(admin_only)])
+async def restore_system_backup(
+    file_path: str, current_user: dict = Depends(get_current_user)
+):
+    """Performs a full database restore from a SQL file."""
+    from backend.services.system_service import restore_database
+
+    try:
+        result = restore_database(file_path)
+        return {"status": "success", "data": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/payments/{payment_id}/receipt-pdf", dependencies=[Depends(write_access)])
 async def generate_receipt_pdf(
     payment_id: int, current_user: dict = Depends(get_current_user)
