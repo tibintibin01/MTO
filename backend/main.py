@@ -8,6 +8,9 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Add parent directory to path to import existing services
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,6 +30,11 @@ from fastapi.responses import FileResponse
 from backend.schemas import PropertySaveSchema, ReceiptRecordSchema, LogActionSchema, UserUpdateSchema, PasswordResetSchema
 
 app = FastAPI(title="Treasury Management API", version="2.0.0")
+
+# Rate Limiter Configuration
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS Configuration - Lock the door to everyone except our local apps
 origins = [
@@ -134,7 +142,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 @app.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+@limiter.limit("10/minute")
+async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     try:
         user = auth_svc.verify_user_login(form_data.username, form_data.password)
         if not user:
@@ -224,7 +233,8 @@ async def restore_property(property_id: int, current_user: dict = Depends(get_cu
     return {"status": "restored"}
 
 @app.post("/properties/import-assessment")
-async def import_assessment_roll(file: UploadFile = File(...), current_user: dict = Depends(write_access)):
+@limiter.limit("2/minute")
+async def import_assessment_roll(request: Request, file: UploadFile = File(...), current_user: dict = Depends(write_access)):
     """Imports Assessment Roll data from Excel."""
     import shutil
     temp_path = f"temp_import_{datetime.now().timestamp()}.xlsx"
