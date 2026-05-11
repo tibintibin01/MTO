@@ -14,13 +14,14 @@ import api_clients.system_service as system
 from theme_manager import setup_theme, ModernTheme
 from ui_components import ModernChartWidget, show_toast
 
-from ui.logs import AuditLogsPage
+
 from ui.ledger import LedgerPage
 from ui.property import PropertyPage
 from ui.recycle import RecycleBinPage
 from ui.reports import ReportsPage
 from ui.assessment_roll import AssessmentRollPage
 from ui.system_admin import SystemAdminPage
+from ui.audit_trail import AuditTrailPage
 from ui.command_palette import CommandPalette
 
 # Ensure theme is loaded
@@ -346,6 +347,11 @@ class DashboardApp(ctk.CTk):
         if auth.has_permission(self.user_data, "property_view"):
             self.create_nav_btn(
                 "Assessment Roll", lambda: self.load_page(AssessmentRollPage)
+            )
+
+        if auth.has_permission(self.user_data, "view_logs"):
+            self.create_nav_btn(
+                "📑 Audit Trail", lambda: self.load_page(AuditTrailPage)
             )
 
         if any(

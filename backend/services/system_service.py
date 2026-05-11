@@ -170,12 +170,25 @@ def get_audit_stats():
     }
 
 
-def get_audit_logs(user_id=None, limit=100):
+def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit=100, offset=0):
     filters = []
     params = []
-    if user_id:
-        filters.append("user_id = %s")
-        params.append(user_id)
+
+    if username and username != "ALL":
+        filters.append("username = %s")
+        params.append(username)
+
+    if search:
+        filters.append("(action LIKE %s OR table_name LIKE %s OR CAST(record_id AS CHAR) LIKE %s)")
+        params.append(f"%{search}%")
+
+    if date_from:
+        filters.append("DATE(timestamp) >= %s")
+        params.append(date_from)
+
+    if date_to:
+        filters.append("DATE(timestamp) <= %s")
+        params.append(date_to)
 
     where_clause = "WHERE 1=1"
     if filters:
@@ -186,15 +199,15 @@ def get_audit_logs(user_id=None, limit=100):
         FROM audit_logs
         {where_clause}
         ORDER BY timestamp DESC
-        LIMIT %s
+        LIMIT %s OFFSET %s
     """
-    params.append(limit)
+    params.extend([int(limit), int(offset)])
 
     rows = db.db_query(query, tuple(params), fetch=True, commit=False) or []
     return [
         {
             "id": r[0],
-            "timestamp": r[1],
+            "timestamp": r[1].strftime("%Y-%m-%d %H:%M:%S") if hasattr(r[1], "strftime") else str(r[1]),
             "username": r[2],
             "action": r[3],
             "table_name": r[4],

@@ -146,11 +146,14 @@ class RoleChecker:
 
     def __call__(self, current_user: dict = Depends(get_current_user)):
         # Now we read from the token payload instead of DB
-        role = str(current_user.get("role", "")).lower()
+        role = str(current_user.get("role", "")).strip().lower()
+        print(f"DEBUG AUTH: User='{current_user.get('username')}' Role='{role}' Required={self.allowed_roles}")
+        
         if role not in self.allowed_roles:
+            print(f"DEBUG AUTH: ACCESS DENIED. Role '{role}' not in {self.allowed_roles}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied: Required permissions missing.",
+                detail=f"Access denied: Required permissions missing. You have '{role}', need one of {self.allowed_roles}",
             )
         return current_user
 
@@ -648,6 +651,31 @@ async def log_system_action(
 @app.get("/system/audit-stats", dependencies=[Depends(admin_only)])
 async def get_audit_stats(current_user: dict = Depends(get_current_user)):
     return sys_svc.get_audit_stats()
+
+
+@app.get("/system/audit-logs", dependencies=[Depends(admin_only)])
+async def list_audit_logs(
+    username: Optional[str] = None,
+    search: Optional[str] = "",
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user),
+):
+    return sys_svc.get_audit_logs(
+        username=username,
+        search=search,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@app.get("/system/audit-users", dependencies=[Depends(admin_only)])
+async def list_audit_users(current_user: dict = Depends(get_current_user)):
+    return sys_svc.get_distinct_log_users()
 
 
 @app.get("/system/logs", tags=["System"], dependencies=[Depends(admin_only)])
