@@ -89,32 +89,20 @@ async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        auth_header = request.headers.get("Authorization")
-        print(f"DEBUG AUTH: Incoming Request - Method: {request.method} | Path: {request.url.path}")
-        print(f"DEBUG AUTH: Authorization Header: {auth_header[:25]}..." if auth_header else "DEBUG AUTH: No Authorization Header Found!")
-        
-        print(f"DEBUG AUTH: Decoding token for request...")
+        # DECOUPLED: Read user info directly from JWT to avoid DB fetch on every request
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: int = payload.get("id")
         username: str = payload.get("sub")
-        if username is None:
-            print("DEBUG AUTH: Username not found in payload")
+        role: str = payload.get("role")
+        
+        if username is None or role is None or user_id is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
-    except Exception as e:
-        print(f"DEBUG AUTH: UNEXPECTED AUTH ERROR: {type(e).__name__}: {str(e)}")
-        import traceback
-        traceback.print_exc()
+            
+        return {"id": user_id, "username": username, "role": role}
+    except JWTError:
         raise credentials_exception
-    
-    try:
-        user = auth_svc.get_user_by_username(token_data.username)
-        if user is None:
-            print(f"DEBUG AUTH: User {token_data.username} not found in DB")
-            raise credentials_exception
-        print(f"DEBUG AUTH: Auth SUCCESS for user: {token_data.username}")
-        return user
     except Exception as e:
-        print(f"DEBUG AUTH: DB ERROR DURING AUTH: {str(e)}")
+        print(f"AUTH ERROR: {str(e)}")
         raise credentials_exception
 
 class RoleChecker:
@@ -122,8 +110,8 @@ class RoleChecker:
         self.allowed_roles = allowed_roles
 
     def __call__(self, current_user: dict = Depends(get_current_user)):
-        user_role = auth_svc.get_user_role(current_user)
-        if user_role not in self.allowed_roles:
+        # Now we read from the token payload instead of DB
+        if current_user.get("role") not in self.allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied: Required permissions missing."
@@ -157,7 +145,8 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             )
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
-            data={"sub": user["username"], "role": user["role"]}, expires_delta=access_token_expires
+            data={"sub": user["username"], "role": user["role"], "id": user["id"]}, 
+            expires_delta=access_token_expires
         )
         return {"access_token": access_token, "token_type": "bearer"}
     except HTTPException:

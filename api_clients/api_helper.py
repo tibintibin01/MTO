@@ -6,6 +6,38 @@ API_BASE_URL = BASE_URL # Alias for auth_service compatibility
 
 _SESSION_TOKEN = None
 
+def is_token_expired(token):
+    """
+    Decodes the JWT payload (no signature verification) to check the 'exp' field.
+    This allows the client to know if the session is over without a roundtrip.
+    """
+    try:
+        import base64
+        import json
+        import time
+        
+        # JWT is header.payload.signature
+        parts = token.split('.')
+        if len(parts) != 3:
+            return True
+            
+        payload_b64 = parts[1]
+        # Add padding
+        missing_padding = len(payload_b64) % 4
+        if missing_padding:
+            payload_b64 += '=' * (4 - missing_padding)
+            
+        payload_json = base64.b64decode(payload_b64).decode('utf-8')
+        payload = json.loads(payload_json)
+        
+        exp = payload.get('exp')
+        if not exp:
+            return False
+            
+        return time.time() > exp
+    except Exception:
+        return True # Default to expired if malformed
+
 def set_token(token):
     """Sets the global bearer token for all subsequent API requests."""
     global _SESSION_TOKEN
@@ -20,6 +52,12 @@ def api_request(method, endpoint, data=None, params=None, files=None, raw_respon
     
     headers = {}
     if _SESSION_TOKEN:
+        # Verify expiration locally before sending
+        if is_token_expired(_SESSION_TOKEN):
+            print("SESSION EXPIRED: Token check failed locally.")
+            # We raise a custom exception that the UI can catch to show a login prompt
+            raise Exception("Your session has expired. Please log in again.")
+            
         headers["Authorization"] = f"Bearer {_SESSION_TOKEN}"
 
     try:
