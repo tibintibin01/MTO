@@ -64,7 +64,8 @@ class LoginApp(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
 
         # --- Sidebar / Branding ---
-        self.brand_frame = ctk.CTkFrame(self, corner_radius=0, fg_color=ModernTheme.PRIMARY, border_width=0)
+        # Using a darker color to match the image background perfectly (#0b162c)
+        self.brand_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="#0b162c", border_width=0)
         self.brand_frame.grid(row=0, column=0, sticky="nsew")
 
         try:
