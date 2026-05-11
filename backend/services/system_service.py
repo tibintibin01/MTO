@@ -56,9 +56,7 @@ def restore_database(sql_file_path):
         cmd.insert(2, f"-p{db_pass}")
 
     try:
-        # Close any existing connection to avoid state issues
-        db.close_db_connection()
-
+        # Proceed with restore without explicit close (handled by process isolation)
         with open(sql_file_path, "r", encoding="utf-8", errors="ignore") as source:
             result = subprocess.run(
                 cmd, 
