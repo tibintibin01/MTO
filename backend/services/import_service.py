@@ -112,4 +112,76 @@ def commit_property_import(data_list, user):
         log_action(user, f"Bulk imported {count} property records.")
         return count
 
-    return db.execute_transaction(operation)
+def import_assessment_roll_from_excel(file_path, user):
+    """
+    Imports the entire Assessment Roll from an Excel file.
+    Updates existing records or inserts new ones based on TD Number.
+    """
+    from backend.services.system_service import log_action
+    import pandas as pd
+    
+    try:
+        df = pd.read_excel(file_path)
+        # Standardize headers
+        df.columns = [str(c).strip().upper() for c in df.columns]
+        
+        # Mapping for the Assessment Roll specific headers
+        mapping = {
+            "TD NUMBER": ["TD NO.", "TD NUMBER", "TAX DECLARATION"],
+            "PIN": ["PIN", "PROPERTY INDEX NUMBER"],
+            "OWNER": ["PROPERTY OWNER", "OWNER NAME", "OWNER"],
+            "LOCATION": ["LOCATION", "ADDRESS", "BARANGAY"],
+            "VALUE": ["ASSESSED VALUE", "VALUE", "MARKET VALUE"],
+            "KIND": ["CLASSIFICATION", "KIND", "KIND OF PROPERTY"]
+        }
+        
+        found_cols = {}
+        for key, aliases in mapping.items():
+            match = next((c for c in df.columns if c in aliases), None)
+            found_cols[key] = match
+
+        def operation(cur):
+            inserted = 0
+            updated = 0
+            failed = 0
+            errors = []
+            
+            for index, row in df.iterrows():
+                try:
+                    td = str(row.get(found_cols["TD NUMBER"], "")).strip()
+                    if not td: continue
+                    
+                    owner = str(row.get(found_cols["OWNER"], "")).strip()
+                    kind = str(row.get(found_cols["KIND"], "LAND")).strip().upper()
+                    loc = str(row.get(found_cols["LOCATION"], "")).strip()
+                    try:
+                        val = float(row.get(found_cols["VALUE"], 0))
+                    except:
+                        val = 0.0
+                        
+                    # Check if exists
+                    cur.execute("SELECT id FROM properties WHERE td_number = %s", (td,))
+                    exists = cur.fetchone()
+                    
+                    if exists:
+                        cur.execute(
+                            "UPDATE properties SET owner_name = %s, kind_of_property = %s, assessed_value = %s, updated_at = NOW() WHERE id = %s",
+                            (owner, kind, val, exists[0])
+                        )
+                        updated += 1
+                    else:
+                        cur.execute(
+                            "INSERT INTO properties (td_number, owner_name, kind_of_property, assessed_value, location, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
+                            (td, owner, kind, val, loc)
+                        )
+                        inserted += 1
+                except Exception as row_err:
+                    failed += 1
+                    errors.append(f"Row {index+2}: {str(row_err)}")
+            
+            log_action(user, f"Bulk Assessment Import: {inserted} new, {updated} updated.")
+            return {"inserted": inserted, "updated": updated, "failed": failed, "errors": errors}
+
+        return db.execute_transaction(operation)
+    except Exception as e:
+        return {"success": False, "error": str(e)}

@@ -252,13 +252,6 @@ async def reset_user_password(
     return {"status": "password_reset"}
 
 
-@app.get("/system/audit-logs", dependencies=[Depends(admin_only)])
-async def get_audit_logs(
-    user_id: Optional[int] = None,
-    limit: int = 100,
-    current_user: dict = Depends(get_current_user),
-):
-    return sys_svc.get_audit_logs(user_id=user_id, limit=limit)
 
 
 # --- Property Routes ---

@@ -90,8 +90,8 @@ class LedgerPage:
         self.tree.tag_configure('oddrow', background="#2b2b2b", foreground="white")
         self.tree.tag_configure('evenrow', background="#333333", foreground="white")
         
-        self.tree.pack(side="left", fill="both", expand=True)
         scrolly.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
         
         self.tree.bind("<<TreeviewSelect>>", self.on_selection_change)
         self.tree.bind("<Double-1>", lambda e: self.open_receipt())

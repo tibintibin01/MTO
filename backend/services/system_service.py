@@ -180,7 +180,7 @@ def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit
 
     if search:
         filters.append("(action LIKE %s OR table_name LIKE %s OR CAST(record_id AS CHAR) LIKE %s)")
-        params.append(f"%{search}%")
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
 
     if date_from:
         filters.append("DATE(timestamp) >= %s")
