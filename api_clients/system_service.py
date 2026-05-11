@@ -40,12 +40,12 @@ def get_audit_users():
     return api_request("GET", "/system/audit-users")
 
 
-def validate_import(file_path):
+def validate_import(file_path, mode="property"):
     import os
     with open(file_path, "rb") as f:
         files = {"file": (os.path.basename(file_path), f)}
-        return api_request("POST", "/system/import/validate", files=files)
+        return api_request("POST", f"/system/import/validate?mode={mode}", files=files)
 
 
-def commit_import(data):
-    return api_request("POST", "/system/import/commit", data=data)
+def commit_import(data, mode="property"):
+    return api_request("POST", f"/system/import/commit?mode={mode}", data=data)

@@ -86,8 +86,109 @@ def validate_property_import(file_content, file_extension):
             "data": rows_to_import if len(rows_to_import) == len(df) else [] # Only return if 100% clean for now
         }
         
+def validate_assessment_import(file_content, file_extension):
+    """
+    Validates an Excel file for Assessment Roll import.
+    """
+    try:
+        if file_extension.lower() == '.csv':
+            df = pd.read_csv(io.BytesIO(file_content))
+        else:
+            df = pd.read_excel(io.BytesIO(file_content))
+        
+        df.columns = [str(c).strip().upper() for c in df.columns]
+        
+        mapping = {
+            "td_number": ["TD NO.", "TD NUMBER", "TAX DECLARATION"],
+            "owner_name": ["PROPERTY OWNER", "OWNER NAME", "OWNER"],
+            "assessed_value": ["ASSESSED VALUE", "VALUE", "MARKET VALUE"]
+        }
+        
+        found_cols = {}
+        for db_field, aliases in mapping.items():
+            match = next((c for c in df.columns if c in aliases), None)
+            if not match:
+                return {"success": False, "error": f"Missing required column for '{db_field}'."}
+            found_cols[db_field] = match
+
+        results = []
+        rows_to_import = []
+        
+        for index, row in df.iterrows():
+            errors = []
+            td = str(row.get(found_cols["td_number"], "")).strip()
+            owner = str(row.get(found_cols["owner_name"], "")).strip()
+            
+            if not td: errors.append("Missing TD Number")
+            if not owner: errors.append("Missing Owner Name")
+            
+            try:
+                val = float(row.get(found_cols["assessed_value"], 0))
+            except:
+                errors.append("Invalid Numeric Value")
+                
+            status = "❌ ERROR" if errors else "✅ VALID"
+            
+            # Map for frontend preview
+            results.append({
+                "row_index": index + 2,
+                "td_number": td,
+                "owner_name": owner,
+                "status": status,
+                "message": "; ".join(errors) if errors else "Assessment record valid"
+            })
+            
+            if not errors:
+                # Store cleaned data for commit
+                rows_to_import.append({
+                    "td_number": td,
+                    "owner_name": owner,
+                    "assessed_value": val,
+                    "location": str(row.get("LOCATION", "")).strip(),
+                    "kind": str(row.get("KIND", "LAND")).strip().upper()
+                })
+
+        return {
+            "success": True,
+            "report": results,
+            "total_rows": len(df),
+            "valid_rows": len(rows_to_import),
+            "data": rows_to_import
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+def commit_assessment_import(data_list, user):
+    """
+    Saves the validated assessment rows.
+    """
+    from backend.services.system_service import log_action
+    
+    def operation(cur):
+        inserted = 0
+        updated = 0
+        for row in data_list:
+            td = row["td_number"]
+            cur.execute("SELECT id FROM properties WHERE td_number = %s", (td,))
+            exists = cur.fetchone()
+            
+            if exists:
+                cur.execute(
+                    "UPDATE properties SET owner_name = %s, assessed_value = %s, updated_at = NOW() WHERE id = %s",
+                    (row["owner_name"], row["assessed_value"], exists[0])
+                )
+                updated += 1
+            else:
+                cur.execute(
+                    "INSERT INTO properties (td_number, owner_name, assessed_value, location, kind_of_property, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
+                    (td, row["owner_name"], row["assessed_value"], row["location"], row["kind"])
+                )
+                inserted += 1
+        
+        log_action(user, f"Wizard Assessment Import: {inserted} new, {updated} updated.")
+        return {"inserted": inserted, "updated": updated}
+
+    return db.execute_transaction(operation)
 
 def commit_property_import(data_list, user):
     """

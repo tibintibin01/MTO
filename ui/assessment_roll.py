@@ -5,6 +5,7 @@ from theme_manager import ModernTheme
 import api_clients.property_service as prop_svc
 import api_clients.api_helper as api
 from ui.dossier import PropertyDossierModal
+from ui.import_wizard import ImportWizardModal
 import threading
 
 
@@ -109,8 +110,8 @@ class AssessmentRollPage:
 
         ctk.CTkButton(
             filters_fr,
-            text="📥 IMPORT EXCEL",
-            command=self.import_excel,
+            text="🚀 BULK IMPORT",
+            command=self.open_import_wizard,
             fg_color="#3498db",
             width=120,
         ).pack(side="right", padx=10)
@@ -297,50 +298,8 @@ class AssessmentRollPage:
                 tags=(tag,),
             )
 
-    def import_excel(self):
-        file_path = filedialog.askopenfilename(
-            title="Select Assessment Roll Excel",
-            filetypes=[("Excel files", "*.xlsx *.xls")],
-        )
-        if not file_path:
-            return
-
-        # Loading indicator
-        msg_win = ctk.CTkToplevel(self.parent)
-        msg_win.geometry("350x150")
-        msg_win.overrideredirect(True)
-        msg_win.attributes("-topmost", True)
-
-        sw, sh = msg_win.winfo_screenwidth(), msg_win.winfo_screenheight()
-        msg_win.geometry(f"+{(sw-350)//2}+{(sh-150)//2}")
-
-        ctk.CTkLabel(
-            msg_win, text="⚙️ PROCESSING BULK IMPORT...", font=("Segoe UI", 12, "bold")
-        ).pack(expand=True)
-        msg_win.update()
-
-        def worker():
-            try:
-                # Use centralized API helper
-                res = api.api_request(
-                    "POST",
-                    "/properties/import-assessment",
-                    files={"file": open(file_path, "rb")},
-                )
-
-                self.container.after(
-                    0, lambda: [msg_win.destroy(), self._show_import_summary(res)]
-                )
-            except Exception as e:
-                self.container.after(
-                    0,
-                    lambda e=e: [
-                        msg_win.destroy(),
-                        messagebox.showerror("Import Error", str(e)),
-                    ],
-                )
-
-        threading.Thread(target=worker, daemon=True).start()
+    def open_import_wizard(self):
+        ImportWizardModal(self.container.winfo_toplevel(), mode="assessment")
 
     def _show_import_summary(self, res):
         if "error" in res:

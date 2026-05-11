@@ -5,9 +5,14 @@ import threading
 import api_clients.system_service as system
 
 class ImportWizardModal(ctk.CTkToplevel):
-    def __init__(self, parent):
+    def __init__(self, parent, mode="property"):
         super().__init__(parent)
-        self.title("Property Bulk Import Wizard")
+        self.mode = mode
+        title_map = {
+            "property": "Property Bulk Import Wizard",
+            "assessment": "Assessment Roll Import Wizard"
+        }
+        self.title(title_map.get(mode, "Bulk Import Wizard"))
         self.geometry("900x650")
         self.attributes("-topmost", True)
         self.grab_set()
@@ -115,7 +120,7 @@ class ImportWizardModal(ctk.CTkToplevel):
         
         def worker():
             try:
-                res = system.validate_import(fpath)
+                res = system.validate_import(fpath, mode=self.mode)
                 if res.get("success"):
                     self.validated_data = res.get("data", [])
                     self.raw_report = res.get("report", [])
@@ -139,7 +144,7 @@ class ImportWizardModal(ctk.CTkToplevel):
             
         def worker():
             try:
-                res = system.commit_import(self.validated_data)
+                res = system.commit_import(self.validated_data, mode=self.mode)
                 if res.get("status") == "success":
                     self.after(0, lambda: self.finish_import(res["imported"]))
                 else:
