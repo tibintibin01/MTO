@@ -133,7 +133,7 @@ class LedgerPage:
                 rows = payment.get_unified_payment_history(term)
                 self.container.after(0, lambda: self._update_ui(rows, term))
             except Exception as e:
-                self.container.after(0, lambda: messagebox.showerror("Error", str(e)))
+                self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
             finally:
                 self.is_loading = False
                 self.container.after(0, lambda: self.search_btn.configure(state="normal"))

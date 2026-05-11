@@ -242,7 +242,7 @@ class AssessmentRollPage:
                 )
                 self.container.after(0, lambda: self._update_table(results))
             except Exception as e:
-                self.container.after(0, lambda: messagebox.showerror("Error", str(e)))
+                self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
 
         threading.Thread(target=worker, daemon=True).start()
 
