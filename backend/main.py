@@ -146,7 +146,8 @@ class RoleChecker:
 
     def __call__(self, current_user: dict = Depends(get_current_user)):
         # Now we read from the token payload instead of DB
-        if current_user.get("role") not in self.allowed_roles:
+        role = str(current_user.get("role", "")).lower()
+        if role not in self.allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied: Required permissions missing.",
