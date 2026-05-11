@@ -171,7 +171,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 
-@app.post("/token", response_model=Token)
+@app.post("/token", response_model=Token, tags=["Auth"])
 @limiter.limit("10/minute")
 async def login_for_access_token(
     request: Request, form_data: OAuth2PasswordRequestForm = Depends()
@@ -200,7 +200,7 @@ async def login_for_access_token(
         )
 
 
-@app.get("/me")
+@app.get("/me", tags=["Auth"])
 async def read_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
 
@@ -208,12 +208,12 @@ async def read_users_me(current_user: dict = Depends(get_current_user)):
 # --- User Management (Admin Only) ---
 
 
-@app.get("/users", dependencies=[Depends(admin_only)])
+@app.get("/users", tags=["Admin"], dependencies=[Depends(admin_only)])
 async def list_users(current_user: dict = Depends(get_current_user)):
     return auth_svc.get_all_users()
 
 
-@app.post("/users", dependencies=[Depends(admin_only)])
+@app.post("/users", tags=["Admin"], dependencies=[Depends(admin_only)])
 async def create_user(
     data: UserCreateSchema, current_user: dict = Depends(get_current_user)
 ):
@@ -260,7 +260,7 @@ async def get_audit_logs(
 # --- Property Routes ---
 
 
-@app.get("/properties")
+@app.get("/properties", tags=["Properties"])
 async def list_properties(
     search: str = "",
     limit: int = 50,
@@ -280,7 +280,7 @@ async def list_properties(
     )
 
 
-@app.get("/properties/delinquent")
+@app.get("/properties/delinquent", tags=["Properties"])
 async def get_delinquent_accounts(current_user: dict = Depends(get_current_user)):
     return prop_svc.get_delinquent_accounts()
 
@@ -298,7 +298,7 @@ async def restore_property(
     return {"status": "restored"}
 
 
-@app.post("/properties/import-assessment")
+@app.post("/properties/import-assessment", tags=["Properties"])
 @limiter.limit("2/minute")
 async def import_assessment_roll(
     request: Request,
@@ -530,7 +530,7 @@ async def get_payment_details(
     return res
 
 
-@app.post("/payments/receipt-record")
+@app.post("/payments/receipt-record", tags=["Financial"])
 async def save_receipt_record(
     data: ReceiptRecordSchema, current_user: dict = Depends(write_access)
 ):
@@ -605,7 +605,7 @@ async def get_receivables_by_barangay(current_user: dict = Depends(get_current_u
 # --- System Routes ---
 
 
-@app.post("/system/backup/trigger")
+@app.post("/system/backup/trigger", tags=["System"])
 async def trigger_backup(
     background_tasks: BackgroundTasks, current_user: dict = Depends(admin_only)
 ):
@@ -620,7 +620,7 @@ async def trigger_backup(
     }
 
 
-@app.get("/system/backup/status", dependencies=[Depends(read_only)])
+@app.get("/system/backup/status", tags=["System"], dependencies=[Depends(read_only)])
 async def get_backup_health(current_user: dict = Depends(get_current_user)):
     from backend.services.backup_service import get_backup_status
 
@@ -640,7 +640,7 @@ async def get_audit_stats(current_user: dict = Depends(get_current_user)):
     return sys_svc.get_audit_stats()
 
 
-@app.get("/system/logs", dependencies=[Depends(admin_only)])
+@app.get("/system/logs", tags=["System"], dependencies=[Depends(admin_only)])
 async def get_system_logs(
     lines: int = 100, current_user: dict = Depends(get_current_user)
 ):
