@@ -331,25 +331,29 @@ class DashboardApp(ctk.CTk):
         self.sidebar = ctk.CTkFrame(self, width=280, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
 
-        # Logo Section with Robust Path Management
-        try:
-            logo_path = Path(__file__).parent / "bagongpilipinas.png"
-            if logo_path.exists():
-                self.logo_img = ctk.CTkImage(
-                    Image.open(str(logo_path)), size=(180, 180)
-                )
-                self.logo_lbl = ctk.CTkLabel(self.sidebar, image=self.logo_img, text="")
-                self.logo_lbl.pack(pady=(30, 10))
-            else:
-                raise FileNotFoundError
-        except:
-            # Professional Fallback Placeholder
-            ctk.CTkLabel(
-                self.sidebar,
-                text="TREASURY SYSTEM",
-                font=ModernTheme.H2,
-                text_color="#3498db",
-            ).pack(pady=(30, 10))
+        # --- PREMIUM SIDEBAR HEADER ---
+        header_fr = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        header_fr.pack(fill="x", pady=(40, 20), padx=20)
+
+        ctk.CTkLabel(
+            header_fr,
+            text="MTO TREASURY",
+            font=("Segoe UI", 20, "bold"),
+            text_color="#3498db",
+            anchor="w"
+        ).pack(fill="x")
+        
+        ctk.CTkLabel(
+            header_fr,
+            text="MUNICIPAL SYSTEM",
+            font=("Segoe UI", 10, "bold"),
+            text_color="gray",
+            anchor="w"
+        ).pack(fill="x")
+        
+        # Subtle Separator
+        line = ctk.CTkFrame(self.sidebar, height=1, fg_color="gray30")
+        line.pack(fill="x", padx=30, pady=(0, 20))
 
         # Profile Section
         ctk.CTkLabel(self.sidebar, text=self.username, font=ModernTheme.BODY).pack()
