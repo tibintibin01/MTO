@@ -22,6 +22,7 @@ from ui.reports import ReportsPage
 from ui.assessment_roll import AssessmentRollPage
 from ui.system_admin import SystemAdminPage
 from ui.audit_trail import AuditTrailPage
+from ui.analytics_dashboard import AnalyticsDashboardPage
 from ui.command_palette import CommandPalette
 
 # Ensure theme is loaded
@@ -343,6 +344,9 @@ class DashboardApp(ctk.CTk):
 
         if auth.has_permission(self.user_data, "report_view"):
             self.create_nav_btn("Reports", lambda: self.load_page(ReportsPage))
+            self.create_nav_btn(
+                "📊 Analytics Hub", lambda: self.load_page(AnalyticsDashboardPage)
+            )
 
         if auth.has_permission(self.user_data, "property_view"):
             self.create_nav_btn(

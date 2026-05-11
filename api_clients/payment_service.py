@@ -34,7 +34,15 @@ def get_next_or_number():
 
 
 def get_monthly_collection_trend(months=6):
-    return api_request("GET", "/payments/trend", params={"months": months})
+    return api_request("GET", "/analytics/trends", params={"months": months})
+
+
+def get_barangay_breakdown():
+    return api_request("GET", "/analytics/barangay-breakdown")
+
+
+def get_analytics_kpis():
+    return api_request("GET", "/analytics/kpis")
 
 
 def save_receipt_record(property_id, payment_id, details, file_path, user_name):

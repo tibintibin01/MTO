@@ -700,6 +700,24 @@ async def list_audit_users(current_user: dict = Depends(get_current_user)):
     return sys_svc.get_distinct_log_users()
 
 
+@app.get("/analytics/trends", tags=["Analytics"], dependencies=[Depends(read_only)])
+async def get_analytics_trends(months: int = 12, current_user: dict = Depends(get_current_user)):
+    from backend.services.payment_service import get_monthly_collection_trend
+    return get_monthly_collection_trend(months)
+
+
+@app.get("/analytics/barangay-breakdown", tags=["Analytics"], dependencies=[Depends(read_only)])
+async def get_barangay_breakdown(current_user: dict = Depends(get_current_user)):
+    from backend.services.payment_service import get_revenue_by_barangay
+    return get_revenue_by_barangay()
+
+
+@app.get("/analytics/kpis", tags=["Analytics"], dependencies=[Depends(read_only)])
+async def get_analytics_kpis(current_user: dict = Depends(get_current_user)):
+    from backend.services.payment_service import get_collection_kpis
+    return get_collection_kpis()
+
+
 @app.get("/system/logs", tags=["System"], dependencies=[Depends(admin_only)])
 async def get_system_logs(
     lines: int = 100, current_user: dict = Depends(get_current_user)

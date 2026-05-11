@@ -205,6 +205,41 @@ def get_monthly_collection_trend(months=6):
     return cleaned
 
 
+def get_revenue_by_barangay():
+    query = """
+        SELECT COALESCE(prop.barangay, 'UNSPECIFIED') as brgy, 
+               SUM(pay.amount) as total
+        FROM payments pay
+        JOIN properties prop ON prop.id = pay.property_id
+        WHERE prop.is_deleted = 0
+        GROUP BY brgy
+        ORDER BY total DESC
+    """
+    rows = db.db_query(query, fetch=True, commit=False) or []
+    return [{"barangay": r[0], "total": float(r[1] or 0)} for r in rows]
+
+
+def get_collection_kpis():
+    query = """
+        SELECT 
+            SUM(amount) as total_revenue,
+            COUNT(id) as payment_count,
+            (SELECT SUM(amount) FROM payments WHERE DATE(date_paid) = CURDATE()) as today_collection,
+            (SELECT SUM(amount) FROM payments WHERE YEAR(date_paid) = YEAR(CURDATE()) AND MONTH(date_paid) = MONTH(CURDATE())) as this_month
+        FROM payments
+    """
+    rows = db.db_query(query, fetch=True, commit=False) or []
+    if not rows:
+        return {"total_revenue": 0, "payment_count": 0, "today": 0, "month": 0}
+    r = rows[0]
+    return {
+        "total_revenue": float(r[0] or 0),
+        "payment_count": int(r[1] or 0),
+        "today": float(r[2] or 0),
+        "month": float(r[3] or 0)
+    }
+
+
 def get_unified_payment_history(term):
     """
     Unified query for the Integrated Ledger & Receipt History.
