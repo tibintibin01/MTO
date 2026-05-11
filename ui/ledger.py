@@ -7,7 +7,7 @@ from theme_manager import ModernTheme
 import api_clients.payment_service as payment
 import api_clients.auth_service as auth
 import api_clients.system_service as system
-from utils import format_curr
+from utils import format_curr, export_data_to_excel
 from receipt_generator import generate_or_receipt
 
 class LedgerPage:
@@ -206,3 +206,14 @@ class LedgerPage:
                 self.container.after(0, lambda: messagebox.showerror("Generation Error", err_msg))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def do_export(self):
+        data = []
+        for child in self.tree.get_children():
+            data.append(self.tree.item(child)["values"])
+            
+        if not data:
+            messagebox.showwarning("Export", "No data to export. Please search for a record first.")
+            return
+            
+        export_data_to_excel(data, self.cols, filename_prefix="LedgerExport")
