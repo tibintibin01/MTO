@@ -343,9 +343,10 @@ class DashboardApp(ctk.CTk):
         if auth.has_permission(self.user_data, "report_view"):
             self.create_nav_btn("Reports", lambda: self.load_page(ReportsPage))
 
-        self.create_nav_btn(
-            "Assessment Roll", lambda: self.load_page(AssessmentRollPage)
-        )
+        if auth.has_permission(self.user_data, "property_view"):
+            self.create_nav_btn(
+                "Assessment Roll", lambda: self.load_page(AssessmentRollPage)
+            )
 
         if any(
             auth.has_permission(self.user_data, p)

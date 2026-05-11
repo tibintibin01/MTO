@@ -43,9 +43,18 @@ class LedgerPage:
                                      fg_color="#3498db", hover_color="#2980b9", width=120, height=35, state="disabled")
         self.view_btn.pack(side="right", padx=5)
         
-        self.regen_btn = ctk.CTkButton(toolbar, text="♻️ REGENERATE", command=self.regenerate_receipt,
-                                      fg_color="#27ae60", hover_color="#219150", width=120, height=35, state="disabled")
-        self.regen_btn.pack(side="right", padx=5)
+        if auth.has_permission(self.user, "receipt_generate"):
+            self.regen_btn = ctk.CTkButton(
+                toolbar,
+                text="♻️ REGENERATE",
+                command=self.regenerate_receipt,
+                fg_color="#27ae60",
+                hover_color="#219150",
+                width=120,
+                height=35,
+                state="disabled",
+            )
+            self.regen_btn.pack(side="right", padx=5)
 
         self.export_btn = ctk.CTkButton(toolbar, text="📊 EXPORT DATA", command=self.do_export,
                                         fg_color="#e67e22", hover_color="#d35400", width=120, height=35)
@@ -99,8 +108,11 @@ class LedgerPage:
         sel = self.tree.selection()
         state = "normal" if sel else "disabled"
         self.view_btn.configure(state=state)
-        regen_state = state if auth.has_permission(self.user, "receipt_generate") else "disabled"
-        self.regen_btn.configure(state=regen_state)
+        if hasattr(self, "regen_btn"):
+            regen_state = (
+                state if auth.has_permission(self.user, "receipt_generate") else "disabled"
+            )
+            self.regen_btn.configure(state=regen_state)
 
     def load_ledger(self):
         term = self.search_ent.get().strip()

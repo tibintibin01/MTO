@@ -41,21 +41,24 @@ class PropertyPage:
             fg_color="#34495e",
         ).pack(side="right", padx=10)
 
-        ctk.CTkButton(
-            header_fr,
-            text="🧹 DATA CLEANUP",
-            command=self.open_bulk_update,
-            fg_color="#e67e22",
-            width=150,
-        ).pack(side="right", padx=10)
+        import api_clients.auth_service as auth
 
-        ctk.CTkButton(
-            header_fr,
-            text="+ ADD PROPERTY",
-            command=self.open_add_modal,
-            fg_color="#2ecc71",
-            width=150,
-        ).pack(side="right")
+        if auth.has_permission(self.user, "property_edit"):
+            ctk.CTkButton(
+                header_fr,
+                text="🧹 DATA CLEANUP",
+                command=self.open_bulk_update,
+                fg_color="#e67e22",
+                width=150,
+            ).pack(side="right", padx=10)
+
+            ctk.CTkButton(
+                header_fr,
+                text="+ ADD PROPERTY",
+                command=self.open_add_modal,
+                fg_color="#2ecc71",
+                width=150,
+            ).pack(side="right")
 
         # Table Container
         table_fr = ctk.CTkFrame(self.container, fg_color="white", corner_radius=12)
@@ -152,23 +155,27 @@ class PropertyPage:
         actions = ctk.CTkFrame(self.container, fg_color="transparent")
         actions.pack(fill="x", pady=(15, 0))
 
-        self.edit_btn = ctk.CTkButton(
-            actions,
-            text="✏️ EDIT",
-            command=self.open_edit_modal,
-            fg_color="#3498db",
-            state="disabled",
-        )
-        self.edit_btn.pack(side="right", padx=5)
+        import api_clients.auth_service as auth
 
-        self.del_btn = ctk.CTkButton(
-            actions,
-            text="🗑️ DELETE",
-            command=self.confirm_delete,
-            fg_color="#e74c3c",
-            state="disabled",
-        )
-        self.del_btn.pack(side="right", padx=5)
+        if auth.has_permission(self.user, "property_edit"):
+            self.edit_btn = ctk.CTkButton(
+                actions,
+                text="✏️ EDIT",
+                command=self.open_edit_modal,
+                fg_color="#3498db",
+                state="disabled",
+            )
+            self.edit_btn.pack(side="right", padx=5)
+
+        if auth.has_permission(self.user, "property_delete"):
+            self.del_btn = ctk.CTkButton(
+                actions,
+                text="🗑️ DELETE",
+                command=self.confirm_delete,
+                fg_color="#e74c3c",
+                state="disabled",
+            )
+            self.del_btn.pack(side="right", padx=5)
 
         self.export_btn = ctk.CTkButton(
             actions,
