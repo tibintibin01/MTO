@@ -64,8 +64,8 @@ class LoginApp(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
 
         # --- Sidebar / Branding ---
-        # Using a deeper shadow color (#050c17) for perfect blending
-        self.brand_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="#050c17", border_width=0)
+        # Using pure black (#000000) to match the image's deep space edges
+        self.brand_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="#000000", border_width=0)
         self.brand_frame.grid(row=0, column=0, sticky="nsew")
 
         try:
@@ -73,11 +73,11 @@ class LoginApp(ctk.CTk):
             self.logo_img = ctk.CTkImage(
                 light_image=Image.open(logo_path),
                 dark_image=Image.open(logo_path),
-                size=(550, 700), # Initial fit for 1100x700
+                size=(600, 800), # Initial fit for 1100x700
             )
-            # Removed visible 'MTO Logo' text to fix the hanging text issue
+            # Step 11: Overscan Shield - Place the image at 110% size to eliminate rounding gaps
             self.logo_label = ctk.CTkLabel(self.brand_frame, image=self.logo_img, text="")
-            self.logo_label.pack(fill="both", expand=True, padx=0, pady=0)
+            self.logo_label.place(relx=0.5, rely=0.5, relwidth=1.1, relheight=1.1, anchor="center")
         except Exception as e:
             self.logo_label = ctk.CTkLabel(self.brand_frame, text="MTO\nTREASURY", font=ModernTheme.H1, text_color="white")
             self.logo_label.pack(expand=True)
@@ -128,11 +128,11 @@ class LoginApp(ctk.CTk):
                 self.brand_frame.grid()
                 self.login_frame.grid_configure(column=1, columnspan=1)
                 
-                # Dynamic Image Resizing
+                # Dynamic Image Resizing with Overscan
                 try:
-                    # Calculate half-width for the sidebar
-                    new_w = width // 2
-                    new_h = height
+                    # Calculate half-width for the sidebar and add 10% overscan
+                    new_w = int((width // 2) * 1.1)
+                    new_h = int(height * 1.1)
                     # Update CTkImage size
                     self.logo_img.configure(size=(new_w, new_h))
                 except:
