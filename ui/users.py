@@ -140,7 +140,9 @@ class UserAccessPage:
                 users = auth.get_all_users()
                 self.container.after(0, lambda: self._update_user_table(users))
             except Exception as e:
-                self.container.after(0, lambda: messagebox.showerror("Refresh Error", str(e)))
+                self.container.after(
+                    0, lambda err=e: messagebox.showerror("Refresh Error", str(err))
+                )
         threading.Thread(target=worker, daemon=True).start()
 
     def _update_user_table(self, users):
