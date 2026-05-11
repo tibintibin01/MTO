@@ -25,9 +25,6 @@ def validate_property_import(file_content, file_extension):
             "assessed_value": ["value", "assessed_value", "assessment"]
         }
         
-        results = []
-        rows_to_import = []
-        
         # Check if basic columns exist
         found_cols = {}
         for db_field, aliases in required_fields.items():
@@ -35,13 +32,16 @@ def validate_property_import(file_content, file_extension):
             if not match:
                 return {"success": False, "error": f"Missing required column for '{db_field}'. Please check your headers."}
             found_cols[db_field] = match
-
+        
         # Get existing TD numbers for duplicate check
         existing_tds = set()
         rows = db.db_query("SELECT td_number FROM properties", fetch=True, commit=False) or []
         for r in rows:
             existing_tds.add(str(r[0]).strip())
-
+            
+        results = []
+        rows_to_import = []
+        
         for index, row in df.iterrows():
             errors = []
             row_data = row.to_dict()
@@ -78,6 +78,12 @@ def validate_property_import(file_content, file_extension):
             if not errors:
                 rows_to_import.append(row_data)
 
+        return {
+            "success": True, 
+            "report": results, 
+            "total_rows": len(df),
+            "valid_rows": len(rows_to_import),
+            "data": rows_to_import if len(rows_to_import) == len(df) else []
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -208,6 +214,8 @@ def commit_property_import(data_list, user):
         
         log_action(user, f"Bulk imported {count} property records.")
         return count
+
+    return db.execute_transaction(operation)
 
 def import_assessment_roll_from_excel(file_path, user):
     """
