@@ -317,12 +317,6 @@ class DashboardApp(ctk.CTk):
             
         # Check every 2 seconds
         self.after(2000, self.update_connectivity_status)
-            elif command == "nav:users":
-                self.load_page(SystemAdminPage)
-            elif command == "nav:reports":
-                self.load_page(ReportsPage)
-            elif command == "nav:assessment":
-                self.load_page(AssessmentRollPage)
 
     def trigger_manual_backup_from_palette(self):
         try:
