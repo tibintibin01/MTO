@@ -60,8 +60,20 @@ def restore_database(sql_file_path):
         db.close_db_connection()
 
         with open(sql_file_path, "r", encoding="utf-8", errors="ignore") as source:
-            subprocess.run(cmd, stdin=source, check=True)
+            result = subprocess.run(
+                cmd, 
+                stdin=source, 
+                check=True, 
+                capture_output=True, 
+                text=True
+            )
+            print(f"Restore Output: {result.stdout}")
+    except subprocess.CalledProcessError as cpe:
+        error_msg = f"MySQL Error: {cpe.stderr or cpe.output}"
+        print(error_msg)
+        raise RuntimeError(error_msg) from cpe
     except Exception as exc:
+        print(f"General Restore Error: {exc}")
         raise RuntimeError(f"Restore failed: {exc}") from exc
     return {"ok": True, "safety_backup": safety_backup, "restored_file": sql_file_path}
 

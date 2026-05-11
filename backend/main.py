@@ -759,6 +759,7 @@ async def restore_system_backup(
 ):
     """Performs a full database restore from a SQL file."""
     from backend.services.system_service import restore_database
+    import traceback
 
     try:
         # Normalize the path to handle cross-platform slash issues
@@ -766,8 +767,19 @@ async def restore_system_backup(
         result = restore_database(file_path)
         return {"status": "success", "data": result}
     except Exception as e:
-        import traceback
-        print(f"Restore Error: {traceback.format_exc()}")
+        error_detail = traceback.format_exc()
+        # Log to a dedicated file for the user to see
+        try:
+            with open("logs/restore_debug.log", "a") as f:
+                f.write(f"\n[{datetime.now()}] RESTORE FAILURE\n")
+                f.write(f"File: {request.file_path}\n")
+                f.write(f"Error: {str(e)}\n")
+                f.write(f"Traceback:\n{error_detail}\n")
+                f.write("-" * 40 + "\n")
+        except:
+            pass
+            
+        print(f"Restore Error: {error_detail}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
