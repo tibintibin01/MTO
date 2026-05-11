@@ -17,6 +17,44 @@
         "retry": "Retry",
         "error": "Error",
         "success": "Success",
-        "system_error": "System Error"
+        "system_error": "System Error",
+        "logout_confirm": "Confirm Logout",
+        "logout_msg": "Are you sure you want to log out of the system?"
+    },
+    "dashboard": {
+        "title": "Revenue Dashboard",
+        "subtitle": "Real-time collection monitoring and analytics",
+        "stats": {
+            "total_properties": "Total Properties",
+            "collections_today": "Today's Collection",
+            "collections_month": "Monthly Total"
+        },
+        "charts": {
+            "revenue_month": "Revenue by Month",
+            "collection_trend": "Collection Trend"
+        },
+        "backup": {
+            "title": "SYSTEM DATA PROTECTION STATUS",
+            "local": "Local Backup",
+            "usb": "USB Mirror",
+            "cloud": "Cloud Sync",
+            "verify": "Restore Test",
+            "run_now": "RUN HYBRID BACKUP NOW",
+            "running": "BACKUP IN PROGRESS...",
+            "success_toast": "Hybrid backup started in background",
+            "refresh_toast": "Dashboard data refreshed"
+        },
+        "nav": {
+            "dashboard": "Dashboard",
+            "property": "Property Records",
+            "ledger": "Payment & Receipt Ledger",
+            "reports": "Reports",
+            "analytics": "Analytics Hub",
+            "assessment": "Assessment Roll",
+            "audit": "Audit Trail",
+            "settings": "System Settings",
+            "help": "System Help",
+            "logout": "LOGOUT"
+        }
     }
 }

@@ -12,7 +12,8 @@ import api_clients.property_service as prop
 import api_clients.payment_service as payment
 import api_clients.system_service as system
 from theme_manager import setup_theme, ModernTheme
-from ui_components import ModernChartWidget, show_toast
+from ui_components import ModernChartWidget, show_toast, ErrorDialog
+from utils import tr
 from api_clients.sync_monitor import sync_monitor
 import api_clients.api_helper as api
 from api_clients.offline_manager import manager
@@ -48,11 +49,11 @@ class DashboardHomePage:
         header.pack(fill="x", pady=(0, 20))
 
         ctk.CTkLabel(
-            header, text="Revenue Dashboard", font=ModernTheme.H1, text_color="white"
+            header, text=tr("dashboard.title"), font=ModernTheme.H1, text_color="white"
         ).pack(anchor="w", padx=30, pady=(25, 5))
         ctk.CTkLabel(
             header,
-            text="Real-time collection monitoring and analytics",
+            text=tr("dashboard.subtitle"),
             font=ModernTheme.BODY,
             text_color="#d1d1d1",
         ).pack(anchor="w", padx=30, pady=(0, 25))
@@ -64,13 +65,13 @@ class DashboardHomePage:
 
         self.stat_cards = {
             "total_properties": self._make_stat_card(
-                stats_frame, 0, "Total Properties", "0", "#3498db"
+                stats_frame, 0, tr("dashboard.stats.total_properties"), "0", "#3498db"
             ),
             "collections_today": self._make_stat_card(
-                stats_frame, 1, "Today's Collection", "P 0.00", "#2ecc71"
+                stats_frame, 1, tr("dashboard.stats.collections_today"), "P 0.00", "#2ecc71"
             ),
             "collections_month": self._make_stat_card(
-                stats_frame, 2, "Monthly Total", "P 0.00", "#e67e22"
+                stats_frame, 2, tr("dashboard.stats.collections_month"), "P 0.00", "#e67e22"
             ),
         }
 
@@ -79,10 +80,10 @@ class DashboardHomePage:
         charts_frame.pack(fill="both", expand=True)
         charts_frame.grid_columnconfigure((0, 1), weight=1)
 
-        self.bar_chart = ModernChartWidget(charts_frame, "Revenue by Month")
+        self.bar_chart = ModernChartWidget(charts_frame, tr("dashboard.charts.revenue_month"))
         self.bar_chart.pack(row=0, column=0, padx=(0, 10), sticky="nsew")
 
-        self.trend_chart = ModernChartWidget(charts_frame, "Collection Trend")
+        self.trend_chart = ModernChartWidget(charts_frame, tr("dashboard.charts.collection_trend"))
         self.trend_chart.pack(row=0, column=1, padx=(10, 0), sticky="nsew")
 
         # Backup Status Section
@@ -94,7 +95,7 @@ class DashboardHomePage:
 
         ctk.CTkLabel(
             self.backup_card,
-            text="SYSTEM DATA PROTECTION STATUS",
+            text=tr("dashboard.backup.title"),
             font=("Segoe UI", 12, "bold"),
             text_color="gray",
         ).pack(pady=(15, 10), padx=20, anchor="w")
@@ -104,17 +105,17 @@ class DashboardHomePage:
         inner_backup.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         self.backup_labels = {
-            "local": self._make_backup_item(inner_backup, 0, "Local Backup", "Never"),
-            "usb": self._make_backup_item(inner_backup, 1, "USB Mirror", "Never"),
-            "cloud": self._make_backup_item(inner_backup, 2, "Cloud Sync", "Never"),
+            "local": self._make_backup_item(inner_backup, 0, tr("dashboard.backup.local"), "Never"),
+            "usb": self._make_backup_item(inner_backup, 1, tr("dashboard.backup.usb"), "Never"),
+            "cloud": self._make_backup_item(inner_backup, 2, tr("dashboard.backup.cloud"), "Never"),
             "verify": self._make_backup_item(
-                inner_backup, 3, "Restore Test", "Unknown"
+                inner_backup, 3, tr("dashboard.backup.verify"), "Unknown"
             ),
         }
 
         self.backup_btn = ctk.CTkButton(
             self.backup_card,
-            text="RUN HYBRID BACKUP NOW",
+            text=tr("dashboard.backup.run_now"),
             command=self.trigger_manual_backup,
             width=200,
             height=35,
@@ -206,7 +207,7 @@ class DashboardHomePage:
             system.trigger_backup()
             show_toast(
                 self.parent.winfo_toplevel(),
-                "Hybrid backup started in background",
+                tr("dashboard.backup.success_toast"),
                 type="info",
             )
             # Refresh data soon to show "In Progress"
@@ -362,22 +363,33 @@ class DashboardApp(ctk.CTk):
             text=auth.get_user_role(self.user_data).upper(),
             font=("Segoe UI", 10, "bold"),
             text_color="gray",
-        ).pack(pady=(0, 30))
+        ).pack(pady=(0, 10))
+
+        # Theme Toggle in Sidebar
+        self.theme_btn = ctk.CTkButton(
+            self.sidebar, 
+            text=tr("login.toggle_theme"), 
+            command=self.toggle_theme, 
+            width=120, 
+            height=30, 
+            fg_color="transparent", 
+            text_color=ModernTheme.TEXT_GRAY
+        )
+        self.theme_btn.pack(pady=(0, 20))
 
         # Scrollable area for buttons
         self.nav_scroll = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent")
         self.nav_scroll.pack(fill="both", expand=True, padx=5)
 
-        self.nav_btns = {}
-        self.create_nav_btn("Dashboard", lambda: self.load_page(DashboardHomePage))
+        self.create_nav_btn(tr("dashboard.nav.dashboard"), lambda: self.load_page(DashboardHomePage))
 
         if auth.has_permission(self.user_data, "property_view"):
             self.create_nav_btn(
-                "Property Records", lambda: self.load_page(PropertyPage)
+                tr("dashboard.nav.property"), lambda: self.load_page(PropertyPage)
             )
         if auth.has_permission(self.user_data, "ledger_view"):
             self.create_nav_btn(
-                "Payment & Receipt Ledger", lambda: self.load_page(LedgerPage)
+                tr("dashboard.nav.ledger"), lambda: self.load_page(LedgerPage)
             )
 
         ctk.CTkLabel(
@@ -388,19 +400,19 @@ class DashboardApp(ctk.CTk):
         ).pack(pady=(20, 5))
 
         if auth.has_permission(self.user_data, "report_view"):
-            self.create_nav_btn("Reports", lambda: self.load_page(ReportsPage))
+            self.create_nav_btn(tr("dashboard.nav.reports"), lambda: self.load_page(ReportsPage))
             self.create_nav_btn(
-                "📊 Analytics Hub", lambda: self.load_page(AnalyticsDashboardPage)
+                tr("dashboard.nav.analytics"), lambda: self.load_page(AnalyticsDashboardPage)
             )
 
         if auth.has_permission(self.user_data, "property_view"):
             self.create_nav_btn(
-                "Assessment Roll", lambda: self.load_page(AssessmentRollPage)
+                tr("dashboard.nav.assessment"), lambda: self.load_page(AssessmentRollPage)
             )
 
         if auth.has_permission(self.user_data, "view_logs"):
             self.create_nav_btn(
-                "📑 Audit Trail", lambda: self.load_page(AuditTrailPage)
+                tr("dashboard.nav.audit"), lambda: self.load_page(AuditTrailPage)
             )
 
         if any(
@@ -408,7 +420,7 @@ class DashboardApp(ctk.CTk):
             for p in ["manage_users", "view_logs"]
         ):
             self.create_nav_btn(
-                "System Settings", lambda: self.load_page(SystemAdminPage)
+                tr("dashboard.nav.settings"), lambda: self.load_page(SystemAdminPage)
             )
 
         ctk.CTkLabel(
@@ -417,12 +429,12 @@ class DashboardApp(ctk.CTk):
             font=("Segoe UI", 10, "bold"),
             text_color="gray",
         ).pack(pady=(20, 5))
-        self.create_nav_btn("📖 System Help", lambda: self.load_page(SystemHelpPage))
+        self.create_nav_btn(tr("dashboard.nav.help"), lambda: self.load_page(SystemHelpPage))
 
         # Logout at bottom
         self.logout_btn = ctk.CTkButton(
             self.sidebar,
-            text="LOGOUT",
+            text=tr("dashboard.nav.logout"),
             fg_color="#e74c3c",
             hover_color="#c0392b",
             command=self.logout,
@@ -450,13 +462,20 @@ class DashboardApp(ctk.CTk):
             widget.destroy()
         page_class(self.main_area, self.user_data)
 
-    def logout(self):
-        from tkinter import messagebox
+    def toggle_theme(self):
+        # Toggle based on current appearance mode
+        current = ctk.get_appearance_mode()
+        new_mode = "light" if current == "Dark" else "dark"
+        setup_theme(new_mode)
 
-        if messagebox.askyesno(
-            "Confirm Logout", "Are you sure you want to log out of the system?"
-        ):
-            self.destroy()
+    def logout(self):
+        if ErrorDialog(self, tr("common.logout_confirm"), tr("common.logout_msg"), retry_callback=None):
+            # We need to handle the result of the dialog, but CTkToplevel is non-blocking.
+            # For simplicity, let's keep the standard messagebox for confirm-dialogs 
+            # unless we implement a proper Modal with return value.
+            from tkinter import messagebox
+            if messagebox.askyesno(tr("common.logout_confirm"), tr("common.logout_msg")):
+                self.destroy()
 
 
 def open_dashboard(user_data):

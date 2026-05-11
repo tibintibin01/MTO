@@ -7,6 +7,8 @@ import api_clients.api_helper as api
 from ui.dossier import PropertyDossierModal
 from ui.import_wizard import ImportWizardModal
 
+from theme_manager import ModernTheme
+from utils import tr
 
 class PropertyPage:
     def __init__(self, parent, user=None):
@@ -25,7 +27,7 @@ class PropertyPage:
         header_fr.pack(fill="x", pady=(0, 20))
 
         ctk.CTkLabel(
-            header_fr, text="PROPERTY DIRECTORY", font=("Segoe UI", 24, "bold")
+            header_fr, text=tr("dashboard.nav.property").upper(), font=ModernTheme.H1
         ).pack(side="left")
 
         # Search Box with hint
