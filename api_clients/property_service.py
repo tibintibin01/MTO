@@ -4,7 +4,7 @@ from api_clients.api_helper import api_request
 
 
 def search_properties(
-    term, limit=50, offset=0, kind=None, year_start=None, year_end=None
+    term, limit=50, offset=0, kind=None, year_start=None, year_end=None, barangay=None
 ):
     params = {"search": term, "limit": limit, "offset": offset}
     if kind:
@@ -13,7 +13,13 @@ def search_properties(
         params["year_start"] = year_start
     if year_end:
         params["year_end"] = year_end
+    if barangay:
+        params["barangay"] = barangay
     return api_request("GET", "/properties", params=params)
+
+
+def get_barangays():
+    return api_request("GET", "/properties/barangays")
 
 
 def get_property_by_id(property_id):

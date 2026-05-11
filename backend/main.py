@@ -268,6 +268,7 @@ async def list_properties(
     kind: Optional[str] = None,
     year_start: Optional[int] = None,
     year_end: Optional[int] = None,
+    barangay: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
     return prop_svc.search_properties(
@@ -277,7 +278,15 @@ async def list_properties(
         kind=kind,
         year_start=year_start,
         year_end=year_end,
+        barangay=barangay,
     )
+
+@app.get("/properties/barangays", tags=["Properties"])
+async def list_barangays(current_user: dict = Depends(get_current_user)):
+    from backend.services.property_service import get_barangays
+
+    return get_barangays()
+
 
 
 @app.get("/properties/delinquent", tags=["Properties"])

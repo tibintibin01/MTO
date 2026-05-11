@@ -16,6 +16,7 @@ class PropertyPage:
         self.container = ctk.CTkFrame(parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
         self.setup_ui()
+        self.fetch_barangays()
 
     def setup_ui(self):
         # Header Area
@@ -59,6 +60,42 @@ class PropertyPage:
                 fg_color="#2ecc71",
                 width=150,
             ).pack(side="right")
+
+        # --- ADVANCED FILTER BAR ---
+        filter_bar = ctk.CTkFrame(self.container, fg_color="#34495e", corner_radius=8)
+        filter_bar.pack(fill="x", pady=(0, 15), padx=5)
+
+        # Barangay Filter
+        ctk.CTkLabel(
+            filter_bar, text="BARANGAY:", font=("Segoe UI", 11, "bold"), text_color="white"
+        ).pack(side="left", padx=(15, 5))
+        self.barangay_cmb = ctk.CTkComboBox(
+            filter_bar, values=["ALL"], width=180, height=28
+        )
+        self.barangay_cmb.pack(side="left", padx=5, pady=8)
+
+        # Tax Year Range
+        ctk.CTkLabel(
+            filter_bar, text="YEAR FROM:", font=("Segoe UI", 11, "bold"), text_color="white"
+        ).pack(side="left", padx=(15, 5))
+        self.year_from_ent = ctk.CTkEntry(filter_bar, width=80, height=28)
+        self.year_from_ent.pack(side="left", padx=5)
+
+        ctk.CTkLabel(
+            filter_bar, text="TO:", font=("Segoe UI", 11, "bold"), text_color="white"
+        ).pack(side="left", padx=(5, 5))
+        self.year_to_ent = ctk.CTkEntry(filter_bar, width=80, height=28)
+        self.year_to_ent.pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            filter_bar,
+            text="🎯 APPLY FILTERS",
+            command=self.refresh_table,
+            width=120,
+            height=28,
+            fg_color="#27ae60",
+            hover_color="#219150",
+        ).pack(side="right", padx=15)
 
         # Table Container
         table_fr = ctk.CTkFrame(self.container, fg_color="white", corner_radius=12)
@@ -218,13 +255,37 @@ class PropertyPage:
         def worker():
             try:
                 term = self.search_ent.get().strip()
+                brgy = self.barangay_cmb.get()
+                y_from = self.year_from_ent.get().strip()
+                y_to = self.year_to_ent.get().strip()
+
                 offset = self.current_page * self.page_size
                 results = prop_svc.search_properties(
-                    term, limit=self.page_size, offset=offset
+                    term,
+                    limit=self.page_size,
+                    offset=offset,
+                    year_start=y_from if y_from else None,
+                    year_end=y_to if y_to else None,
+                    barangay=brgy if brgy != "ALL" else None,
                 )
                 self.container.after(0, lambda: self._update_table(results))
             except Exception as e:
                 self.container.after(0, lambda: messagebox.showerror("Error", str(e)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def fetch_barangays(self):
+        """Asynchronously loads the barangay list for the dropdown."""
+
+        def worker():
+            try:
+                brgys = prop_svc.get_barangays()
+                if brgys:
+                    self.container.after(
+                        0, lambda: self.barangay_cmb.configure(values=["ALL"] + brgys)
+                    )
+            except:
+                pass
 
         threading.Thread(target=worker, daemon=True).start()
 

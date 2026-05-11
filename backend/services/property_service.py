@@ -15,7 +15,7 @@ def clean_currency(value):
 
 
 def search_properties(
-    term, limit=100, offset=0, kind=None, year_start=None, year_end=None
+    term, limit=100, offset=0, kind=None, year_start=None, year_end=None, barangay=None
 ):
     """
     Enhanced search with optional filters for kind and effectivity year ranges.
@@ -49,6 +49,10 @@ def search_properties(
         where_clauses.append("effectivity_date <= %s")
         params.append(year_end)
 
+    if barangay and barangay != "ALL":
+        where_clauses.append("barangay = %s")
+        params.append(barangay)
+
     query = f"""
         SELECT id, td_number, owner_name, payor_name, lot_number, area, location, kind_of_property,
                accountable_officer, assessed_value, (assessed_value * 0.01) as basic, (assessed_value * 0.01) as sef,
@@ -61,6 +65,13 @@ def search_properties(
     """
     params.extend([int(limit), int(offset)])
     return db.db_query(query, params, fetch=True, commit=False) or []
+
+
+def get_barangays():
+    """Returns a list of all unique barangay names in the database."""
+    query = "SELECT DISTINCT barangay FROM properties WHERE barangay IS NOT NULL AND barangay != '' ORDER BY barangay ASC"
+    rows = db.db_query(query, fetch=True, commit=False)
+    return [r[0] for r in rows] if rows else []
 
 
 def get_property_by_id(property_id):
