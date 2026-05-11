@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from fastapi.middleware.cors import CORSMiddleware
 
 # Add parent directory to path to import existing services
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,6 +27,23 @@ from fastapi.responses import FileResponse
 from backend.schemas import PropertySaveSchema, ReceiptRecordSchema, LogActionSchema, UserUpdateSchema, PasswordResetSchema
 
 app = FastAPI(title="Treasury Management API", version="2.0.0")
+
+# CORS Configuration - Lock the door to everyone except our local apps
+origins = [
+    "http://localhost",
+    "http://127.0.0.1",
+    "http://localhost:8001",
+    "https://localhost:8001",
+    "http://localhost:3000", # Common for future frontend dev
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 async def startup_event():
@@ -477,4 +495,13 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    cert_path = os.path.join(base_dir, "certs", "cert.pem")
+    key_path = os.path.join(base_dir, "certs", "key.pem")
+    
+    if os.path.exists(cert_path) and os.path.exists(key_path):
+        print("Starting Secure API (HTTPS) with CORS Enabled...")
+        uvicorn.run(app, host="0.0.0.0", port=8001, ssl_keyfile=key_path, ssl_certfile=cert_path)
+    else:
+        print("Starting Standard API (HTTP) - SSL Certs not found.")
+        uvicorn.run(app, host="0.0.0.0", port=8001)

@@ -1,7 +1,7 @@
 import requests
 import json
 
-BASE_URL = "http://127.0.0.1:8001"
+BASE_URL = "https://127.0.0.1:8001"
 API_BASE_URL = BASE_URL # Alias for auth_service compatibility
 
 _SESSION_TOKEN = None
@@ -25,6 +25,10 @@ def api_request(method, endpoint, data=None, params=None, files=None, raw_respon
     try:
         # If 'files' is provided, requests uses 'multipart/form-data'
         # If 'data' is provided, it uses 'application/json'
+        # verify=False is used because we are using a self-signed certificate for local dev
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
         response = requests.request(
             method, 
             url, 
@@ -33,7 +37,8 @@ def api_request(method, endpoint, data=None, params=None, files=None, raw_respon
             params=params, 
             files=files,
             headers=headers,
-            timeout=120
+            timeout=120,
+            verify=False
         )
         
         if raw_response:
