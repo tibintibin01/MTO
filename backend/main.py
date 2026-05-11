@@ -635,7 +635,7 @@ async def get_backup_health(current_user: dict = Depends(get_current_user)):
 
 @app.post("/system/import/validate", tags=["System"], dependencies=[Depends(write_access)])
 async def validate_bulk_import(
-    file: UploadFile = File(...), current_user: dict = Depends(get_current_user)
+    request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)
 ):
     import os
     from backend.services.import_service import validate_property_import
