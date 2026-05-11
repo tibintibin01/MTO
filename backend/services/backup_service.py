@@ -18,6 +18,7 @@ backup_status = {
     "last_usb": "Never",
     "last_cloud": "Never",
     "last_verify": "Unknown",
+    "last_checksum": "None",
     "is_running": False
 }
 
@@ -52,6 +53,14 @@ def run_hybrid_backup(user=None):
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Local dump created: {local_path}")
         backup_status["last_local"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
+        # 1.5 Generate Checksum
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Step 1.5/5: Generating checksum...")
+        checksum = _generate_checksum(local_path)
+        checksum_path = local_path + ".sha256"
+        with open(checksum_path, "w") as f:
+            f.write(checksum)
+        backup_status["last_checksum"] = checksum
+        
         # 2. Verify Local Backup
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Step 2/5: Verifying backup integrity...")
         v_success, v_msg = verify_sql_dump(local_path)
@@ -69,6 +78,9 @@ def run_hybrid_backup(user=None):
             usb_dest = os.path.join(usb_path, "MTO_Backups")
             os.makedirs(usb_dest, exist_ok=True)
             shutil.copy2(local_path, os.path.join(usb_dest, filename))
+            # Also copy checksum to USB
+            shutil.copy2(local_path + ".sha256", os.path.join(usb_dest, filename + ".sha256"))
+            
             backup_status["last_usb"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: USB Sync Successful: {usb_path}")
             _rotate_backups(usb_dest, keep=14)
@@ -144,3 +156,11 @@ def start_background_backup():
     thread = threading.Thread(target=run_hybrid_backup, daemon=True)
     thread.start()
     return thread
+
+def _generate_checksum(file_path):
+    import hashlib
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()

@@ -450,10 +450,6 @@ async def get_report_details(month: str = "All", year: str = "All", current_user
 async def get_receivables_summary(year: str, current_user: dict = Depends(get_current_user)):
     return bill_svc.get_rpt_receivables_summary(year)
 
-@app.get("/billing/receivables-summary")
-async def get_receivables_summary(year: str, current_user: dict = Depends(get_current_user)):
-    return bill_svc.get_rpt_receivables_summary(year)
-
 @app.get("/reports/receivables-by-barangay")
 async def get_receivables_by_barangay(current_user: dict = Depends(get_current_user)):
     return prop_svc.get_receivables_by_barangay()
@@ -468,6 +464,11 @@ async def trigger_backup(background_tasks: BackgroundTasks, current_user: dict =
     # Run in background to avoid blocking the main thread
     background_tasks.add_task(run_hybrid_backup, user=current_user)
     return {"status": "backup_started", "message": "Hybrid backup is running in the background."}
+
+@app.get("/system/backup/status", dependencies=[Depends(read_only)])
+async def get_backup_health(current_user: dict = Depends(get_current_user)):
+    from backend.services.backup_service import get_backup_status
+    return get_backup_status()
 
 @app.post("/system/logs")
 async def log_system_action(log: LogActionSchema, current_user: dict = Depends(get_current_user)):
