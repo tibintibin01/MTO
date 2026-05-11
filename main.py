@@ -72,10 +72,10 @@ class LoginApp(ctk.CTk):
             self.logo_img = ctk.CTkImage(
                 light_image=Image.open(logo_path),
                 dark_image=Image.open(logo_path),
-                size=(400, 550),
+                size=(450, 600), # Expanded to fill half of 900x600
             )
-            # Step 6: Logo Alt-text via text attribute (useful for accessibility)
-            self.logo_label = ctk.CTkLabel(self.brand_frame, image=self.logo_img, text="MTO Logo")
+            # Removed visible 'MTO Logo' text to fix the hanging text issue
+            self.logo_label = ctk.CTkLabel(self.brand_frame, image=self.logo_img, text="")
             self.logo_label.pack(fill="both", expand=True)
         except Exception as e:
             self.logo_label = ctk.CTkLabel(self.brand_frame, text="MTO\nTREASURY", font=ModernTheme.H1, text_color="white")
