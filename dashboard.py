@@ -381,6 +381,7 @@ class DashboardApp(ctk.CTk):
         self.nav_scroll = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent")
         self.nav_scroll.pack(fill="both", expand=True, padx=5)
 
+        self.nav_btns = {}
         self.create_nav_btn(tr("dashboard.nav.dashboard"), lambda: self.load_page(DashboardHomePage))
 
         if auth.has_permission(self.user_data, "property_view"):
@@ -458,9 +459,12 @@ class DashboardApp(ctk.CTk):
         self.nav_btns[text] = btn
 
     def load_page(self, page_class):
-        for widget in self.main_area.winfo_children():
-            widget.destroy()
-        page_class(self.main_area, self.user_data)
+        try:
+            for widget in self.main_area.winfo_children():
+                widget.destroy()
+            page_class(self.main_area, self.user_data)
+        except Exception as e:
+            ErrorDialog(self, tr("common.system_error"), f"Failed to load page: {str(e)}")
 
     def toggle_theme(self):
         # Toggle based on current appearance mode
