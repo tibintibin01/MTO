@@ -52,4 +52,4 @@ def commit_import(data, mode="property"):
 
 
 def restore_backup(file_path):
-    return api_request("POST", f"/system/restore?file_path={file_path}")
+    return api_request("POST", "/system/restore", data={"file_path": file_path})

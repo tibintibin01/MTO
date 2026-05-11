@@ -750,17 +750,24 @@ async def get_backup_verification_status(current_user: dict = Depends(get_curren
     return get_backup_status()
 
 
+class RestoreRequest(BaseModel):
+    file_path: str
+
 @app.post("/system/restore", tags=["System"], dependencies=[Depends(admin_only)])
 async def restore_system_backup(
-    file_path: str, current_user: dict = Depends(get_current_user)
+    request: RestoreRequest, current_user: dict = Depends(get_current_user)
 ):
     """Performs a full database restore from a SQL file."""
     from backend.services.system_service import restore_database
 
     try:
+        # Normalize the path to handle cross-platform slash issues
+        file_path = request.file_path.replace("\\", "/").strip()
         result = restore_database(file_path)
         return {"status": "success", "data": result}
     except Exception as e:
+        import traceback
+        print(f"Restore Error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

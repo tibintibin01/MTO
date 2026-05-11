@@ -1,9 +1,15 @@
-# -*- coding: utf-8 -*-
 import os
+import sys
 import subprocess
 from datetime import datetime
+
+# Ensure project root is in path for relative imports
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
 import db_manager as db
-from services.auth_service import get_username
+from backend.services.auth_service import get_username
 
 
 def backup_database(destination_path):
