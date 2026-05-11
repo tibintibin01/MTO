@@ -479,6 +479,21 @@ async def log_system_action(log: LogActionSchema, current_user: dict = Depends(g
 async def get_audit_stats(current_user: dict = Depends(get_current_user)):
     return sys_svc.get_audit_stats()
 
+@app.get("/system/logs", dependencies=[Depends(admin_only)])
+async def get_system_logs(lines: int = 100, current_user: dict = Depends(get_current_user)):
+    """Returns the last N lines of the system.log file."""
+    try:
+        from utils import ERROR_LOG_PATH
+        if not os.path.exists(ERROR_LOG_PATH):
+            return {"logs": "Log file not found."}
+            
+        with open(ERROR_LOG_PATH, "r", encoding="utf-8") as f:
+            # Read all lines and take the last N
+            log_lines = f.readlines()
+            return {"logs": "".join(log_lines[-lines:])}
+    except Exception as e:
+        return {"logs": f"Error reading logs: {str(e)}"}
+
 @app.post("/payments/{payment_id}/receipt-pdf", dependencies=[Depends(write_access)])
 async def generate_receipt_pdf(payment_id: int, current_user: dict = Depends(get_current_user)):
     details = pay_svc.get_payment_receipt_details(payment_id)
