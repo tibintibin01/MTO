@@ -73,11 +73,11 @@ class LoginApp(ctk.CTk):
             self.logo_img = ctk.CTkImage(
                 light_image=Image.open(logo_path),
                 dark_image=Image.open(logo_path),
-                size=(450, 600), # Expanded to fill half of 900x600
+                size=(460, 610), # Precision fit to overfill the 450x600 space
             )
             # Removed visible 'MTO Logo' text to fix the hanging text issue
             self.logo_label = ctk.CTkLabel(self.brand_frame, image=self.logo_img, text="")
-            self.logo_label.pack(fill="both", expand=True)
+            self.logo_label.pack(fill="both", expand=True, padx=0, pady=0)
         except Exception as e:
             self.logo_label = ctk.CTkLabel(self.brand_frame, text="MTO\nTREASURY", font=ModernTheme.H1, text_color="white")
             self.logo_label.pack(expand=True)
@@ -118,7 +118,7 @@ class LoginApp(ctk.CTk):
         self.bind("<Escape>", lambda e: self.destroy())
 
     def _on_resize(self, event):
-        """Responsive behavior: Hide sidebar on narrow screens and resize logo."""
+        """Responsive behavior: Hide sidebar on narrow screens."""
         if event.widget == self:
             width, height = event.width, event.height
             if width < 750:
@@ -127,16 +127,6 @@ class LoginApp(ctk.CTk):
             else:
                 self.brand_frame.grid()
                 self.login_frame.grid_configure(column=1, columnspan=1)
-                
-                # Dynamic Image Resizing
-                try:
-                    # Calculate half-width for the sidebar
-                    new_w = width // 2
-                    new_h = height
-                    # Update CTkImage size
-                    self.logo_img.configure(size=(new_w, new_h))
-                except:
-                    pass
 
     def toggle_theme(self):
         self.is_dark = not self.is_dark
