@@ -78,14 +78,10 @@ def validate_property_import(file_content, file_extension):
             if not errors:
                 rows_to_import.append(row_data)
 
-        return {
-            "success": True, 
-            "report": results, 
-            "total_rows": len(df),
-            "valid_rows": len(rows_to_import),
-            "data": rows_to_import if len(rows_to_import) == len(df) else [] # Only return if 100% clean for now
         }
-        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 def validate_assessment_import(file_content, file_extension):
     """
     Validates an Excel file for Assessment Roll import.
