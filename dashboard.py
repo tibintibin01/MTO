@@ -13,6 +13,9 @@ import api_clients.payment_service as payment
 import api_clients.system_service as system
 from theme_manager import setup_theme, ModernTheme
 from ui_components import ModernChartWidget, show_toast
+from api_clients.sync_monitor import sync_monitor
+import api_clients.api_helper as api
+from api_clients.offline_manager import manager
 
 
 from ui.ledger import LedgerPage
@@ -240,6 +243,23 @@ class DashboardApp(ctk.CTk):
         self.main_area = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.main_area.grid(row=0, column=1, sticky="nsew")
 
+        # --- CONNECTIVITY STATUS BAR (FOOTER) ---
+        self.footer = ctk.CTkFrame(self, height=25, fg_color="#2c3e50")
+        self.footer.grid(row=1, column=0, columnspan=2, sticky="ew")
+        
+        self.status_dot = ctk.CTkLabel(self.footer, text="●", font=("Segoe UI", 14), text_color="#2ecc71")
+        self.status_dot.pack(side="left", padx=(15, 5))
+        
+        self.status_lbl = ctk.CTkLabel(self.footer, text="SYSTEM ONLINE", font=("Segoe UI", 10, "bold"), text_color="white")
+        self.status_lbl.pack(side="left")
+        
+        self.queue_lbl = ctk.CTkLabel(self.footer, text="", font=("Segoe UI", 10), text_color="#bdc3c7")
+        self.queue_lbl.pack(side="right", padx=15)
+
+        # Start Sync Monitor & Status Heartbeat
+        sync_monitor.start()
+        self.update_connectivity_status()
+
         self.load_page(DashboardHomePage)
 
         # Bind Global Search (Ctrl+K)
@@ -270,6 +290,33 @@ class DashboardApp(ctk.CTk):
                 self.trigger_manual_backup_from_palette()
             elif command == "nav:new_property":
                 self.load_page(PropertyPage)
+            elif command == "nav:users":
+                self.load_page(SystemAdminPage)
+            elif command == "nav:reports":
+                self.load_page(ReportsPage)
+
+    def update_connectivity_status(self):
+        """Periodically updates the UI based on global connection state."""
+        status = api.CONNECTION_STATUS
+        count = manager.get_queue_count()
+        
+        if status == "ONLINE":
+            self.status_dot.configure(text_color="#2ecc71")
+            self.status_lbl.configure(text="SYSTEM ONLINE & SECURED")
+        elif status == "OFFLINE":
+            self.status_dot.configure(text_color="#f1c40f")
+            self.status_lbl.configure(text="OFFLINE MODE (LOCAL SAVE ACTIVE)")
+        elif status == "SYNCING":
+            self.status_dot.configure(text_color="#3498db")
+            self.status_lbl.configure(text="SYNCING DATA TO SERVER...")
+            
+        if count > 0:
+            self.queue_lbl.configure(text=f"PENDING SYNC: {count} ITEMS")
+        else:
+            self.queue_lbl.configure(text="")
+            
+        # Check every 2 seconds
+        self.after(2000, self.update_connectivity_status)
             elif command == "nav:users":
                 self.load_page(SystemAdminPage)
             elif command == "nav:reports":

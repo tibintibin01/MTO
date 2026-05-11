@@ -1,5 +1,9 @@
-import requests
 import json
+import requests
+from api_clients.offline_manager import manager
+import threading
+
+CONNECTION_STATUS = "ONLINE" # ONLINE, OFFLINE, SYNCING
 
 BASE_URL = "https://127.0.0.1:8001"
 API_BASE_URL = BASE_URL  # Alias for auth_service compatibility
@@ -93,10 +97,35 @@ def api_request(
         if response.content:
             return response.json()
         return True
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+        global CONNECTION_STATUS
+        CONNECTION_STATUS = "OFFLINE"
+        
+        # OFFLINE HANDLING
+        if method == "GET":
+            cached = manager.get_cached_data(f"{method}:{endpoint}:{params}")
+            if cached:
+                return cached
+            raise Exception("Offline: No cached data available for this request.")
+        
+        elif method in ["POST", "PUT", "DELETE"]:
+            # Queue for later sync
+            success = manager.queue_action(method, endpoint, data)
+            if success:
+                return {"status": "queued", "message": "Connection lost. Action queued for sync.", "offline": True}
+            raise Exception("Offline: Failed to queue action.")
+        
+        raise Exception(f"Connection lost and no offline handler for {method}")
+
     except requests.exceptions.RequestException as e:
         # Provide a more descriptive error message
         status_code = getattr(e.response, "status_code", "N/A")
         error_msg = f"API Communication Error (Status {status_code}): {str(e)}"
+        
+        # If it's a 503 or 504, we might treat it as offline too
+        if status_code in [502, 503, 504]:
+            CONNECTION_STATUS = "OFFLINE"
+
         if e.response and e.response.text:
             try:
                 error_data = e.response.json()
@@ -107,3 +136,11 @@ def api_request(
         raise Exception(error_msg)
     except Exception as e:
         raise Exception(f"Unexpected Error: {str(e)}")
+
+
+# Auto-Cache for successful GET requests
+def api_request_with_cache(*args, **kwargs):
+    res = api_request(*args, **kwargs)
+    if args[0] == "GET" and isinstance(res, (dict, list)):
+        manager.cache_data(f"{args[0]}:{args[1]}:{kwargs.get('params')}", res)
+    return res

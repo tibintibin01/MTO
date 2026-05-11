@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # Client-side Property Service (Thin Client)
-from api_clients.api_helper import api_request
+from api_clients.api_helper import api_request, api_request_with_cache
 
 
 def search_properties(
@@ -15,21 +15,21 @@ def search_properties(
         params["year_end"] = year_end
     if barangay:
         params["barangay"] = barangay
-    return api_request("GET", "/properties", params=params)
+    return api_request_with_cache("GET", "/properties", params=params)
 
 
 def get_barangays():
-    return api_request("GET", "/properties/barangays")
+    return api_request_with_cache("GET", "/properties/barangays")
 
 
 def get_property_by_id(property_id):
-    return api_request("GET", f"/properties/{property_id}")
+    return api_request_with_cache("GET", f"/properties/{property_id}")
 
 
 # Placeholder for other methods that will be migrated later
 def find_property_by_td_number(td_number, exclude_id=None):
     # This might need a specific endpoint
-    results = api_request("GET", "/properties", params={"search": td_number})
+    results = api_request_with_cache("GET", "/properties", params={"search": td_number})
     for r in results:
         if str(r[1]).strip() == str(td_number).strip():
             return {"id": r[0], "td_number": r[1], "owner_name": r[2]}
@@ -57,19 +57,19 @@ def save_property(data, editing_id=None, **kwargs):
 
 
 def get_assessment_roll():
-    return api_request("GET", "/billing/assessment-roll")
+    return api_request_with_cache("GET", "/billing/assessment-roll")
 
 
 def get_delinquent_accounts():
-    return api_request("GET", "/properties/delinquent")
+    return api_request_with_cache("GET", "/properties/delinquent")
 
 
 def get_receivables_by_barangay():
-    return api_request("GET", "/reports/receivables-by-barangay")
+    return api_request_with_cache("GET", "/reports/receivables-by-barangay")
 
 
 def get_deleted_properties():
-    return api_request("GET", "/properties/deleted")
+    return api_request_with_cache("GET", "/properties/deleted")
 
 
 def restore_property(property_id, **kwargs):
@@ -81,7 +81,7 @@ def purge_property(property_id, **kwargs):
 
 
 def get_unspecified_properties():
-    return api_request("GET", "/properties/unspecified")
+    return api_request_with_cache("GET", "/properties/unspecified")
 
 
 def bulk_update_barangay(ids, barangay):
