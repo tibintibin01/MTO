@@ -118,14 +118,25 @@ class LoginApp(ctk.CTk):
         self.bind("<Escape>", lambda e: self.destroy())
 
     def _on_resize(self, event):
-        """Responsive behavior: Hide sidebar on narrow screens."""
+        """Responsive behavior: Hide sidebar on narrow screens and resize logo."""
         if event.widget == self:
-            if event.width < 750:
+            width, height = event.width, event.height
+            if width < 750:
                 self.brand_frame.grid_remove()
                 self.login_frame.grid_configure(column=0, columnspan=2)
             else:
                 self.brand_frame.grid()
                 self.login_frame.grid_configure(column=1, columnspan=1)
+                
+                # Dynamic Image Resizing
+                try:
+                    # Calculate half-width for the sidebar
+                    new_w = width // 2
+                    new_h = height
+                    # Update CTkImage size
+                    self.logo_img.configure(size=(new_w, new_h))
+                except:
+                    pass
 
     def toggle_theme(self):
         self.is_dark = not self.is_dark
