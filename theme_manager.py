@@ -16,5 +16,6 @@ class ModernTheme:
     FONT_FAMILY = "Segoe UI"
     H1 = ("Segoe UI", 24, "bold")
     H2 = ("Segoe UI", 18, "bold")
+    H3 = ("Segoe UI", 15, "bold")
     BODY = ("Segoe UI", 13)
     BUTTON = ("Segoe UI", 13, "bold")
