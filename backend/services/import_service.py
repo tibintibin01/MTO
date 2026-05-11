@@ -58,9 +58,9 @@ def validate_property_import(file_content, file_extension):
             if not owner:
                 errors.append("Missing Owner Name")
                 
-            # 3. Check Assessed Value
             try:
-                val = float(row_data.get(found_cols["assessed_value"], 0))
+                raw_val = row_data.get(found_cols["assessed_value"], 0)
+                val = float(raw_val) if not pd.isna(raw_val) else 0.0
                 if val < 0: errors.append("Assessed Value cannot be negative")
             except:
                 errors.append("Invalid numeric format for Assessed Value")
@@ -125,8 +125,10 @@ def validate_assessment_import(file_content, file_extension):
             if not owner: errors.append("Missing Owner Name")
             
             try:
-                val = float(row.get(found_cols["assessed_value"], 0))
+                raw_val = row.get(found_cols["assessed_value"], 0)
+                val = float(raw_val) if not pd.isna(raw_val) else 0.0
             except:
+                val = 0.0
                 errors.append("Invalid Numeric Value")
                 
             status = "❌ ERROR" if errors else "✅ VALID"
