@@ -742,6 +742,14 @@ async def get_system_logs(
         return {"logs": f"Error reading logs: {str(e)}"}
 
 
+@app.get("/system/backup/status", tags=["System"], dependencies=[Depends(read_only)])
+async def get_backup_verification_status(current_user: dict = Depends(get_current_user)):
+    """Returns the latest backup health, timestamp, and SHA-256 checksum."""
+    from backend.services.backup_service import get_backup_status
+
+    return get_backup_status()
+
+
 @app.post("/payments/{payment_id}/receipt-pdf", dependencies=[Depends(write_access)])
 async def generate_receipt_pdf(
     payment_id: int, current_user: dict = Depends(get_current_user)

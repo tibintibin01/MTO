@@ -12,6 +12,27 @@ BACKUP_BASE_DIR = r"C:\MTO\backups"
 LOCAL_DIR = os.path.join(BACKUP_BASE_DIR, "local")
 USB_SECRET_FILE = "mto_backup_drive.txt"
 
+def _ensure_backup_table():
+    """Creates the backup_history table if it doesn't exist."""
+    query = """
+    CREATE TABLE IF NOT EXISTS backup_history (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        filename VARCHAR(255),
+        file_path VARCHAR(500),
+        checksum VARCHAR(64),
+        status VARCHAR(20),
+        health VARCHAR(10),
+        user_name VARCHAR(100)
+    )
+    """
+    try:
+        db.db_query(query)
+    except:
+        pass
+
+_ensure_backup_table()
+
 # State tracking for dashboard
 backup_status = {
     "last_local": "Never",
@@ -24,6 +45,19 @@ backup_status = {
 
 
 def get_backup_status():
+    """Fetches the latest backup status from the database."""
+    try:
+        query = "SELECT timestamp, checksum, health FROM backup_history ORDER BY id DESC LIMIT 1"
+        res = db.db_query(query, fetch=True, commit=False)
+        if res:
+            row = res[0]
+            backup_status.update({
+                "last_success": row[0].strftime("%Y-%m-%d %H:%M:%S") if row[0] else "Never",
+                "checksum": row[1] or "None",
+                "health": row[2] or "UNKNOWN"
+            })
+    except:
+        pass
     return backup_status
 
 
@@ -124,6 +158,16 @@ def run_hybrid_backup(user=None):
         )
         _sync_to_cloud(local_path)
         backup_status["last_cloud"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 6. Store in Database
+        try:
+            db.db_query(
+                "INSERT INTO backup_history (filename, file_path, checksum, status, health, user_name) VALUES (%s, %s, %s, %s, %s, %s)",
+                (filename, local_path, checksum, "SUCCESS", "OK", user_name)
+            )
+        except Exception as db_err:
+            print(f"Failed to log backup to DB: {db_err}")
+
         print(
             f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Hybrid Backup Completed Successfully."
         )
