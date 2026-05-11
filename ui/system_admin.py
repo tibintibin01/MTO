@@ -154,13 +154,20 @@ class SystemAdminPage:
         self.update_status_display()
 
     def update_status_display(self):
-        import backend.services.backup_service as backup_svc
-
-        status = backup_svc.get_backup_status()
-        for key, lbl in self.status_labels.items():
-            val = status.get(key, "Unknown")
-            color = "#27ae60" if "Success" in val or ":" in val else "#e67e22"
-            lbl.configure(text=val, text_color=color)
+        try:
+            import backend.services.backup_service as backup_svc
+            status = backup_svc.get_backup_status()
+            for key, lbl in self.status_labels.items():
+                val = status.get(key, "Unknown")
+                # Highlight green for success/timestamps, orange for unknown/failed
+                color = "#27ae60" if ("Success" in val or ":" in val or "OK" in val) else "#e67e22"
+                lbl.configure(text=val, text_color=color)
+        except:
+            pass
+            
+        # Refresh every 3 seconds while the widget exists
+        if self.container.winfo_exists():
+            self.container.after(3000, self.update_status_display)
 
     def trigger_backup(self):
         import threading
