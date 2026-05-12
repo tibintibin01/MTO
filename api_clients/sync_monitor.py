@@ -1,15 +1,20 @@
-# -*- coding: utf-8 -*-
 import threading
 import time
 import requests
 import api_clients.api_helper as api
 from api_clients.offline_manager import manager
+from utils.logger import mto_logger
+from utils.resilience import CircuitBreaker
 
 class SyncMonitor:
-    def __init__(self, interval=30):
+    def __init__(self, interval=30, on_conflict=None):
         self.interval = interval
+        self.on_conflict = on_conflict # Callback: func(action_id, local_payload, server_snapshot)
         self.running = False
         self._thread = None
+        
+        # Initialize Circuit Breaker for Local Backend connectivity
+        self.circuit = CircuitBreaker(name="LocalBackend", failure_threshold=3, recovery_timeout=60)
 
     def start(self):
         if not self.running:
@@ -41,19 +46,21 @@ class SyncMonitor:
             time.sleep(self.interval)
 
     def _check_connection(self):
-        try:
-            # Ping a simple endpoint
-            response = requests.get(f"{api.BASE_URL}/", timeout=5, verify=False)
+        """Pings the local API server with circuit breaker protection."""
+        def ping():
+            response = requests.get(f"{api.BASE_URL}/", timeout=5, verify=api.CERT_PATH)
             return response.status_code == 200
-        except:
+            
+        try:
+            return self.circuit.call(ping)
+        except Exception:
             return False
 
     def _flush_queue(self, pending):
         """Attempts to push all pending actions to the server."""
         for action in pending:
             try:
-                # Use raw api_request to avoid re-queuing on failure here
-                # but we handle exceptions to stop flushing if connection drops again
+                # Use raw api_request (which now enforces SSL)
                 response = api.api_request(
                     action["method"],
                     action["endpoint"],
@@ -62,19 +69,25 @@ class SyncMonitor:
                 
                 # If success, remove from local DB
                 manager.mark_as_synced(action["id"])
-                print(f"SYNC SUCCESS: {action['method']} {action['endpoint']}")
+                mto_logger.info(f"SYNC SUCCESS: {action['method']} {action['endpoint']}", action_id=action["id"])
             except Exception as e:
                 # 409 Conflict Handling (Version Mismatch)
                 if "409" in str(e):
-                    print(f"SYNC CONFLICT for {action['id']}: Version mismatch.")
-                    # Mark as conflict for manual resolution
-                    manager.mark_as_conflict(action["id"], {"server_version": "CONFLICT_DETECTED"})
+                    mto_logger.warning(f"SYNC CONFLICT detected for {action['id']}", action_id=action["id"])
+                    
+                    # Extract server snapshot (Simulation for now)
+                    server_snapshot = {"error": "Conflict", "hint": "Field mismatch detected on server"}
+                    
+                    manager.mark_as_conflict(action["id"], server_snapshot)
+                    
+                    if self.on_conflict:
+                        # Signal the coordinator to show UI
+                        self.on_conflict(action["id"], action["payload"], server_snapshot)
                     continue
 
-                print(f"SYNC FAILED for {action['id']}: {e}")
-                # If it fails due to connection, stop flushing and wait for next interval
+                mto_logger.error(f"SYNC FAILED for {action['id']}", error=str(e), action_id=action["id"])
                 if "Connection lost" in str(e) or "Status N/A" in str(e):
                     break
 
 # Global monitor
-sync_monitor = SyncMonitor(interval=20) # Check every 20 seconds
+sync_monitor = SyncMonitor(interval=20)

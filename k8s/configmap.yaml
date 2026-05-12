@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mto-config
+data:
+  APP_ENV: "production"
+  DB_TYPE: "mysql"
+  DB_HOST: "mto-db-service"
+  DB_PORT: "3306"
+  MUNICIPALITY_NAME: "Municipality of Casiguran"
+  MUNICIPAL_TREASURER: "JUAN D. TREASURER"

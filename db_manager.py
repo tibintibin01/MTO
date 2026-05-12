@@ -59,91 +59,22 @@ except ImportError as exc:
 DB_CONFIG_PATH = os.path.join(BASE_DIR, "db_config.json")
 
 
+from utils.config import config as mto_config
+from utils.secrets_manager import secrets
+
 def load_db_config():
+    """
+    Retrieves database configuration from the centralized config engine.
+    """
     runtime_config = {
-        "host": os.getenv("MTO_DB_HOST", "").strip(),
-        "port": os.getenv("MTO_DB_PORT", "3306").strip(),
-        "user": os.getenv("MTO_DB_USER", "").strip(),
-        "password": os.getenv("MTO_DB_PASSWORD", ""),
-        "database": os.getenv("MTO_DB_NAME", "").strip(),
-        "connect_timeout": int(os.getenv("MTO_DB_CONNECT_TIMEOUT", "5") or "5"),
-        "mysql_path": os.getenv("MYSQL_PATH", "mysql").strip(),
-        "mysqldump_path": os.getenv("MYSQLDUMP_PATH", "mysqldump").strip(),
+        "host": mto_config.DB_HOST,
+        "port": mto_config.DB_PORT,
+        "user": mto_config.DB_USER,
+        "password": secrets.db_password,
+        "database": mto_config.DB_NAME,
+        "connect_timeout": mto_config.DB_CONNECT_TIMEOUT,
     }
-    if os.path.exists(DB_CONFIG_PATH):
-        try:
-            with open(DB_CONFIG_PATH, "r", encoding="utf-8") as handle:
-                file_config = json.load(handle)
-            if isinstance(file_config, dict):
-                runtime_source = file_config.get("runtime", file_config)
-                if isinstance(runtime_source, dict):
-                    for key in (
-                        "host",
-                        "port",
-                        "user",
-                        "password",
-                        "database",
-                        "connect_timeout",
-                        "mysql_path",
-                        "mysqldump_path",
-                    ):
-                        if key in runtime_source and runtime_source[key] is not None:
-                            runtime_config[key] = runtime_source[key]
-        except Exception as exc:
-            raise RuntimeError(f"Could not read db_config.json: {exc}") from exc
-
-    # Handle encrypted password if present
-    if runtime_config.get("password_encrypted"):
-        try:
-            from cryptography.fernet import Fernet
-            import base64
-
-            # Use environment-based secret key for industry-standard security
-            raw_key = os.getenv("SECRET_KEY")
-            if not raw_key:
-                raise RuntimeError(
-                    "CRITICAL SECURITY ERROR: SECRET_KEY environment variable is missing. Application cannot safely decrypt database credentials."
-                )
-
-            raw_key = raw_key.encode()
-            # Ensure key is exactly 32 bytes for Fernet
-            if len(raw_key) < 32:
-                raw_key = raw_key.ljust(32)[:32]
-            else:
-                raw_key = raw_key[:32]
-
-            key = base64.urlsafe_b64encode(raw_key)
-            f = Fernet(key)
-            runtime_config["password"] = f.decrypt(
-                runtime_config["password_encrypted"].encode()
-            ).decode()
-        except Exception as exc:
-            log_error_to_file("Failed to decrypt database password", exc)
-
-    missing = [
-        key
-        for key in ("host", "user", "database")
-        if not str(runtime_config.get(key) or "").strip()
-    ]
-    if missing:
-        raise RuntimeError(
-            f"Database configuration incomplete. Missing: {', '.join(missing)}"
-        )
-
-    try:
-        runtime_config["port"] = int(runtime_config.get("port", 3306) or 3306)
-    except Exception as exc:
-        log_error_to_file("Invalid database port in config", exc)
-        runtime_config["port"] = 3306
-
-    # CRITICAL SECURITY CONTROL: Require a high-entropy SECRET_KEY
-    raw_key = os.getenv("SECRET_KEY")
-    if not raw_key or len(raw_key) < 128:
-        raise RuntimeError(
-            "CRITICAL SECURITY ERROR: SECRET_KEY environment variable is missing or too weak. "
-            "The application requires a 64-byte (128-character hex) high-entropy key to protect sensitive data."
-        )
-
+    
     return runtime_config
 
 

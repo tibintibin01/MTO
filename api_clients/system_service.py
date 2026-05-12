@@ -23,12 +23,12 @@ def trigger_backup():
     return api_request("POST", "/system/backup/trigger")
 
 
-def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit=100, offset=0):
+def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit=100, cursor=None):
     params = {
         "limit": limit,
-        "offset": offset,
         "search": search
     }
+    if cursor: params["cursor"] = cursor
     if username: params["username"] = username
     if date_from: params["date_from"] = date_from
     if date_to: params["date_to"] = date_to

@@ -63,12 +63,12 @@ class ImportWizardModal(ctk.CTkToplevel):
         table_fr = ctk.CTkFrame(self.main_container)
         table_fr.pack(fill="both", expand=True)
         
-        cols = ("ROW", "TD NUMBER", "OWNER", "STATUS", "MESSAGE")
+        cols = ("ROW", "TD NUMBER", "OWNER", "ACTION", "STATUS", "MESSAGE")
         self.tree = ttk.Treeview(table_fr, columns=cols, show="headings")
         
         for col in cols:
             self.tree.heading(col, text=col)
-            self.tree.column(col, anchor="center", width=100)
+            self.tree.column(col, anchor="center", width=80)
         
         self.tree.column("MESSAGE", width=300, anchor="w")
         self.tree.column("OWNER", width=150, anchor="w")
@@ -89,6 +89,7 @@ class ImportWizardModal(ctk.CTkToplevel):
                 r["row_index"],
                 r["td_number"],
                 r["owner_name"],
+                r.get("action", "N/A"),
                 r["status"],
                 r["message"]
             ), tags=(tag,))
@@ -155,8 +156,12 @@ class ImportWizardModal(ctk.CTkToplevel):
         
         threading.Thread(target=worker, daemon=True).start()
 
-    def finish_import(self, count):
-        messagebox.showinfo("Success", f"Successfully imported {count} records!")
+    def finish_import(self, stats):
+        if isinstance(stats, dict):
+            msg = f"Import Complete!\n\n🆕 New Records: {stats.get('inserted', 0)}\n🔄 Updated Records: {stats.get('updated', 0)}"
+        else:
+            msg = f"Successfully imported {stats} records!"
+        messagebox.showinfo("Success", msg)
         self.destroy()
 
     def clear_container(self):

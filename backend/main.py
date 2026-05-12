@@ -35,23 +35,29 @@ from slowapi.errors import RateLimitExceeded
 # Add parent directory to path to import existing services
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import services.analytics_service as analytics
-from fastapi.responses import HTMLResponse
+from utils.config import config as mto_config
+from utils.secrets_manager import secrets
+from utils.resilience import CircuitBreaker
+from utils.metrics import MetricsManager
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
-# Initialize Sentry Telemetry (Resilient Implementation)
+# Initialize Sentry Telemetry with Circuit Protection
 SENTRY_DSN = os.getenv("SENTRY_DSN")
+sentry_circuit = CircuitBreaker(name="SentryTelemetry", failure_threshold=3, recovery_timeout=300)
+
 if SENTRY_AVAILABLE and SENTRY_DSN:
-    sentry_sdk.init(
-        dsn=SENTRY_DSN,
-        integrations=[FastApiIntegration()],
-        traces_sample_rate=1.0,
-        profiles_sample_rate=1.0,
-    )
-    print(f"INFO: Sentry Telemetry INITIALIZED: {SENTRY_DSN[:20]}...")
+    def init_sentry():
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            integrations=[FastApiIntegration()],
+            traces_sample_rate=1.0,
+            profiles_sample_rate=1.0,
+        )
+        print(f"INFO: Sentry Telemetry INITIALIZED: {SENTRY_DSN[:20]}...")
+    
+    try:
+        sentry_circuit.call(init_sentry)
+    except Exception as e:
+        print(f"WARNING: Sentry Initialization skipped due to circuit trip: {e}")
 elif not SENTRY_AVAILABLE and SENTRY_DSN:
     print("WARNING: Sentry DSN provided but sentry_sdk NOT FOUND. Telemetry disabled.")
 
@@ -133,43 +139,102 @@ else:
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# --- OBSERVABILITY MIDDLEWARE ---
+from utils.metrics import MetricsManager
+import time
+
+# --- OBSERVABILITY & TELEMETRY MIDDLEWARE ---
 @app.middleware("http")
-async def add_request_id_middleware(request: Request, call_next):
+async def observability_middleware(request: Request, call_next):
+    """
+    Unified middleware for Request ID correlation and Prometheus performance tracking.
+    """
     from utils import set_request_id, get_request_id
+    start_time = time.perf_counter()
     
-    # Generate or capture request ID
+    # 1. Generate or capture request ID
     req_id = request.headers.get("X-Request-ID") or request.headers.get("X-Correlation-ID")
-    set_request_id(req_id) # Generates new one if None
+    set_request_id(req_id)
     
-    # Tag Sentry scope
+    # 2. Tag Sentry scope (if available)
     if SENTRY_DSN:
         with sentry_sdk.configure_scope() as scope:
             scope.set_tag("request_id", get_request_id())
-            if hasattr(request.state, "user"):
-                scope.set_user({"username": request.state.user.get("username")})
     
+    # 3. Process Request
     response: Response = await call_next(request)
+    duration = time.perf_counter() - start_time
     
-    # Return ID in header for client-side correlation
+    # 4. Record Metrics (excluding metrics endpoint noise)
+    if not request.url.path.endswith("/metrics"):
+        MetricsManager.record_request(
+            method=request.method,
+            endpoint=request.url.path,
+            status=response.status_code,
+            duration=duration
+        )
+        
+        # Periodic circuit state reporting (Sampled or on every request for low-volume apps)
+        MetricsManager.record_circuit_state("SentryTelemetry", sentry_circuit.get_state_numeric())
+
+    # 5. Return ID in header for client-side correlation
     response.headers["X-Request-ID"] = get_request_id()
     return response
 
+# --- METRICS ENDPOINT ---
+@app.get("/api/v2/metrics", tags=["System"])
+async def get_metrics(current_user: dict = Depends(admin_only)):
+    """
+    Exposes industrial Prometheus metrics for system monitoring.
+    Locked to Admin-only for security.
+    """
+    content, content_type = MetricsManager.get_latest_metrics()
+    return Response(content=content, media_type=content_type)
+
+# --- OBSERVABILITY MIDDLEWARE ---
+
+# --- CSRF PROTECTION MIDDLEWARE ---
 @app.middleware("http")
 async def csrf_protection_middleware(request: Request, call_next):
     """
-    Enterprise CSRF Protection: Requires a custom header for all state-changing requests.
-    This prevents cross-site attacks from browsers while allowing our Desktop App to function seamlessly.
+    Enforces X-Requested-With header for all state-changing operations.
+    Protects against browser-based CSRF attacks.
     """
     if request.method in ["POST", "PUT", "DELETE", "PATCH"]:
-        # Check for presence of custom security headers
-        if not request.headers.get("X-Requested-With") and not request.headers.get("X-CSRF-Token"):
-             from fastapi.responses import JSONResponse
-             return JSONResponse(
-                status_code=403,
-                content={"detail": "CSRF Protect: Missing custom security header (X-Requested-With or X-CSRF-Token)"}
+        custom_header = request.headers.get("X-Requested-With")
+        if custom_header != "XMLHttpRequest":
+            mto_logger.security(
+                "CSRF ATTEMPT DETECTED: Missing or invalid X-Requested-With header",
+                method=request.method,
+                url=str(request.url),
+                ip=request.client.host
             )
-    return await call_next(request)
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Security violation: CSRF protection triggered."}
+            )
+            
+    response = await call_next(request)
+    return response
+
+# --- AUTHENTICATION ENDPOINT ---
+@app.post("/api/auth/login")
+async def login(credentials: Dict[str, str], request: Request):
+    """
+    Secure login with brute-force protection and structured logging.
+    """
+    username = credentials.get("username")
+    password = credentials.get("password")
+    
+    mto_logger.info(f"Login attempt received for user: {username}", ip=request.client.host)
+    
+    user_data = auth_svc.verify_user_login(username, password)
+    if user_data:
+        mto_logger.info("Login successful", user=username, ip=request.client.host)
+        return user_data
+    else:
+        mto_logger.security("Login failed: Invalid credentials or account locked", user=username, ip=request.client.host)
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 @app.middleware("http")
 async def maintenance_mode_middleware(request: Request, call_next):
@@ -206,13 +271,18 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     try:
-        from migration_manager import run_migrations
-
-        print("Starting Database Migration Check...")
-        run_migrations()
-        print("Database is up to date.")
+        from alembic.config import Config
+        from alembic import command
+        
+        mto_logger.info("Starting Industrial Database Migration Check (Alembic)...")
+        
+        # Load Alembic config and run upgrade
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+        
+        mto_logger.info("Database schema is UP TO DATE.")
     except Exception as e:
-        print(f"CRITICAL: Database Migration Failed: {e}")
+        mto_logger.error(f"CRITICAL: Database Migration Failed: {e}")
 
 
 from fastapi.exceptions import RequestValidationError
@@ -230,14 +300,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 # Security Configuration
-SECRET_KEY = os.getenv("MTO_API_SECRET_KEY")
-if not SECRET_KEY or len(SECRET_KEY) < 128:
-    raise RuntimeError(
-        "CRITICAL SECURITY ERROR: MTO_API_SECRET_KEY is missing or too weak. "
-        "The application requires a 64-byte (128-character hex) high-entropy key to protect sessions."
-    )
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 hours
+from utils.secrets_manager import secrets
+from utils.config import config as mto_config
+SECRET_KEY = secrets.jwt_secret
+ALGORITHM = mto_config.JWT_ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = mto_config.TOKEN_EXPIRE_MINUTES
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -454,22 +521,56 @@ async def reset_user_password(
 async def list_properties(
     search: str = "",
     limit: int = 50,
-    offset: int = 0,
+    cursor: Optional[int] = None,
     kind: Optional[str] = None,
     year_start: Optional[int] = None,
     year_end: Optional[int] = None,
     barangay: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
-    return prop_svc.search_properties(
+    # Fetch limit + 1 to detect if there's a next page
+    results = prop_svc.search_properties(
         search,
-        limit=limit,
-        offset=offset,
+        limit=limit + 1,
+        cursor=cursor,
         kind=kind,
         year_start=year_start,
         year_end=year_end,
         barangay=barangay,
     )
+    
+    has_more = len(results) > limit
+    items = results[:limit]
+    next_cursor = items[-1][0] if has_more and items else None # items[0] is ID in raw row
+    
+    return {
+        "items": items,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "count": len(items)
+    }
+
+@app.get("/properties/{property_id}/history", tags=["Properties"])
+async def get_property_history(property_id: int, current_user: dict = Depends(get_current_user)):
+    query = """
+        SELECT id, td_number, assessed_value, kind_of_property, tax_year, changed_by, created_at
+        FROM property_assessment_history
+        WHERE property_id = %s
+        ORDER BY created_at DESC
+    """
+    rows = db.db_query(query, (property_id,), fetch=True, commit=False) or []
+    return [
+        {
+            "id": r[0],
+            "td_number": r[1],
+            "assessed_value": float(r[2]),
+            "kind": r[3],
+            "tax_year": r[4],
+            "changed_by": r[5],
+            "date": r[6].strftime("%Y-%m-%d %H:%M:%S") if hasattr(r[6], "strftime") else str(r[6])
+        }
+        for r in rows
+    ]
 
 @app.get("/properties/barangays", tags=["Properties"])
 async def list_barangays(current_user: dict = Depends(get_current_user)):
@@ -697,11 +798,33 @@ async def get_property_dossier(
         # 4. Fetch recent audit logs
         logs = sys_svc.get_audit_logs(limit=10)
 
+        # 5. Fetch full assessment history
+        hist_query = """
+            SELECT id, td_number, assessed_value, kind_of_property, tax_year, changed_by, created_at
+            FROM property_assessment_history
+            WHERE property_id = %s
+            ORDER BY created_at DESC
+        """
+        raw_history = db.db_query(hist_query, (prop.get("id"),), fetch=True, commit=False) or []
+        history = [
+            {
+                "id": r[0],
+                "td_number": r[1],
+                "assessed_value": float(r[2]),
+                "kind": r[3],
+                "tax_year": r[4],
+                "changed_by": r[5],
+                "date": r[6].strftime("%Y-%m-%d %H:%M:%S") if hasattr(r[6], "strftime") else str(r[6])
+            }
+            for r in raw_history
+        ]
+
         return {
             "master": prop,
             "payments": payments,
             "ancestry": ancestry,
             "audit_summary": logs,
+            "assessment_history": history
         }
     except Exception as e:
         import traceback
@@ -917,17 +1040,27 @@ async def list_audit_logs(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     limit: int = 100,
-    offset: int = 0,
+    cursor: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
 ):
-    return sys_svc.get_audit_logs(
+    results = sys_svc.get_audit_logs(
         username=username,
         search=search,
         date_from=date_from,
         date_to=date_to,
-        limit=limit,
-        offset=offset,
+        limit=limit + 1,
+        cursor=cursor,
     )
+    
+    has_more = len(results) > limit
+    items = results[:limit]
+    next_cursor = items[-1]["id"] if has_more and items else None
+    
+    return {
+        "items": items,
+        "next_cursor": next_cursor,
+        "has_more": has_more
+    }
 
 
 @app.get("/system/audit-users", dependencies=[Depends(admin_only)])
@@ -1092,32 +1225,51 @@ async def serve_analytics_dashboard():
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
         <style>
             :root {
-                --bg-color: #0f172a;
-                --card-bg: #1e293b;
-                --text-primary: #f8fafc;
+                --bg-color: #f8fafc;
+                --card-bg: #ffffff;
+                --text-primary: #1e293b;
+                --text-secondary: #64748b;
                 --accent: #38bdf8;
                 --emerald: #10b981;
+                --border: #e2e8f0;
+            }
+            [data-theme='dark'] {
+                --bg-color: #0f172a;
+                --card-bg: #1e293b;
+                --text-primary: #f1f5f9;
+                --text-secondary: #94a3b8;
+                --accent: #38bdf8;
+                --border: #334155;
             }
             body { 
                 margin: 0; padding: 20px; 
                 background: var(--bg-color); 
                 color: var(--text-primary);
                 font-family: 'Inter', sans-serif;
+                transition: background 0.3s, color 0.3s;
             }
             .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
             .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
             .card { 
                 background: var(--card-bg); 
-                border-radius: 12px; padding: 20px; 
-                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-                border: 1px solid rgba(255,255,255,0.05);
+                border-radius: 12px; padding: 24px; 
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                border: 1px solid var(--border);
+                transition: transform 0.2s;
+                animation: fadeInUp 0.6s ease-out forwards;
+                opacity: 0;
             }
-            .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 20px; }
-            .stat-card { background: rgba(56, 189, 248, 0.1); padding: 15px; border-radius: 8px; border-left: 4px solid var(--accent); }
-            .stat-val { font-size: 1.5rem; font-weight: 600; color: var(--accent); }
-            .stat-label { font-size: 0.8rem; opacity: 0.7; text-transform: uppercase; }
-            .chart-container { height: 350px; width: 100%; }
-            h2 { margin: 0 0 20px 0; font-weight: 600; font-size: 1.1rem; opacity: 0.9; }
+            .card:hover { transform: translateY(-4px); }
+            @keyframes fadeInUp {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+            .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px; }
+            .stat-card { background: var(--card-bg); padding: 20px; border-radius: 12px; border: 1px solid var(--border); border-left: 4px solid var(--accent); }
+            .stat-val { font-size: 1.8rem; font-weight: 600; color: var(--accent); margin-top: 5px; }
+            .stat-label { font-size: 0.85rem; color: var(--text-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+            .chart-container { height: 350px; width: 100%; margin-top: 10px; }
+            h2 { margin: 0; font-weight: 600; font-size: 1.1rem; color: var(--text-primary); }
         </style>
     </head>
     <body>
@@ -1144,7 +1296,10 @@ async def serve_analytics_dashboard():
                 // Secure Token Retrieval from URL
                 const urlParams = new URLSearchParams(window.location.search);
                 const token = urlParams.get('t');
+                const theme = urlParams.get('theme') || 'dark';
                 
+                document.documentElement.setAttribute('data-theme', theme);
+
                 const headers = {};
                 if (token) {
                     headers["Authorization"] = "Bearer " + token;
@@ -1174,7 +1329,8 @@ async def serve_analytics_dashboard():
             }
 
             function renderTrendChart(trend) {
-                const chart = echarts.init(document.getElementById('trend-chart'), 'dark');
+                const theme = document.documentElement.getAttribute('data-theme');
+                const chart = echarts.init(document.getElementById('trend-chart'), theme === 'dark' ? 'dark' : null);
                 chart.setOption({
                     backgroundColor: 'transparent',
                     tooltip: { trigger: 'axis' },
@@ -1197,7 +1353,8 @@ async def serve_analytics_dashboard():
             }
 
             function renderBarangayChart(data) {
-                const chart = echarts.init(document.getElementById('barangay-chart'), 'dark');
+                const theme = document.documentElement.getAttribute('data-theme');
+                const chart = echarts.init(document.getElementById('barangay-chart'), theme === 'dark' ? 'dark' : null);
                 chart.setOption({
                     backgroundColor: 'transparent',
                     tooltip: { trigger: 'item' },
@@ -1214,7 +1371,8 @@ async def serve_analytics_dashboard():
             }
 
             function renderYearChart(data) {
-                const chart = echarts.init(document.getElementById('year-chart'), 'dark');
+                const theme = document.documentElement.getAttribute('data-theme');
+                const chart = echarts.init(document.getElementById('year-chart'), theme === 'dark' ? 'dark' : null);
                 chart.setOption({
                     backgroundColor: 'transparent',
                     tooltip: { trigger: 'axis' },

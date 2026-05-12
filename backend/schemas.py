@@ -1,8 +1,17 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import Optional, List, Any
+from utils.sanitizer import sanitize_string, sanitize_numeric_string
 
+class BaseSanitizedModel(BaseModel):
+    """Base class that automatically sanitizes all string fields."""
+    @field_validator("*", mode="before")
+    @classmethod
+    def sanitize_all_strings(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return sanitize_string(v)
+        return v
 
-class PropertySaveSchema(BaseModel):
+class PropertySaveSchema(BaseSanitizedModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     td_number: Optional[str] = Field(None, alias="TD Number")
@@ -26,8 +35,15 @@ class PropertySaveSchema(BaseModel):
     prev_td_number: Optional[str] = Field(None, alias="Previous TD Number")
     effectivity_date: Optional[str] = Field(None, alias="Effectivity Date")
 
+    @field_validator("td_number", "pin", "prev_td_number", mode="before")
+    @classmethod
+    def sanitize_ids(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return sanitize_numeric_string(v)
+        return v
 
-class ReceiptRecordSchema(BaseModel):
+
+class ReceiptRecordSchema(BaseSanitizedModel):
     model_config = ConfigDict(extra="forbid")
     
     property_id: int
@@ -37,18 +53,18 @@ class ReceiptRecordSchema(BaseModel):
     user_name: str
 
 
-class LogActionSchema(BaseModel):
+class LogActionSchema(BaseSanitizedModel):
     model_config = ConfigDict(extra="forbid")
     action: str
 
 
-class UserUpdateSchema(BaseModel):
+class UserUpdateSchema(BaseSanitizedModel):
     model_config = ConfigDict(extra="forbid")
     role: Optional[str] = None
     is_active: Optional[bool] = None
 
 
-class UserCreateSchema(BaseModel):
+class UserCreateSchema(BaseSanitizedModel):
     model_config = ConfigDict(extra="forbid")
     username: str = Field(..., min_length=3)
     full_name: str = Field(..., min_length=3)
@@ -56,12 +72,12 @@ class UserCreateSchema(BaseModel):
     role: str = "viewer"
 
 
-class PasswordResetSchema(BaseModel):
+class PasswordResetSchema(BaseSanitizedModel):
     model_config = ConfigDict(extra="forbid")
     new_password: str = Field(..., min_length=6)
 
 
-class BulkUpdateBarangaySchema(BaseModel):
+class BulkUpdateBarangaySchema(BaseSanitizedModel):
     model_config = ConfigDict(extra="forbid")
     ids: List[int]
     barangay: str

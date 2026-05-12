@@ -4,9 +4,11 @@ from api_clients.api_helper import api_request, api_request_with_cache
 
 
 def search_properties(
-    term, limit=50, offset=0, kind=None, year_start=None, year_end=None, barangay=None
+    term, limit=50, cursor=None, kind=None, year_start=None, year_end=None, barangay=None
 ):
-    params = {"search": term, "limit": limit, "offset": offset}
+    params = {"search": term, "limit": limit}
+    if cursor:
+        params["cursor"] = cursor
     if kind:
         params["kind"] = kind
     if year_start:
@@ -29,7 +31,8 @@ def get_property_by_id(property_id):
 # Placeholder for other methods that will be migrated later
 def find_property_by_td_number(td_number, exclude_id=None):
     # This might need a specific endpoint
-    results = api_request_with_cache("GET", "/properties", params={"search": td_number})
+    response = api_request_with_cache("GET", "/properties", params={"search": td_number})
+    results = response.get("items", [])
     for r in results:
         if str(r[1]).strip() == str(td_number).strip():
             return {"id": r[0], "td_number": r[1], "owner_name": r[2]}

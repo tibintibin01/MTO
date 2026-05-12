@@ -186,7 +186,7 @@ def get_audit_stats():
     }
 
 
-def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit=100, offset=0):
+def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit=100, cursor=None):
     filters = []
     params = []
 
@@ -206,6 +206,11 @@ def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit
         filters.append("DATE(timestamp) <= %s")
         params.append(date_to)
 
+    # 3. Cursor Pagination
+    if cursor:
+        where_clauses.append("id < %s")
+        params.append(int(cursor))
+
     where_clause = "WHERE 1=1"
     if filters:
         where_clause += " AND " + " AND ".join(filters)
@@ -214,10 +219,10 @@ def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit
         SELECT id, timestamp, username, action, table_name, record_id, old_values, new_values, ip_address
         FROM audit_logs
         {where_clause}
-        ORDER BY timestamp DESC
-        LIMIT %s OFFSET %s
+        ORDER BY id DESC
+        LIMIT %s
     """
-    params.extend([int(limit), int(offset)])
+    params.append(int(limit))
 
     rows = db.db_query(query, tuple(params), fetch=True, commit=False) or []
     return [

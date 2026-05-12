@@ -14,7 +14,8 @@ class AssessmentRollPage:
     def __init__(self, parent, user):
         self.parent = parent
         self.user = user
-        self.current_page = 0
+        self.next_cursor = None
+        self.cursor_history = [] # For going back if we want
         self.page_size = 50
         self.is_loading = False
         self.all_loaded = False
@@ -240,9 +241,9 @@ class AssessmentRollPage:
 
         self.next_btn = ctk.CTkButton(
             self.pag_fr,
-            text="NEXT ▶",
+            text="LOAD MORE ▶",
             command=self.next_page,
-            width=100,
+            width=120,
             fg_color="#34495e",
         )
         self.next_btn.pack(side="right", padx=10)
@@ -269,7 +270,8 @@ class AssessmentRollPage:
 
     def refresh_table(self, reset_page=True):
         if reset_page:
-            self.current_page = 0
+            self.next_cursor = None
+            self.cursor_history = []
             self.all_loaded = False
             
         if self.is_loading:
@@ -283,16 +285,21 @@ class AssessmentRollPage:
                 kind = self.kind_var.get()
                 y_start = self.year_start_ent.get().strip()
                 y_end = self.year_end_ent.get().strip()
-                offset = self.current_page * self.page_size
-
-                results = prop_svc.search_properties(
+                
+                response = prop_svc.search_properties(
                     term,
                     limit=self.page_size,
-                    offset=offset,
+                    cursor=self.next_cursor if not reset_page else None,
                     kind=kind,
                     year_start=y_start,
                     year_end=y_end,
                 )
+                
+                results = response.get("items", [])
+                self.next_cursor = response.get("next_cursor")
+                if not response.get("has_more"):
+                    self.all_loaded = True
+
                 self.container.after(0, lambda: self._update_table(results, append=not reset_page))
             except Exception as e:
                 self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
@@ -302,17 +309,16 @@ class AssessmentRollPage:
         threading.Thread(target=worker, daemon=True).start()
 
     def next_page(self):
-        self.current_page += 1
-        self.refresh_table(reset_page=False)
-
-    def prev_page(self):
-        if self.current_page > 0:
-            self.current_page -= 1
+        if not self.all_loaded:
             self.refresh_table(reset_page=False)
 
+    def prev_page(self):
+        # We use infinite scroll with append=True, so 'Back' is naturally handled by scrolling up.
+        pass
+
     def _update_table(self, results, append=False):
-        self.page_lbl.configure(text=f"PAGE {self.current_page + 1}")
-        self.prev_btn.configure(state="normal" if self.current_page > 0 else "disabled")
+        self.page_lbl.configure(text="INFINITE ROLL" if append else "ASSESSMENT ROLL")
+        self.prev_btn.configure(state="disabled") # Disabled for cursor mode
         
         if not results:
             if not append:

@@ -12,6 +12,9 @@ class AuditLogsPage:
     def __init__(self, parent, user):
         self.parent = parent
         self.user = user
+        self.next_cursor = None
+        self.all_loaded = False
+        self.is_loading = False
         self.setup_ui()
         self.refresh()
 
@@ -42,6 +45,9 @@ class AuditLogsPage:
         
         self.refresh_btn = ctk.CTkButton(toolbar, text=f"🔄 {tr('technical_logs.toolbar.btn_refresh')}", command=self.refresh, fg_color=ModernTheme.PRIMARY, width=150, height=35, font=ModernTheme.BUTTON_SMALL)
         self.refresh_btn.pack(side="left", padx=10)
+
+        self.load_more_btn = ctk.CTkButton(toolbar, text="📥 LOAD MORE", command=self.load_more, fg_color=ModernTheme.SECONDARY, width=150, height=35, font=ModernTheme.BUTTON_SMALL)
+        self.load_more_btn.pack(side="right")
 
         # Table Area
         table_fr = ctk.CTkFrame(self.container)
@@ -98,6 +104,20 @@ class AuditLogsPage:
         return value_lbl
 
     def refresh(self):
+        self.next_cursor = None
+        self.all_loaded = False
+        self._load_data(append=False)
+
+    def load_more(self):
+        if not self.all_loaded and not self.is_loading:
+            self._load_data(append=True)
+
+    def _load_data(self, append=False):
+        if self.is_loading: return
+        self.is_loading = True
+        
+        if self.load_more_btn.winfo_exists():
+            self.load_more_btn.configure(state="disabled", text="LOADING...")
         def worker():
             try:
                 # Load stats
@@ -114,18 +134,28 @@ class AuditLogsPage:
                     except: pass
                 self.container.after(0, update_cb)
                 
-                # Load logs
-                selected_username = self.user_cb.get()
-                user_id = None
-                if selected_username != tr("technical_logs.toolbar.all_users"):
-                    user_match = next((u for u in users if u["username"] == selected_username), None)
-                    if user_match: user_id = user_match["id"]
+                logs_response = system.get_audit_logs(
+                    username=selected_username if selected_username != tr("technical_logs.toolbar.all_users") else None,
+                    limit=50,
+                    cursor=self.next_cursor if append else None
+                )
                 
-                logs = auth.get_audit_logs(user_id=user_id)
-                self.container.after(0, lambda: self._update_table(logs))
+                logs = logs_response.get("items", [])
+                self.next_cursor = logs_response.get("next_cursor")
+                if not logs_response.get("has_more"):
+                    self.all_loaded = True
+                
+                self.container.after(0, lambda: self._update_table(logs, append=append))
             except Exception as e:
-                # Lambda Scope Fix: Pass e=e to lock the error object in memory
                 self.container.after(0, lambda e=e: messagebox.showerror("Audit Engine Error", str(e)))
+            finally:
+                self.is_loading = False
+                def reset_btn():
+                    try:
+                        state = "disabled" if self.all_loaded else "normal"
+                        self.load_more_btn.configure(state=state, text="DONE" if self.all_loaded else "📥 LOAD MORE")
+                    except: pass
+                self.container.after(0, reset_btn)
         
         threading.Thread(target=worker, daemon=True).start()
 
@@ -134,8 +164,11 @@ class AuditLogsPage:
         self.today_logs_lbl.configure(text=str(stats.get("today", 0)))
         self.active_users_lbl.configure(text=str(stats.get("active_users", 0)))
 
-    def _update_table(self, logs):
-        for row in self.tree.get_children(): self.tree.delete(row)
+    def _update_table(self, logs, append=False):
+        if not append:
+            for row in self.tree.get_children(): self.tree.delete(row)
+        
+        start_idx = len(self.tree.get_children())
         for i, l in enumerate(logs):
             ts_raw = l.get("timestamp")
             if isinstance(ts_raw, str):

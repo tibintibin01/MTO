@@ -6,6 +6,7 @@ import api_clients.payment_service as payment
 import api_clients.system_service as system
 from ui_components import ModernChartWidget, show_toast, ErrorDialog
 from utils import tr
+from ui.animation_helper import WidgetAnimator
 
 class DashboardHomePage:
     def __init__(self, parent, user, callbacks):
@@ -19,12 +20,12 @@ class DashboardHomePage:
         self.container = ctk.CTkScrollableFrame(self.parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
-        # Header Section
-        header = ctk.CTkFrame(self.container, fg_color="#1f538d", corner_radius=15)
+        # Header Section - Gradient-like effect using primary colors
+        header = ctk.CTkFrame(self.container, fg_color=ModernTheme.PRIMARY, corner_radius=15)
         header.pack(fill="x", pady=(0, 20))
 
         ctk.CTkLabel(header, text=tr("dashboard.title"), font=ModernTheme.H1, text_color="white").pack(anchor="w", padx=30, pady=(25, 5))
-        ctk.CTkLabel(header, text=tr("dashboard.subtitle"), font=ModernTheme.BODY, text_color="#d1d1d1").pack(anchor="w", padx=30, pady=(0, 25))
+        ctk.CTkLabel(header, text=tr("dashboard.subtitle"), font=ModernTheme.BODY, text_color="#f0f9ff").pack(anchor="w", padx=30, pady=(0, 25))
 
         # Stats Cards (Grid)
         stats_frame = ctk.CTkFrame(self.container, fg_color="transparent")
@@ -32,9 +33,9 @@ class DashboardHomePage:
         stats_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
         self.stat_cards = {
-            "total_properties": self._make_stat_card(stats_frame, 0, tr("dashboard.stats.total_properties"), "0", "#3498db"),
-            "collections_today": self._make_stat_card(stats_frame, 1, tr("dashboard.stats.collections_today"), "P 0.00", "#2ecc71"),
-            "collections_month": self._make_stat_card(stats_frame, 2, tr("dashboard.stats.collections_month"), "P 0.00", "#e67e22"),
+            "total_properties": self._make_stat_card(stats_frame, 0, tr("dashboard.stats.total_properties"), "0", ModernTheme.INFO),
+            "collections_today": self._make_stat_card(stats_frame, 1, tr("dashboard.stats.collections_today"), "P 0.00", ModernTheme.SUCCESS),
+            "collections_month": self._make_stat_card(stats_frame, 2, tr("dashboard.stats.collections_month"), "P 0.00", ModernTheme.WARNING),
         }
 
         # Charts Section
@@ -76,11 +77,16 @@ class DashboardHomePage:
             ctk.CTkLabel(self.backup_card, text="🛡️ Administrative credentials required to trigger manual backup.", font=("Segoe UI", 10, "italic"), text_color="gray").pack(pady=(0, 20), padx=20, anchor="e")
 
     def _make_stat_card(self, parent, col, title, value, color):
-        card = ctk.CTkFrame(parent, height=120)
+        card = ctk.CTkFrame(parent, height=120, border_width=1, border_color=ModernTheme.BORDER_DARK if ctk.get_appearance_mode().lower() == "dark" else ModernTheme.BORDER_LIGHT)
         card.grid(row=0, column=col, padx=10, sticky="nsew")
-        ctk.CTkLabel(card, text=title, font=ModernTheme.BODY, text_color="gray").pack(pady=(20, 5))
+        
+        ctk.CTkLabel(card, text=title, font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_SUB_DARK if ctk.get_appearance_mode().lower() == "dark" else ModernTheme.TEXT_SUB_LIGHT).pack(pady=(20, 5))
         val_label = ctk.CTkLabel(card, text=value, font=ModernTheme.H2, text_color=color)
         val_label.pack(pady=(0, 20))
+        
+        # Entrance Animation
+        card.after(100 + (col * 100), lambda: WidgetAnimator.pulse(card, card.cget("fg_color"), ModernTheme.PRIMARY_HOVER, 200))
+        
         return val_label
 
     def _make_backup_item(self, parent, col, title, value):

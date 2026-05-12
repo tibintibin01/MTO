@@ -19,15 +19,14 @@ import api_clients.api_helper as api
 from api_clients.offline_manager import manager
 
 
-from ui.ledger import LedgerPage
-from ui.property import PropertyPage
-from ui.recycle import RecycleBinPage
-from ui.reports import ReportsPage
-from ui.assessment_roll import AssessmentRollPage
-from ui.system_admin import SystemAdminPage
-from ui.audit_trail import AuditTrailPage
-from ui.analytics_dashboard import AnalyticsDashboardPage
-from ui.command_palette import CommandPalette
+from ui.navigation import NavigationSidebar
+from ui.status_bar import ConnectivityStatusBar
+from ui.dashboard_home import DashboardHomePage
+from ui.help_page import SystemHelpPage
+from ui.watchdog import SessionWatchdog, show_session_expired_dialog
+from ui.notifications import NotificationListener
+from ui.conflict_resolver import ConflictArbitrationModal
+from api_clients.sync_monitor import sync_monitor
 
 # Ensure theme is loaded
 setup_theme()
@@ -293,6 +292,9 @@ class DashboardApp(ctk.CTk):
             "on_notification": self._handle_notification,
             "on_progress": self._handle_progress
         })
+        
+        # Phase 4: Sync Monitor with Conflict Arbitration
+        sync_monitor.on_conflict = self._handle_sync_conflict
 
         self.setup_main_window()
         self.setup_ui()
@@ -300,6 +302,7 @@ class DashboardApp(ctk.CTk):
         # 2. Launch Background Services
         self.watchdog.start_monitoring()
         self.notifier.start()
+        sync_monitor.start()
         
         # 3. Initial State
         self.load_page(DashboardHomePage)
@@ -350,6 +353,21 @@ class DashboardApp(ctk.CTk):
             self.watchdog.reset()
         except Exception as e:
             ErrorDialog(self, tr("common.system_error"), f"Failed to load page: {str(e)}")
+
+    def _handle_sync_conflict(self, action_id, local_payload, server_snapshot):
+        """Launches the arbitration UI on the main thread."""
+        self.after(0, lambda: ConflictArbitrationModal(
+            self, action_id, local_payload, server_snapshot, self._resolve_conflict_action
+        ))
+
+    def _resolve_conflict_action(self, action_id, resolution):
+        """Processes the final arbitration decision from the modal."""
+        from api_clients.offline_manager import manager
+        if resolution == "LOCAL":
+            show_toast(self, "Resolving: Overriding server with local version...", type="info")
+        else:
+            manager.resolve_conflict(action_id, resolution="DISCARD")
+            show_toast(self, "Resolving: Discarded local version. Using server data.", type="success")
 
     def trigger_backup_action(self):
         try: system.trigger_backup(); show_toast(self, tr("dashboard.backup.success_toast"), type="info")

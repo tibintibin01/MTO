@@ -110,12 +110,23 @@ class PropertyDossierModal(ctk.CTkToplevel):
             if "UPDATE" in log.get("action", ""):
                 events.append({
                     "date": str(log.get("timestamp", ""))[:10],
-                    "type": "ASSESSMENT",
-                    "title": "Property Detail Update",
-                    "subtitle": f"Modified by: {log.get('username')}",
-                    "detail": "Data Integrity Snapshot",
+                    "type": "LOG",
+                    "title": "System Meta Update",
+                    "subtitle": f"By: {log.get('username')}",
+                    "detail": "General record maintenance",
                     "color": "#9b59b6" # Purple
                 })
+
+        # Assessment History (Valuation Changes)
+        for h in self.data.get("assessment_history", []):
+            events.append({
+                "date": str(h.get("date", ""))[:10],
+                "type": "VALUATION",
+                "title": f"Previous Assessment: {h.get('td_number')}",
+                "subtitle": f"Historical Value: P {h.get('assessed_value', 0):,.2f}",
+                "detail": f"Classification: {h.get('kind')} | Year: {h.get('tax_year')}",
+                "color": "#e67e22" # Orange
+            })
 
         # 2. Sort Events (Newest First)
         # Handle 'LEGACY' dates as very old

@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mto-backend
+  labels:
+    app: mto-treasury
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mto-treasury
+  template:
+    metadata:
+      labels:
+        app: mto-treasury
+    spec:
+      containers:
+      - name: mto-backend
+        image: mto-treasury:latest
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: mto-config
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mto-service
+spec:
+  selector:
+    app: mto-treasury
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: LoadBalancer

@@ -2,6 +2,7 @@ import json
 import requests
 from api_clients.offline_manager import manager
 import threading
+from utils.logger import mto_logger
 
 CONNECTION_STATUS = "ONLINE" # ONLINE, OFFLINE, SYNCING
 
@@ -81,13 +82,15 @@ def api_request(
     # CSRF Protection: Include custom header for all state-changing requests
     headers["X-Requested-With"] = "XMLHttpRequest"
 
+    mto_logger.info(f"API Request: {method} {endpoint}", method=method, url=url)
+
     try:
         # If 'files' is provided, requests uses 'multipart/form-data'
         # If 'data' is provided, it uses 'application/json'
         # verify=False is used because we are using a self-signed certificate for local dev
         import urllib3
         import time
-        from utils import set_request_id, logger, MetricsManager
+        from utils import set_request_id, MetricsManager
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         
@@ -112,17 +115,14 @@ def api_request(
             verify=verify_param,
         )
 
+        mto_logger.info(f"API Response: {response.status_code}", status=response.status_code)
+
         # 2. Telemetry: Measure Latency
         latency = (time.perf_counter() - start_time) * 1000
         MetricsManager.record_request(latency, is_error=not response.ok)
         
         # 3. Log structured telemetry
-        logger.info(f"API {method} {endpoint} completed", extra={"extra_data": {
-            "latency_ms": round(latency, 2),
-            "status": response.status_code,
-            "method": method,
-            "endpoint": endpoint
-        }})
+        mto_logger.info(f"API {method} {endpoint} completed", latency_ms=round(latency, 2), status=response.status_code)
 
         if raw_response:
             return response

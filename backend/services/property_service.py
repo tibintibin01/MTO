@@ -22,7 +22,7 @@ def clean_currency(value):
 
 
 def search_properties(
-    term, limit=100, offset=0, kind=None, year_start=None, year_end=None, barangay=None
+    term, limit=100, cursor=None, kind=None, year_start=None, year_end=None, barangay=None
 ):
     """
     Enhanced search with optional filters for kind and effectivity year ranges.
@@ -60,6 +60,11 @@ def search_properties(
         where_clauses.append("barangay = %s")
         params.append(barangay)
 
+    # 3. Cursor Pagination (Performance Injection)
+    if cursor:
+        where_clauses.append("id < %s")
+        params.append(int(cursor))
+
     query = f"""
         SELECT id, td_number, owner_name, payor_name, lot_number, area, location, kind_of_property,
                accountable_officer, assessed_value, (assessed_value * 0.01) as basic, (assessed_value * 0.01) as sef,
@@ -67,10 +72,10 @@ def search_properties(
                pin, block_number, prev_td_number, effectivity_date, barangay
         FROM properties
         WHERE {" AND ".join(where_clauses)}
-        ORDER BY effectivity_date DESC, id DESC
-        LIMIT %s OFFSET %s
+        ORDER BY id DESC
+        LIMIT %s
     """
-    params.extend([int(limit), int(offset)])
+    params.append(int(limit))
     return db.db_query(query, params, fetch=True, commit=False) or []
 
 

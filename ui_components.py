@@ -33,7 +33,7 @@ class ModernChartWidget:
 
         if self.matplotlib:
             # Match the dark theme of CustomTkinter
-            bg_color = "#2b2b2b"  # Default CTK dark frame color
+            bg_color = ModernTheme.CARD_DARK if ctk.get_appearance_mode().lower() == "dark" else ModernTheme.CARD_LIGHT
             self.figure = self.Figure(figsize=(5, 3), dpi=100, facecolor=bg_color)
             self.ax = self.figure.add_subplot(111)
             self.ax.set_facecolor(bg_color)
@@ -85,10 +85,10 @@ class ModernChartWidget:
             else:
                 self.ax.plot(x_data, y_data, color=color, marker="o", linewidth=2)
 
-            self.ax.tick_params(colors="white", labelsize=8)
+            self.ax.tick_params(colors="gray", labelsize=8)
             for spine in self.ax.spines.values():
-                spine.set_color("#444444")
-            self.ax.grid(True, axis="y", alpha=0.1)
+                spine.set_color(ModernTheme.BORDER_DARK if ctk.get_appearance_mode().lower() == "dark" else ModernTheme.BORDER_LIGHT)
+            self.ax.grid(True, axis="y", alpha=0.05)
 
         self.figure.tight_layout()
         self.canvas.draw()
@@ -142,8 +142,17 @@ class ToastNotification(ctk.CTkToplevel):
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
         x = screen_width - 320
-        y = screen_height - 100
-        self.geometry(f"300x60+{x}+{y}")
+        y = screen_height - 120
+        self.geometry(f"300x70+{x}+{y}")
+        self.attributes("-alpha", 0.0) # Start transparent for animation
+        self.animate_in()
+
+    def animate_in(self):
+        alpha = self.attributes("-alpha")
+        if alpha < 1.0:
+            alpha += 0.2
+            self.attributes("-alpha", alpha)
+            self.after(20, self.animate_in)
 
         self.label = ctk.CTkLabel(
             self,
