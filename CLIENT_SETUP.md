@@ -1,108 +1,83 @@
-# MTO Client Test Setup
+# 🏛️ MTO Treasury System - Enterprise Deployment Guide
 
-Use this guide when testing the MTO app from another PC on the same network.
+This document outlines the **N-Tier API Architecture** setup for the modernized MTO Treasury System. Follow these steps to ensure a secure, high-performance connection between the Server and Client machines.
 
-## 1. Server PC checklist
+---
 
-Server PC IP:
+## 🏗️ 1. ARCHITECTURE OVERVIEW
+Unlike the old monolithic setup, this system uses a **Centralized API Server**. 
+- **Server Machine:** Runs the MySQL Database AND the FastAPI Backend.
+- **Client Machine:** Runs the Desktop UI and connects to the Server via HTTP/REST.
+- **Security:** Clients do NOT connect to MySQL directly. All traffic is routed through the API for auditing and rate-limiting.
 
-`192.168.1.151`
+---
 
-Make sure the server PC is powered on and connected to the same LAN or Wi-Fi as the client PC.
+## 🖥️ 2. SERVER MACHINE SETUP (Host)
 
-Make sure MySQL is running on the server PC.
+### **A. Database Preparation**
+1. Open XAMPP Control Panel and start **MySQL**.
+2. Verify the database `property_system` exists and is populated.
+3. Ensure `.env` has the correct `MTO_DB_*` credentials.
 
-If you use XAMPP:
+### **B. Start the API Engine**
+1. Navigate to the project root.
+2. Run the API Server:
+   ```powershell
+   .\run_server.bat
+   ```
+3. The server will start on `http://0.0.0.0:8000` (or `8001`). Note the Server's IP address (e.g., `192.168.1.151`).
 
-1. Open XAMPP Control Panel.
-2. Start `MySQL`.
-3. Confirm the `property_system` database exists.
-
-Make sure Windows Firewall allows inbound TCP port `3306`.
-
-Example PowerShell command on the server PC:
-
+### **C. Firewall Configuration**
+You must allow inbound traffic on the **API Port** (e.g., 8000). Run this as Admin:
 ```powershell
-New-NetFirewallRule -DisplayName "MTO MySQL 3306" -Direction Inbound -Protocol TCP -LocalPort 3306 -Action Allow
+New-NetFirewallRule -DisplayName "MTO API Server" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow
 ```
 
-Make sure MySQL allows remote TCP connections.
+---
 
-Check your MySQL config file, usually `my.ini`, and verify:
+## 💻 3. CLIENT MACHINE SETUP (Workstation)
 
-```ini
-[mysqld]
-bind-address=0.0.0.0
-port=3306
-```
+### **A. Environment Configuration**
+1. Copy the project folder to the Client PC.
+2. Ensure Python 3.14+ is installed.
+3. Run `install_packages.bat` to setup dependencies.
+4. Open the `.env` (or `api_config.json`) and point the **API_URL** to the Server's IP:
+   ```env
+   # Example for Client PC
+   MTO_API_URL=http://192.168.1.151:8000
+   ```
 
-If `bind-address` is set to `127.0.0.1`, client PCs will not be able to connect.
-
-After changing `my.ini`, restart MySQL.
-
-Make sure the MySQL user can connect from other machines.
-
-For quick testing only, you can run this in phpMyAdmin or MySQL:
-
-```sql
-CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY '';
-GRANT ALL PRIVILEGES ON property_system.* TO 'root'@'%';
-FLUSH PRIVILEGES;
-```
-
-If your MySQL already uses `root`, update the existing remote-access rule instead of creating duplicates.
-
-## 2. Client PC checklist
-
-Copy the MTO project folder to the client PC.
-
-Open the project folder and run:
-
+### **B. Launch the Interface**
+Start the modernized UI:
 ```powershell
-install_packages.bat
+.\run_system.bat
 ```
 
-Replace `db_config.json` with the client-ready file:
+---
 
-1. Keep a backup of the original `db_config.json`.
-2. Copy `db_config.client.json`.
-3. Rename the copy to `db_config.json`.
+## 📡 4. HEALTH & CONNECTIVITY VERIFICATION
 
-Run the network test:
-
-```powershell
-python network_test.py
+To verify that the Client can see the Server and the Database is healthy, visit the **Orchestration Beacon** in any browser:
+```text
+http://[SERVER_IP]:8000/healthz
 ```
 
-Expected result:
-
-- Socket connection succeeds.
-- MySQL login succeeds.
-
-Then start the app:
-
-```powershell
-python main.py
+**Expected JSON Response:**
+```json
+{
+  "status": "healthy",
+  "database": "connected",
+  "last_backup": "OK"
+}
 ```
 
-## 3. Quick troubleshooting
+---
 
-If `network_test.py` says socket connection failed:
+## 🛠️ 5. TROUBLESHOOTING
+- **Status "Offline" in Footer:** Check if the `run_server.bat` is still active on the host machine.
+- **Connection Refused:** Check the Windows Firewall on the **Server** machine.
+- **Locale Errors:** Ensure the `locales/` directory (containing `en.json` and `tl.json`) is present on the client PC.
+- **Authentication Failed:** Verify the `MTO_API_SECRET_KEY` matches on both Server and Client.
 
-- Check both PCs are on the same network.
-- Check the server IP is still `192.168.1.151`.
-- Check Windows Firewall on the server.
-- Check MySQL is running.
-- Check `bind-address` is not `127.0.0.1`.
-
-If socket works but MySQL login fails:
-
-- Check MySQL username and password.
-- Check the database name is `property_system`.
-- Check the MySQL user is allowed from `%` or from the client PC IP.
-
-If the app does not start at all:
-
-- Make sure Python is installed on the client PC.
-- Run `install_packages.bat`.
-- Try `python network_test.py` first to confirm dependencies and DB access.
+---
+*MTO Treasury System | Enterprise Modernization v2.0*
