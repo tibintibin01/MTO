@@ -23,6 +23,13 @@ from utils import log_error_to_file, tr
 import dashboard
 from theme_manager import setup_theme, ModernTheme
 from ui_components import ErrorDialog
+import migration_manager
+
+# Ensure database is up to date
+try:
+    migration_manager.run_migrations()
+except Exception as e:
+    log_error_to_file("Migration auto-run failed", e)
 
 # Initialize Theme
 setup_theme("dark")

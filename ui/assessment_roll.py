@@ -45,6 +45,7 @@ class AssessmentRollPage:
             "SAPANGKAWAYAN",
             "TOYTOYAN",
         ]
+        self.search_timer = None
         self.setup_ui()
         # Keep table clear initially for performance (Search-First logic)
 
@@ -70,6 +71,7 @@ class AssessmentRollPage:
         )
         self.search_ent.pack(side="left")
         self.search_ent.bind("<Return>", lambda e: self.refresh_table())
+        self.search_ent.bind("<KeyRelease>", self.on_search_key)
 
         # Kind of Property Filter
         ctk.CTkLabel(
@@ -96,12 +98,14 @@ class AssessmentRollPage:
             filters_fr, width=80, placeholder_text="YYYY"
         )
         self.year_start_ent.pack(side="left")
+        self.year_start_ent.bind("<KeyRelease>", self.on_search_key)
 
         ctk.CTkLabel(
             filters_fr, text="TO:", font=("Segoe UI", 10, "bold"), text_color="gray"
         ).pack(side="left", padx=(5, 5))
         self.year_end_ent = ctk.CTkEntry(filters_fr, width=80, placeholder_text="YYYY")
         self.year_end_ent.pack(side="left")
+        self.year_end_ent.bind("<KeyRelease>", self.on_search_key)
 
         ctk.CTkButton(
             filters_fr,
@@ -258,6 +262,11 @@ class AssessmentRollPage:
         if self.tree.yview()[1] > 0.9:
             self.next_page()
 
+    def on_search_key(self, event=None):
+        if self.search_timer:
+            self.container.after_cancel(self.search_timer)
+        self.search_timer = self.container.after(500, self.refresh_table)
+
     def refresh_table(self, reset_page=True):
         if reset_page:
             self.current_page = 0
@@ -307,9 +316,7 @@ class AssessmentRollPage:
         
         if not results:
             if not append:
-                # Only show error if it's the first page
-                if self.search_ent.get().strip():
-                    messagebox.showinfo("Assessment Roll", "Record not found.")
+                # Silently clear table without annoying pop-ups during live search
                 for item in self.tree.get_children():
                     self.tree.delete(item)
             else:
@@ -328,12 +335,6 @@ class AssessmentRollPage:
         
         # Get current row count for zebra tagging
         current_count = len(self.tree.get_children())
-        if not results and self.search_ent.get().strip():
-            messagebox.showinfo(
-                "Assessment Roll",
-                "Record not found. This property may not be registered in the Assessment Roll yet.",
-            )
-            return
 
         for i, r in enumerate(results):
             # Indices from backend search_properties:

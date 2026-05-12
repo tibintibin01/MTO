@@ -283,475 +283,154 @@ class DashboardApp(ctk.CTk):
         
         self.queue_lbl = ctk.CTkLabel(self.footer, text="", font=("Segoe UI", 10), text_color="#bdc3c7")
         self.queue_lbl.pack(side="right", padx=15)
+        self.progress_overlays = {}
 
-        # Start Sync Monitor & Status Heartbeat
-        sync_monitor.start()
-        self.update_connectivity_status()
+        # 1. Initialize Specialized Coordinators
+        self.watchdog = SessionWatchdog(self, 15, self.logout_automatic)
+        self.notifier = NotificationListener({
+            "on_open": lambda: self.status_bar.set_ws_status(True),
+            "on_close": lambda: self.status_bar.set_ws_status(False),
+            "on_notification": self._handle_notification,
+            "on_progress": self._handle_progress
+        })
 
-        # --- SESSION GOVERNANCE (TIMEOUT) ---
-        self.last_activity = datetime.now()
-        self.timeout_minutes = 15
+        self.setup_main_window()
+        self.setup_ui()
         
-        # Bind global interactions to reset the clock
-        self.bind_all("<Any-KeyPress>", lambda e: self.reset_session_timer())
-        self.bind_all("<Any-Button>", lambda e: self.reset_session_timer())
-        self.bind_all("<Motion>", lambda e: self.reset_session_timer())
+        # 2. Launch Background Services
+        self.watchdog.start_monitoring()
+        self.notifier.start()
         
-        # Start the inactivity watchdog
-        self.check_session_timeout()
-
+        # 3. Initial State
         self.load_page(DashboardHomePage)
 
-        # --- REAL-TIME NOTIFICATIONS (WebSocket) ---
-        self.start_notification_listener()
-
-        # Bind Global Search (Ctrl+K)
+        # Bind Global Search
         self.bind("<Control-k>", lambda e: self.open_command_palette())
         self.bind("<Control-K>", lambda e: self.open_command_palette())
-
-    def reset_session_timer(self):
-        """Resets the inactivity clock on any user interaction."""
-        self.last_activity = datetime.now()
-
-    def check_session_timeout(self):
-        """Watchdog that checks if the user has been idle for too long."""
-        elapsed = (datetime.now() - self.last_activity).total_seconds()
         
-        if elapsed > (self.timeout_minutes * 60):
-            self.logout_automatic()
-            return
+        # Bind global interactions to reset the watchdog
+        self.bind_all("<Any-KeyPress>", lambda e: self.watchdog.reset())
+        self.bind_all("<Any-Button>", lambda e: self.watchdog.reset())
 
-        # Check every 30 seconds to be resource-efficient
-        self.after(30000, self.check_session_timeout)
+    def setup_main_window(self):
+        self.title(f"MTO Treasury System | {self.username.upper()}")
+        self.geometry("1400x900")
+        self.minsize(1200, 800)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-    def start_notification_listener(self):
-        """Launches the background thread for real-time server notifications."""
-        def listener_worker():
-            import websocket
-            import json
-            import time
-            
-            # Get API URL from helper
-            ws_url = api.BASE_URL.replace("http://", "ws://").replace("https://", "wss://")
-            ws_endpoint = f"{ws_url}/ws/notifications"
-            
-            while True:
-                try:
-                    ws = websocket.WebSocketApp(
-                        ws_endpoint,
-                        on_message=self._on_ws_message,
-                        on_error=self._on_ws_error,
-                        on_close=self._on_ws_close,
-                        on_open=self._on_ws_open
-                    )
-                    ws.run_forever()
-                except Exception as e:
-                    print(f"WS CONNECTION ERROR: {e}")
-                
-                # Wait before reconnecting
-                time.sleep(5)
-        
-        thread = threading.Thread(target=listener_worker, daemon=True)
-        thread.start()
-
-    def _on_ws_open(self, ws):
-        self.after(0, lambda: [
-            self.status_dot.configure(text_color="#2ecc71"),
-            self.status_lbl.configure(text="SYSTEM ONLINE • LIVE")
-        ])
-
-    def _on_ws_message(self, ws, message):
-        try:
-            import json
-            data = json.loads(message)
-            if data.get("type") == "NOTIFICATION":
-                title = data.get("title", "System Update")
-                msg = data.get("message", "")
-                level = data.get("level", "info")
-                
-                # Dispatch to main thread for UI safety
-                self.after(0, lambda: show_toast(self, f"🔔 {title}: {msg}", type=level))
-            elif data.get("type") == "PROGRESS":
-                module = data.get("module", "system")
-                percentage = data.get("percentage", 0)
-                msg = data.get("message", "")
-                
-                # Update or Create Progress Overlay
-                self.after(0, lambda: self._handle_progress_update(module, percentage, msg))
-        except Exception as e:
-            print(f"WS MESSAGE PROCESSING ERROR: {e}")
-
-    def _handle_progress_update(self, module, percentage, message):
-        """Manages the lifecycle of progress overlays from WebSocket events."""
-        from ui_components import ProgressOverlay
-        
-        if module not in self.progress_overlays:
-            self.progress_overlays[module] = ProgressOverlay(self, title=f"{module.upper()} TASK")
-        
-        overlay = self.progress_overlays[module]
-        overlay.update(percentage, message)
-        
-        if percentage >= 100:
-            # Cleanup after delay
-            self.after(2000, lambda: self.progress_overlays.pop(module, None))
-
-    def _on_ws_error(self, ws, error):
-        print(f"WS ERROR: {error}")
-
-    def _on_ws_close(self, ws, close_status_code, close_msg):
-        self.after(0, lambda: [
-            self.status_dot.configure(text_color="#e67e22"),
-            self.status_lbl.configure(text="SYSTEM ONLINE • DISCONNECTED")
-        ])
-
-    def logout_automatic(self):
-        """Securely terminates the session with a premium branded notification."""
-        # Create a modern modal-like window for the expiration notice
-        expired_win = ctk.CTkToplevel(self)
-        expired_win.title(tr("common.session_expired_title"))
-        expired_win.geometry("450x250")
-        expired_win.attributes("-topmost", True)
-        expired_win.grab_set() # Make it modal
-        
-        # Center the window
-        expired_win.update_idletasks()
-        x = self.winfo_x() + (self.winfo_width() // 2) - 225
-        y = self.winfo_y() + (self.winfo_height() // 2) - 125
-        expired_win.geometry(f"+{x}+{y}")
-
-        content = ctk.CTkFrame(expired_win, fg_color="transparent")
-        content.pack(expand=True, fill="both", padx=30, pady=30)
-
-        ctk.CTkLabel(
-            content, 
-            text="🚨 " + tr("common.session_expired_title"), 
-            font=("Segoe UI", 20, "bold"), 
-            text_color="#e74c3c"
-        ).pack(pady=(0, 10))
-
-        ctk.CTkLabel(
-            content, 
-            text=tr("common.session_expired_msg"), 
-            font=("Segoe UI", 12), 
-            wraplength=350
-        ).pack(pady=10)
-
-        ctk.CTkButton(
-            content, 
-            text=tr("common.ok"), 
-            command=self.destroy,
-            fg_color="#e74c3c",
-            hover_color="#c0392b",
-            width=120
-        ).pack(pady=(15, 0))
-
-    def open_command_palette(self):
-        CommandPalette(self, self.user_data, self.handle_palette_selection)
-
-    def handle_palette_selection(self, result):
-        """Processes navigation or actions from the Command Palette."""
-        res_type = result.get("type")
-        identifier = result.get("identifier")
-        command = result.get("command")
-
-        if res_type == "property":
-            # Open Dossier for this TD
-            from ui.dossier import PropertyDossierWindow
-
-            PropertyDossierWindow(self, identifier, self.user_data)
-
-        elif res_type == "receipt":
-            # Open the Unified Ledger
-            self.load_page(LedgerPage)
-
-        elif res_type == "action":
-            if command == "action:backup":
-                self.trigger_manual_backup_from_palette()
-            elif command == "nav:new_property":
-                self.load_page(PropertyPage)
-            elif command == "nav:users":
-                self.load_page(SystemAdminPage)
-            elif command == "nav:reports":
-                self.load_page(ReportsPage)
-
-    def update_connectivity_status(self):
-        """Periodically updates the UI based on global connection state."""
-        status = api.CONNECTION_STATUS
-        count = manager.get_queue_count()
-        
-        if status == "ONLINE":
-            self.status_dot.configure(text_color="#2ecc71")
-            self.status_lbl.configure(text="SYSTEM ONLINE & SECURED")
-        elif status == "OFFLINE":
-            self.status_dot.configure(text_color="#f1c40f")
-            self.status_lbl.configure(text="OFFLINE MODE (LOCAL SAVE ACTIVE)")
-        elif status == "SYNCING":
-            self.status_dot.configure(text_color="#3498db")
-            self.status_lbl.configure(text="SYNCING DATA TO SERVER...")
-            
-        if count > 0:
-            self.queue_lbl.configure(text=f"PENDING SYNC: {count} ITEMS")
-        else:
-            self.queue_lbl.configure(text="")
-            
-        # Check every 2 seconds
-        self.after(2000, self.update_connectivity_status)
-
-    def trigger_manual_backup_from_palette(self):
-        try:
-            system.trigger_backup()
-            show_toast(self, "Hybrid backup started in background", type="info")
-        except Exception as e:
-            from tkinter import messagebox
-
-            messagebox.showerror("Backup Error", str(e))
-
-    def setup_sidebar(self):
-        self.sidebar = ctk.CTkFrame(self, width=280, corner_radius=0)
+    def setup_ui(self):
+        callbacks = {
+            "load_page": self.load_page,
+            "toggle_theme": self.toggle_theme,
+            "toggle_language": self.toggle_language,
+            "logout": self.logout
+        }
+        self.sidebar = NavigationSidebar(self, self.user_data, self.username, callbacks)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
 
-        # --- PREMIUM SIDEBAR HEADER ---
-        header_fr = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        header_fr.pack(fill="x", pady=(40, 20), padx=20)
+        self.main_area = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        self.main_area.grid(row=0, column=1, sticky="nsew")
 
-        ctk.CTkLabel(
-            header_fr,
-            text="MTO TREASURY",
-            font=("Segoe UI", 20, "bold"),
-            text_color="#3498db",
-            anchor="w"
-        ).pack(fill="x")
-        
-        ctk.CTkLabel(
-            header_fr,
-            text="MUNICIPAL SYSTEM",
-            font=("Segoe UI", 10, "bold"),
-            text_color="gray",
-            anchor="w"
-        ).pack(fill="x")
-        # Subtle Separator
-        line = ctk.CTkFrame(self.sidebar, height=1, fg_color="gray30")
-        line.pack(fill="x", padx=30, pady=(0, 20))
-
-        # --- PREMIUM PROFILE CARD ---
-        self.profile_card = ctk.CTkFrame(
-            self.sidebar, 
-            fg_color=("#f1f2f6", "#1a2634"), 
-            corner_radius=15,
-            border_width=1,
-            border_color=("#d1d8e0", "#2c3e50")
-        )
-        self.profile_card.pack(fill="x", padx=20, pady=(0, 25))
-
-        # Avatar & Identity Row
-        id_fr = ctk.CTkFrame(self.profile_card, fg_color="transparent")
-        id_fr.pack(fill="x", padx=15, pady=15)
-
-        # Stylized Avatar (Circle-like)
-        avatar_val = self.username[0].upper() if self.username else "U"
-        avatar_fr = ctk.CTkFrame(
-            id_fr, 
-            width=42, 
-            height=42, 
-            corner_radius=21, 
-            fg_color=ModernTheme.PRIMARY
-        )
-        avatar_fr.pack(side="left", padx=(0, 12))
-        avatar_fr.pack_propagate(False)
-        
-        ctk.CTkLabel(
-            avatar_fr, 
-            text=avatar_val, 
-            font=("Segoe UI", 18, "bold"), 
-            text_color="white"
-        ).place(relx=0.5, rely=0.5, anchor="center")
-
-        # Name & Role Info
-        info_fr = ctk.CTkFrame(id_fr, fg_color="transparent")
-        info_fr.pack(side="left", fill="both", expand=True)
-
-        ctk.CTkLabel(
-            info_fr, 
-            text=self.username.lower(), 
-            font=("Segoe UI", 14, "bold"), 
-            anchor="w"
-        ).pack(fill="x")
-        
-        role_label = ctk.CTkLabel(
-            info_fr, 
-            text=auth.get_user_role(self.user_data).upper(), 
-            font=("Segoe UI", 9, "bold"), 
-            text_color=ModernTheme.PRIMARY,
-            anchor="w"
-        )
-        role_label.pack(fill="x")
-
-        # Theme & Language Row
-        toggle_fr = ctk.CTkFrame(self.profile_card, fg_color="transparent")
-        toggle_fr.pack(fill="x", padx=10, pady=(0, 10))
-
-        # Theme Toggle (Integrated Sleek Link)
-        self.theme_btn = ctk.CTkButton(
-            toggle_fr, 
-            text="🌓", 
-            command=self.toggle_theme, 
-            width=40,
-            height=32, 
-            fg_color="transparent", 
-            text_color=ModernTheme.TEXT_GRAY,
-            font=("Segoe UI", 14, "bold"),
-            hover_color=("#d1d8e0", "#2c3e50")
-        )
-        self.theme_btn.pack(side="left", padx=2)
-
-        # Language Toggle
-        from utils import LocalizationManager
-        current_lang = LocalizationManager()._current_locale.upper()
-        self.lang_btn = ctk.CTkButton(
-            toggle_fr, 
-            text=f"🌏 {current_lang}", 
-            command=self.toggle_language, 
-            height=32, 
-            fg_color="transparent", 
-            text_color=ModernTheme.TEXT_GRAY,
-            font=("Segoe UI", 11, "bold"),
-            hover_color=("#d1d8e0", "#2c3e50")
-        )
-        self.lang_btn.pack(side="left", fill="x", expand=True)
-
-        # Scrollable area for buttons
-        self.nav_scroll = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent")
-        self.nav_scroll.pack(fill="both", expand=True, padx=5)
-
-        self.nav_btns = {}
-        self.create_nav_btn(tr("dashboard.nav.dashboard"), lambda: self.load_page(DashboardHomePage))
-
-        if auth.has_permission(self.user_data, "property_view"):
-            self.create_nav_btn(
-                tr("dashboard.nav.property"), lambda: self.load_page(PropertyPage)
-            )
-        if auth.has_permission(self.user_data, "ledger_view"):
-            self.create_nav_btn(
-                tr("dashboard.nav.ledger"), lambda: self.load_page(LedgerPage)
-            )
-
-        ctk.CTkLabel(
-            self.nav_scroll,
-            text=tr("reports.title").split()[0], # Grouping label
-            font=("Segoe UI", 10, "bold"),
-            text_color="gray",
-        ).pack(pady=(20, 5))
-
-        if auth.has_permission(self.user_data, "report_view"):
-            self.create_nav_btn(tr("dashboard.nav.reports"), lambda: self.load_page(ReportsPage))
-            self.create_nav_btn(
-                tr("dashboard.nav.analytics"), lambda: self.load_page(AnalyticsDashboardPage)
-            )
-
-        if auth.has_permission(self.user_data, "property_view"):
-            self.create_nav_btn(
-                tr("dashboard.nav.assessment"), lambda: self.load_page(AssessmentRollPage)
-            )
-
-        if auth.has_permission(self.user_data, "view_logs"):
-            self.create_nav_btn(
-                tr("dashboard.nav.audit"), lambda: self.load_page(AuditTrailPage)
-            )
-
-        if any(
-            auth.has_permission(self.user_data, p)
-            for p in ["manage_users", "view_logs"]
-        ):
-            self.create_nav_btn(
-                tr("dashboard.nav.settings"), lambda: self.load_page(SystemAdminPage)
-            )
-
-        ctk.CTkLabel(
-            self.nav_scroll,
-            text=tr("dashboard.nav.help").upper(),
-            font=("Segoe UI", 10, "bold"),
-            text_color="gray",
-        ).pack(pady=(20, 5))
-        self.create_nav_btn(tr("dashboard.nav.help"), lambda: self.load_page(SystemHelpPage))
-
-        # Logout at bottom
-        self.logout_btn = ctk.CTkButton(
-            self.sidebar,
-            text=tr("dashboard.nav.logout"),
-            fg_color="#e74c3c",
-            hover_color="#c0392b",
-            command=self.logout,
-            font=ModernTheme.BUTTON,
-        )
-        self.logout_btn.pack(side="bottom", pady=30, padx=20, fill="x")
-
-    def create_nav_btn(self, text, command):
-        btn = ctk.CTkButton(
-            self.nav_scroll,
-            text=text,
-            command=command,
-            anchor="w",
-            fg_color="transparent",
-            text_color=("gray10", "gray90"),
-            hover_color=("gray70", "gray30"),
-            font=ModernTheme.BODY,
-            height=45,
-        )
-        btn.pack(fill="x", padx=10, pady=2)
-        self.nav_btns[text] = btn
+        self.status_bar = ConnectivityStatusBar(self)
+        self.status_bar.grid(row=1, column=0, columnspan=2, sticky="ew")
 
     def load_page(self, page_class):
         try:
             for widget in self.main_area.winfo_children():
                 widget.destroy()
-            self.current_page = page_class(self.main_area, self.user_data)
+            
+            # Context-Aware Page Loading
+            if page_class == DashboardHomePage:
+                cb = {"trigger_backup": self.trigger_backup_action, "get_summary": system.get_dashboard_summary, "get_trend": payment.get_monthly_collection_trend}
+                self.current_page = page_class(self.main_area, self.user_data, cb)
+            else:
+                self.current_page = page_class(self.main_area, self.user_data)
+            
+            self.watchdog.reset()
         except Exception as e:
             ErrorDialog(self, tr("common.system_error"), f"Failed to load page: {str(e)}")
 
-    def dispatch_hotkey(self, action):
-        """Delegates hotkey actions to the active page if supported."""
-        if hasattr(self, "current_page"):
-            method_name = f"on_hotkey_{action}"
-            if hasattr(self.current_page, method_name):
-                getattr(self.current_page, method_name)()
+    def trigger_backup_action(self):
+        try: system.trigger_backup(); show_toast(self, tr("dashboard.backup.success_toast"), type="info")
+        except Exception as e: ErrorDialog(self, "Backup Error", str(e))
+
+    def _handle_notification(self, data):
+        self.after(0, lambda: show_toast(self, f"🔔 {data.get('title')}: {data.get('message')}", type=data.get("level", "info")))
+
+    def _handle_progress(self, data):
+        from ui_components import ProgressOverlay
+        module = data.get("module")
+        if module not in self.progress_overlays:
+            self.progress_overlays[module] = ProgressOverlay(self, title=f"{module.upper()} TASK")
+        self.progress_overlays[module].update(data.get("percentage"), data.get("message"))
+        if data.get("percentage") >= 100:
+            self.after(2000, lambda: self.progress_overlays.pop(module, None))
+
+    def open_command_palette(self):
+        CommandPalette(self, self.user_data, self.handle_palette_selection)
+
+    def handle_palette_selection(self, result):
+        res_type, identifier, command = result.get("type"), result.get("identifier"), result.get("command")
+        
+        if res_type == "property":
+            from ui.dossier import PropertyDossierWindow
+            PropertyDossierWindow(self, identifier, self.user_data)
+        elif res_type == "receipt":
+            from ui.ledger import LedgerPage
+            self.load_page(LedgerPage)
+        elif res_type == "action":
+            self._handle_palette_action(command)
+
+    def _handle_palette_action(self, command):
+        mapping = {
+            "action:backup": self.trigger_backup_action,
+            "nav:new_property": lambda: [self.load_page(__import__("ui.property", fromlist=["PropertyPage"]).PropertyPage)],
+            "nav:users": lambda: [self.load_page(__import__("ui.system_admin", fromlist=["SystemAdminPage"]).SystemAdminPage)],
+            "nav:reports": lambda: [self.load_page(__import__("ui.reports", fromlist=["ReportsPage"]).ReportsPage)]
+        }
+        if command in mapping: mapping[command]()
 
     def toggle_theme(self):
-        # Toggle based on current appearance mode
         current = ctk.get_appearance_mode()
         new_mode = "light" if current == "Dark" else "dark"
         setup_theme(new_mode)
-        
-        # Persist preference
         from utils import ConfigManager
         ConfigManager.set("appearance_mode", new_mode)
-        show_toast(self, f"Theme switched to {new_mode.upper()}", type="info")
+        self.after(100, self.refresh_sidebar) # Re-draw sidebar for theme alignment
+
+    def refresh_sidebar(self):
+        self.sidebar.destroy()
+        callbacks = {"load_page": self.load_page, "toggle_theme": self.toggle_theme, "toggle_language": self.toggle_language, "logout": self.logout}
+        self.sidebar = NavigationSidebar(self, self.user_data, self.username, callbacks)
+        self.sidebar.grid(row=0, column=0, sticky="nsew")
 
     def toggle_language(self):
-        """Switches between English and Tagalog and refreshes the UI."""
         from utils import LocalizationManager
         mgr = LocalizationManager()
-        new_lang = "tl" if mgr._current_locale == "en" else "en"
-        mgr.set_locale(new_lang)
-        
-        # Refresh Sidebar
-        for widget in self.sidebar.winfo_children():
-            widget.destroy()
-        self.setup_sidebar()
-        
-        # Refresh current page if possible, or go home
+        mgr.set_locale("tl" if mgr._current_locale == "en" else "en")
+        self.refresh_sidebar()
         self.load_page(DashboardHomePage)
-        
-        show_toast(self, f"Language switched to {new_lang.upper()}", type="success")
 
     def logout(self):
-        if ErrorDialog(self, tr("common.logout_confirm"), tr("common.logout_msg"), retry_callback=None):
-            # We need to handle the result of the dialog, but CTkToplevel is non-blocking.
-            # For simplicity, let's keep the standard messagebox for confirm-dialogs 
-            # unless we implement a proper Modal with return value.
-            from tkinter import messagebox
-            if messagebox.askyesno(tr("common.logout_confirm"), tr("common.logout_msg")):
-                self.destroy()
+        from tkinter import messagebox
+        if messagebox.askyesno(tr("common.logout_confirm"), tr("common.logout_msg")):
+            self.destroy()
 
+    def logout_automatic(self):
+        expired_win = ctk.CTkToplevel(self)
+        expired_win.title(tr("common.session_expired_title"))
+        expired_win.geometry("450x250")
+        expired_win.attributes("-topmost", True)
+        expired_win.grab_set()
+        expired_win.update_idletasks()
+        x, y = self.winfo_x() + (self.winfo_width() // 2) - 225, self.winfo_y() + (self.winfo_height() // 2) - 125
+        expired_win.geometry(f"+{x}+{y}")
+        content = ctk.CTkFrame(expired_win, fg_color="transparent")
+        content.pack(expand=True, fill="both", padx=30, pady=30)
+        ctk.CTkLabel(content, text="🚨 " + tr("common.session_expired_title"), font=("Segoe UI", 20, "bold"), text_color="#e74c3c").pack(pady=(0, 10))
+        ctk.CTkLabel(content, text=tr("common.session_expired_msg"), font=("Segoe UI", 12), wraplength=350).pack(pady=10)
+        ctk.CTkButton(content, text=tr("common.ok"), command=self.destroy, fg_color="#e74c3c", hover_color="#c0392b", width=120).pack(pady=(15, 0))
 
 def open_dashboard(user_data):
     app = DashboardApp(user_data)

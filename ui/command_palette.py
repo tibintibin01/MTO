@@ -30,6 +30,7 @@ class CommandPalette(ctk.CTkToplevel):
 
         self.setup_ui()
         self.bind_keys()
+        self.search_timer = None
 
         # Focus management
         self.after(10, self.search_entry.focus_set)
@@ -82,8 +83,11 @@ class CommandPalette(ctk.CTkToplevel):
         if event.keysym in ("Up", "Down", "Return", "Escape"):
             return
 
+        if self.search_timer:
+            self.after_cancel(self.search_timer)
+        
         query = self.search_entry.get().strip()
-        self.perform_search(query)
+        self.search_timer = self.after(300, lambda: self.perform_search(query))
 
     def perform_search(self, query):
         # In a real app, this would hit the API

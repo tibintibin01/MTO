@@ -20,9 +20,13 @@ class AnalyticsDashboardPage:
         self.load_data()
 
     def open_external_dashboard(self):
-        """Launches the high-fidelity web dashboard in the default browser."""
-        from api_clients.api_helper import BASE_URL
-        webbrowser.open(f"{BASE_URL}/analytics")
+        """Launches the high-fidelity web dashboard in the default browser with a secure token."""
+        from api_clients.api_helper import BASE_URL, get_token
+        token = get_token()
+        if not token:
+            messagebox.showerror("Auth Error", "Your session has expired. Please re-login.")
+            return
+        webbrowser.open(f"{BASE_URL}/analytics?t={token}")
 
     def setup_ui(self):
         # Header

@@ -74,19 +74,26 @@ def verify_user_login(username, password):
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        from api_clients.api_helper import API_BASE_URL
+        from api_clients.api_helper import API_BASE_URL, CERT_PATH
+        verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
 
-        response = requests.post(f"{API_BASE_URL}/token", data=payload, verify=False)
+        headers = {"X-Requested-With": "XMLHttpRequest"}
+        response = requests.post(f"{API_BASE_URL}/token", data=payload, headers=headers, verify=verify_param)
         if response.status_code == 200:
             token_data = response.json()
             set_token(token_data["access_token"])
             # Get user info
             user_info = api_request("GET", "/me")
             return user_info
-        return None
+        else:
+            try:
+                err_detail = response.json().get("detail", "Login failed")
+                raise Exception(err_detail)
+            except:
+                raise Exception(f"Server error: {response.status_code}")
     except Exception as e:
         print(f"Login failed: {e}")
-        return None
+        raise e
 
 
 def get_all_users():

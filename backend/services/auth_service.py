@@ -199,7 +199,7 @@ def get_user_by_username(username):
 
 def verify_user_login(username, password):
     rows = db.db_query(
-        "SELECT id, username, password, role, is_active FROM users WHERE username=%s AND is_deleted=0 LIMIT 1",
+        "SELECT id, username, password, role, is_active, failed_attempts, lockout_until FROM users WHERE username=%s AND is_deleted=0 LIMIT 1",
         (username,),
         fetch=True,
         commit=False,
@@ -207,18 +207,44 @@ def verify_user_login(username, password):
     if not rows:
         return None
 
-    user_id, stored_username, stored_password, role, is_active = rows[0]
+    user_id, stored_username, stored_password, role, is_active, failed_attempts, lockout_until = rows[0]
 
+    # 1. Check if account is manually disabled
     if not bool(is_active):
         raise ValueError("Account is disabled. Please contact the administrator.")
+
+    # 2. Check for active security lockout
+    from datetime import datetime
+    if lockout_until and lockout_until > datetime.now():
+        diff = lockout_until - datetime.now()
+        minutes = int(diff.total_seconds() // 60) + 1
+        raise ValueError(f"Account temporarily locked due to multiple failed attempts. Please try again in {minutes} minute(s).")
 
     match = verify_password(password, stored_password)
 
     if not match:
-        return None
+        # Increment failed attempts
+        new_attempts = failed_attempts + 1
+        if new_attempts >= 5:
+            # Enforce 5-minute lockout
+            db.db_query(
+                "UPDATE users SET failed_attempts=%s, lockout_until=DATE_ADD(NOW(), INTERVAL 5 MINUTE) WHERE id=%s",
+                (new_attempts, user_id)
+            )
+            raise ValueError("Account locked for 5 minutes after 5 failed attempts.")
+        else:
+            db.db_query(
+                "UPDATE users SET failed_attempts=%s WHERE id=%s",
+                (new_attempts, user_id)
+            )
+            remaining = 5 - new_attempts
+            raise ValueError(f"Invalid password. {remaining} attempt(s) remaining before lockout.")
 
-    # Update last login
-    db.db_query("UPDATE users SET last_login=NOW() WHERE id=%s", (user_id,))
+    # 3. Successful login - Reset security counters
+    db.db_query(
+        "UPDATE users SET last_login=NOW(), failed_attempts=0, lockout_until=NULL WHERE id=%s", 
+        (user_id,)
+    )
 
     if stored_password and not is_password_hashed(stored_password):
         upgraded_hash = hash_password(password)

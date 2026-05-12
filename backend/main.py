@@ -156,6 +156,22 @@ async def add_request_id_middleware(request: Request, call_next):
     return response
 
 @app.middleware("http")
+async def csrf_protection_middleware(request: Request, call_next):
+    """
+    Enterprise CSRF Protection: Requires a custom header for all state-changing requests.
+    This prevents cross-site attacks from browsers while allowing our Desktop App to function seamlessly.
+    """
+    if request.method in ["POST", "PUT", "DELETE", "PATCH"]:
+        # Check for presence of custom security headers
+        if not request.headers.get("X-Requested-With") and not request.headers.get("X-CSRF-Token"):
+             from fastapi.responses import JSONResponse
+             return JSONResponse(
+                status_code=403,
+                content={"detail": "CSRF Protect: Missing custom security header (X-Requested-With or X-CSRF-Token)"}
+            )
+    return await call_next(request)
+
+@app.middleware("http")
 async def maintenance_mode_middleware(request: Request, call_next):
     from utils import is_feature_enabled
     if is_feature_enabled("MAINTENANCE_MODE"):
@@ -1125,7 +1141,25 @@ async def serve_analytics_dashboard():
 
         <script>
             async function fetchData() {
-                const res = await fetch('/api/analytics/dashboard');
+                // Secure Token Retrieval from URL
+                const urlParams = new URLSearchParams(window.location.search);
+                const token = urlParams.get('t');
+                
+                const headers = {};
+                if (token) {
+                    headers["Authorization"] = "Bearer " + token;
+    
+                    // CSRF Protection: Include custom header for all state-changing requests
+                    headers["X-Requested-With"] = "XMLHttpRequest";
+                }
+
+                const res = await fetch('/api/analytics/dashboard', { headers: headers });
+                
+                if (res.status === 401) {
+                    document.body.innerHTML = '<div style="display:flex; height:100vh; align-items:center; justify-content:center; color:white;"><h1>🚫 UNAUTHORIZED: Please launch from the Treasury Desktop App.</h1></div>';
+                    return;
+                }
+
                 const data = await res.json();
                 
                 document.getElementById('last-update').innerText = 'System Pulse: ' + new Date().toLocaleTimeString();

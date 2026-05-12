@@ -15,6 +15,7 @@ class LedgerPage:
         self.parent = parent
         self.user = user
         self.is_loading = False
+        self.search_timer = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -34,6 +35,7 @@ class LedgerPage:
         self.search_ent = ctk.CTkEntry(toolbar, placeholder_text=tr("ledger.search_placeholder"), width=450, height=35, font=ModernTheme.BODY)
         self.search_ent.pack(side="left")
         self.search_ent.bind("<Return>", lambda e: self.load_ledger())
+        self.search_ent.bind("<KeyRelease>", self.on_search_key)
 
         self.search_btn = ctk.CTkButton(toolbar, text=f"🔍 {tr('ledger.btn_fetch')}", command=self.load_ledger, width=150, height=35, font=ModernTheme.BUTTON)
         self.search_btn.pack(side="left", padx=10)
@@ -127,6 +129,11 @@ class LedgerPage:
             )
             self.regen_btn.configure(state=regen_state)
 
+    def on_search_key(self, event=None):
+        if self.search_timer:
+            self.container.after_cancel(self.search_timer)
+        self.search_timer = self.container.after(500, self.load_ledger)
+
     def load_ledger(self):
         term = self.search_ent.get().strip()
         if not term:
@@ -176,7 +183,7 @@ class LedgerPage:
                 except: pass
             self.total_lbl.configure(text=tr("ledger.footer.total").replace("{value}", f"₱ {grand_total:,.2f}"))
         else:
-            ErrorDialog(self.parent.winfo_toplevel(), tr("ledger.errors.not_found"), tr("ledger.errors.not_found_msg").replace("{term}", term))
+            # Silently update without annoying pop-ups
             self.total_lbl.configure(text=tr("ledger.footer.total").replace("{value}", "₱ 0.00"))
         self.on_selection_change()
 

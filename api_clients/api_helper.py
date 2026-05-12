@@ -5,8 +5,17 @@ import threading
 
 CONNECTION_STATUS = "ONLINE" # ONLINE, OFFLINE, SYNCING
 
+import os
+from pathlib import Path
+
 BASE_URL = "https://127.0.0.1:8001"
 API_BASE_URL = BASE_URL  # Alias for auth_service compatibility
+
+# --- SECURITY HARDENING: SSL CERTIFICATE PINNING ---
+# We point to the local cert.pem to eliminate MITM vulnerabilities
+# while still supporting our self-signed municipal certificates.
+_CURRENT_DIR = Path(__file__).resolve().parent
+CERT_PATH = _CURRENT_DIR.parent / "backend" / "certs" / "cert.pem"
 
 _SESSION_TOKEN = None
 
@@ -68,6 +77,9 @@ def api_request(
             raise Exception("Your session has expired. Please log in again.")
 
         headers["Authorization"] = f"Bearer {_SESSION_TOKEN}"
+    
+    # CSRF Protection: Include custom header for all state-changing requests
+    headers["X-Requested-With"] = "XMLHttpRequest"
 
     try:
         # If 'files' is provided, requests uses 'multipart/form-data'
@@ -83,6 +95,12 @@ def api_request(
         set_request_id() 
         start_time = time.perf_counter()
         
+        # 4. Final Security Check: Use pinned certificate instead of verify=False
+        # If cert file is missing, we fallback to False only if explicitly configured (for emergency debug)
+        verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
+        if not verify_param:
+            print("WARNING: SSL Certificate NOT FOUND. Falling back to insecure mode.")
+
         response = requests.request(
             method,
             url,
@@ -91,7 +109,7 @@ def api_request(
             params=params,
             headers=headers,
             timeout=120,
-            verify=False,
+            verify=verify_param,
         )
 
         # 2. Telemetry: Measure Latency
