@@ -82,6 +82,26 @@ class OfflineManager:
                 conn.commit()
         except: pass
 
+    def mark_as_conflict(self, action_id, server_data):
+        """Marks an action as in-conflict for manual resolution."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "UPDATE sync_queue SET status = 'CONFLICT', payload = ? WHERE id = ?",
+                    (json.dumps({"error": "CONFLICT", "server_snapshot": server_data}), action_id)
+                )
+                conn.commit()
+        except: pass
+
+    def resolve_conflict(self, action_id, resolution="OVERRIDE"):
+        """Resolves a conflict by either re-queueing or discarding."""
+        # Note: In a full implementation, OVERRIDE would update the payload with current server version
+        # and re-queue. DISCARD would just delete the action.
+        if resolution == "DISCARD":
+            self.mark_as_synced(action_id)
+            return True
+        return False
+
     def get_queue_count(self):
         """Returns the number of items waiting to be synced."""
         try:

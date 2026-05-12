@@ -19,7 +19,9 @@
         "success": "Success",
         "system_error": "System Error",
         "logout_confirm": "Confirm Logout",
-        "logout_msg": "Are you sure you want to log out of the system?"
+        "logout_msg": "Are you sure you want to log out of the system?",
+        "session_expired_title": "Session Expired",
+        "session_expired_msg": "You have been logged out due to 15 minutes of inactivity for security compliance."
     },
     "dashboard": {
         "title": "Revenue Dashboard",

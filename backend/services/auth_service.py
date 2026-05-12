@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import secrets
+import binascii
 import db_manager as db
 from utils import log_error_to_file
 from functools import wraps
@@ -162,7 +163,10 @@ def verify_password(password, stored_value):
             int(iteration_text),
         )
         return secrets.compare_digest(actual_digest, expected_digest)
-    except Exception:
+    except (ValueError, binascii.Error, TypeError):
+        return False
+    except Exception as e:
+        log_error_to_file("Unexpected error during password verification", e)
         return False
 
 
@@ -206,7 +210,7 @@ def verify_user_login(username, password):
     user_id, stored_username, stored_password, role, is_active = rows[0]
 
     if not bool(is_active):
-        raise Exception("Account is disabled. Please contact the administrator.")
+        raise ValueError("Account is disabled. Please contact the administrator.")
 
     match = verify_password(password, stored_password)
 
@@ -229,6 +233,7 @@ def verify_user_login(username, password):
         prop_service.release_all_property_locks(stored_username)
     except Exception as e:
         log_error_to_file("Failed to clear orphaned locks on login", error=e)
+        
     return {"id": user_id, "username": stored_username, "role": role}
 
 
@@ -273,9 +278,11 @@ def create_user(username, full_name, password, role, admin_user):
 # --- User Management (Admin) ---
 
 
-def get_all_users():
+def get_all_users(limit=50, offset=0):
+    safe_limit = max(1, int(limit))
+    safe_offset = max(0, int(offset))
     rows = db.db_query(
-        "SELECT id, username, full_name, role, is_active, last_login, created_at FROM users WHERE is_deleted=0 ORDER BY username ASC",
+        f"SELECT id, username, full_name, role, is_active, last_login, created_at FROM users WHERE is_deleted=0 ORDER BY username ASC LIMIT {safe_limit} OFFSET {safe_offset}",
         fetch=True,
         commit=False,
     )

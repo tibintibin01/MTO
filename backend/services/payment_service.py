@@ -297,11 +297,13 @@ def get_payment_ledger(td_number):
     return db.db_query(query, (td_number,), fetch=True, commit=False) or []
 
 
-def get_payment_receipt_records(term):
+def get_payment_receipt_records(term, limit=50, offset=0):
+    safe_limit = max(1, int(limit))
+    safe_offset = max(0, int(offset))
     like_term = f"%{term}%"
     return (
         db.db_query(
-            """
+            f"""
         SELECT pay.id, pay.date_paid, prop.td_number, prop.owner_name,
                prop.kind_of_property, pay.or_number, pay.tax_year, pay.amount,
                rh.file_path, rh.generated_by, rh.status, rh.id as rh_id
@@ -311,6 +313,7 @@ def get_payment_receipt_records(term):
         WHERE prop.is_deleted = 0
           AND (prop.td_number LIKE %s OR prop.owner_name LIKE %s OR pay.or_number LIKE %s)
         ORDER BY pay.date_paid DESC, pay.id DESC
+        LIMIT {safe_limit} OFFSET {safe_offset}
         """,
             (like_term, like_term, like_term),
             fetch=True,

@@ -471,3 +471,27 @@ def get_rpt_receivables_summary(report_year):
         "adjustments": adj,
         "ending_receivable": end,
     }
+
+
+def get_delinquent_accounts(limit=50, offset=0):
+    """
+    Fetches properties with outstanding balances across any tax year.
+    Born with native pagination support.
+    """
+    safe_limit = max(1, int(limit))
+    safe_offset = max(0, int(offset))
+    
+    query = f"""
+        SELECT prop.id, prop.td_number, prop.owner_name, prop.location,
+               SUM((pb.assessed_value * 0.02) + pb.penalty - pb.discount) as total_due,
+               SUM(pb.amount_paid) as total_paid,
+               SUM((pb.assessed_value * 0.02) + pb.penalty - pb.discount - pb.amount_paid) as balance
+        FROM properties prop
+        JOIN property_billings pb ON pb.property_id = prop.id
+        WHERE prop.is_deleted = 0
+        GROUP BY prop.id
+        HAVING balance > 0
+        ORDER BY balance DESC
+        LIMIT {safe_limit} OFFSET {safe_offset}
+    """
+    return db_query(query, fetch=True, commit=False) or []

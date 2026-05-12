@@ -164,14 +164,34 @@ def validate_assessment_import(file_content, file_extension):
 
 def commit_assessment_import(data_list, user):
     """
-    Saves the validated assessment rows.
+    Saves the validated assessment rows with real-time progress updates.
     """
     from backend.services.system_service import log_action
+    
+    async def report_progress(percentage, msg):
+        try:
+            from backend.main import manager
+            await manager.broadcast({
+                "type": "PROGRESS",
+                "module": "import",
+                "percentage": percentage,
+                "message": msg
+            })
+        except: pass
+
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+    except:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     
     def operation(cur):
         inserted = 0
         updated = 0
-        for row in data_list:
+        total = len(data_list)
+        
+        for i, row in enumerate(data_list):
             td = row["td_number"]
             cur.execute("SELECT id FROM properties WHERE td_number = %s", (td,))
             exists = cur.fetchone()
@@ -188,6 +208,10 @@ def commit_assessment_import(data_list, user):
                     (td, row["owner_name"], row["assessed_value"], row["location"], row["kind"])
                 )
                 inserted += 1
+            
+            if i % 10 == 0 or i == total - 1:
+                percentage = int(((i + 1) / total) * 100)
+                loop.run_until_complete(report_progress(percentage, f"Importing: {i+1} / {total} records"))
         
         log_action(user, f"Wizard Assessment Import: {inserted} new, {updated} updated.")
         return {"inserted": inserted, "updated": updated}
@@ -196,15 +220,32 @@ def commit_assessment_import(data_list, user):
 
 def commit_property_import(data_list, user):
     """
-    Saves the validated rows to the database.
+    Saves the validated rows to the database with real-time progress updates.
     """
     from backend.services.system_service import log_action
     
+    async def report_progress(percentage, msg):
+        try:
+            from backend.main import manager
+            await manager.broadcast({
+                "type": "PROGRESS",
+                "module": "import",
+                "percentage": percentage,
+                "message": msg
+            })
+        except: pass
+
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+    except:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
     def operation(cur):
         count = 0
-        for row in data_list:
-            # Map spreadsheet fields back to DB fields
-            # This is a simplified version, ideally we map all possible fields
+        total = len(data_list)
+        for i, row in enumerate(data_list):
             cur.execute(
                 """
                 INSERT INTO properties (td_number, owner_name, assessed_value, created_at, updated_at)
@@ -213,6 +254,10 @@ def commit_property_import(data_list, user):
                 (row.get("td_number"), row.get("owner_name"), row.get("assessed_value"))
             )
             count += 1
+            
+            if i % 10 == 0 or i == total - 1:
+                percentage = int(((i + 1) / total) * 100)
+                loop.run_until_complete(report_progress(percentage, f"Processing: {i+1} / {total} properties"))
         
         log_action(user, f"Bulk imported {count} property records.")
         return count

@@ -113,15 +113,25 @@ class DashboardHomePage:
             ),
         }
 
-        self.backup_btn = ctk.CTkButton(
-            self.backup_card,
-            text=tr("dashboard.backup.run_now"),
-            command=self.trigger_manual_backup,
-            width=200,
-            height=35,
-            font=ModernTheme.BUTTON,
-        )
-        self.backup_btn.pack(pady=(0, 20), padx=20, anchor="e")
+        # Only show backup button for users with permission
+        if auth.has_permission(self.user, "backup_restore"):
+            self.backup_btn = ctk.CTkButton(
+                self.backup_card,
+                text=tr("dashboard.backup.run_now"),
+                command=self.trigger_manual_backup,
+                width=200,
+                height=35,
+                font=ModernTheme.BUTTON,
+            )
+            self.backup_btn.pack(pady=(0, 20), padx=20, anchor="e")
+        else:
+            self.backup_btn = None
+            ctk.CTkLabel(
+                self.backup_card,
+                text="🛡️ Administrative credentials required to trigger manual backup.",
+                font=("Segoe UI", 10, "italic"),
+                text_color="gray"
+            ).pack(pady=(0, 20), padx=20, anchor="e")
 
     def _make_stat_card(self, parent, col, title, value, color):
         card = ctk.CTkFrame(parent, height=120)
@@ -192,10 +202,11 @@ class DashboardHomePage:
         )
         self.backup_labels["verify"].configure(text=v, text_color=v_color)
 
-        if b.get("is_running"):
-            self.backup_btn.configure(state="disabled", text="BACKUP IN PROGRESS...")
-        else:
-            self.backup_btn.configure(state="normal", text="RUN HYBRID BACKUP NOW")
+        if self.backup_btn:
+            if b.get("is_running"):
+                self.backup_btn.configure(state="disabled", text="BACKUP IN PROGRESS...")
+            else:
+                self.backup_btn.configure(state="normal", text="RUN HYBRID BACKUP NOW")
 
         # Show a subtle update toast
         show_toast(
@@ -224,8 +235,17 @@ class DashboardApp(ctk.CTk):
         self.user_data = user_data
         self.username = auth.get_username(user_data)
 
+        # --- LOAD PERSISTED CONFIGURATION ---
+        from utils import ConfigManager
+        ConfigManager.load()
+        appearance = ConfigManager.get("appearance_mode", "dark")
+        ctk.set_appearance_mode(appearance)
+
         self.title(f"Treasury Management System | {self.username}")
         self.geometry("1400x850")
+        
+        # --- TASK TRACKING ---
+        self.progress_overlays = {} # Track active progress windows
         self.resizable(True, True)
         self.minsize(1100, 700)
 
@@ -235,6 +255,13 @@ class DashboardApp(ctk.CTk):
 
         # Auto-Maximize (Fullscreen) on Startup
         self.after(0, lambda: self.state("zoomed"))
+
+        # --- GLOBAL HOTKEYS ---
+        self.bind("<Control-n>", lambda e: self.dispatch_hotkey("new"))
+        self.bind("<Control-N>", lambda e: self.dispatch_hotkey("new"))
+        self.bind("<Control-s>", lambda e: self.dispatch_hotkey("save"))
+        self.bind("<Control-S>", lambda e: self.dispatch_hotkey("save"))
+        self.bind("<Escape>", lambda e: self.dispatch_hotkey("cancel"))
 
         # Responsive Layout
         self.grid_columnconfigure(1, weight=1)
@@ -261,11 +288,162 @@ class DashboardApp(ctk.CTk):
         sync_monitor.start()
         self.update_connectivity_status()
 
+        # --- SESSION GOVERNANCE (TIMEOUT) ---
+        self.last_activity = datetime.now()
+        self.timeout_minutes = 15
+        
+        # Bind global interactions to reset the clock
+        self.bind_all("<Any-KeyPress>", lambda e: self.reset_session_timer())
+        self.bind_all("<Any-Button>", lambda e: self.reset_session_timer())
+        self.bind_all("<Motion>", lambda e: self.reset_session_timer())
+        
+        # Start the inactivity watchdog
+        self.check_session_timeout()
+
         self.load_page(DashboardHomePage)
+
+        # --- REAL-TIME NOTIFICATIONS (WebSocket) ---
+        self.start_notification_listener()
 
         # Bind Global Search (Ctrl+K)
         self.bind("<Control-k>", lambda e: self.open_command_palette())
         self.bind("<Control-K>", lambda e: self.open_command_palette())
+
+    def reset_session_timer(self):
+        """Resets the inactivity clock on any user interaction."""
+        self.last_activity = datetime.now()
+
+    def check_session_timeout(self):
+        """Watchdog that checks if the user has been idle for too long."""
+        elapsed = (datetime.now() - self.last_activity).total_seconds()
+        
+        if elapsed > (self.timeout_minutes * 60):
+            self.logout_automatic()
+            return
+
+        # Check every 30 seconds to be resource-efficient
+        self.after(30000, self.check_session_timeout)
+
+    def start_notification_listener(self):
+        """Launches the background thread for real-time server notifications."""
+        def listener_worker():
+            import websocket
+            import json
+            import time
+            
+            # Get API URL from helper
+            ws_url = api.BASE_URL.replace("http://", "ws://").replace("https://", "wss://")
+            ws_endpoint = f"{ws_url}/ws/notifications"
+            
+            while True:
+                try:
+                    ws = websocket.WebSocketApp(
+                        ws_endpoint,
+                        on_message=self._on_ws_message,
+                        on_error=self._on_ws_error,
+                        on_close=self._on_ws_close,
+                        on_open=self._on_ws_open
+                    )
+                    ws.run_forever()
+                except Exception as e:
+                    print(f"WS CONNECTION ERROR: {e}")
+                
+                # Wait before reconnecting
+                time.sleep(5)
+        
+        thread = threading.Thread(target=listener_worker, daemon=True)
+        thread.start()
+
+    def _on_ws_open(self, ws):
+        self.after(0, lambda: [
+            self.status_dot.configure(text_color="#2ecc71"),
+            self.status_lbl.configure(text="SYSTEM ONLINE • LIVE")
+        ])
+
+    def _on_ws_message(self, ws, message):
+        try:
+            import json
+            data = json.loads(message)
+            if data.get("type") == "NOTIFICATION":
+                title = data.get("title", "System Update")
+                msg = data.get("message", "")
+                level = data.get("level", "info")
+                
+                # Dispatch to main thread for UI safety
+                self.after(0, lambda: show_toast(self, f"🔔 {title}: {msg}", type=level))
+            elif data.get("type") == "PROGRESS":
+                module = data.get("module", "system")
+                percentage = data.get("percentage", 0)
+                msg = data.get("message", "")
+                
+                # Update or Create Progress Overlay
+                self.after(0, lambda: self._handle_progress_update(module, percentage, msg))
+        except Exception as e:
+            print(f"WS MESSAGE PROCESSING ERROR: {e}")
+
+    def _handle_progress_update(self, module, percentage, message):
+        """Manages the lifecycle of progress overlays from WebSocket events."""
+        from ui_components import ProgressOverlay
+        
+        if module not in self.progress_overlays:
+            self.progress_overlays[module] = ProgressOverlay(self, title=f"{module.upper()} TASK")
+        
+        overlay = self.progress_overlays[module]
+        overlay.update(percentage, message)
+        
+        if percentage >= 100:
+            # Cleanup after delay
+            self.after(2000, lambda: self.progress_overlays.pop(module, None))
+
+    def _on_ws_error(self, ws, error):
+        print(f"WS ERROR: {error}")
+
+    def _on_ws_close(self, ws, close_status_code, close_msg):
+        self.after(0, lambda: [
+            self.status_dot.configure(text_color="#e67e22"),
+            self.status_lbl.configure(text="SYSTEM ONLINE • DISCONNECTED")
+        ])
+
+    def logout_automatic(self):
+        """Securely terminates the session with a premium branded notification."""
+        # Create a modern modal-like window for the expiration notice
+        expired_win = ctk.CTkToplevel(self)
+        expired_win.title(tr("common.session_expired_title"))
+        expired_win.geometry("450x250")
+        expired_win.attributes("-topmost", True)
+        expired_win.grab_set() # Make it modal
+        
+        # Center the window
+        expired_win.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() // 2) - 225
+        y = self.winfo_y() + (self.winfo_height() // 2) - 125
+        expired_win.geometry(f"+{x}+{y}")
+
+        content = ctk.CTkFrame(expired_win, fg_color="transparent")
+        content.pack(expand=True, fill="both", padx=30, pady=30)
+
+        ctk.CTkLabel(
+            content, 
+            text="🚨 " + tr("common.session_expired_title"), 
+            font=("Segoe UI", 20, "bold"), 
+            text_color="#e74c3c"
+        ).pack(pady=(0, 10))
+
+        ctk.CTkLabel(
+            content, 
+            text=tr("common.session_expired_msg"), 
+            font=("Segoe UI", 12), 
+            wraplength=350
+        ).pack(pady=10)
+
+        ctk.CTkButton(
+            content, 
+            text=tr("common.ok"), 
+            command=self.destroy,
+            fg_color="#e74c3c",
+            hover_color="#c0392b",
+            width=120
+        ).pack(pady=(15, 0))
 
     def open_command_palette(self):
         CommandPalette(self, self.user_data, self.handle_palette_selection)
@@ -526,15 +704,27 @@ class DashboardApp(ctk.CTk):
         try:
             for widget in self.main_area.winfo_children():
                 widget.destroy()
-            page_class(self.main_area, self.user_data)
+            self.current_page = page_class(self.main_area, self.user_data)
         except Exception as e:
             ErrorDialog(self, tr("common.system_error"), f"Failed to load page: {str(e)}")
+
+    def dispatch_hotkey(self, action):
+        """Delegates hotkey actions to the active page if supported."""
+        if hasattr(self, "current_page"):
+            method_name = f"on_hotkey_{action}"
+            if hasattr(self.current_page, method_name):
+                getattr(self.current_page, method_name)()
 
     def toggle_theme(self):
         # Toggle based on current appearance mode
         current = ctk.get_appearance_mode()
         new_mode = "light" if current == "Dark" else "dark"
         setup_theme(new_mode)
+        
+        # Persist preference
+        from utils import ConfigManager
+        ConfigManager.set("appearance_mode", new_mode)
+        show_toast(self, f"Theme switched to {new_mode.upper()}", type="info")
 
     def toggle_language(self):
         """Switches between English and Tagalog and refreshes the UI."""

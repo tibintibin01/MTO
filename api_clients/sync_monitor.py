@@ -54,15 +54,23 @@ class SyncMonitor:
             try:
                 # Use raw api_request to avoid re-queuing on failure here
                 # but we handle exceptions to stop flushing if connection drops again
-                api.api_request(
+                response = api.api_request(
                     action["method"],
                     action["endpoint"],
                     data=action["payload"]
                 )
+                
                 # If success, remove from local DB
                 manager.mark_as_synced(action["id"])
                 print(f"SYNC SUCCESS: {action['method']} {action['endpoint']}")
             except Exception as e:
+                # 409 Conflict Handling (Version Mismatch)
+                if "409" in str(e):
+                    print(f"SYNC CONFLICT for {action['id']}: Version mismatch.")
+                    # Mark as conflict for manual resolution
+                    manager.mark_as_conflict(action["id"], {"server_version": "CONFLICT_DETECTED"})
+                    continue
+
                 print(f"SYNC FAILED for {action['id']}: {e}")
                 # If it fails due to connection, stop flushing and wait for next interval
                 if "Connection lost" in str(e) or "Status N/A" in str(e):

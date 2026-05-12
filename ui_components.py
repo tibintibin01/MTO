@@ -154,8 +154,13 @@ class ToastNotification(ctk.CTkToplevel):
         )
         self.label.pack(expand=True, padx=10, pady=10)
 
-        # Fade out and destroy
-        self.after(duration, self.fade_out)
+        # Fade out and destroy (if not sticky)
+        if duration > 0:
+            self.after(duration, self.fade_out)
+        else:
+            # Sticky: destroy on click
+            self.bind("<Button-1>", lambda e: self.destroy())
+            self.label.bind("<Button-1>", lambda e: self.destroy())
 
     def fade_out(self):
         alpha = self.attributes("-alpha")
@@ -167,16 +172,29 @@ class ToastNotification(ctk.CTkToplevel):
             self.destroy()
 
 
-def show_toast(master, message, type="info"):
+def show_toast(master, message, type="info", duration=None, sticky=False):
+    """
+    Shows a premium toast notification.
+    duration: ms to show (overrides default). If 0 or sticky=True, stays until clicked.
+    """
+    from utils import ConfigManager
     colors = {
         "info": "#3498db",
         "success": "#2ecc71",
         "error": "#e74c3c",
         "warning": "#f39c12",
     }
-    # Centralized UI thread safety: ensure windows are only created in the main thread
+    
+    if duration is None:
+        duration = ConfigManager.get("toast_duration", 3000)
+    
+    if sticky or type == "error":
+        duration = 0
+        message = f"📌 {message}"
+
+    # Centralized UI thread safety
     master.after(
-        0, lambda: ToastNotification(master, message, colors.get(type, "#3498db"))
+        0, lambda: ToastNotification(master, message, colors.get(type, "#3498db"), duration=duration)
     )
 
 class ErrorDialog(ctk.CTkToplevel):
@@ -219,3 +237,50 @@ class ErrorDialog(ctk.CTkToplevel):
         from utils import tr
         self.ok_btn = ctk.CTkButton(btn_fr, text=tr("common.ok"), command=self.destroy, fg_color="transparent", border_width=1)
         self.ok_btn.pack(side="left", padx=10)
+
+class ModernProgressBar(ctk.CTkFrame):
+    def __init__(self, master, title="Operation in Progress...", **kwargs):
+        super().__init__(master, **kwargs)
+        self.grid_columnconfigure(0, weight=1)
+        
+        self.lbl = ctk.CTkLabel(self, text=title, font=ModernTheme.BODY_BOLD)
+        self.lbl.grid(row=0, column=0, padx=20, pady=(15, 5), sticky="w")
+        
+        self.pbar = ctk.CTkProgressBar(self, height=12, corner_radius=6)
+        self.pbar.grid(row=1, column=0, padx=20, pady=(0, 5), sticky="ew")
+        self.pbar.set(0)
+        
+        self.status_lbl = ctk.CTkLabel(self, text="Preparing...", font=ModernTheme.BODY_SMALL, text_color="gray")
+        self.status_lbl.grid(row=2, column=0, padx=20, pady=(0, 15), sticky="w")
+
+    def update_progress(self, percentage, message):
+        self.pbar.set(percentage / 100)
+        self.status_lbl.configure(text=message)
+
+class ProgressOverlay(ctk.CTkToplevel):
+    def __init__(self, master, title="System Task"):
+        super().__init__(master)
+        self.title(title)
+        self.geometry("450x180")
+        self.resizable(False, False)
+        self.attributes("-topmost", True)
+        self.overrideredirect(True) # Borderless premium feel
+        
+        # Center
+        self.update_idletasks()
+        x = master.winfo_rootx() + (master.winfo_width() // 2) - 225
+        y = master.winfo_rooty() + (master.winfo_height() // 2) - 90
+        self.geometry(f"+{x}+{y}")
+        
+        self.configure(fg_color=ModernTheme.SECONDARY)
+        
+        self.inner = ctk.CTkFrame(self, fg_color="transparent")
+        self.inner.pack(fill="both", expand=True, padx=2, pady=2)
+        
+        self.progress_widget = ModernProgressBar(self.inner, title=title, fg_color=ModernTheme.BG_CARD_DARK)
+        self.progress_widget.pack(fill="both", expand=True)
+        
+    def update(self, percentage, message):
+        self.progress_widget.update_progress(percentage, message)
+        if percentage >= 100:
+            self.after(1500, self.destroy)

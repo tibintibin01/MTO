@@ -16,6 +16,8 @@ class AssessmentRollPage:
         self.user = user
         self.current_page = 0
         self.page_size = 50
+        self.is_loading = False
+        self.all_loaded = False
         self.barangays = [
             "NORTH POBLACION",
             "SOUTH POBLACION",
@@ -208,6 +210,11 @@ class AssessmentRollPage:
 
         self.tree.pack(side="left", fill="both", expand=True, padx=5, pady=5)
         scrolly.pack(side="right", fill="y")
+        
+        # Bind scroll event for lazy loading
+        self.tree.bind("<MouseWheel>", self.handle_scroll)
+        self.tree.bind("<Button-4>", self.handle_scroll) # Linux
+        self.tree.bind("<Button-5>", self.handle_scroll) # Linux
 
         # --- PAGINATION BAR ---
         self.pag_fr = ctk.CTkFrame(self.container, fg_color="transparent")
@@ -235,12 +242,31 @@ class AssessmentRollPage:
             fg_color="#34495e",
         )
         self.next_btn.pack(side="right", padx=10)
+        
+        # Initially hidden as we move to infinite scroll, but kept for manual overrides
+        self.pag_fr.pack_forget()
 
         self.tree.bind("<Double-1>", lambda e: self.open_dossier())
+
+    def handle_scroll(self, event=None):
+        """Detects if the user has reached the bottom of the table to trigger lazy loading."""
+        if self.is_loading or self.all_loaded:
+            return
+            
+        # Get scroll position (0 to 1)
+        # If at the bottom (~90%), fetch next page
+        if self.tree.yview()[1] > 0.9:
+            self.next_page()
 
     def refresh_table(self, reset_page=True):
         if reset_page:
             self.current_page = 0
+            self.all_loaded = False
+            
+        if self.is_loading:
+            return
+            
+        self.is_loading = True
 
         def worker():
             try:
@@ -258,9 +284,11 @@ class AssessmentRollPage:
                     year_start=y_start,
                     year_end=y_end,
                 )
-                self.container.after(0, lambda: self._update_table(results))
+                self.container.after(0, lambda: self._update_table(results, append=not reset_page))
             except Exception as e:
                 self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
+            finally:
+                self.is_loading = False
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -273,16 +301,33 @@ class AssessmentRollPage:
             self.current_page -= 1
             self.refresh_table(reset_page=False)
 
-    def _update_table(self, results):
+    def _update_table(self, results, append=False):
         self.page_lbl.configure(text=f"PAGE {self.current_page + 1}")
         self.prev_btn.configure(state="normal" if self.current_page > 0 else "disabled")
-        # Simple heuristic: disable next if results < page_size
-        self.next_btn.configure(
-            state="normal" if len(results) >= self.page_size else "disabled"
-        )
+        
+        if not results:
+            if not append:
+                # Only show error if it's the first page
+                if self.search_ent.get().strip():
+                    messagebox.showinfo("Assessment Roll", "Record not found.")
+                for item in self.tree.get_children():
+                    self.tree.delete(item)
+            else:
+                self.all_loaded = True
+            return
 
-        for item in self.tree.get_children():
-            self.tree.delete(item)
+        if len(results) < self.page_size:
+            self.all_loaded = True
+            self.next_btn.configure(state="disabled")
+        else:
+            self.next_btn.configure(state="normal")
+
+        if not append:
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+        
+        # Get current row count for zebra tagging
+        current_count = len(self.tree.get_children())
         if not results and self.search_ent.get().strip():
             messagebox.showinfo(
                 "Assessment Roll",
@@ -307,7 +352,7 @@ class AssessmentRollPage:
             if eff and len(str(eff)) >= 4:
                 eff = str(eff)[:4]
 
-            tag = "evenrow" if i % 2 == 0 else "oddrow"
+            tag = "evenrow" if (current_count + i) % 2 == 0 else "oddrow"
             self.tree.insert(
                 "",
                 "end",
@@ -408,37 +453,43 @@ class AssessmentRollPage:
 
         def worker():
             try:
-                from api_clients.billing_service import get_property_statement_data
-                from receipt_generator import bulk_generate_soa, generate_delinquency_notice
-                import os
+                # 1. Collect IDs for properties in the current view
+                property_ids = []
+                for child in self.tree.get_children():
+                    property_ids.append(int(self.tree.item(child)["values"][0]))
+                
+                if not property_ids:
+                    raise Exception("No property IDs found for generation.")
 
-                base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-                data_list = []
+                self.container.after(0, lambda: [prog.set(0.3), status_lbl.configure(text="Requesting server-side generation...")])
                 
-                # We need to fetch full statement data for each property
-                children = self.tree.get_children()
-                total = len(children)
+                # 2. Call the new API endpoint
+                payload = {
+                    "property_ids": property_ids,
+                    "filename_prefix": "BULK_SOA" if mode == "SOA" else "BULK_NOTICES"
+                }
                 
-                for i, child in enumerate(children):
-                    td_number = self.tree.item(child)["values"][1]
-                    # We need the property ID, but the tree has ID at index 0
-                    prop_id = self.tree.item(child)["values"][0]
-                    
-                    self.container.after(0, lambda v=i/total, t=f"Processing {td_number}...": [prog.set(v), status_lbl.configure(text=t)])
-                    
-                    stmt_data = get_property_statement_data(prop_id)
-                    if stmt_data:
-                        data_list.append(stmt_data)
+                # Request raw response to get bytes
+                response = api.api_request("POST", "/billing/bulk-soa", data=payload, raw_response=True)
                 
-                self.container.after(0, lambda: status_lbl.configure(text="Finalizing PDF stream..."))
+                self.container.after(0, lambda: [prog.set(0.8), status_lbl.configure(text="Downloading document...")])
                 
-                if mode == "SOA":
-                    output_path = bulk_generate_soa(data_list, base_dir)
-                else:
-                    # For notices, we reuse the same logic but a different prefix
-                    output_path = bulk_generate_soa(data_list, base_dir, filename_prefix="BULK_NOTICES")
+                # 3. Save the received file locally
+                import os
+                if not os.path.exists("receipts"):
+                    os.makedirs("receipts")
                 
-                self.container.after(0, lambda: [overlay.destroy(), os.startfile(output_path), messagebox.showinfo("Success", f"Bulk {mode} generation complete!\n\nFile saved to receipts folder.")])
+                filename = response.headers.get("Content-Disposition", f"attachment; filename=bulk_{mode.lower()}.pdf").split("filename=")[-1]
+                output_path = os.path.join("receipts", filename)
+                
+                with open(output_path, "wb") as f:
+                    f.write(response.content)
+                
+                self.container.after(0, lambda: [
+                    overlay.destroy(), 
+                    os.startfile(os.path.abspath(output_path)), 
+                    messagebox.showinfo("Success", f"Bulk {mode} generation complete!\n\nFile saved to: {output_path}")
+                ])
                 
             except Exception as e:
                 self.container.after(0, lambda err=e: [overlay.destroy(), messagebox.showerror("Bulk Print Error", str(err))])

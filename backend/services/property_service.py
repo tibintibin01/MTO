@@ -4,6 +4,13 @@ from backend.services.auth_service import get_username, require_permission
 import backend.services.billing_service as billing
 import backend.services.payment_service as payment
 
+class SyncConflictError(Exception):
+    """Custom exception raised when a version mismatch is detected during save."""
+    def __init__(self, server_data, client_data):
+        self.server_data = server_data
+        self.client_data = client_data
+        super().__init__("Offline Sync Conflict Detected.")
+
 
 def clean_currency(value):
     if value is None:
@@ -89,244 +96,194 @@ def release_all_property_locks(username):
 
 
 def save_property(data, editing_id=None, user=None):
-    """Saves or Updates a property and its associated billing/payment records."""
+    """
+    Main orchestrator for saving or updating a property.
+    Refactored into single-responsibility helpers.
+    """
+    def transaction_wrapper(cur):
+        # 1. Validate Business Rules
+        from backend.services.validation_service import enforce_property_rules, ValidationError
+        try:
+            enforce_property_rules(data)
+        except ValidationError as e:
+            # We can re-raise as HTTPException in main.py, or handle here
+            raise Exception(f"VALIDATION_ERROR: {str(e)}")
 
-    def save_transaction(cur):
-        old_data = None
-        if editing_id:
-            cur.execute("SELECT * FROM properties WHERE id=%s", (editing_id,))
-            old_data = cur.fetchone()
+        # 2. Normalize and Prepare Data
+        params = _prepare_property_params(data, editing_id, cur)
+        
+        # 3. Perform DB Upsert
+        client_version = data.get("version", 0)
+        prop_id, old_data = _upsert_property_record(cur, params, editing_id, client_version)
+        
+        # 4. Detailed Audit Log (with Snapshots)
+        from backend.services.history_service import log_data_change
+        action = "UPDATE" if editing_id else "CREATE"
+        
+        # Convert tuple params to dict for history
+        col_names = ["td_number", "owner_name", "payor_name", "lot_number", "area", "location", "kind_of_property", 
+                     "accountable_officer", "assessed_value", "penalty", "discount", "or_number", "or_date", 
+                     "tax_year", "pin", "block_number", "prev_td_number", "effectivity_date", "barangay"]
+        after_data = dict(zip(col_names, params))
+        
+        # Map old_data tuple to dict if present
+        before_data = None
+        if old_data:
+            # Note: properties table has id as index 0, so we skip it
+            before_data = dict(zip(col_names, old_data[1:20]))
+            
+        log_data_change(user["id"] if user else 0, "properties", prop_id, action, before=before_data, after=after_data)
+        
+        # 5. Synchronize Billings and Payments
+        _sync_financial_records(cur, prop_id, data)
+        
+        return {"ok": True, "property_id": prop_id}
 
-        def _up(v):
-            return str(v).strip().upper() if v else None
+    return db.execute_transaction(transaction_wrapper)
 
-        def get_v(key, old_idx=None):
-            if key in data:
-                return data.get(key)
-            if old_data and old_idx is not None:
-                return old_data[old_idx]
-            return None
 
-        # Prepare normalized values
-        td_number = _up(get_v("TD Number", 1))
-        owner_name = _up(get_v("Owner Name", 2))
-        payor_name = _up(get_v("Payor", 3) or get_v("Owner Name", 2))
-        lot_number = _up(get_v("Lot Number", 4))
-        area = _up(get_v("Area", 5))
-        location = _up(get_v("Location", 6))
-        kind = _up(get_v("Type", 7) or get_v("Kind of Property", 7))
-        officer = _up(get_v("Accountable Officer", 8))
-        av = get_v("Assessed Value", 9)
-        penalty = get_v("Penalty", 10)
-        discount = get_v("Discount", 11)
-        or_number = _up(get_v("OR Number", 12))
-        or_date = get_v("OR Date", 13)
-        tax_year = _up(get_v("Tax Year", 14))
-        pin = _up(get_v("PIN", 15))
-        block = _up(get_v("Block Number", 16))
-        prev_td = _up(get_v("Previous TD Number", 17) or get_v("Previous TD", 17))
-        eff_date = get_v("Effectivity Date", 18)
-        barangay = _up(get_v("Barangay", 19) or get_v("Location", 6))
+def _prepare_property_params(data, editing_id, cur):
+    """Normalizes and prepares parameters for the SQL query."""
+    old_data = None
+    if editing_id:
+        cur.execute("SELECT * FROM properties WHERE id=%s", (editing_id,))
+        old_data = cur.fetchone()
 
-        property_params = (
-            td_number,
-            owner_name,
-            payor_name,
-            lot_number,
-            area,
-            location,
-            kind,
-            officer,
-            clean_currency(av),
-            clean_currency(penalty),
-            clean_currency(discount),
-            or_number,
-            or_date,
-            tax_year,
-            pin,
-            block,
-            prev_td,
-            eff_date,
-            barangay,
+    def _up(v):
+        return str(v).strip().upper() if v else None
+
+    def get_v(key, old_idx=None):
+        if key in data: return data.get(key)
+        return old_data[old_idx] if old_data and old_idx is not None else None
+
+    return (
+        _up(get_v("TD Number", 1)),
+        _up(get_v("Owner Name", 2)),
+        _up(get_v("Payor", 3) or get_v("Owner Name", 2)),
+        _up(get_v("Lot Number", 4)),
+        _up(get_v("Area", 5)),
+        _up(get_v("Location", 6)),
+        _up(get_v("Kind of Property", 7)),
+        _up(get_v("Accountable Officer", 8)),
+        clean_currency(get_v("Assessed Value", 9)),
+        clean_currency(get_v("Penalty", 10)),
+        clean_currency(get_v("Discount", 11)),
+        _up(get_v("OR Number", 12)),
+        get_v("OR Date", 13),
+        _up(get_v("Tax Year", 14)),
+        _up(get_v("PIN", 15)),
+        _up(get_v("Block Number", 16)),
+        _up(get_v("Previous TD Number", 17)),
+        get_v("Effectivity Date", 18),
+        _up(get_v("Barangay", 19) or get_v("Location", 6)),
+    )
+
+
+def _upsert_property_record(cur, params, editing_id, client_version=None):
+    """Handles the actual SQL INSERT/UPDATE with conflict detection."""
+    old_data = None
+    if editing_id:
+        cur.execute("SELECT * FROM properties WHERE id=%s", (editing_id,))
+        old_data = cur.fetchone()
+        
+        if not old_data:
+            raise Exception("Record not found for update.")
+
+        # CONFLICT DETECTION (Optimistic Locking)
+        # properties index for version (after migration) should be at the end
+        # We need to find the correct index for 'version'
+        # To be safe, let's fetch by column name or check schema
+        cur.execute("SHOW COLUMNS FROM properties")
+        cols = [c[0] for c in cur.fetchall()]
+        version_idx = cols.index("version")
+        
+        server_version = old_data[version_idx]
+        
+        if client_version is not None and int(client_version) < int(server_version):
+            # Convert old_data tuple to dict for the conflict response
+            server_data_dict = dict(zip(cols, old_data))
+            raise SyncConflictError(server_data_dict, params)
+
+        cur.execute(f"""
+            UPDATE properties SET 
+                td_number=%s, owner_name=%s, payor_name=%s, lot_number=%s, area=%s, location=%s,
+                kind_of_property=%s, accountable_officer=%s, assessed_value=%s, penalty=%s, discount=%s,
+                or_number=%s, or_date=%s, tax_year=%s, pin=%s, block_number=%s, 
+                prev_td_number=%s, effectivity_date=%s, barangay=%s,
+                version = version + 1
+            WHERE id=%s
+        """, (*params, editing_id))
+        return editing_id, old_data
+    else:
+        cur.execute("""
+            INSERT INTO properties (
+                td_number, owner_name, payor_name, lot_number, area, location, kind_of_property,
+                accountable_officer, assessed_value, penalty, discount, or_number, or_date, tax_year,
+                pin, block_number, prev_td_number, effectivity_date, barangay, is_deleted, version
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, 1)
+        """, params)
+        return cur.lastrowid, None
+
+
+def _audit_property_change(cur, prop_id, params, old_data, editing_id, user):
+    """Records the change in the audit trail if a user is provided."""
+    if not user:
+        return
+        
+    action = "UPDATE_PROPERTY" if editing_id else "CREATE_PROPERTY"
+    # Convert tuple to dict for audit logging
+    col_names = ["td_number", "owner_name", "payor_name", "lot_number", "area", "location", "kind_of_property", 
+                 "accountable_officer", "assessed_value", "penalty", "discount", "or_number", "or_date", 
+                 "tax_year", "pin", "block_number", "prev_td_number", "effectivity_date", "barangay"]
+    new_data_dict = dict(zip(col_names, params))
+    
+    db.record_audit_log_with_cur(cur, user, action, "properties", prop_id, old_data, new_data_dict)
+
+
+def _sync_financial_records(cur, prop_id, data):
+    """Synchronizes property billings and payments based on the saved property data."""
+    tax_years = billing.normalize_tax_years(data.get("Tax Year"))
+    av = clean_currency(data.get("Assessed Value"))
+    pen = clean_currency(data.get("Penalty"))
+    disc = clean_currency(data.get("Discount"))
+    
+    # Split amounts across multiple years if applicable
+    av_shares = billing.split_amount_across_years(av, len(tax_years))
+    pen_shares = billing.split_amount_across_years(pen, len(tax_years))
+    disc_shares = billing.split_amount_across_years(disc, len(tax_years))
+    
+    should_pay = bool(data.get("OR Number"))
+    billing_rows = []
+    
+    for year, a_s, p_s, d_s in zip(tax_years, av_shares, pen_shares, disc_shares):
+        billing_rows.append(
+            billing.sync_property_billing(cur, prop_id, year, a_s, p_s, d_s, has_payment=should_pay)
         )
-
-        if editing_id:
-            cur.execute(
-                """
-                UPDATE properties
-                SET td_number=%s, owner_name=%s, payor_name=%s, lot_number=%s, area=%s, location=%s,
-                    kind_of_property=%s, accountable_officer=%s, assessed_value=%s, penalty=%s, discount=%s,
-                    or_number=%s, or_date=%s, tax_year=%s,
-                    pin=%s, block_number=%s, prev_td_number=%s, effectivity_date=%s, barangay=%s
-                WHERE id=%s
-                """,
-                (*property_params, editing_id),
-            )
-            property_id = editing_id
-
-            # Audit: Get new data
-            cur.execute("SELECT * FROM properties WHERE id=%s", (editing_id,))
-            new_data = cur.fetchone()
-
-            if user:
-                db.record_audit_log_with_cur(
-                    cur,
-                    user,
-                    "UPDATE_PROPERTY",
-                    "properties",
-                    property_id,
-                    old_data,
-                    new_data,
-                )
+        
+    if should_pay:
+        paid = clean_currency(data.get("Amount Paid"))
+        allocated = billing.allocate_payment_amount(billing_rows, paid)
+        
+        # Upsert payment record
+        cur.execute("""
+            SELECT id FROM payments WHERE property_id = %s AND or_number = %s AND date_paid = %s 
+            ORDER BY id DESC LIMIT 1 FOR UPDATE
+        """, (prop_id, data.get("OR Number"), data.get("OR Date")))
+        
+        pay_row = cur.fetchone()
+        pay_params = (paid, data.get("OR Number"), data.get("OR Date"), data.get("Tax Year"), 
+                      data.get("Accountable Officer"), data.get("Payor") or data.get("Owner Name"))
+        
+        if pay_row:
+            cur.execute("UPDATE payments SET amount=%s, or_number=%s, date_paid=%s, tax_year=%s, posted_by=%s, payor_name=%s WHERE id=%s", 
+                        (*pay_params, pay_row[0]))
+            payment_id = pay_row[0]
         else:
-            cur.execute(
-                """
-                INSERT INTO properties (
-                    td_number, owner_name, payor_name, lot_number, area, location, kind_of_property,
-                    accountable_officer, assessed_value, penalty, discount,
-                    or_number, or_date, tax_year, 
-                    pin, block_number, prev_td_number, effectivity_date, barangay,
-                    is_deleted
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0)
-                """,
-                property_params,
-            )
-            property_id = cur.lastrowid
-            if not property_id:
-                cur.execute("SELECT LAST_INSERT_ID()")
-                res = cur.fetchone()
-                property_id = res[0] if res else None
-
-            if not property_id:
-                raise Exception(
-                    "CRITICAL: Failed to retrieve new Property ID from database after INSERT."
-                )
-
-            # Diagnostic Log
-            from utils import log_error_to_file
-
-            log_error_to_file(
-                f"DEBUG: New Property Created - ID: {property_id}", error=None
-            )
-
-            if user:
-                # Convert tuple to dict for better audit logging
-                new_data_dict = dict(
-                    zip(
-                        [
-                            "td_number",
-                            "owner_name",
-                            "payor_name",
-                            "lot_number",
-                            "area",
-                            "location",
-                            "kind_of_property",
-                            "accountable_officer",
-                            "assessed_value",
-                            "penalty",
-                            "or_number",
-                            "or_date",
-                            "tax_year",
-                            "pin",
-                            "block_number",
-                            "prev_td_number",
-                            "effectivity_date",
-                            "barangay",
-                        ],
-                        property_params,
-                    )
-                )
-                db.record_audit_log_with_cur(
-                    cur,
-                    user,
-                    "CREATE_PROPERTY",
-                    "properties",
-                    property_id,
-                    None,
-                    new_data_dict,
-                )
-
-        # Sync billings & payments
-        tax_years = billing.normalize_tax_years(data.get("Tax Year"))
-        assessed_value = clean_currency(data.get("Assessed Value"))
-        penalty_value = clean_currency(data.get("Penalty"))
-
-        billing_rows = []
-        assessed_shares = billing.split_amount_across_years(
-            assessed_value, len(tax_years)
-        )
-        penalty_shares = billing.split_amount_across_years(
-            penalty_value, len(tax_years)
-        )
-        discount_value = clean_currency(data.get("Discount"))
-        discount_shares = billing.split_amount_across_years(
-            discount_value, len(tax_years)
-        )
-
-        should_record_payment = bool(data.get("OR Number"))
-
-        for tax_year, assessed_share, penalty_share, discount_share in zip(
-            tax_years, assessed_shares, penalty_shares, discount_shares
-        ):
-            billing_rows.append(
-                billing.sync_property_billing(
-                    cur,
-                    property_id,
-                    tax_year,
-                    assessed_share,
-                    penalty_share,
-                    discount_share,
-                    has_payment=should_record_payment,
-                )
-            )
-
-        if should_record_payment:
-            amount_paid = clean_currency(data.get("Amount Paid"))
-            allocated_billing_rows = billing.allocate_payment_amount(
-                billing_rows, amount_paid
-            )
-
-            cur.execute(
-                "SELECT id FROM payments WHERE property_id = %s AND or_number = %s AND date_paid = %s ORDER BY id DESC LIMIT 1 FOR UPDATE",
-                (property_id, data.get("OR Number"), data.get("OR Date")),
-            )
-            payment_row = cur.fetchone()
-
-            if payment_row:
-                payment_id = payment_row[0]
-                cur.execute(
-                    "UPDATE payments SET amount=%s, or_number=%s, date_paid=%s, tax_year=%s, posted_by=%s, payor_name=%s WHERE id=%s",
-                    (
-                        amount_paid,
-                        data.get("OR Number"),
-                        data.get("OR Date"),
-                        data.get("Tax Year"),
-                        data.get("Accountable Officer"),
-                        data.get("Payor") or data.get("Owner Name"),
-                        payment_id,
-                    ),
-                )
-            else:
-                cur.execute(
-                    "INSERT INTO payments (property_id, amount, or_number, date_paid, tax_year, posted_by, payor_name) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                    (
-                        property_id,
-                        amount_paid,
-                        data.get("OR Number"),
-                        data.get("OR Date"),
-                        data.get("Tax Year"),
-                        data.get("Accountable Officer"),
-                        data.get("Payor") or data.get("Owner Name"),
-                    ),
-                )
-                cur.execute("SELECT LAST_INSERT_ID()")
-                payment_id = cur.fetchone()[0]
-
-            billing.sync_payment_billings(cur, payment_id, allocated_billing_rows)
-
-        return {"ok": True, "property_id": property_id}
-
-    return db.execute_transaction(save_transaction)
+            cur.execute("INSERT INTO payments (property_id, amount, or_number, date_paid, tax_year, posted_by, payor_name) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
+                        (prop_id, *pay_params))
+            payment_id = cur.lastrowid
+            
+        billing.sync_payment_billings(cur, payment_id, allocated)
 
 
 @require_permission("property_edit")
@@ -360,13 +317,16 @@ def soft_delete_property(property_id, user=None, ip_address=None):
     return res
 
 
-def get_deleted_properties():
-    """Fetches all properties marked as deleted."""
-    query = """
+def get_deleted_properties(limit=50, offset=0):
+    """Fetches all properties marked as deleted with pagination support."""
+    safe_limit = max(1, int(limit))
+    safe_offset = max(0, int(offset))
+    query = f"""
         SELECT id, td_number, owner_name, location, assessed_value 
         FROM properties 
         WHERE is_deleted = 1 
         ORDER BY id DESC
+        LIMIT {safe_limit} OFFSET {safe_offset}
     """
     return db.db_query(query, fetch=True, commit=False) or []
 
@@ -465,8 +425,10 @@ def get_property_by_td(td_number):
     return res[0] if res else None
 
 
-def get_assessment_roll():
-    query = "SELECT td_number, owner_name, location, kind_of_property, assessed_value FROM properties WHERE is_deleted = 0 ORDER BY owner_name ASC"
+def get_assessment_roll(limit=100, offset=0):
+    safe_limit = max(1, int(limit))
+    safe_offset = max(0, int(offset))
+    query = f"SELECT td_number, owner_name, location, kind_of_property, assessed_value FROM properties WHERE is_deleted = 0 ORDER BY owner_name ASC LIMIT {safe_limit} OFFSET {safe_offset}"
     return db.db_query(query, fetch=True, commit=False) or []
 
 

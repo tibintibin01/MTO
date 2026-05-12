@@ -136,12 +136,12 @@ def load_db_config():
         log_error_to_file("Invalid database port in config", exc)
         runtime_config["port"] = 3306
 
-    # CRITICAL SECURITY CONTROL: Require a robust SECRET_KEY
+    # CRITICAL SECURITY CONTROL: Require a high-entropy SECRET_KEY
     raw_key = os.getenv("SECRET_KEY")
-    if not raw_key or len(raw_key) < 16:
+    if not raw_key or len(raw_key) < 128:
         raise RuntimeError(
-            "CRITICAL SECURITY ERROR: SECRET_KEY environment variable is missing or too short. "
-            "The application requires a secure key (min 16 chars) to protect sensitive data."
+            "CRITICAL SECURITY ERROR: SECRET_KEY environment variable is missing or too weak. "
+            "The application requires a 64-byte (128-character hex) high-entropy key to protect sensitive data."
         )
 
     return runtime_config
@@ -225,12 +225,13 @@ def _init_pool():
         DB_ENGINE = create_engine(
             uri,
             poolclass=QueuePool,
-            pool_size=10,
-            max_overflow=5,
-            pool_recycle=3600,
-            pool_pre_ping=True  # Automatic recovery from drops
+            pool_size=50,
+            max_overflow=20,
+            pool_recycle=1800,  # Recycled every 30 mins to prevent stale connections
+            pool_timeout=30,    # Max wait time for a connection before failing
+            pool_pre_ping=True  # Automatic recovery from drops (Health Check)
         )
-        print(f"SQLAlchemy Connection Pool initialized (Size: 10 + 5 Overflow)")
+        print(f"SQLAlchemy Connection Pool initialized (Size: 50 + 20 Overflow)")
     except Exception as e:
         log_error_to_file("Failed to initialize SQLAlchemy engine", e)
         DB_ENGINE = None

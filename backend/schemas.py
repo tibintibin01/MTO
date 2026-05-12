@@ -3,7 +3,7 @@ from typing import Optional, List, Any
 
 
 class PropertySaveSchema(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, extra="allow")
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     td_number: Optional[str] = Field(None, alias="TD Number")
     owner_name: Optional[str] = Field(None, alias="Owner Name")
@@ -28,6 +28,8 @@ class PropertySaveSchema(BaseModel):
 
 
 class ReceiptRecordSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    
     property_id: int
     payment_id: int
     details: dict
@@ -36,15 +38,18 @@ class ReceiptRecordSchema(BaseModel):
 
 
 class LogActionSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     action: str
 
 
 class UserUpdateSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     role: Optional[str] = None
     is_active: Optional[bool] = None
 
 
 class UserCreateSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     username: str = Field(..., min_length=3)
     full_name: str = Field(..., min_length=3)
     password: str = Field(..., min_length=6)
@@ -52,4 +57,11 @@ class UserCreateSchema(BaseModel):
 
 
 class PasswordResetSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     new_password: str = Field(..., min_length=6)
+
+
+class BulkUpdateBarangaySchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ids: List[int]
+    barangay: str

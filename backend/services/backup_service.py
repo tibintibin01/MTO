@@ -5,7 +5,7 @@ import threading
 import subprocess
 from datetime import datetime
 import db_manager as db
-from verify_backup import verify_sql_dump
+from backend.services.verification_service import verify_sql_dump
 from backend.services.auth_service import require_permission
 
 BACKUP_BASE_DIR = r"C:\MTO\backups"
@@ -66,8 +66,9 @@ def get_backup_status():
 
 
 @require_permission("backup_restore")
-def run_hybrid_backup(user=None):
-    """Main orchestrator for the Hybrid Backup process."""
+async def run_hybrid_backup(user=None):
+    """Main orchestrator for the Hybrid Backup process (Async)."""
+    import asyncio
     from backend.services.auth_service import get_username
 
     user_name = get_username(user)
@@ -81,126 +82,98 @@ def run_hybrid_backup(user=None):
     )
 
     backup_status["is_running"] = True
+    
+    async def report_progress(step, percentage, msg):
+        from backend.main import manager
+        await manager.broadcast({
+            "type": "PROGRESS",
+            "module": "backup",
+            "step": step,
+            "percentage": percentage,
+            "message": msg
+        })
+
     try:
         # 1. Local Backup
-        print(
-            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Step 1/5: Creating local SQL dump..."
-        )
+        await report_progress(1, 10, "Creating local SQL dump...")
         os.makedirs(LOCAL_DIR, exist_ok=True)
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         filename = f"mto_backup_{timestamp}.sql"
         local_path = os.path.join(LOCAL_DIR, filename)
 
-        success = _create_local_dump(local_path)
+        success = await asyncio.to_thread(_create_local_dump, local_path)
         if not success:
-            print(
-                f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ERROR: Local dump failed."
-            )
-            return (
-                False,
-                "Local dump failed. Check if mysqldump is installed and configured.",
-            )
+            await report_progress(1, 0, "ERROR: Local dump failed")
+            return False, "Local dump failed."
 
-        print(
-            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Local dump created: {local_path}"
-        )
         backup_status["last_local"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         # 1.5 Generate Checksum
-        print(
-            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Step 1.5/5: Generating checksum..."
-        )
-        checksum = _generate_checksum(local_path)
-        checksum_path = local_path + ".sha256"
-        with open(checksum_path, "w") as f:
-            f.write(checksum)
+        await report_progress(1, 20, "Generating checksum...")
+        checksum = await asyncio.to_thread(_generate_checksum, local_path)
+        
+        def save_checksum():
+            with open(local_path + ".sha256", "w") as f:
+                f.write(checksum)
+        await asyncio.to_thread(save_checksum)
+        
         backup_status["last_checksum"] = checksum
 
         # 2. Verify Local Backup
-        print(
-            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Step 2/5: Verifying backup integrity..."
-        )
-        v_success, v_msg = verify_sql_dump(local_path)
+        await report_progress(2, 40, "Verifying backup integrity...")
+        v_success, v_msg = await asyncio.to_thread(verify_sql_dump, local_path)
         backup_status["last_verify"] = "Success" if v_success else f"Failed: {v_msg}"
-        print(
-            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Verification Result: {backup_status['last_verify']}"
-        )
 
         # 3. Rotation (Local)
-        print(
-            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Step 3/5: Rotating old local backups..."
-        )
-        _rotate_backups(LOCAL_DIR, keep=7)
+        await report_progress(3, 50, "Rotating old local backups...")
+        await asyncio.to_thread(_rotate_backups, LOCAL_DIR, keep=7)
 
         # 4. USB Mirroring
-        print(
-            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Step 4/5: Syncing to USB Drive..."
-        )
-        usb_path = _find_usb_drive()
+        await report_progress(4, 70, "Syncing to USB Drive...")
+        usb_path = await asyncio.to_thread(_find_usb_drive)
         if usb_path:
-            usb_dest = os.path.join(usb_path, "MTO_Backups")
-            os.makedirs(usb_dest, exist_ok=True)
-            shutil.copy2(local_path, os.path.join(usb_dest, filename))
-            # Also copy checksum to USB
-            shutil.copy2(
-                local_path + ".sha256", os.path.join(usb_dest, filename + ".sha256")
-            )
-
+            def sync_usb():
+                usb_dest = os.path.join(usb_path, "MTO_Backups")
+                os.makedirs(usb_dest, exist_ok=True)
+                shutil.copy2(local_path, os.path.join(usb_dest, filename))
+                shutil.copy2(local_path + ".sha256", os.path.join(usb_dest, filename + ".sha256"))
+                _rotate_backups(usb_dest, keep=14)
+            
+            await asyncio.to_thread(sync_usb)
             backup_status["last_usb"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(
-                f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: USB Sync Successful: {usb_path}"
-            )
-            _rotate_backups(usb_dest, keep=14)
-        else:
-            print(
-                f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: USB Sync Skipped (No drive found)"
-            )
 
         # 5. Cloud Sync
-        print(
-            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Step 5/5: Syncing to Cloud..."
-        )
+        await report_progress(5, 90, "Syncing to Cloud...")
         cloud_success = False
-        retries = 3
-        for attempt in range(retries):
-            try:
-                if _sync_to_cloud(local_path):
-                    cloud_success = True
-                    break
-            except Exception as cloud_err:
-                print(f"Cloud attempt {attempt+1} failed: {cloud_err}")
-                import time
-                time.sleep(2)
-        
-            if cloud_success:
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Cloud Sync Successful.")
-            else:
-                _alert_failure("Cloud Sync Failed after 3 retries", user_name)
+        for _ in range(3):
+            if await asyncio.to_thread(_sync_to_cloud, local_path):
+                cloud_success = True
+                break
         
         backup_status["last_cloud"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if cloud_success else "FAILED"
         
         # 6. Store in Database
+        await report_progress(6, 100, "Finalizing backup logs...")
         try:
-            health_status = "OK" if backup_status["last_verify"] == "Success" else "FAIL"
+            health_detail = backup_status["last_verify"]
             cloud_status = "SYNCED" if cloud_success else "PENDING"
-            db.db_query(
-                "INSERT INTO backup_history (filename, file_path, checksum, status, health, user_name) VALUES (%s, %s, %s, %s, %s, %s)",
-                (filename, local_path, checksum, cloud_status, health_status, user_name)
-            )
+            
+            def log_to_db():
+                db.db_query(
+                    "INSERT INTO backup_history (filename, file_path, checksum, status, health, user_name) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (filename, local_path, checksum, cloud_status, health_detail, user_name)
+                )
+            await asyncio.to_thread(log_to_db)
+            
         except Exception as db_err:
             print(f"Failed to log backup to DB: {db_err}")
-
-        print(
-            f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] INFO: Hybrid Backup Completed Successfully."
-        )
 
         return True, "Hybrid backup completed successfully."
     except Exception as e:
         log_error_to_file("Hybrid Backup Orchestrator Error", e)
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] CRITICAL: {str(e)}")
-        _alert_failure(f"Hybrid Backup Orchestrator Error: {str(e)}", user_name)
+        await report_progress(0, 0, f"CRITICAL ERROR: {str(e)}")
+        await asyncio.to_thread(_alert_failure, f"Hybrid Backup Orchestrator Error: {str(e)}", user_name)
         return False, str(e)
-
     finally:
         backup_status["is_running"] = False
 
@@ -214,12 +187,35 @@ def _create_local_dump(dest_path):
     db_name = db.DB_CONFIG["database"]
     db_host = db.DB_CONFIG["host"]
 
+    # Standard search paths for mysqldump on Windows/XAMPP
+    COMMON_DUMP_PATHS = [
+        dump_path,
+        r"C:\xampp\mysql\bin\mysqldump.exe",
+        r"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqldump.exe",
+        r"C:\Program Files\MySQL\MySQL Server 5.7\bin\mysqldump.exe",
+        r"D:\xampp\mysql\bin\mysqldump.exe",
+    ]
+
+    actual_dump_executable = None
+    for p in COMMON_DUMP_PATHS:
+        # Check if it's just a command name or a full path
+        if "\\" not in p and "/" not in p:
+            # Check if command is in PATH
+            if shutil.which(p):
+                actual_dump_executable = p
+                break
+        elif os.path.exists(p):
+            actual_dump_executable = p
+            break
+    
+    if not actual_dump_executable:
+        log_error_to_file("Backup Dump Error", "Could not locate mysqldump executable in common paths or System PATH.")
+        return False
+
     try:
         with open(dest_path, "w", encoding="utf-8") as f:
-            # Add --no-defaults to avoid reading config files that might prompt
-            # Add --single-transaction for better consistency on InnoDB
             cmd = [
-                dump_path,
+                actual_dump_executable,
                 f"-u{db_user}",
                 f"-h{db_host}",
                 "--single-transaction",
@@ -228,7 +224,9 @@ def _create_local_dump(dest_path):
             if db_pass:
                 cmd.insert(2, f"-p{db_pass}")
 
-            subprocess.run(cmd, stdout=f, check=True, timeout=300)
+            # Use shell=True only on windows if executable is just a name
+            is_win = os.name == 'nt'
+            subprocess.run(cmd, stdout=f, check=True, timeout=300, shell=is_win if "\\" not in actual_dump_executable else False)
         return True
     except subprocess.TimeoutExpired:
         log_error_to_file(
@@ -272,11 +270,6 @@ def _sync_to_cloud(file_path):
     return True
 
 
-def start_background_backup():
-    """Triggers the backup in a non-blocking thread."""
-    thread = threading.Thread(target=run_hybrid_backup, daemon=True)
-    thread.start()
-    return thread
 
 
 def _generate_checksum(file_path):

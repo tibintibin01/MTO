@@ -1,6 +1,14 @@
 import os
 import sys
 from typing import List, Optional
+
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+    SENTRY_AVAILABLE = True
+except ImportError:
+    SENTRY_AVAILABLE = False
+
 from fastapi import (
     FastAPI,
     Depends,
@@ -9,7 +17,10 @@ from fastapi import (
     File,
     UploadFile,
     Request,
+    Response,
     BackgroundTasks,
+    WebSocket,
+    WebSocketDisconnect
 )
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -24,9 +35,51 @@ from slowapi.errors import RateLimitExceeded
 # Add parent directory to path to import existing services
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import services.analytics_service as analytics
+from fastapi.responses import HTMLResponse
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Initialize Sentry Telemetry (Resilient Implementation)
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+if SENTRY_AVAILABLE and SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[FastApiIntegration()],
+        traces_sample_rate=1.0,
+        profiles_sample_rate=1.0,
+    )
+    print(f"INFO: Sentry Telemetry INITIALIZED: {SENTRY_DSN[:20]}...")
+elif not SENTRY_AVAILABLE and SENTRY_DSN:
+    print("WARNING: Sentry DSN provided but sentry_sdk NOT FOUND. Telemetry disabled.")
+
+# --- REAL-TIME NOTIFICATIONS (WebSockets) ---
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        await websocket.send_text(message)
+
+    async def broadcast(self, message: dict):
+        import json
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(json.dumps(message))
+            except:
+                # Connection might be stale
+                pass
+
+manager = ConnectionManager()
 
 import db_manager as db
 import backend.services.auth_service as auth_svc
@@ -43,9 +96,29 @@ from backend.schemas import (
     LogActionSchema,
     UserUpdateSchema,
     PasswordResetSchema,
+    BulkUpdateBarangaySchema,
 )
 
-app = FastAPI(title="Treasury Management API", version="2.0.0")
+app = FastAPI(
+    title="MTO Treasury Management System",
+    description="Professional Enterprise API for Municipal Treasury Operations. Includes Property Assessment, Billing, and Collection management with high-entropy security controls.",
+    version="2.1.0",
+    contact={
+        "name": "MTO IT Support",
+        "email": "support@mto.gov.ph",
+    },
+    license_info={
+        "name": "Proprietary",
+    },
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# --- API VERSIONING (v2) ---
+from fastapi import APIRouter
+api_v2 = APIRouter(prefix="/api/v2")
+
+# Register Versioned Router later in the file after dependencies are defined
 
 # Rate Limiter Configuration - Supports Redis for Multi-Instance Scaling
 REDIS_URL = os.getenv("REDIS_URL")
@@ -59,6 +132,42 @@ else:
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# --- OBSERVABILITY MIDDLEWARE ---
+@app.middleware("http")
+async def add_request_id_middleware(request: Request, call_next):
+    from utils import set_request_id, get_request_id
+    
+    # Generate or capture request ID
+    req_id = request.headers.get("X-Request-ID") or request.headers.get("X-Correlation-ID")
+    set_request_id(req_id) # Generates new one if None
+    
+    # Tag Sentry scope
+    if SENTRY_DSN:
+        with sentry_sdk.configure_scope() as scope:
+            scope.set_tag("request_id", get_request_id())
+            if hasattr(request.state, "user"):
+                scope.set_user({"username": request.state.user.get("username")})
+    
+    response: Response = await call_next(request)
+    
+    # Return ID in header for client-side correlation
+    response.headers["X-Request-ID"] = get_request_id()
+    return response
+
+@app.middleware("http")
+async def maintenance_mode_middleware(request: Request, call_next):
+    from utils import is_feature_enabled
+    if is_feature_enabled("MAINTENANCE_MODE"):
+        # Allow only admins to bypass maintenance
+        # This is a simplified check; in a real app, you'd check JWT here if possible
+        # or allow specific IP addresses
+        if not request.url.path.startswith("/docs") and not request.url.path.startswith("/redoc"):
+             return Response(
+                content="System is currently under maintenance. Please try again later.",
+                status_code=503
+            )
+    return await call_next(request)
 
 # CORS Configuration - Lock the door to everyone except our local apps
 origins = [
@@ -105,9 +214,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 # Security Configuration
-SECRET_KEY = os.getenv(
-    "MTO_API_SECRET_KEY", "7b9e1d2c3f4a5b6c7d8e9f0a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p"
-)
+SECRET_KEY = os.getenv("MTO_API_SECRET_KEY")
+if not SECRET_KEY or len(SECRET_KEY) < 128:
+    raise RuntimeError(
+        "CRITICAL SECURITY ERROR: MTO_API_SECRET_KEY is missing or too weak. "
+        "The application requires a 64-byte (128-character hex) high-entropy key to protect sessions."
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 hours
 
@@ -246,12 +358,40 @@ async def read_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
 
 
+@api_v2.post("/system/undo", tags=["System"])
+async def undo_last_system_action(
+    current_user: dict = Depends(get_current_user)
+):
+    """Reverses the last critical action (UPDATE/DELETE) performed by the current user."""
+    from backend.services.history_service import undo_last_action
+    success, message = undo_last_action(current_user["id"])
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    
+    # Notify other clients of the data change
+    await manager.broadcast({
+        "type": "NOTIFICATION",
+        "title": "Action Reversed",
+        "message": message,
+        "level": "success"
+    })
+    
+    return {"status": "success", "message": message}
+
+# Register Versioned Router
+app.include_router(api_v2)
+
+
 # --- User Management (Admin Only) ---
 
 
 @app.get("/users", tags=["Admin"], dependencies=[Depends(admin_only)])
-async def list_users(current_user: dict = Depends(get_current_user)):
-    return auth_svc.get_all_users()
+async def list_users(
+    limit: int = 50,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user)
+):
+    return auth_svc.get_all_users(limit=limit, offset=offset)
 
 
 @app.post("/users", tags=["Admin"], dependencies=[Depends(admin_only)])
@@ -324,8 +464,12 @@ async def list_barangays(current_user: dict = Depends(get_current_user)):
 
 
 @app.get("/properties/delinquent", tags=["Properties"])
-async def get_delinquent_accounts(current_user: dict = Depends(get_current_user)):
-    return prop_svc.get_delinquent_accounts()
+async def get_delinquent_accounts(
+    limit: int = 50,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user)
+):
+    return bill_svc.get_delinquent_accounts(limit=limit, offset=offset)
 
 
 @app.get("/properties/deleted", dependencies=[Depends(admin_only)])
@@ -342,7 +486,7 @@ async def restore_property(
 
 
 @app.post("/properties/import-assessment", tags=["Properties"])
-@limiter.limit("2/minute")
+@limiter.limit("5/minute")
 async def import_assessment_roll(
     request: Request,
     file: UploadFile = File(...),
@@ -470,9 +614,9 @@ async def delete_property(
 
 
 @app.post("/properties/bulk-update-barangay")
-async def bulk_update_barangay(data: dict, current_user: dict = Depends(write_access)):
-    ids = data.get("ids", [])
-    new_brgy = data.get("barangay")
+async def bulk_update_barangay(data: BulkUpdateBarangaySchema, current_user: dict = Depends(write_access)):
+    ids = data.ids
+    new_brgy = data.barangay
     count = prop_svc.bulk_update_barangay(ids, new_brgy, user=current_user)
     return {"updated": count}
 
@@ -625,8 +769,12 @@ async def get_property_statement(
 
 
 @app.get("/billing/assessment-roll")
-async def get_assessment_roll(current_user: dict = Depends(get_current_user)):
-    return prop_svc.get_assessment_roll()
+async def get_assessment_roll(
+    limit: int = 100, 
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user)
+):
+    return prop_svc.get_assessment_roll(limit=limit, offset=offset)
 
 
 @app.get("/billing/report-details")
@@ -654,7 +802,7 @@ async def get_receivables_by_barangay(current_user: dict = Depends(get_current_u
 
 
 @app.post("/system/backup/trigger", tags=["System"])
-@limiter.limit("1/minute")
+@limiter.limit("3/minute")
 async def trigger_backup(
     request: Request,
     background_tasks: BackgroundTasks, 
@@ -664,7 +812,17 @@ async def trigger_backup(
     from backend.services.backup_service import run_hybrid_backup
 
     # Run in background to avoid blocking the main thread
-    background_tasks.add_task(run_hybrid_backup, user=current_user)
+    async def backup_wrapper():
+        await run_hybrid_backup(user=current_user)
+        # Notify all clients when done
+        await manager.broadcast({
+            "type": "NOTIFICATION",
+            "title": "Backup Complete",
+            "message": "The Hybrid Backup process has finished successfully.",
+            "level": "success"
+        })
+
+    background_tasks.add_task(backup_wrapper)
     return {
         "status": "backup_started",
         "message": "Hybrid backup is running in the background.",
@@ -682,6 +840,10 @@ async def get_backup_health(current_user: dict = Depends(get_current_user)):
 async def validate_bulk_import(
     request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)
 ):
+    from utils import is_feature_enabled
+    if not is_feature_enabled("BULK_IMPORT"):
+        raise HTTPException(status_code=403, detail="Bulk Import feature is currently disabled.")
+        
     import os
     from backend.services.import_service import validate_property_import
 
@@ -698,17 +860,24 @@ async def validate_bulk_import(
 
 @app.post("/system/import/commit", tags=["System"], dependencies=[Depends(write_access)])
 async def commit_bulk_import(
-    request: Request, data: List[dict], current_user: dict = Depends(get_current_user)
+    request: Request, data: List[PropertySaveSchema], current_user: dict = Depends(get_current_user)
 ):
+    from utils import is_feature_enabled
+    if not is_feature_enabled("BULK_IMPORT"):
+        raise HTTPException(status_code=403, detail="Bulk Import feature is currently disabled.")
+        
     mode = request.query_params.get("mode", "property")
+    # Convert Pydantic models back to dictionaries for the service layer
+    # We use exclude_unset=True to avoid sending defaults for missing fields
+    payload = [d.model_dump(exclude_unset=True) for d in data]
     
     if mode == "assessment":
         from backend.services.import_service import commit_assessment_import
-        res = commit_assessment_import(data, current_user)
+        res = commit_assessment_import(payload, current_user)
         return {"status": "success", "imported": res["inserted"] + res["updated"], "details": res}
 
     from backend.services.import_service import commit_property_import
-    count = commit_property_import(data, current_user)
+    count = commit_property_import(payload, current_user)
     return {"status": "success", "imported": count}
 
 
@@ -828,6 +997,32 @@ async def restore_system_backup(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/billing/bulk-soa", tags=["Billing"], dependencies=[Depends(write_access)])
+async def generate_bulk_soa_pdf(
+    request: BillingBulkRequest, current_user: dict = Depends(get_current_user)
+):
+    """Generates a merged PDF of Statements of Account for multiple properties."""
+    from backend.services.billing_service import get_property_statement_data
+    import os
+
+    data_list = []
+    for prop_id in request.property_ids:
+        stmt_data = get_property_statement_data(prop_id)
+        if stmt_data:
+            data_list.append(stmt_data)
+
+    if not data_list:
+        raise HTTPException(status_code=400, detail="No valid property data found for bulk generation.")
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    # Delegate to the proxy generator
+    pdf_path = rg.bulk_generate_soa(data_list, base_dir, filename_prefix=request.filename_prefix)
+    
+    return FileResponse(
+        pdf_path, media_type="application/pdf", filename=os.path.basename(pdf_path)
+    )
+
+
 @app.post("/payments/{payment_id}/receipt-pdf", dependencies=[Depends(write_access)])
 async def generate_receipt_pdf(
     payment_id: int, current_user: dict = Depends(get_current_user)
@@ -842,6 +1037,180 @@ async def generate_receipt_pdf(
         pdf_path, media_type="application/pdf", filename=os.path.basename(pdf_path)
     )
 
+
+# --- WebSocket Endpoint ---
+@app.websocket("/ws/notifications")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive
+            data = await websocket.receive_text()
+            # Echo for testing or handle specific client signals
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+# --- ANALYTICS DASHBOARD ---
+
+@app.get("/api/analytics/dashboard")
+async def get_analytics_dashboard(user: str = Depends(get_current_user)):
+    """Returns a comprehensive set of treasury analytics data."""
+    return {
+        "summary": analytics.get_collection_summary(),
+        "trend": analytics.get_monthly_revenue_trend(),
+        "barangays": analytics.get_barangay_distribution(),
+        "years": analytics.get_tax_year_distribution()
+    }
+
+@app.get("/analytics", response_class=HTMLResponse)
+async def serve_analytics_dashboard():
+    """Serves a premium, web-based analytics dashboard using Apache ECharts."""
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>MTO Treasury Insights</title>
+        <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+        <style>
+            :root {
+                --bg-color: #0f172a;
+                --card-bg: #1e293b;
+                --text-primary: #f8fafc;
+                --accent: #38bdf8;
+                --emerald: #10b981;
+            }
+            body { 
+                margin: 0; padding: 20px; 
+                background: var(--bg-color); 
+                color: var(--text-primary);
+                font-family: 'Inter', sans-serif;
+            }
+            .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
+            .card { 
+                background: var(--card-bg); 
+                border-radius: 12px; padding: 20px; 
+                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+                border: 1px solid rgba(255,255,255,0.05);
+            }
+            .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 20px; }
+            .stat-card { background: rgba(56, 189, 248, 0.1); padding: 15px; border-radius: 8px; border-left: 4px solid var(--accent); }
+            .stat-val { font-size: 1.5rem; font-weight: 600; color: var(--accent); }
+            .stat-label { font-size: 0.8rem; opacity: 0.7; text-transform: uppercase; }
+            .chart-container { height: 350px; width: 100%; }
+            h2 { margin: 0 0 20px 0; font-weight: 600; font-size: 1.1rem; opacity: 0.9; }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>🏛️ Treasury Insights Portal</h1>
+            <div id="last-update" style="opacity: 0.5; font-size: 0.9rem;"></div>
+        </div>
+
+        <div class="stat-grid">
+            <div class="stat-card"><div class="stat-label">Today's Collection</div><div id="stat-today" class="stat-val">₱0.00</div></div>
+            <div class="stat-card" style="border-left-color: var(--emerald);"><div class="stat-label">Transactions Today</div><div id="stat-count" class="stat-val">0</div></div>
+            <div class="stat-card"><div class="stat-label">Monthly Velocity</div><div id="stat-month" class="stat-val">₱0.00</div></div>
+            <div class="stat-card"><div class="stat-label">Annual Revenue</div><div id="stat-year" class="stat-val">₱0.00</div></div>
+        </div>
+
+        <div class="grid">
+            <div class="card"><h2>Revenue Velocity (Last 12 Months)</h2><div id="trend-chart" class="chart-container"></div></div>
+            <div class="card"><h2>Top Barangay Collections</h2><div id="barangay-chart" class="chart-container"></div></div>
+            <div class="card"><h2>Tax Year Distribution</h2><div id="year-chart" class="chart-container"></div></div>
+        </div>
+
+        <script>
+            async function fetchData() {
+                const res = await fetch('/api/analytics/dashboard');
+                const data = await res.json();
+                
+                document.getElementById('last-update').innerText = 'System Pulse: ' + new Date().toLocaleTimeString();
+                document.getElementById('stat-today').innerText = '₱' + data.summary.today.toLocaleString();
+                document.getElementById('stat-count').innerText = data.summary.count;
+                document.getElementById('stat-month').innerText = '₱' + data.summary.month.toLocaleString();
+                document.getElementById('stat-year').innerText = '₱' + data.summary.year.toLocaleString();
+
+                renderTrendChart(data.trend);
+                renderBarangayChart(data.barangays);
+                renderYearChart(data.years);
+            }
+
+            function renderTrendChart(trend) {
+                const chart = echarts.init(document.getElementById('trend-chart'), 'dark');
+                chart.setOption({
+                    backgroundColor: 'transparent',
+                    tooltip: { trigger: 'axis' },
+                    xAxis: { type: 'category', data: trend.map(d => d.month), axisLine: { show: false } },
+                    yAxis: { type: 'value', splitLine: { lineStyle: { color: 'rgba(255,255,255,0.05)' } } },
+                    series: [{
+                        data: trend.map(d => d.total),
+                        type: 'line',
+                        smooth: true,
+                        lineStyle: { width: 4, color: '#38bdf8' },
+                        areaStyle: {
+                            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                { offset: 0, color: 'rgba(56, 189, 248, 0.4)' },
+                                { offset: 1, color: 'rgba(56, 189, 248, 0)' }
+                            ])
+                        },
+                        symbol: 'none'
+                    }]
+                });
+            }
+
+            function renderBarangayChart(data) {
+                const chart = echarts.init(document.getElementById('barangay-chart'), 'dark');
+                chart.setOption({
+                    backgroundColor: 'transparent',
+                    tooltip: { trigger: 'item' },
+                    series: [{
+                        type: 'pie',
+                        radius: ['40%', '70%'],
+                        avoidLabelOverlap: false,
+                        itemStyle: { borderRadius: 10, borderColor: '#1e293b', borderWidth: 2 },
+                        label: { show: false },
+                        emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold' } },
+                        data: data
+                    }]
+                });
+            }
+
+            function renderYearChart(data) {
+                const chart = echarts.init(document.getElementById('year-chart'), 'dark');
+                chart.setOption({
+                    backgroundColor: 'transparent',
+                    tooltip: { trigger: 'axis' },
+                    xAxis: { type: 'value', splitLine: { show: false } },
+                    yAxis: { type: 'category', data: data.map(d => d.year) },
+                    series: [{
+                        type: 'bar',
+                        data: data.map(d => d.total),
+                        itemStyle: {
+                            color: new echarts.graphic.LinearGradient(1, 0, 0, 0, [
+                                { offset: 0, color: '#10b981' },
+                                { offset: 1, color: '#38bdf8' }
+                            ]),
+                            borderRadius: [0, 5, 5, 0]
+                        }
+                    }]
+                });
+            }
+
+            fetchData();
+            setInterval(fetchData, 60000);
+            window.addEventListener('resize', () => {
+                echarts.getInstanceByDom(document.getElementById('trend-chart')).resize();
+                echarts.getInstanceByDom(document.getElementById('barangay-chart')).resize();
+                echarts.getInstanceByDom(document.getElementById('year-chart')).resize();
+            });
+        </script>
+    </body>
+    </html>
+    """
 
 # Deleted redundant delete_property route to avoid FastAPI startup conflict
 @app.get("/")

@@ -8,16 +8,88 @@ import json
 import uuid
 import time
 import threading
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List
+from contextvars import ContextVar
+
+# --- CONFIGURATION MANAGEMENT ---
+class ConfigManager:
+    """Handles local persistence of user settings and UI state."""
+    _config_file = "config.json"
+    _defaults = {
+        "appearance_mode": "dark",
+        "language": "en",
+        "toast_duration": 3000,
+        "auto_refresh_interval": 30,
+        "sidebar_collapsed": False
+    }
+    _config = {}
+
+    @classmethod
+    def load(cls):
+        if not os.path.exists(cls._config_file):
+            cls._config = cls._defaults.copy()
+            cls.save()
+        else:
+            try:
+                with open(cls._config_file, "r") as f:
+                    cls._config = {**cls._defaults, **json.load(f)}
+            except Exception:
+                cls._config = cls._defaults.copy()
+
+    @classmethod
+    def save(cls):
+        try:
+            with open(cls._config_file, "w") as f:
+                json.dump(cls._config, f, indent=4)
+        except Exception as e:
+            print(f"ERROR: Failed to save config: {e}")
+
+    @classmethod
+    def get(cls, key: str, default: Any = None) -> Any:
+        if not cls._config: cls.load()
+        return cls._config.get(key, default)
+
+    @classmethod
+    def set(cls, key: str, value: Any):
+        if not cls._config: cls.load()
+        cls._config[key] = value
+        cls.save()
+
+# --- FEATURE TOGGLES ---
+class FeatureManager:
+    """Manages system feature flags via environment variables."""
+    _defaults = {
+        "BULK_IMPORT": True,
+        "DELINQUENCY_NOTICES": False,
+        "CLOUD_BACKUP": False,
+        "SENTRY_TELEMETRY": True,
+        "MAINTENANCE_MODE": False,
+    }
+
+    @classmethod
+    def is_enabled(cls, feature_name: str) -> bool:
+        env_key = f"MTO_ENABLE_{feature_name.upper()}"
+        if feature_name.upper() == "MAINTENANCE_MODE":
+            env_key = "MTO_MAINTENANCE_MODE"
+            
+        val = os.getenv(env_key)
+        if val is None:
+            return cls._defaults.get(feature_name.upper(), False)
+        return str(val).lower() in ("1", "true", "yes", "on")
+
+def is_feature_enabled(feature_name: str) -> bool:
+    """Helper to check if a feature is enabled."""
+    return FeatureManager.is_enabled(feature_name)
 
 # --- OBSERVABILITY CONTEXT ---
-_context = threading.local()
+from contextvars import ContextVar
+_request_id_ctx_var: ContextVar[Optional[str]] = ContextVar("request_id", default="SYSTEM")
 
 def set_request_id(request_id: str = None):
-    _context.request_id = request_id or str(uuid.uuid4())
+    _request_id_ctx_var.set(request_id or str(uuid.uuid4()))
 
 def get_request_id():
-    return getattr(_context, 'request_id', 'SYSTEM')
+    return _request_id_ctx_var.get()
 
 class ContextFilter(logging.Filter):
     def filter(self, record):

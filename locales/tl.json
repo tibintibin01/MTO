@@ -19,7 +19,9 @@
         "success": "Tagumpay",
         "system_error": "Error sa System",
         "logout_confirm": "Kumpirmahin ang Pag-logout",
-        "logout_msg": "Sigurado ka bang nais mong mag-logout sa system?"
+        "logout_msg": "Sigurado ka bang nais mong mag-logout sa system?",
+        "session_expired_title": "Nag-expire ang Session",
+        "session_expired_msg": "Awtomatiko kang na-logout dahil sa 15 minutong walang aktibidad para sa seguridad."
     },
     "dashboard": {
         "title": "Dashboard ng Koleksyon",

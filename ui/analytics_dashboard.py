@@ -2,6 +2,7 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox
 import threading
+import webbrowser
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import api_clients.payment_service as payment_svc
@@ -18,6 +19,11 @@ class AnalyticsDashboardPage:
         self.setup_ui()
         self.load_data()
 
+    def open_external_dashboard(self):
+        """Launches the high-fidelity web dashboard in the default browser."""
+        from api_clients.api_helper import BASE_URL
+        webbrowser.open(f"{BASE_URL}/analytics")
+
     def setup_ui(self):
         # Header
         header_fr = ctk.CTkFrame(self.container, fg_color="transparent")
@@ -29,6 +35,15 @@ class AnalyticsDashboardPage:
         
         ctk.CTkButton(
             header_fr, text="🔄 REFRESH DATA", command=self.load_data, width=150, fg_color="#3498db"
+        ).pack(side="right", padx=(10, 0))
+
+        ctk.CTkButton(
+            header_fr, 
+            text="📈 OPEN HIGH-FIDELITY INSIGHTS", 
+            command=self.open_external_dashboard, 
+            width=220, 
+            fg_color="#8e44ad",
+            hover_color="#9b59b6"
         ).pack(side="right")
 
         # --- KPI CARDS ---
@@ -134,4 +149,4 @@ class AnalyticsDashboardPage:
 
         canvas = FigureCanvasTkAgg(fig, master=self.brgy_card)
         canvas.draw()
-        canvas.get_tkwidget().pack(fill="both", expand=True, padx=10, pady=10)
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
