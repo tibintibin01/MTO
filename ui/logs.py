@@ -118,6 +118,7 @@ class AuditLogsPage:
         
         if self.load_more_btn.winfo_exists():
             self.load_more_btn.configure(state="disabled", text="LOADING...")
+        selected_user = self.user_cb.get()
         def worker():
             try:
                 # Load stats
@@ -135,7 +136,7 @@ class AuditLogsPage:
                 self.container.after(0, update_cb)
                 
                 logs_response = system.get_audit_logs(
-                    username=selected_username if selected_username != tr("technical_logs.toolbar.all_users") else None,
+                    username=selected_user if selected_user != tr("technical_logs.toolbar.all_users") else None,
                     limit=50,
                     cursor=self.next_cursor if append else None
                 )

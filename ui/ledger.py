@@ -9,6 +9,7 @@ import api_clients.auth_service as auth
 import api_clients.system_service as system
 from utils import format_curr, export_data_to_excel, tr
 from receipt_generator import generate_or_receipt
+from ui_components import LoadingOverlay, ErrorDialog
 
 class LedgerPage:
     def __init__(self, parent, user):
@@ -35,7 +36,7 @@ class LedgerPage:
         self.search_ent = ctk.CTkEntry(toolbar, placeholder_text=tr("ledger.search_placeholder"), width=450, height=35, font=ModernTheme.BODY)
         self.search_ent.pack(side="left")
         self.search_ent.bind("<Return>", lambda e: self.load_ledger())
-        self.search_ent.bind("<KeyRelease>", self.on_search_key)
+        self.search_ent.bind("<KP_Enter>", lambda e: self.load_ledger())
 
         self.search_btn = ctk.CTkButton(toolbar, text=f"🔍 {tr('ledger.btn_fetch')}", command=self.load_ledger, width=150, height=35, font=ModernTheme.BUTTON)
         self.search_btn.pack(side="left", padx=10)
@@ -129,11 +130,6 @@ class LedgerPage:
             )
             self.regen_btn.configure(state=regen_state)
 
-    def on_search_key(self, event=None):
-        if self.search_timer:
-            self.container.after_cancel(self.search_timer)
-        self.search_timer = self.container.after(500, self.load_ledger)
-
     def load_ledger(self):
         term = self.search_ent.get().strip()
         if not term:
@@ -143,6 +139,8 @@ class LedgerPage:
         if self.is_loading: return
         self.is_loading = True
         self.search_btn.configure(state="disabled")
+        
+        self.overlay = LoadingOverlay(self.container, tr("ledger.loading_msg") if "ledger.loading_msg" in tr("ledger") else "Fetching Records...")
 
         for r in self.tree.get_children(): self.tree.delete(r)
 
@@ -156,6 +154,7 @@ class LedgerPage:
                 self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
             finally:
                 self.is_loading = False
+                self.container.after(0, lambda: self.overlay.hide())
                 self.container.after(0, lambda: self.search_btn.configure(state="normal"))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -207,6 +206,7 @@ class LedgerPage:
         if not sel: return
         
         pay_id = self.tree.item(sel[0])["values"][0]
+        overlay = LoadingOverlay(self.container, "Regenerating PDF...")
         
         def worker():
             try:
@@ -224,6 +224,8 @@ class LedgerPage:
             except Exception as e:
                 err_msg = str(e)
                 self.container.after(0, lambda: messagebox.showerror("Generation Error", err_msg))
+            finally:
+                self.container.after(0, lambda: overlay.hide())
 
         threading.Thread(target=worker, daemon=True).start()
 

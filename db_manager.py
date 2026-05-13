@@ -122,12 +122,45 @@ def _show_warning(title, message):
 _db_state = threading.local()
 DB_ENGINE = None
 
+class ResultCache:
+    """Thread-safe TTL cache for read-only database queries."""
+    def __init__(self, ttl_seconds=60):
+        self._cache = {}
+        self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+
+    def get(self, key):
+        with self._lock:
+            if key in self._cache:
+                val, ts = self._cache[key]
+                if (datetime.now() - ts).total_seconds() < self._ttl:
+                    return val
+                del self._cache[key]
+        return None
+
+    def set(self, key, value):
+        with self._lock:
+            # Prevent cache bloat
+            if len(self._cache) > 500:
+                self._cache.clear()
+            self._cache[key] = (value, datetime.now())
+
+    def clear(self):
+        with self._lock:
+            self._cache.clear()
+
+# Global read cache
+read_cache = ResultCache(ttl_seconds=60)
 
 def close_thread_connection():
     """
-    Explicitly close and remove the thread-local connection, returning it to the pool.
-    MUST be called at the end of background threads (dashboard refresh, backup, etc.).
+    Explicitly close and remove the thread-local connection and cached cursor.
     """
+    if hasattr(_db_state, "cursor") and _db_state.cursor:
+        try: _db_state.cursor.close()
+        except: pass
+        _db_state.cursor = None
+
     if hasattr(_db_state, "conn") and _db_state.conn:
         try:
             _db_state.conn.close()
@@ -215,7 +248,7 @@ def record_audit_log(
     new_values=None,
     ip_address=None,
 ):
-    from services.auth_service import get_username
+    from backend.services.auth_service import get_username
 
     username = get_username(user)
     user_id = user.get("id") if isinstance(user, dict) else None
@@ -262,7 +295,7 @@ def record_audit_log_with_cur(
     new_values=None,
     ip_address=None,
 ):
-    from services.auth_service import get_username
+    from backend.services.auth_service import get_username
 
     username = get_username(user)
     user_id = user.get("id") if isinstance(user, dict) else None
@@ -306,29 +339,65 @@ def _connection_is_alive(conn):
         return False
 
 
-def db_query(query, params=(), fetch=False, commit=True, dictionary=False):
-    conn = get_db_connection()
+def get_read_connection():
+    """Returns a connection optimized for read-only operations."""
+    # Future: Return connection to a Read Replica
+    return get_db_connection()
+
+def get_write_connection():
+    """Returns a connection for write operations. Clears read cache on use."""
+    # Any write operation should invalidate the read cache to prevent stale data
+    read_cache.clear()
+    return get_db_connection()
+
+def db_query(query, params=(), fetch=False, commit=True, dictionary=False, use_cache=True):
+    """
+    Executes a query with built-in caching for repeated READ operations.
+    """
+    # 1. Try Cache for Read-Only fetches
+    cache_key = None
+    if fetch and not commit and use_cache:
+        cache_key = f"{query}:{str(params)}:{dictionary}"
+        cached_res = read_cache.get(cache_key)
+        if cached_res is not None:
+            return cached_res
+
+    # 2. Handle Connection and Write Invalidation
+    if commit:
+        conn = get_write_connection()
+    else:
+        conn = get_read_connection()
+
     if not conn:
-        log_error_to_file(
-            "Database connection error in db_query", DB_CONFIG_ERROR, extra=query
-        )
+        log_error_to_file("Database connection error in db_query", DB_CONFIG_ERROR, extra=query)
         raise ConnectionError("Lost connection to the Treasury Database.")
+
     result = None
     try:
-        cur = _create_cursor(conn, dictionary=dictionary)
+        # Use thread-local cursor cache to reduce overhead
+        if not hasattr(_db_state, "cursor") or _db_state.cursor is None:
+            _db_state.cursor = _create_cursor(conn, dictionary=dictionary)
+        cur = _db_state.cursor
+        
         cur.execute(query, params)
+        
         if fetch:
             result = cur.fetchall()
+            # Store in cache if this was a read-only request
+            if cache_key:
+                read_cache.set(cache_key, result)
+        
         if commit:
             conn.commit()
         else:
             conn.rollback()
-        cur.close()
+
     except Error as e:
         if commit:
             conn.rollback()
         log_error_to_file("Database query failed", e, extra=f"query={query}")
         raise DatabaseError(f"SQL Error: {str(e)}") from e
+    
     return result
 
 
@@ -373,6 +442,9 @@ def execute_transaction(operation, show_errors=True, return_error=False):
 
         cur = _create_cursor(conn)
 
+        # Any transaction is a potential WRITE, so we clear the read cache
+        read_cache.clear()
+
         # Explicitly start transaction for clarity and safety
         try:
             cur.execute("START TRANSACTION")
@@ -404,15 +476,31 @@ def execute_transaction(operation, show_errors=True, return_error=False):
 
 
 def _create_cursor(conn, dictionary=False):
+    """
+    Creates a cursor from the connection, handling driver-specific options.
+    If a driver-specific option fails (e.g. buffered on PyMySQL), it falls back to a standard cursor.
+    """
     try:
-        if DB_DRIVER == "mysql.connector":
+        # 1. Try PyMySQL with dictionary support if requested
+        if dictionary:
+            try:
+                import pymysql.cursors
+                return conn.cursor(pymysql.cursors.DictCursor)
+            except (ImportError, AttributeError):
+                pass
+        
+        # 2. Try MySQL Connector with buffered support if available
+        try:
             return conn.cursor(buffered=True, dictionary=dictionary)
-        elif DB_DRIVER == "pymysql" and dictionary:
-            import pymysql.cursors
-
-            return conn.cursor(pymysql.cursors.DictCursor)
+        except (AttributeError, TypeError):
+            # Probably PyMySQL or similar which doesn't support 'buffered'
+            pass
+            
+        # 3. Fallback to standard cursor
         return conn.cursor()
-    except:
+    except Exception as e:
+        # Last resort fallback
+        print(f"DEBUG: Critical cursor creation failure: {e}")
         return conn.cursor()
 
 
@@ -433,7 +521,7 @@ def _acquire_named_lock(table_name, key_column, key_value, user_name, stale_minu
         raise ValueError(f"Unauthorized lock column: {key_column}")
 
     # Import locally to avoid circular dependency
-    from services.auth_service import get_username
+    from backend.services.auth_service import get_username
 
     user_name = get_username(user_name)
 
@@ -478,7 +566,7 @@ def _release_named_lock(table_name, key_column, key_value, user_name):
     if key_column not in ALLOWED_LOCK_COLUMNS:
         raise ValueError(f"Unauthorized lock column: {key_column}")
 
-    from services.auth_service import get_username
+    from backend.services.auth_service import get_username
 
     user_name = get_username(user_name)
     db_query(
@@ -497,7 +585,7 @@ def _release_all_named_locks(table_name, user_name):
     if table_name not in ALLOWED_LOCK_TABLES:
         raise ValueError(f"Unauthorized lock table: {table_name}")
 
-    from services.auth_service import get_username
+    from backend.services.auth_service import get_username
 
     user_name = get_username(user_name)
     db_query(f"DELETE FROM {table_name} WHERE locked_by = %s", (user_name,))

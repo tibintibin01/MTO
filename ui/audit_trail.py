@@ -13,6 +13,7 @@ class AuditTrailPage:
         self.user = user
         self.current_page = 0
         self.page_size = 50
+        self.next_cursor = None
         
         self.container = ctk.CTkFrame(parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
@@ -156,25 +157,28 @@ class AuditTrailPage:
                 d_to = self.date_to_ent.get().strip()
                 
                 offset = self.current_page * self.page_size
-                logs = sys_svc.get_audit_logs(
+                response = sys_svc.get_audit_logs(
                     username=user if user != "ALL" else None,
                     search=search,
                     date_from=d_from if d_from else None,
                     date_to=d_to if d_to else None,
                     limit=self.page_size,
-                    offset=offset
+                    cursor=self.next_cursor if not reset_page else None
                 )
+                items = response.get("items", [])
+                self.next_cursor = response.get("next_cursor")
+                has_more = response.get("has_more", False)
                 
-                self.container.after(0, lambda: self._update_table(logs))
+                self.container.after(0, lambda: self._update_table(items, has_more))
             except Exception as e:
                 self.container.after(0, lambda err=e: ErrorDialog(self.parent.winfo_toplevel(), tr("common.system_error"), tr("audit.messages.load_error").replace("{err}", str(err))))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _update_table(self, logs):
+    def _update_table(self, logs, has_more=False):
         self.page_lbl.configure(text=f"{tr('audit.pagination.page')} {self.current_page + 1}")
         self.prev_btn.configure(state="normal" if self.current_page > 0 else "disabled")
-        self.next_btn.configure(state="normal" if len(logs) >= self.page_size else "disabled")
+        self.next_btn.configure(state="normal" if has_more else "disabled")
 
         for item in self.tree.get_children():
             self.tree.delete(item)

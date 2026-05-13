@@ -39,9 +39,9 @@ def generate_delinquency_notice(statement_data, base_dir):
     current_y -= 14 * mm
     c.setStrokeColor(colors.HexColor("#f5c6cb"))
     c.rect(margin_x, current_y - 26 * mm, width - (2 * margin_x), 28 * mm, fill=0, stroke=1)
-    draw_field(c, "TD Number", statement_data.get("td_number"), margin_x + 4 * mm, current_y - 5 * mm)
-    draw_field(c, "Owner Name", statement_data.get("owner_name"), margin_x + 4 * mm, current_y - 12 * mm)
-    draw_field(c, "Location", statement_data.get("location"), margin_x + 4 * mm, current_y - 19 * mm)
+    draw_field(c, "TD Number", statement_data.get("td_number"), margin_x + 4 * mm, current_y - 5 * mm, width=width - 2*margin_x - 10*mm)
+    draw_field(c, "Owner Name", statement_data.get("owner_name"), margin_x + 4 * mm, current_y - 12 * mm, width=width - 2*margin_x - 10*mm)
+    draw_field(c, "Location", statement_data.get("location"), margin_x + 4 * mm, current_y - 19 * mm, width=width - 2*margin_x - 10*mm)
     
     current_y -= 36 * mm
     c.setFont("Helvetica-Bold", 11)

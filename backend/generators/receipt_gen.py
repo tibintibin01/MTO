@@ -34,7 +34,7 @@ def generate_or_receipt(receipt_data, base_dir):
     c.setStrokeColor(accent_color)
     c.rect(margin_x, current_y - 18 * mm, width - (2 * margin_x), 20 * mm, fill=0, stroke=1)
     draw_field(c, "OR Number", receipt_data.get("or_number"), margin_x + 5 * mm, current_y - 5 * mm)
-    draw_field(c, "Date Paid", receipt_data.get("or_date"), margin_x + 5 * mm, current_y - 12 * mm)
+    draw_field(c, "Date Paid", receipt_data.get("date_paid"), margin_x + 5 * mm, current_y - 12 * mm)
     
     tax_year_label = ", ".join(receipt_data.get("tax_years", [])) if receipt_data.get("tax_years") else receipt_data.get("tax_year")
     draw_field(c, "Tax Year(s)", tax_year_label, width / 2, current_y - 5 * mm, width=55 * mm)
@@ -49,15 +49,15 @@ def generate_or_receipt(receipt_data, base_dir):
     c.line(margin_x, current_y, width - margin_x, current_y)
     current_y -= 8 * mm
 
-    draw_field(c, "TD Number", receipt_data.get("td_number"), margin_x, current_y)
+    draw_field(c, "TD Number", receipt_data.get("td_number"), margin_x, current_y, width=width - 2*margin_x)
     current_y -= 8 * mm
-    draw_field(c, "Owner Name", receipt_data.get("owner_name"), margin_x, current_y)
+    draw_field(c, "Owner Name", receipt_data.get("owner_name"), margin_x, current_y, width=width - 2*margin_x)
     current_y -= 8 * mm
-    draw_field(c, "Kind of Property", receipt_data.get("kind_of_property"), margin_x, current_y)
+    draw_field(c, "Kind of Property", receipt_data.get("kind_of_property"), margin_x, current_y, width=width - 2*margin_x)
     current_y -= 8 * mm
-    draw_field(c, "Lot Number", receipt_data.get("lot_number"), margin_x, current_y)
+    draw_field(c, "Lot Number", receipt_data.get("lot_number"), margin_x, current_y, width=width - 2*margin_x)
     current_y -= 8 * mm
-    draw_field(c, "Location", receipt_data.get("location"), margin_x, current_y)
+    draw_field(c, "Location", receipt_data.get("location"), margin_x, current_y, width=width - 2*margin_x)
 
     current_y -= 16 * mm
 

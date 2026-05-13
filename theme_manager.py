@@ -15,6 +15,8 @@ class ModernTheme:
     DANGER = "#ef4444"         # Rose
     WARNING = "#f59e0b"        # Amber
     INFO = "#3b82f6"           # Blue
+    SECONDARY = "#64748b"      # Slate
+    SECONDARY_HOVER = "#475569"
     
     # --- NEUTRAL PALETTE (Light) ---
     BG_LIGHT = "#f8fafc"
@@ -29,6 +31,7 @@ class ModernTheme:
     TEXT_MAIN_DARK = "#f1f5f9"
     TEXT_SUB_DARK = "#94a3b8"
     BORDER_DARK = "#334155"
+    TEXT_GRAY = "#94a3b8"  # Alias for TEXT_SUB_DARK
 
     # --- TYPOGRAPHY ---
     FONT_FAMILY = "Inter" # Fallback to Segoe UI if Inter is missing
@@ -38,6 +41,8 @@ class ModernTheme:
     BODY = ("Inter", 13)
     BODY_BOLD = ("Inter", 13, "bold")
     BODY_SMALL = ("Inter", 11)
+    BUTTON = ("Inter", 14, "bold")
+    BUTTON_SMALL = ("Inter", 11, "bold")
 
 def setup_theme(mode=None):
     """

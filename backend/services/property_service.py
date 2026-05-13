@@ -119,8 +119,16 @@ def save_property(data, editing_id=None, user=None):
         
         # 3. Perform DB Upsert
         client_version = data.get("version", 0)
-        prop_id, old_data = _upsert_property_record(cur, params, editing_id, client_version)
-        
+        prop_id, old_data, conflict_info = _upsert_property_record(cur, params, editing_id, client_version)
+
+        # Last-write-wins: Log the conflict but continue with update
+        if conflict_info.get("conflict_detected"):
+            import logging
+            logging.warning(
+                f"Last-write-wins conflict resolved for property {prop_id}: "
+                f"client ver={conflict_info['client_version']}, server ver={conflict_info['server_version']}"
+            )
+
         # 4. Detailed Audit Log (with Snapshots)
         from backend.services.history_service import log_data_change
         action = "UPDATE" if editing_id else "CREATE"
@@ -141,84 +149,94 @@ def save_property(data, editing_id=None, user=None):
         
         # 5. Synchronize Billings and Payments
         _sync_financial_records(cur, prop_id, data)
-        
-        return {"ok": True, "property_id": prop_id}
+
+        return {
+            "ok": True,
+            "property_id": prop_id,
+            "conflict_resolved": conflict_info.get("conflict_detected", False),
+            "new_version": conflict_info.get("server_version", 1)
+        }
 
     return db.execute_transaction(transaction_wrapper)
 
 
 def _prepare_property_params(data, editing_id, cur):
-    """Normalizes and prepares parameters for the SQL query."""
-    old_data = None
+    """Normalizes and prepares parameters for the SQL query using dictionary mapping."""
+    old_data_dict = {}
     if editing_id:
         cur.execute("SELECT * FROM properties WHERE id=%s", (editing_id,))
-        old_data = cur.fetchone()
+        row = cur.fetchone()
+        if row:
+            columns = [col[0] for col in cur.description]
+            old_data_dict = dict(zip(columns, row))
 
     def _up(v):
         return str(v).strip().upper() if v else None
 
-    def get_v(key, old_idx=None):
+    def get_v(key, col_name):
         if key in data: return data.get(key)
-        return old_data[old_idx] if old_data and old_idx is not None else None
+        return old_data_dict.get(col_name)
 
     return (
-        _up(get_v("TD Number", 1)),
-        _up(get_v("Owner Name", 2)),
-        _up(get_v("Payor", 3) or get_v("Owner Name", 2)),
-        _up(get_v("Lot Number", 4)),
-        _up(get_v("Area", 5)),
-        _up(get_v("Location", 6)),
-        _up(get_v("Kind of Property", 7)),
-        _up(get_v("Accountable Officer", 8)),
-        clean_currency(get_v("Assessed Value", 9)),
-        clean_currency(get_v("Penalty", 10)),
-        clean_currency(get_v("Discount", 11)),
-        _up(get_v("OR Number", 12)),
-        get_v("OR Date", 13),
-        _up(get_v("Tax Year", 14)),
-        _up(get_v("PIN", 15)),
-        _up(get_v("Block Number", 16)),
-        _up(get_v("Previous TD Number", 17)),
-        get_v("Effectivity Date", 18),
-        _up(get_v("Barangay", 19) or get_v("Location", 6)),
+        _up(get_v("TD Number", "td_number")),
+        _up(get_v("Owner Name", "owner_name")),
+        _up(get_v("Payor", "payor_name") or get_v("Owner Name", "owner_name")),
+        _up(get_v("Lot Number", "lot_number")),
+        _up(get_v("Area", "area")),
+        _up(get_v("Location", "location")),
+        _up(get_v("Kind of Property", "kind_of_property")),
+        _up(get_v("Accountable Officer", "accountable_officer")),
+        clean_currency(get_v("Assessed Value", "assessed_value")),
+        clean_currency(get_v("Penalty", "penalty")),
+        clean_currency(get_v("Discount", "discount")),
+        _up(get_v("OR Number", "or_number")),
+        get_v("OR Date", "or_date"),
+        _up(get_v("Tax Year", "tax_year")),
+        _up(get_v("PIN", "pin")),
+        _up(get_v("Block Number", "block_number")),
+        _up(get_v("Previous TD Number", "prev_td_number")),
+        get_v("Effectivity Date", "effectivity_date"),
+        _up(get_v("Barangay", "barangay") or get_v("Location", "location")),
     )
 
 
 def _upsert_property_record(cur, params, editing_id, client_version=None):
-    """Handles the actual SQL INSERT/UPDATE with conflict detection."""
+    """Handles the actual SQL INSERT/UPDATE with last-write-wins conflict resolution."""
     old_data = None
     if editing_id:
         cur.execute("SELECT * FROM properties WHERE id=%s", (editing_id,))
         old_data = cur.fetchone()
-        
+
         if not old_data:
             raise Exception("Record not found for update.")
 
-        # CONFLICT DETECTION (Optimistic Locking)
-        # properties index for version (after migration) should be at the end
-        # We need to find the correct index for 'version'
-        # To be safe, let's fetch by column name or check schema
-        cur.execute("SHOW COLUMNS FROM properties")
-        cols = [c[0] for c in cur.fetchall()]
-        version_idx = cols.index("version")
+        # CONFLICT DETECTION (Optimistic Locking) - STRICT ENFORCEMENT
+        columns = [c[0] for c in cur.description]
+        version_idx = columns.index("version")
+        raw_version = old_data[version_idx]
+        server_version = int(raw_version) if raw_version is not None else 1
         
-        server_version = old_data[version_idx]
-        
-        if client_version is not None and int(client_version) < int(server_version):
-            # Convert old_data tuple to dict for the conflict response
-            server_data_dict = dict(zip(cols, old_data))
+        if client_version is not None and int(client_version) < server_version:
+            server_data_dict = dict(zip(columns, old_data))
             raise SyncConflictError(server_data_dict, params)
 
         cur.execute(f"""
-            UPDATE properties SET 
+            UPDATE properties SET
                 td_number=%s, owner_name=%s, payor_name=%s, lot_number=%s, area=%s, location=%s,
                 kind_of_property=%s, accountable_officer=%s, assessed_value=%s, penalty=%s, discount=%s,
-                or_number=%s, or_date=%s, tax_year=%s, pin=%s, block_number=%s, 
+                or_number=%s, or_date=%s, tax_year=%s, pin=%s, block_number=%s,
                 prev_td_number=%s, effectivity_date=%s, barangay=%s,
-                version = version + 1
+                version = COALESCE(version, 1) + 1
             WHERE id=%s
         """, (*params, editing_id))
-        return editing_id, old_data
+
+        # Return conflict info so caller can decide how to handle
+        return editing_id, old_data, {
+            "conflict_detected": conflict_detected,
+            "client_version": client_ver_for_update,
+            "server_version": server_version + 1,  # New version after update
+            "server_data": dict(zip(columns, old_data)) if conflict_detected else None
+        }
     else:
         cur.execute("""
             INSERT INTO properties (
@@ -227,7 +245,7 @@ def _upsert_property_record(cur, params, editing_id, client_version=None):
                 pin, block_number, prev_td_number, effectivity_date, barangay, is_deleted, version
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, 1)
         """, params)
-        return cur.lastrowid, None
+        return cur.lastrowid, None, {"conflict_detected": False}
 
 
 def _audit_property_change(cur, prop_id, params, old_data, editing_id, user):

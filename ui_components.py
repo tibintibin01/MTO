@@ -138,6 +138,9 @@ class ToastNotification(ctk.CTkToplevel):
         self.attributes("-topmost", True)
         self.configure(fg_color=color)
 
+        self.message = message
+        self.duration = duration
+
         # Position at bottom right
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
@@ -145,6 +148,24 @@ class ToastNotification(ctk.CTkToplevel):
         y = screen_height - 120
         self.geometry(f"300x70+{x}+{y}")
         self.attributes("-alpha", 0.0) # Start transparent for animation
+        
+        self.label = ctk.CTkLabel(
+            self,
+            text=self.message,
+            font=ModernTheme.BODY,
+            text_color="white",
+            wraplength=280,
+        )
+        self.label.pack(expand=True, padx=10, pady=10)
+
+        # Fade out and destroy (if not sticky)
+        if self.duration > 0:
+            self.after(self.duration, self.fade_out)
+        else:
+            # Sticky: destroy on click
+            self.bind("<Button-1>", lambda e: self.destroy())
+            self.label.bind("<Button-1>", lambda e: self.destroy())
+
         self.animate_in()
 
     def animate_in(self):
@@ -153,23 +174,6 @@ class ToastNotification(ctk.CTkToplevel):
             alpha += 0.2
             self.attributes("-alpha", alpha)
             self.after(20, self.animate_in)
-
-        self.label = ctk.CTkLabel(
-            self,
-            text=message,
-            font=ModernTheme.BODY,
-            text_color="white",
-            wraplength=280,
-        )
-        self.label.pack(expand=True, padx=10, pady=10)
-
-        # Fade out and destroy (if not sticky)
-        if duration > 0:
-            self.after(duration, self.fade_out)
-        else:
-            # Sticky: destroy on click
-            self.bind("<Button-1>", lambda e: self.destroy())
-            self.label.bind("<Button-1>", lambda e: self.destroy())
 
     def fade_out(self):
         alpha = self.attributes("-alpha")
@@ -293,3 +297,99 @@ class ProgressOverlay(ctk.CTkToplevel):
         self.progress_widget.update_progress(percentage, message)
         if percentage >= 100:
             self.after(1500, self.destroy)
+
+class LoadingOverlay(ctk.CTkToplevel):
+    def __init__(self, master, message="Loading...", **kwargs):
+        super().__init__(master)
+        
+        # Premium Floating Window
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        
+        # Card Styling
+        card_bg = "#1e1e1e" if ctk.get_appearance_mode().lower() == "dark" else "#f0f0f0"
+        self.configure(fg_color=card_bg)
+        
+        # Center relative to master
+        self.update_idletasks()
+        width, height = 350, 120
+        
+        # Try to get master coordinates, fallback to screen center
+        try:
+            mx = master.winfo_rootx()
+            my = master.winfo_rooty()
+            mw = master.winfo_width()
+            mh = master.winfo_height()
+            x = mx + (mw // 2) - (width // 2)
+            y = my + (mh // 2) - (height // 2)
+        except:
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            x = (sw // 2) - (width // 2)
+            y = (sh // 2) - (height // 2)
+            
+        self.geometry(f"{width}x{height}+{x}+{y}")
+        
+        # Border Frame
+        self.border_fr = ctk.CTkFrame(
+            self, 
+            fg_color="transparent", 
+            corner_radius=12, 
+            border_width=2, 
+            border_color=ModernTheme.PRIMARY
+        )
+        self.border_fr.pack(fill="both", expand=True)
+        
+        self.inner = ctk.CTkFrame(self.border_fr, fg_color="transparent")
+        self.inner.place(relx=0.5, rely=0.5, anchor="center")
+        
+        self.lbl = ctk.CTkLabel(self.inner, text=message, font=ModernTheme.BODY_BOLD)
+        self.lbl.pack(pady=(0, 15))
+        
+        self.progress = ctk.CTkProgressBar(self.inner, mode="indeterminate", width=250, height=8)
+        self.progress.pack()
+        self.progress.start()
+        
+    def hide(self):
+        self.destroy()
+
+class SyncBadge(ctk.CTkFrame):
+    """Real-time status indicator for the offline sync queue."""
+    def __init__(self, master, command=None, **kwargs):
+        super().__init__(master, fg_color="transparent", **kwargs)
+        self.command = command
+        self.label = ctk.CTkLabel(
+            self, 
+            text="● Synced", 
+            font=ModernTheme.BODY_SMALL,
+            text_color="#2ecc71",
+            cursor="hand2"
+        )
+        self.label.pack(side="left", padx=5)
+        
+        # Make the whole frame and label clickable
+        self.bind("<Button-1>", lambda e: self._on_click())
+        self.label.bind("<Button-1>", lambda e: self._on_click())
+        
+        # Internal state
+        self.last_count = 0
+        self.is_syncing = False
+
+    def _on_click(self):
+        if self.command:
+            self.command()
+
+    def update_status(self, count, is_syncing):
+        self.last_count = count
+        self.is_syncing = is_syncing
+        
+        # Thread-safe UI update
+        self.after(0, self._perform_update)
+
+    def _perform_update(self):
+        if self.is_syncing:
+            self.label.configure(text=f"🔄 Syncing...", text_color="#f39c12")
+        elif self.last_count > 0:
+            self.label.configure(text=f"● {self.last_count} Pending", text_color="#f39c12")
+        else:
+            self.label.configure(text="● Synced", text_color="#2ecc71")

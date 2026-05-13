@@ -42,18 +42,18 @@ def validate_date_sequence(start_date: str, end_date: str, label: str = "Period"
         raise ValidationError(f"Invalid date format for {label}.", "date")
 
 def enforce_property_rules(payload: Dict[str, Any]):
-    """Comprehensive validation for property assessment records."""
-    # 1. TD Number Format (Year-Brgy-Index)
-    td = payload.get("td_number", "")
-    if not td:
+    """Comprehensive validation for property assessment records using aliased keys."""
+    # 1. TD Number Format
+    td = payload.get("TD Number") or payload.get("td_number")
+    if not td or not str(td).strip():
         raise ValidationError("TD Number is required.", "td_number")
     
     # 2. Assessed Value
-    val = payload.get("assessed_value", 0)
+    val = payload.get("Assessed Value") or payload.get("assessed_value") or 0
     validate_tax_amount(val, "Assessed Value")
     
     # 3. Owner Name
-    owner = payload.get("owner_name", "")
+    owner = payload.get("Owner Name") or payload.get("owner_name")
     if not owner or len(str(owner).strip()) < 2:
         raise ValidationError("Owner name is too short or missing.", "owner_name")
     

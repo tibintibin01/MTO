@@ -9,6 +9,7 @@ from ui.import_wizard import ImportWizardModal
 
 from theme_manager import ModernTheme
 from utils import tr
+from ui_components import LoadingOverlay, ErrorDialog
 
 class PropertyPage:
     def __init__(self, parent, user=None):
@@ -16,6 +17,7 @@ class PropertyPage:
         self.user = user
         self.current_page = 0
         self.page_size = 50
+        self.next_cursor = None
         self.container = ctk.CTkFrame(parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
         self.setup_ui()
@@ -36,6 +38,7 @@ class PropertyPage:
         )
         self.search_ent.pack(side="right", padx=(10, 0))
         self.search_ent.bind("<Return>", lambda e: self.refresh_table())
+        self.search_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         ctk.CTkButton(
             header_fr,
@@ -114,7 +117,6 @@ class PropertyPage:
 
         # Table Container
         table_fr = ctk.CTkFrame(self.container, fg_color="white", corner_radius=12)
-        table_fr.pack(fill="both", expand=True)
 
         # Style Treeview
         style = ttk.Style()
@@ -178,7 +180,7 @@ class PropertyPage:
 
         # --- PAGINATION BAR ---
         self.pag_fr = ctk.CTkFrame(self.container, fg_color="transparent")
-        self.pag_fr.pack(fill="x", pady=10)
+        self.pag_fr.pack(side="bottom", fill="x", pady=10)
 
         self.prev_btn = ctk.CTkButton(
             self.pag_fr,
@@ -207,7 +209,7 @@ class PropertyPage:
 
         # Bottom Actions
         actions = ctk.CTkFrame(self.container, fg_color="transparent")
-        actions.pack(fill="x", pady=(15, 0))
+        actions.pack(side="bottom", fill="x", pady=(15, 0))
 
         import api_clients.auth_service as auth
 
@@ -242,6 +244,8 @@ class PropertyPage:
         )
         self.export_btn.pack(side="left", padx=5)
 
+        table_fr.pack(fill="both", expand=True) # Pack expanding table LAST
+
         self.tree.bind("<<TreeviewSelect>>", self.on_selection_change)
         self.tree.bind("<Double-1>", lambda e: self.open_dossier())
 
@@ -266,6 +270,8 @@ class PropertyPage:
     def refresh_table(self, reset_page=True):
         if reset_page:
             self.current_page = 0
+            
+        overlay = LoadingOverlay(self.container, "Loading Properties...")
 
         def worker():
             try:
@@ -275,17 +281,23 @@ class PropertyPage:
                 y_to = self.year_to_ent.get().strip()
 
                 offset = self.current_page * self.page_size
-                results = prop_svc.search_properties(
+                response = prop_svc.search_properties(
                     term,
                     limit=self.page_size,
-                    offset=offset,
+                    cursor=self.next_cursor if not reset_page else None,
                     year_start=y_from if y_from else None,
                     year_end=y_to if y_to else None,
                     barangay=brgy if brgy != "ALL" else None,
                 )
-                self.container.after(0, lambda: self._update_table(results))
+                items = response.get("items", [])
+                self.next_cursor = response.get("next_cursor")
+                has_more = response.get("has_more", False)
+                
+                self.container.after(0, lambda: self._update_table(items, has_more))
             except Exception as e:
                 self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
+            finally:
+                self.container.after(0, lambda: overlay.hide())
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -313,12 +325,11 @@ class PropertyPage:
             self.current_page -= 1
             self.refresh_table(reset_page=False)
 
-    def _update_table(self, results):
+    def _update_table(self, results, has_more=False):
         self.page_lbl.configure(text=f"PAGE {self.current_page + 1}")
         self.prev_btn.configure(state="normal" if self.current_page > 0 else "disabled")
-        # Simple heuristic: disable next if results < page_size
         self.next_btn.configure(
-            state="normal" if len(results) >= self.page_size else "disabled"
+            state="normal" if has_more else "disabled"
         )
 
         for item in self.tree.get_children():
@@ -394,22 +405,13 @@ class PropertyPage:
         if not sel:
             return
         vals = self.tree.item(sel[0])["values"]
-        td_number = vals[1]
+        td_number = str(vals[1]).strip() if len(vals) > 1 else ""
 
-        loading = ctk.CTkToplevel(self.parent)
-        loading.title("Loading...")
-        loading.geometry("300x100")
-        loading.attributes("-topmost", True)
-        loading.overrideredirect(True)
-        sw, sh = loading.winfo_screenwidth(), loading.winfo_screenheight()
-        loading.geometry(f"+{(sw-300)//2}+{(sh-100)//2}")
-        ctk.CTkLabel(
-            loading,
-            text="📂 FETCHING PROPERTY DOSSIER...",
-            font=("Segoe UI", 12, "bold"),
-            text_color="#1f538d",
-        ).pack(expand=True)
-        loading.update()
+        if not td_number:
+            messagebox.showwarning("Dossier Error", "This property record is missing a TD Number.")
+            return
+
+        overlay = LoadingOverlay(self.container, "📂 FETCHING PROPERTY DOSSIER...")
 
         def worker():
             try:
@@ -417,7 +419,7 @@ class PropertyPage:
                 self.container.after(
                     0,
                     lambda: [
-                        loading.destroy(),
+                        overlay.hide(),
                         PropertyDossierModal(self.parent, data),
                     ],
                 )
@@ -425,7 +427,7 @@ class PropertyPage:
                 self.container.after(
                     0,
                     lambda e=e: [
-                        loading.destroy(),
+                        overlay.hide(),
                         messagebox.showerror("Dossier Error", str(e)),
                     ],
                 )
@@ -669,6 +671,10 @@ class PropertyEditModal(ctk.CTkToplevel):
                 )
                 return
 
+        def clean_num(v):
+            if not v: return "0.00"
+            return v.replace(",", "").replace("₱", "").strip() or "0.00"
+
         data = {
             "TD Number": self.vars["td_number"].get().strip(),
             "Owner Name": self.vars["owner_name"].get().strip(),
@@ -677,14 +683,15 @@ class PropertyEditModal(ctk.CTkToplevel):
             "Lot Number": self.vars["lot_number"].get().strip(),
             "Area": self.vars["area"].get().strip(),
             "Location": self.vars["location"].get().strip(),
+            "Barangay": self.vars["location"].get().strip(), # Also set Barangay for the new filter
             "Kind of Property": self.vars["kind_of_property"].get().strip(),
             "Tax Year": self.vars["tax_year"].get().strip(),
             "OR Number": self.vars["or_number"].get().strip(),
             "OR Date": clean_date,
-            "Assessed Value": self.vars["assessed_value"].get().strip(),
-            "Penalty": self.vars["penalty"].get().strip(),
-            "Discount": self.vars["discount"].get().strip(),
-            "Amount Paid": self.vars["amount_paid"].get().strip(),
+            "Assessed Value": clean_num(self.vars["assessed_value"].get()),
+            "Penalty": clean_num(self.vars["penalty"].get()),
+            "Discount": clean_num(self.vars["discount"].get()),
+            "Amount Paid": clean_num(self.vars["amount_paid"].get()),
         }
         try:
             prop_svc.save_property(data, editing_id=self.property_id, user=self.user)

@@ -9,7 +9,7 @@ CONNECTION_STATUS = "ONLINE" # ONLINE, OFFLINE, SYNCING
 import os
 from pathlib import Path
 
-BASE_URL = "https://127.0.0.1:8001"
+BASE_URL = "https://localhost:8001"
 API_BASE_URL = BASE_URL  # Alias for auth_service compatibility
 
 # --- SECURITY HARDENING: SSL CERTIFICATE PINNING ---
@@ -58,6 +58,10 @@ def set_token(token):
     """Sets the global bearer token for all subsequent API requests."""
     global _SESSION_TOKEN
     _SESSION_TOKEN = token
+
+def get_token():
+    """Returns the current session token."""
+    return _SESSION_TOKEN
 
 
 def api_request(

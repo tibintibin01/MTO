@@ -26,18 +26,24 @@ from ui_components import ErrorDialog
 import migration_manager
 
 # Ensure database is up to date
+print("DEBUG: Checking database migrations...")
 try:
     migration_manager.run_migrations()
+    print("DEBUG: Migrations completed successfully.")
 except Exception as e:
+    print(f"DEBUG: Migration manager crashed: {e}")
     log_error_to_file("Migration auto-run failed", e)
 
 # Initialize Theme
+print("DEBUG: Setting up theme...")
 setup_theme("dark")
 
 # CRITICAL SECURITY CHECK
 if not os.getenv("SECRET_KEY") or len(os.getenv("SECRET_KEY", "")) < 16:
     print("CRITICAL SECURITY ERROR: SECRET_KEY is missing or too weak (min 16 chars).")
     sys.exit(1)
+
+print("DEBUG: Starting LoginApp...")
 
 def handle_global_exception(exc_type, exc_value, exc_traceback):
     traceback_text = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -188,8 +194,9 @@ class LoginApp(ctk.CTk):
             auth_result = verify_user_login(u, p)
             self.after(0, self.handle_login_result, auth_result)
         except Exception as e:
+            err_msg = str(e)
             log_error_to_file("Login Background Task Failed", e)
-            self.after(0, lambda: self._hide_overlay_with_error(f"{tr('login.error_network')}: {str(e)}"))
+            self.after(0, lambda m=err_msg: self._hide_overlay_with_error(f"{tr('login.error_network')}: {m}"))
 
     def _hide_overlay_with_error(self, msg):
         self.overlay.destroy()

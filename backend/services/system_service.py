@@ -208,7 +208,7 @@ def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit
 
     # 3. Cursor Pagination
     if cursor:
-        where_clauses.append("id < %s")
+        filters.append("id < %s")
         params.append(int(cursor))
 
     where_clause = "WHERE 1=1"

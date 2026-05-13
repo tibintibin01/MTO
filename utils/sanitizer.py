@@ -28,11 +28,11 @@ def sanitize_string(value: Any) -> Optional[str]:
 def sanitize_numeric_string(value: Any) -> Optional[str]:
     """
     Specifically for numeric fields stored as strings (like TD numbers or PINs).
-    Removes anything that isn't a digit, hyphen, or period.
+    Removes common exploit characters but keeps common municipal ID separators.
     """
     if value is None:
         return None
     
     text = str(value).strip()
-    # Keep only digits, hyphens, periods, and forward slashes (common in municipal IDs)
-    return re.sub(r"[^0-9\-\./]", "", text)
+    # Keep digits, hyphens, periods, slashes, spaces, and alphanumeric chars for municipal IDs
+    return re.sub(r"[^0-9a-zA-Z\-\./ #:]", "", text)

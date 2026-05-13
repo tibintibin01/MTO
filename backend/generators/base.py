@@ -43,9 +43,18 @@ def draw_field(c, label, value, x, y, width=78 * mm):
     c.setFont(BRANDING["fonts"]["header"], 8)
     c.setFillColor(colors.HexColor(BRANDING["branding_colors"]["secondary"]))
     c.drawString(x, y, label.upper())
-    c.setFont(BRANDING["fonts"]["body"], 10)
+    
+    text = safe_text(value)
+    font_size = 10
+    # Dynamic scaling for long text
+    if len(text) > 30 and width < 90 * mm:
+        font_size = 8
+    elif len(text) > 45:
+        font_size = 7
+        
+    c.setFont(BRANDING["fonts"]["body"], font_size)
     c.setFillColor(colors.black)
-    c.drawRightString(x + width, y, safe_text(value))
+    c.drawRightString(x + width, y, text)
 
 def draw_header(c, title, width, height, margin_x, color=None):
     primary_color = color or colors.HexColor(BRANDING["branding_colors"]["primary"])

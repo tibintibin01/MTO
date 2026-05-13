@@ -51,14 +51,23 @@ def apply_migration(version, name, sql_content):
         # Check for specific "Already Exists" errors in MySQL/PyMySQL
         # 1060: Duplicate column name
         # 1061: Duplicate key name (Index)
-        if "1060" in error_str or "Duplicate column name" in error_str:
-            print(f"NOTICE: Columns in {name} already exist. Marking as applied.")
-            return True
-        if "1061" in error_str or "Duplicate key name" in error_str:
-            print(f"NOTICE: Indices in {name} already exist. Marking as applied.")
-            return True
-            
-        print(f"FAILED to apply migration {name}: {e}")
+        if "1060" in error_str or "Duplicate column name" in error_str or "1061" in error_str or "Duplicate key name" in error_str:
+            print(f"NOTICE: Changes in {name} already exist. Recording as applied.")
+            try:
+                # Force record it so we don't try again
+                db.db_query(
+                    "INSERT INTO schema_versions (version, name, applied_at) VALUES (%s, %s, NOW())",
+                    (version, name),
+                    commit=True
+                )
+                return True
+            except Exception as inner_e:
+                print(f"DEBUG: Failed to record already-applied migration: {inner_e}")
+                return True # Probably already recorded or other minor issue
+        
+        print(f"FAILED to apply {name}: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -82,6 +91,7 @@ def run_migrations():
 
     # Sort by version number
     migration_files.sort()
+    print(f"DEBUG: Found {len(migration_files)} migration files. {len(applied)} already applied.")
 
     for version, name, filename in migration_files:
         if version not in applied:

@@ -78,7 +78,7 @@ def verify_user_login(username, password):
         verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
 
         headers = {"X-Requested-With": "XMLHttpRequest"}
-        response = requests.post(f"{API_BASE_URL}/token", data=payload, headers=headers, verify=verify_param)
+        response = requests.post(f"{API_BASE_URL}/token", data=payload, headers=headers, verify=verify_param, timeout=15)
         if response.status_code == 200:
             token_data = response.json()
             set_token(token_data["access_token"])

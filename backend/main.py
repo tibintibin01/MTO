@@ -39,6 +39,7 @@ from utils.config import config as mto_config
 from utils.secrets_manager import secrets
 from utils.resilience import CircuitBreaker
 from utils.metrics import MetricsManager
+from utils.logger import mto_logger
 
 # Initialize Sentry Telemetry with Circuit Protection
 SENTRY_DSN = os.getenv("SENTRY_DSN")
@@ -95,7 +96,7 @@ import backend.services.billing_service as bill_svc
 import backend.services.system_service as sys_svc
 import backend.services.search_service as search_svc
 import receipt_generator as rg
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from backend.schemas import (
     PropertySaveSchema,
     ReceiptRecordSchema,
@@ -120,11 +121,8 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# --- API VERSIONING (v2) ---
-from fastapi import APIRouter
-api_v2 = APIRouter(prefix="/api/v2")
 
-# Register Versioned Router later in the file after dependencies are defined
+# --- GLOBAL INFRASTRUCTURE (Security, Limiter, Auth) ---
 
 # Rate Limiter Configuration - Supports Redis for Multi-Instance Scaling
 REDIS_URL = os.getenv("REDIS_URL")
@@ -134,7 +132,119 @@ if REDIS_URL:
     print(f"INFO: Rate Limiter is BACKED BY REDIS: {REDIS_URL}")
 else:
     limiter = Limiter(key_func=get_remote_address)
-    print("INFO: Rate Limiter is using IN-MEMORY storage.")
+
+# Security Configuration
+from utils.secrets_manager import secrets
+from utils.config import config as mto_config
+SECRET_KEY = secrets.jwt_secret
+ALGORITHM = mto_config.JWT_ALGORITHM
+ACCESS_TOKEN_EXPIRE_MINUTES = mto_config.TOKEN_EXPIRE_MINUTES
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+
+async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        # DECOUPLED: Read user info directly from JWT to avoid DB fetch on every request
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: int = payload.get("id")
+        username: str = payload.get("sub")
+        role: str = payload.get("role")
+
+        if username is None or role is None or user_id is None:
+            raise credentials_exception
+
+        return {"id": user_id, "username": username, "role": role}
+    except JWTError:
+        raise credentials_exception
+    except Exception as e:
+        print(f"AUTH ERROR: {str(e)}")
+        raise credentials_exception
+
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+@app.post("/token", response_model=Token, tags=["Auth"])
+@limiter.limit("10/minute")
+async def login_for_access_token(
+    request: Request, form_data: OAuth2PasswordRequestForm = Depends()
+):
+    try:
+        user = auth_svc.verify_user_login(form_data.username, form_data.password)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": user["username"], "role": user["role"], "id": user["id"]},
+            expires_delta=access_token_expires,
+        )
+        return {"access_token": access_token, "token_type": "bearer"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+# --- API VERSIONING (v2) ---
+from fastapi import APIRouter
+api_v2 = APIRouter(prefix="/api/v2")
+
+
+# --- PERMISSION CHECKERS (must be before route definitions that use them) ---
+class RoleChecker:
+    def __init__(self, allowed_roles: List[str]):
+        self.allowed_roles = allowed_roles
+
+    def __call__(self, current_user: dict = Depends(get_current_user)):
+        # Now we read from the token payload instead of DB
+        role = str(current_user.get("role", "")).strip().lower()
+
+        if role not in self.allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied: Required permissions missing. You have '{role}', need one of {self.allowed_roles}",
+            )
+        return current_user
+
+
+# Permission presets
+admin_only = RoleChecker(["admin"])
+write_access = RoleChecker(["admin", "cashier", "encoder"])
+read_only = RoleChecker(["admin", "cashier", "encoder", "viewer"])
+
+
+# Register Versioned Router later in the file after dependencies are defined
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -270,19 +380,8 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    try:
-        from alembic.config import Config
-        from alembic import command
-        
-        mto_logger.info("Starting Industrial Database Migration Check (Alembic)...")
-        
-        # Load Alembic config and run upgrade
-        alembic_cfg = Config("alembic.ini")
-        command.upgrade(alembic_cfg, "head")
-        
-        mto_logger.info("Database schema is UP TO DATE.")
-    except Exception as e:
-        mto_logger.error(f"CRITICAL: Database Migration Failed: {e}")
+    mto_logger.info("API Server started successfully.")
+    pass
 
 
 from fastapi.exceptions import RequestValidationError
@@ -299,112 +398,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
-# Security Configuration
-from utils.secrets_manager import secrets
-from utils.config import config as mto_config
-SECRET_KEY = secrets.jwt_secret
-ALGORITHM = mto_config.JWT_ALGORITHM
-ACCESS_TOKEN_EXPIRE_MINUTES = mto_config.TOKEN_EXPIRE_MINUTES
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
-
-
-async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        # DECOUPLED: Read user info directly from JWT to avoid DB fetch on every request
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id: int = payload.get("id")
-        username: str = payload.get("sub")
-        role: str = payload.get("role")
-
-        if username is None or role is None or user_id is None:
-            raise credentials_exception
-
-        return {"id": user_id, "username": username, "role": role}
-    except JWTError:
-        raise credentials_exception
-    except Exception as e:
-        print(f"AUTH ERROR: {str(e)}")
-        raise credentials_exception
-
-
-class RoleChecker:
-    def __init__(self, allowed_roles: List[str]):
-        self.allowed_roles = allowed_roles
-
-    def __call__(self, current_user: dict = Depends(get_current_user)):
-        # Now we read from the token payload instead of DB
-        role = str(current_user.get("role", "")).strip().lower()
-        print(f"DEBUG AUTH: User='{current_user.get('username')}' Role='{role}' Required={self.allowed_roles}")
-        
-        if role not in self.allowed_roles:
-            print(f"DEBUG AUTH: ACCESS DENIED. Role '{role}' not in {self.allowed_roles}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Access denied: Required permissions missing. You have '{role}', need one of {self.allowed_roles}",
-            )
-        return current_user
-
-
-# Permission presets
-admin_only = RoleChecker(["admin"])
-write_access = RoleChecker(["admin", "cashier", "encoder"])
-read_only = RoleChecker(["admin", "cashier", "encoder", "viewer"])
-
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-
-@app.post("/token", response_model=Token, tags=["Auth"])
-@limiter.limit("10/minute")
-async def login_for_access_token(
-    request: Request, form_data: OAuth2PasswordRequestForm = Depends()
-):
-    try:
-        user = auth_svc.verify_user_login(form_data.username, form_data.password)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect username or password",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = create_access_token(
-            data={"sub": user["username"], "role": user["role"], "id": user["id"]},
-            expires_delta=access_token_expires,
-        )
-        return {"access_token": access_token, "token_type": "bearer"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
-            headers={"WWW-Authenticate": "Bearer"},
-        )
 
 
 @app.get("/healthz", tags=["System"])
@@ -693,7 +687,8 @@ async def update_property(
     data: PropertySaveSchema,
     current_user: dict = Depends(write_access),
 ):
-    payload = data.dict(by_alias=True)
+    # Use Pydantic model_dump (v2) with alias support
+    payload = data.model_dump(by_alias=True)
 
     if not payload.get("Tax Year") and payload.get("Effectivity Date"):
         eff_date = payload["Effectivity Date"]

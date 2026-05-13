@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from theme_manager import ModernTheme
 from utils import tr
+from ui_components import LoadingOverlay
 import api_clients.property_service as prop_svc
 import api_clients.api_helper as api
 from ui.dossier import PropertyDossierModal
@@ -14,8 +15,8 @@ class AssessmentRollPage:
     def __init__(self, parent, user):
         self.parent = parent
         self.user = user
-        self.next_cursor = None
-        self.cursor_history = [] # For going back if we want
+        self.page_cursors = [None]
+        self.current_page = 0
         self.page_size = 50
         self.is_loading = False
         self.all_loaded = False
@@ -72,21 +73,21 @@ class AssessmentRollPage:
         )
         self.search_ent.pack(side="left")
         self.search_ent.bind("<Return>", lambda e: self.refresh_table())
-        self.search_ent.bind("<KeyRelease>", self.on_search_key)
+        self.search_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
 
-        # Kind of Property Filter
+        # Barangay Filter
         ctk.CTkLabel(
-            filters_fr, text="KIND:", font=("Segoe UI", 10, "bold"), text_color="gray"
+            filters_fr, text="BARANGAY:", font=("Segoe UI", 10, "bold"), text_color="gray"
         ).pack(side="left", padx=(20, 5))
-        self.kind_var = tk.StringVar(value="ALL")
-        self.kind_cb = ctk.CTkComboBox(
+        self.brgy_var = tk.StringVar(value="ALL")
+        self.brgy_cb = ctk.CTkComboBox(
             filters_fr,
-            values=["ALL", "LAND", "BUILDING", "MACHINERY", "OTHERS"],
-            variable=self.kind_var,
-            width=140,
+            values=["ALL"] + sorted(self.barangays),
+            variable=self.brgy_var,
+            width=180,
         )
-        self.kind_cb.pack(side="left")
-        self.kind_cb.configure(command=lambda e: self.refresh_table())
+        self.brgy_cb.pack(side="left")
+        self.brgy_cb.configure(command=lambda e: self.refresh_table())
 
         # Year Range
         ctk.CTkLabel(
@@ -99,14 +100,12 @@ class AssessmentRollPage:
             filters_fr, width=80, placeholder_text="YYYY"
         )
         self.year_start_ent.pack(side="left")
-        self.year_start_ent.bind("<KeyRelease>", self.on_search_key)
 
         ctk.CTkLabel(
             filters_fr, text="TO:", font=("Segoe UI", 10, "bold"), text_color="gray"
         ).pack(side="left", padx=(5, 5))
         self.year_end_ent = ctk.CTkEntry(filters_fr, width=80, placeholder_text="YYYY")
         self.year_end_ent.pack(side="left")
-        self.year_end_ent.bind("<KeyRelease>", self.on_search_key)
 
         ctk.CTkButton(
             filters_fr,
@@ -149,7 +148,6 @@ class AssessmentRollPage:
 
         # --- TABLE ---
         table_fr = ctk.CTkFrame(self.container, fg_color="white", corner_radius=12)
-        table_fr.pack(fill="both", expand=True)
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -215,15 +213,10 @@ class AssessmentRollPage:
 
         self.tree.pack(side="left", fill="both", expand=True, padx=5, pady=5)
         scrolly.pack(side="right", fill="y")
-        
-        # Bind scroll event for lazy loading
-        self.tree.bind("<MouseWheel>", self.handle_scroll)
-        self.tree.bind("<Button-4>", self.handle_scroll) # Linux
-        self.tree.bind("<Button-5>", self.handle_scroll) # Linux
 
         # --- PAGINATION BAR ---
         self.pag_fr = ctk.CTkFrame(self.container, fg_color="transparent")
-        self.pag_fr.pack(fill="x", pady=10)
+        self.pag_fr.pack(side="bottom", fill="x", pady=10)
 
         self.prev_btn = ctk.CTkButton(
             self.pag_fr,
@@ -248,85 +241,81 @@ class AssessmentRollPage:
         )
         self.next_btn.pack(side="right", padx=10)
         
-        # Initially hidden as we move to infinite scroll, but kept for manual overrides
-        self.pag_fr.pack_forget()
+        table_fr.pack(fill="both", expand=True) # Pack expanding table LAST
 
         self.tree.bind("<Double-1>", lambda e: self.open_dossier())
 
-    def handle_scroll(self, event=None):
-        """Detects if the user has reached the bottom of the table to trigger lazy loading."""
-        if self.is_loading or self.all_loaded:
-            return
-            
-        # Get scroll position (0 to 1)
-        # If at the bottom (~90%), fetch next page
-        if self.tree.yview()[1] > 0.9:
-            self.next_page()
-
-    def on_search_key(self, event=None):
-        if self.search_timer:
-            self.container.after_cancel(self.search_timer)
-        self.search_timer = self.container.after(500, self.refresh_table)
+    def next_page(self):
+        if not self.all_loaded:
+            self.current_page += 1
+            self.refresh_table(reset_page=False)
 
     def refresh_table(self, reset_page=True):
         if reset_page:
-            self.next_cursor = None
-            self.cursor_history = []
+            self.page_cursors = [None]
+            self.current_page = 0
             self.all_loaded = False
             
-        if self.is_loading:
-            return
-            
         self.is_loading = True
+        overlay = LoadingOverlay(self.container, "Loading Assessment Roll...")
 
         def worker():
             try:
                 term = self.search_ent.get().strip()
-                kind = self.kind_var.get()
+                brgy = self.brgy_var.get()
                 y_start = self.year_start_ent.get().strip()
                 y_end = self.year_end_ent.get().strip()
+                
+                cursor_to_use = self.page_cursors[self.current_page]
                 
                 response = prop_svc.search_properties(
                     term,
                     limit=self.page_size,
-                    cursor=self.next_cursor if not reset_page else None,
-                    kind=kind,
+                    cursor=cursor_to_use,
+                    barangay=brgy if brgy != "ALL" else None,
                     year_start=y_start,
                     year_end=y_end,
                 )
                 
                 results = response.get("items", [])
-                self.next_cursor = response.get("next_cursor")
+                next_cur = response.get("next_cursor")
+                
+                # Store the next cursor for the next page
+                if len(self.page_cursors) <= self.current_page + 1:
+                    self.page_cursors.append(next_cur)
+                else:
+                    self.page_cursors[self.current_page + 1] = next_cur
+                
                 if not response.get("has_more"):
                     self.all_loaded = True
 
-                self.container.after(0, lambda: self._update_table(results, append=not reset_page))
+                self.container.after(0, lambda: self._update_table(results))
             except Exception as e:
                 self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
             finally:
                 self.is_loading = False
+                self.container.after(0, lambda: overlay.hide())
 
         threading.Thread(target=worker, daemon=True).start()
 
     def next_page(self):
         if not self.all_loaded:
+            self.current_page += 1
             self.refresh_table(reset_page=False)
 
     def prev_page(self):
-        # We use infinite scroll with append=True, so 'Back' is naturally handled by scrolling up.
-        pass
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.all_loaded = False
+            self.refresh_table(reset_page=False)
 
-    def _update_table(self, results, append=False):
-        self.page_lbl.configure(text="INFINITE ROLL" if append else "ASSESSMENT ROLL")
-        self.prev_btn.configure(state="disabled") # Disabled for cursor mode
+    def _update_table(self, results):
+        self.page_lbl.configure(text=f"PAGE {self.current_page + 1}")
+        self.prev_btn.configure(state="normal" if self.current_page > 0 else "disabled")
         
-        if not results:
-            if not append:
-                # Silently clear table without annoying pop-ups during live search
-                for item in self.tree.get_children():
-                    self.tree.delete(item)
-            else:
-                self.all_loaded = True
+        if not results and self.current_page == 0:
+            for item in self.tree.get_children():
+                self.tree.delete(item)
             return
 
         if len(results) < self.page_size:
@@ -335,9 +324,9 @@ class AssessmentRollPage:
         else:
             self.next_btn.configure(state="normal")
 
-        if not append:
-            for item in self.tree.get_children():
-                self.tree.delete(item)
+        # Always clear table for true page-by-page pagination
+        for item in self.tree.get_children():
+            self.tree.delete(item)
         
         # Get current row count for zebra tagging
         current_count = len(self.tree.get_children())
@@ -390,7 +379,11 @@ class AssessmentRollPage:
         if not sel:
             return
         vals = self.tree.item(sel[0])["values"]
-        td_number = vals[2]  # TD Number is index 2 in this table
+        td_number = str(vals[1]).strip() if len(vals) > 1 else ""
+
+        if not td_number:
+            messagebox.showwarning("Dossier Error", "This property record is missing a TD Number.")
+            return
 
         # 1. Create a subtle loading overlay
         loading = ctk.CTkToplevel(self.parent)

@@ -30,6 +30,8 @@ class DataCleanser:
         if val == "N. POBLACION": return "NORTH POBLACION"
         if val == "S. POBLACION": return "SOUTH POBLACION"
         return val
+
+def validate_property_import(file_content, file_extension):
     """
     Validates a CSV or Excel file for property bulk import.
     Returns a list of rows with validation status and error messages.
@@ -195,6 +197,9 @@ def validate_assessment_import(file_content, file_extension):
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+# Alias for backward compatibility and specific wizard mode
+validate_assessment_import = validate_property_import
 
 def commit_assessment_import(data_list, user):
     """
