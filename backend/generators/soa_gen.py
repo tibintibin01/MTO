@@ -5,7 +5,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from backend.generators.base import (
-    BRANDING, safe_text, safe_filename, fmt_currency, draw_field, draw_header
+    BRANDING, safe_text, safe_filename, fmt_currency, draw_field, draw_header, draw_seal
 )
 
 def _draw_soa_table_header(c, left_x, top_y, columns):
@@ -25,7 +25,7 @@ def _draw_soa_table_header(c, left_x, top_y, columns):
     return top_y - 10 * mm
 
 def _draw_soa_page(c, statement_data, width, height, margin_x):
-    current_y = height - 20 * mm
+    draw_seal(c, width, height)
     draw_header(c, "STATEMENT OF ACCOUNT", width, height, margin_x)
 
     current_y = height - 55 * mm

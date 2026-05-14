@@ -1,6 +1,6 @@
 {
     "login": {
-        "title": "MTO Access Portal",
+        "title": "Municipal Revenue Portal",
         "subtitle": "Enter credentials to proceed",
         "username": "Username",
         "password": "Password",
@@ -50,6 +50,7 @@
             "dashboard": "Dashboard",
             "property": "Property Records",
             "ledger": "Payment & Receipt Ledger",
+            "delinquencies": "Delinquency Dashboard",
             "reports": "Reports",
             "analytics": "Analytics Hub",
             "assessment": "Assessment Roll",
@@ -291,7 +292,7 @@
             "scanning": "Scanning...",
             "progress": "BACKUP IN PROGRESS...",
             "success": "Backup Success",
-            "success_msg": "🎉 All systems secured!\n\nLocation: C:\\MTO\\backups\\local\n\n1. Local SQL Dump Created\n2. USB Drive Synced\n3. Cloud Push Completed",
+            "success_msg": "🎉 All systems secured!\n\nLocation: C:\\RevenueSystem\\backups\\local\n\n1. Local SQL Dump Created\n2. USB Drive Synced\n3. Cloud Push Completed",
             "failed": "Backup Failed",
             "failed_msg": "Critical Error: {msg}",
             "restore": {
@@ -330,6 +331,7 @@
             "status_sw": "Account Enabled",
             "security_label": "SECURITY ACTIONS",
             "btn_reset": "FORCE PASSWORD RESET",
+            "btn_delete": "DELETE ACCOUNT",
             "btn_apply": "APPLY ROLE CHANGE",
             "activity_label": "LATEST ACTIVITY TRACE"
         },

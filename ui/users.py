@@ -123,6 +123,10 @@ class UserAccessPage:
         ctk.CTkButton(self.action_fr, text=tr("users.admin_panel.btn_reset"), command=self.reset_password, 
                       font=ModernTheme.BUTTON, fg_color=ModernTheme.WARNING).pack(fill="x", pady=(10, 10))
         
+        self.delete_btn = ctk.CTkButton(self.action_fr, text=f"🗑️ {tr('users.admin_panel.btn_delete')}", command=self.delete_user_account,
+                                       font=ModernTheme.BUTTON, fg_color="#c0392b") # Red for danger
+        self.delete_btn.pack(fill="x", pady=(0, 10))
+
         self.save_changes_btn = ctk.CTkButton(self.action_fr, text=tr("users.admin_panel.btn_apply"), command=self.apply_role_change,
                                                font=ModernTheme.BUTTON, fg_color=ModernTheme.SUCCESS)
         self.save_changes_btn.pack(fill="x", pady=(10, 30))
@@ -141,6 +145,7 @@ class UserAccessPage:
         self.role_cb.configure(state=state)
         self.status_sw.configure(state=state)
         self.save_changes_btn.configure(state=state)
+        self.delete_btn.configure(state=state)
         # Note: Password reset is special, handled in its own func
 
     def refresh_users(self):
@@ -198,6 +203,7 @@ class UserAccessPage:
             self.status_sw.configure(state="disabled")
             self.role_cb.configure(state="disabled")
             self.save_changes_btn.configure(state="disabled")
+            self.delete_btn.configure(state="disabled")
         
         # Load Audit History for this user
         self.refresh_audit_trace(self.selected_user["id"])
@@ -246,6 +252,30 @@ class UserAccessPage:
             self.refresh_audit_trace(self.selected_user["id"])
         except Exception as e:
             ErrorDialog(self.container.winfo_toplevel(), tr("common.error"), str(e))
+
+    def delete_user_account(self):
+        if not self.selected_user: return
+        
+        # 1. First Confirmation
+        if not messagebox.askyesno("⚠️ PERMANENT DELETION", f"Are you absolutely sure you want to PERMANENTLY DELETE the user '{self.selected_user['full_name']}'?\n\nThis action cannot be undone and will remove all login access for this person."):
+            return
+            
+        # 2. Final Confirmation
+        confirm = simpledialog.askstring("FINAL VERIFICATION", f"Type 'DELETE' to confirm the destruction of account: {self.selected_user['username']}")
+        if confirm != "DELETE":
+            messagebox.showinfo("Cancelled", "Account deletion was cancelled.")
+            return
+            
+        try:
+            auth.delete_user(self.selected_user["id"])
+            show_toast(self.container.winfo_toplevel(), f"Account '{self.selected_user['username']}' has been removed.", type="success")
+            self.selected_user = None
+            self.name_lbl.configure(text=tr("users.admin_panel.hint"))
+            self.role_lbl.configure(text="")
+            self.set_admin_ui_state("disabled")
+            self.refresh_users()
+        except Exception as e:
+            ErrorDialog(self.container.winfo_toplevel(), "Deletion Failed", str(e))
 
     def refresh_audit_trace(self, user_id):
         def worker():

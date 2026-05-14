@@ -1,6 +1,6 @@
 {
     "login": {
-        "title": "MTO Access Portal",
+        "title": "Municipal Revenue Portal",
         "subtitle": "I-enter ang credentials upang magpatuloy",
         "username": "Pangalan ng User",
         "password": "Password",
@@ -50,6 +50,7 @@
             "dashboard": "Dashboard",
             "property": "Talaan ng Ari-arian",
             "ledger": "Ledger ng Pagbabayad",
+            "delinquencies": "Mga Delingkwensya",
             "reports": "Mga Ulat",
             "analytics": "Hub ng Analytics",
             "assessment": "Tax Roll",

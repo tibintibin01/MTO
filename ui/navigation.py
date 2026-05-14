@@ -17,8 +17,8 @@ class NavigationSidebar(ctk.CTkFrame):
         header_fr = ctk.CTkFrame(self, fg_color="transparent")
         header_fr.pack(fill="x", pady=(40, 20), padx=20)
 
-        ctk.CTkLabel(header_fr, text="MTO TREASURY", font=("Segoe UI", 20, "bold"), text_color="#3498db", anchor="w").pack(fill="x")
-        ctk.CTkLabel(header_fr, text="MUNICIPAL SYSTEM", font=("Segoe UI", 10, "bold"), text_color="gray", anchor="w").pack(fill="x")
+        ctk.CTkLabel(header_fr, text="REVENUE SYSTEM", font=("Segoe UI", 20, "bold"), text_color="#3498db", anchor="w").pack(fill="x")
+        ctk.CTkLabel(header_fr, text="MUNICIPAL PORTAL", font=("Segoe UI", 10, "bold"), text_color="gray", anchor="w").pack(fill="x")
         
         line = ctk.CTkFrame(self, height=1, fg_color="gray30")
         line.pack(fill="x", padx=30, pady=(0, 20))
@@ -84,6 +84,9 @@ class NavigationSidebar(ctk.CTkFrame):
         if auth.has_permission(self.user_data, "ledger_view"):
             self.create_nav_btn(tr("dashboard.nav.ledger"), lambda: self.callbacks["load_page"](LedgerPage))
 
+        from ui.delinquency_dashboard import DelinquencyDashboardPage
+        self.create_nav_btn(tr("dashboard.nav.delinquencies"), lambda: self.callbacks["load_page"](DelinquencyDashboardPage))
+
         ctk.CTkLabel(self.nav_scroll, text=tr("reports.title").split()[0], font=("Segoe UI", 10, "bold"), text_color="gray").pack(pady=(20, 5))
 
         if auth.has_permission(self.user_data, "report_view"):
@@ -97,7 +100,10 @@ class NavigationSidebar(ctk.CTkFrame):
             self.create_nav_btn(tr("dashboard.nav.audit"), lambda: self.callbacks["load_page"](AuditTrailPage))
 
         if any(auth.has_permission(self.user_data, p) for p in ["manage_users", "view_logs"]):
+            from ui.system_health import SystemHealthPage
+            self.create_nav_btn("📊 SYSTEM HEALTH", lambda: self.callbacks["load_page"](SystemHealthPage))
             self.create_nav_btn(tr("dashboard.nav.settings"), lambda: self.callbacks["load_page"](SystemAdminPage))
+
 
         ctk.CTkLabel(self.nav_scroll, text=tr("dashboard.nav.help").upper(), font=("Segoe UI", 10, "bold"), text_color="gray").pack(pady=(20, 5))
         self.create_nav_btn(tr("dashboard.nav.help"), lambda: self.callbacks["load_page"](SystemHelpPage))

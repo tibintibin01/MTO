@@ -11,6 +11,15 @@ import threading
 from typing import Optional, Any, Dict, List
 from contextvars import ContextVar
 from pathlib import Path
+import secrets
+import hashlib
+import base64
+import binascii
+
+# --- SECURITY CONSTANTS ---
+PASSWORD_SCHEME = "pbkdf2_sha256"
+PASSWORD_ITERATIONS = 200000
+
 
 # --- CONFIGURATION MANAGEMENT ---
 class ConfigManager:
@@ -292,3 +301,23 @@ def export_data_to_excel(data, columns, filename_prefix="Export"):
         from tkinter import messagebox
         messagebox.showerror("Export Error", f"Failed to export data: {str(e)}")
         return None
+
+# --- SECURITY UTILITIES ---
+def hash_password(password):
+    if password is None:
+        raise ValueError("Password is required.")
+    password_text = str(password)
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password_text.encode("utf-8"),
+        salt,
+        PASSWORD_ITERATIONS,
+    )
+    salt_b64 = base64.b64encode(salt).decode("ascii")
+    digest_b64 = base64.b64encode(digest).decode("ascii")
+    return f"{PASSWORD_SCHEME}${PASSWORD_ITERATIONS}${salt_b64}${digest_b64}"
+
+def is_password_hashed(password_value):
+    return str(password_value).startswith(f"{PASSWORD_SCHEME}$")
+

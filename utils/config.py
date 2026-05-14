@@ -9,14 +9,15 @@ class MTOSettings(BaseSettings):
     Enforces type safety and 'Fail-Fast' validation on startup.
     """
     model_config = SettingsConfigDict(
-        env_file=".env", 
+        env_file=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"), 
         env_file_encoding="utf-8", 
         env_prefix="MTO_",
         extra="ignore"
     )
 
+
     # --- SERVER ---
-    APP_NAME: str = "MTO Treasury Management System"
+    APP_NAME: str = "Municipal Revenue System"
     ENVIRONMENT: str = Field(default="production")
     LOG_LEVEL: str = Field(default="INFO")
     
@@ -27,6 +28,10 @@ class MTOSettings(BaseSettings):
     DB_NAME: str = Field(default="")
     DB_PASSWORD: str = Field(default="")
     DB_CONNECT_TIMEOUT: int = Field(default=5, ge=1, le=60)
+    
+    # --- BINARY PATHS ---
+    MYSQL_PATH: str = Field(default="mysql")
+    MYSQLDUMP_PATH: str = Field(default="mysqldump")
     
     # --- SECURITY ---
     API_SECRET_KEY: str = Field(default="", validation_alias="SECRET_KEY")
@@ -41,7 +46,7 @@ class MTOSettings(BaseSettings):
     MAINTENANCE_MODE: bool = False
     
     # --- MUNICIPAL CUSTOMIZATION ---
-    MUNICIPALITY_NAME: str = "MTO Treasury"
+    MUNICIPALITY_NAME: str = "Revenue System"
     CURRENCY_SYMBOL: str = "₱"
 
     @field_validator("DB_NAME", "DB_USER")

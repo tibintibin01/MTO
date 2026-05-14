@@ -68,32 +68,24 @@ def has_permission(user, permission):
 def verify_user_login(username, password):
     try:
         payload = {"username": username, "password": password}
-        # FastAPI OAuth2 uses form data for /token
-        import requests
-        import urllib3
+        
+        # Use our standard api_request helper to hit the dedicated login endpoint
+        user_info = api_request(
+            "POST", "/api/auth/login", data=payload, queue_offline=False
+        )
+        print(f"DEBUG: Login Response: {user_info}")
+        
+        if user_info and "access_token" in user_info:
 
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-        from api_clients.api_helper import API_BASE_URL, CERT_PATH
-        verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
-
-        headers = {"X-Requested-With": "XMLHttpRequest"}
-        response = requests.post(f"{API_BASE_URL}/token", data=payload, headers=headers, verify=verify_param, timeout=15)
-        if response.status_code == 200:
-            token_data = response.json()
-            set_token(token_data["access_token"])
-            # Get user info
-            user_info = api_request("GET", "/me")
+            set_token(user_info["access_token"])
             return user_info
         else:
-            try:
-                err_detail = response.json().get("detail", "Login failed")
-                raise Exception(err_detail)
-            except:
-                raise Exception(f"Server error: {response.status_code}")
+            raise Exception("Login response missing access token.")
+            
     except Exception as e:
         print(f"Login failed: {e}")
         raise e
+
 
 
 def get_all_users():

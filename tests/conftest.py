@@ -8,10 +8,20 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 @pytest.fixture
+def mock_db_session():
+    """
+    Fixture to provide a mock SQLAlchemy Session.
+    """
+    session = MagicMock()
+    # Mock common session methods
+    session.query.return_value.filter.return_value.first.return_value = None
+    session.query.return_value.filter.return_value.all.return_value = []
+    return session
+
+@pytest.fixture
 def mock_db():
     """
-    Fixture to mock db_manager.db_query globally for tests.
-    Prevents any actual database interaction.
+    Legacy fixture to mock db_manager.db_query globally for tests.
     """
     with patch('db_manager.db_query') as mock:
         yield mock

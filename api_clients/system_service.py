@@ -23,6 +23,10 @@ def trigger_backup():
     return api_request("POST", "/system/backup/trigger")
 
 
+def get_backup_verification_status():
+    return api_request("GET", "/system/backup/status")
+
+
 def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit=100, cursor=None):
     params = {
         "limit": limit,
@@ -53,3 +57,8 @@ def commit_import(data, mode="property"):
 
 def restore_backup(file_path):
     return api_request("POST", "/system/restore", data={"file_path": file_path})
+
+
+def get_system_stats():
+    """Fetches real-time DB pool and cache diagnostics from the server."""
+    return api_request("GET", "/system/stats")

@@ -64,7 +64,8 @@ class SyncMonitor:
                 response = api.api_request(
                     action["method"],
                     action["endpoint"],
-                    data=action["payload"]
+                    data=action["payload"],
+                    queue_offline=False,
                 )
                 
                 # If success, remove from local DB

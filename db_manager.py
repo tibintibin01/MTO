@@ -9,8 +9,10 @@ from utils import log_error_to_file
 try:
     from sqlalchemy import create_engine, text
     from sqlalchemy.pool import QueuePool
-except ImportError:
-    pass
+except ImportError as e:
+    log_error_to_file("SQLAlchemy not found. Database pooling will be disabled.", e)
+    create_engine = None
+    QueuePool = None
 
 try:
     from dotenv import load_dotenv
@@ -73,6 +75,8 @@ def load_db_config():
         "password": secrets.db_password,
         "database": mto_config.DB_NAME,
         "connect_timeout": mto_config.DB_CONNECT_TIMEOUT,
+        "mysql_path": mto_config.MYSQL_PATH,
+        "mysqldump_path": mto_config.MYSQLDUMP_PATH,
     }
     
     return runtime_config
@@ -123,34 +127,44 @@ _db_state = threading.local()
 DB_ENGINE = None
 
 class ResultCache:
-    """Thread-safe TTL cache for read-only database queries."""
-    def __init__(self, ttl_seconds=60):
-        self._cache = {}
-        self._ttl = ttl_seconds
+    """Namespaced TTL cache for granular invalidation and high-hit rates."""
+    def __init__(self):
+        self._cache = {} # Structure: {namespace: {key: (value, timestamp, ttl)}}
         self._lock = threading.Lock()
 
-    def get(self, key):
+    def get(self, key, namespace="default"):
         with self._lock:
-            if key in self._cache:
-                val, ts = self._cache[key]
-                if (datetime.now() - ts).total_seconds() < self._ttl:
+            ns = self._cache.get(namespace)
+            if ns and key in ns:
+                val, ts, ttl = ns[key]
+                if (datetime.now() - ts).total_seconds() < ttl:
                     return val
-                del self._cache[key]
+                del ns[key]
         return None
 
-    def set(self, key, value):
+    def set(self, key, value, namespace="default", ttl=60):
         with self._lock:
-            # Prevent cache bloat
-            if len(self._cache) > 500:
+            if namespace not in self._cache:
+                self._cache[namespace] = {}
+            
+            ns = self._cache[namespace]
+            # Prevent single namespace bloat
+            if len(ns) > 500:
+                ns.clear()
+                
+            ns[key] = (value, datetime.now(), ttl)
+
+    def clear(self, namespace=None):
+        """Clears a specific namespace or the entire cache."""
+        with self._lock:
+            if namespace:
+                if namespace in self._cache:
+                    self._cache[namespace].clear()
+            else:
                 self._cache.clear()
-            self._cache[key] = (value, datetime.now())
 
-    def clear(self):
-        with self._lock:
-            self._cache.clear()
-
-# Global read cache
-read_cache = ResultCache(ttl_seconds=60)
+# Global read cache with namespacing
+read_cache = ResultCache()
 
 def close_thread_connection():
     """
@@ -173,6 +187,11 @@ def close_thread_connection():
 def _init_pool():
     global DB_ENGINE
     if DB_ENGINE is not None:
+        return
+
+    if not create_engine:
+        log_error_to_file("SQLAlchemy engine creation skipped", "create_engine is not defined (import failed)")
+        DB_ENGINE = None
         return
 
     try:
@@ -201,41 +220,79 @@ def _init_pool():
         DB_ENGINE = None
 
 
+from contextlib import contextmanager
+
+@contextmanager
+def managed_connection(use_read_pool=False):
+    """
+    Context manager for safe database connection management.
+    Ensures the connection is returned to the pool even if errors occur.
+    """
+    # 1. Choose path (Read vs Write)
+    if not use_read_pool:
+        # Writes clear the cache
+        read_cache.clear()
+        conn = get_db_connection()
+    else:
+        conn = get_read_connection()
+
+    if not conn:
+        raise ConnectionError("Could not acquire a database connection.")
+
+    try:
+        yield conn
+    finally:
+        # If we are NOT in an active transaction, we should return it to the pool
+        # For SQLAlchemy raw_connection, 'close()' returns it to the pool.
+        # However, we only do this if we aren't managing it via _db_state for a transaction.
+        if not hasattr(_db_state, "in_transaction") or not _db_state.in_transaction:
+            try:
+                # Close cursor if cached
+                if hasattr(_db_state, "cursor") and _db_state.cursor:
+                    _db_state.cursor.close()
+                    _db_state.cursor = None
+                
+                conn.close()
+            except: pass
+            finally:
+                if hasattr(_db_state, "conn"):
+                    _db_state.conn = None
+
 def get_db_connection():
     if DB_CONFIG is None:
         return None
 
-    # Try to get from thread-local first (for transaction continuity)
+    # Try to get from thread-local (transaction support)
     conn = getattr(_db_state, "conn", None)
     if conn is not None and _connection_is_alive(conn):
         return conn
 
-    # Try to get from engine
+    # Always use the Pool
     global DB_ENGINE
     if DB_ENGINE is None:
         _init_pool()
 
     try:
         if DB_ENGINE:
-            # get a raw DB-API connection from the pool
             conn = DB_ENGINE.raw_connection()
-        else:
-            # Fallback to direct connection if engine failed
-            if CONNECT_FN is None: return None
-            conn_params = {
-                k: v
-                for k, v in DB_CONFIG.items()
-                if k not in ("mysql_path", "mysqldump_path", "password_encrypted")
-            }
-            conn = CONNECT_FN(**conn_params)
-
-        if hasattr(conn, "autocommit"):
-            conn.autocommit = False
-
-        _db_state.conn = conn
-        return conn
+            if hasattr(conn, "autocommit"):
+                conn.autocommit = False
+            return conn
+            
+        # --- FALLBACK: Direct Driver Connection ---
+        if CONNECT_FN:
+            conn = CONNECT_FN(
+                host=DB_CONFIG["host"],
+                port=DB_CONFIG["port"],
+                user=DB_CONFIG["user"],
+                password=DB_CONFIG["password"],
+                database=DB_CONFIG["database"]
+            )
+            return conn
+            
+        return None
     except Exception as e:
-        log_error_to_file("Database connection request failed", e)
+        log_error_to_file("Database connection request failed (including fallback)", e)
         return None
 
 
@@ -341,138 +398,109 @@ def _connection_is_alive(conn):
 
 def get_read_connection():
     """Returns a connection optimized for read-only operations."""
-    # Future: Return connection to a Read Replica
     return get_db_connection()
 
-def get_write_connection():
-    """Returns a connection for write operations. Clears read cache on use."""
-    # Any write operation should invalidate the read cache to prevent stale data
-    read_cache.clear()
+def get_write_connection(invalidate_namespaces=None):
+    """Returns a connection for write operations. Clears targeted cache folders."""
+    if invalidate_namespaces:
+        for ns in invalidate_namespaces:
+            read_cache.clear(ns)
+    else:
+        # Safety fallback: clear everything if no scope defined
+        read_cache.clear()
     return get_db_connection()
 
-def db_query(query, params=(), fetch=False, commit=True, dictionary=False, use_cache=True):
+def db_query(query, params=(), fetch=False, commit=True, dictionary=False, use_cache=True, namespace="default", ttl=60):
     """
-    Executes a query with built-in caching for repeated READ operations.
+    Executes a query with namespaced caching and custom TTL support.
     """
     # 1. Try Cache for Read-Only fetches
     cache_key = None
     if fetch and not commit and use_cache:
         cache_key = f"{query}:{str(params)}:{dictionary}"
-        cached_res = read_cache.get(cache_key)
+        cached_res = read_cache.get(cache_key, namespace=namespace)
         if cached_res is not None:
             return cached_res
 
     # 2. Handle Connection and Write Invalidation
     if commit:
+        # Note: For db_query writes, we still default to global clear for safety
+        # unless more specific logic is added to callers.
         conn = get_write_connection()
     else:
         conn = get_read_connection()
 
     if not conn:
-        log_error_to_file("Database connection error in db_query", DB_CONFIG_ERROR, extra=query)
         raise ConnectionError("Lost connection to the Treasury Database.")
 
-    result = None
     try:
-        # Use thread-local cursor cache to reduce overhead
-        if not hasattr(_db_state, "cursor") or _db_state.cursor is None:
-            _db_state.cursor = _create_cursor(conn, dictionary=dictionary)
-        cur = _db_state.cursor
-        
-        cur.execute(query, params)
-        
-        if fetch:
-            result = cur.fetchall()
-            # Store in cache if this was a read-only request
-            if cache_key:
-                read_cache.set(cache_key, result)
-        
-        if commit:
-            conn.commit()
-        else:
-            conn.rollback()
-
+        with managed_connection(use_read_pool=not commit) as conn:
+            if not hasattr(_db_state, "cursor") or _db_state.cursor is None:
+                _db_state.cursor = _create_cursor(conn, dictionary=dictionary)
+            cur = _db_state.cursor
+            
+            cur.execute(query, params)
+            
+            result = None
+            if fetch:
+                result = cur.fetchall()
+                if cache_key:
+                    read_cache.set(cache_key, result, namespace=namespace, ttl=ttl)
+            
+            if commit:
+                conn.commit()
+            else:
+                conn.rollback()
+                
+            return result
     except Error as e:
-        if commit:
-            conn.rollback()
         log_error_to_file("Database query failed", e, extra=f"query={query}")
         raise DatabaseError(f"SQL Error: {str(e)}") from e
-    
-    return result
-
 
 def db_execute(query, params=(), fetch=False, commit=True):
-    conn = get_db_connection()
-    if not conn:
-        raise ConnectionError("Lost connection to the Treasury Database.")
-    payload = {"rows": None, "lastrowid": None, "rowcount": 0}
-    try:
-        cur = _create_cursor(conn)
-        cur.execute(query, params)
-        payload["lastrowid"] = cur.lastrowid
-        payload["rowcount"] = cur.rowcount
-        if fetch:
-            payload["rows"] = cur.fetchall()
-        if commit:
+    """Wrapper for db_query returning metadata."""
+    res = db_query(query, params, fetch=fetch, commit=commit)
+    return {"rows": res}
+
+def execute_transaction(operation, show_errors=True, return_error=False, invalidate_namespaces=None):
+    """Executes a set of database operations atomically with targeted cache clearing."""
+    with managed_connection(use_read_pool=False) as conn:
+        _db_state.in_transaction = True
+        _db_state.conn = conn
+        
+        try:
+            conn.rollback()
+            cur = _create_cursor(conn)
+            _db_state.cursor = cur
+            
+            # Target invalidation: Only throw away what's necessary
+            if invalidate_namespaces:
+                for ns in invalidate_namespaces:
+                    read_cache.clear(ns)
+            else:
+                read_cache.clear()
+
+            try: cur.execute("START TRANSACTION")
+            except: pass
+
+            result = operation(cur)
+
             conn.commit()
-        else:
-            conn.rollback()
-        cur.close()
-        return payload
-    except Error as e:
-        if commit:
-            conn.rollback()
-        log_error_to_file("Database execute failed", e, extra=f"query={query}")
-        raise DatabaseError(f"SQL Error: {str(e)}") from e
-
-
-def execute_transaction(operation, show_errors=True, return_error=False):
-    """Executes a set of database operations atomically."""
-    conn = get_db_connection()
-    if not conn:
-        raise ConnectionError(
-            "Could not establish database connection for transaction."
-        )
-
-    cur = None
-    try:
-        # Ensure we are in a clean state
-        if hasattr(conn, "rollback"):
-            conn.rollback()
-
-        cur = _create_cursor(conn)
-
-        # Any transaction is a potential WRITE, so we clear the read cache
-        read_cache.clear()
-
-        # Explicitly start transaction for clarity and safety
-        try:
-            cur.execute("START TRANSACTION")
-        except Error:
-            # Some drivers/configurations might not support explicit START
-            pass
-
-        result = operation(cur)
-
-        conn.commit()
-        return result
-    except Exception as e:
-        try:
-            if conn:
-                conn.rollback()
-        except:
-            pass
-
-        log_error_to_file("Atomic Transaction failed - ROLLBACK TRIGGERED", e)
-        if isinstance(e, (DatabaseError, ConnectionError)):
-            raise
-        raise DatabaseError(f"Transaction failed: {str(e)}") from e
-    finally:
-        if cur is not None:
-            try:
-                cur.close()
-            except:
-                pass
+            return result
+        except Exception as e:
+            try: conn.rollback()
+            except: pass
+            log_error_to_file("Atomic Transaction failed", e)
+            
+            # Re-raise original exception if it's a known business logic or connection error
+            # We avoid wrapping these so the API layer can catch specific types (like Conflict)
+            if isinstance(e, (DatabaseError, ConnectionError)) or "Conflict" in type(e).__name__ or "Sync" in type(e).__name__:
+                raise
+            
+            raise DatabaseError(f"Transaction failed: {str(e)}") from e
+        finally:
+            _db_state.in_transaction = False
+            _db_state.conn = None
 
 
 def _create_cursor(conn, dictionary=False):
@@ -589,3 +617,26 @@ def _release_all_named_locks(table_name, user_name):
 
     user_name = get_username(user_name)
     db_query(f"DELETE FROM {table_name} WHERE locked_by = %s", (user_name,))
+def get_infrastructure_stats():
+    """
+    Returns real-time diagnostics for the database pool and result cache.
+    Used for monitoring system health in the Admin Dashboard.
+    """
+    stats = {
+        "pool": {"active": 0, "idle": 0, "size": 50, "overflow": 0},
+        "cache": {"items": len(read_cache.cache), "namespaces": list(read_cache.namespaces.keys())},
+        "environment": os.getenv("MTO_ENV", "development"),
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    if DB_ENGINE:
+        try:
+            p = DB_ENGINE.pool
+            stats["pool"]["active"] = p.checkedout()
+            stats["pool"]["idle"] = p.checkedin()
+            stats["pool"]["overflow"] = p.overflow()
+            stats["pool"]["size"] = p.size()
+        except:
+            pass
+            
+    return stats

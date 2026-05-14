@@ -149,20 +149,25 @@ class SystemAdminPage:
                 font=ModernTheme.BODY_BOLD,
                 text_color=ModernTheme.PRIMARY,
             )
-            self.status_labels[key].pack(side="right")
+            self.status_labels[key].pack(side="right", padx=(10, 20))
 
         self.update_status_display()
 
     def update_status_display(self):
         try:
-            import backend.services.backup_service as backup_svc
-            status = backup_svc.get_backup_status()
-            for key, lbl in self.status_labels.items():
-                val = status.get(key, "Unknown")
-                # Highlight green for success/timestamps, orange for unknown/failed
-                color = ModernTheme.SUCCESS if ("Success" in val or ":" in val or "OK" in val) else ModernTheme.WARNING
-                lbl.configure(text=val, text_color=color)
-        except:
+            import api_clients.system_service as system_svc
+            # Fetch from API to ensure we see the server's state, not the local process state
+            status = system_svc.get_backup_verification_status()
+            if status:
+                for key, lbl in self.status_labels.items():
+                    val = status.get(key, "Unknown")
+                    # Highlight green for success/timestamps, orange for unknown/failed
+                    # Highlight green for SUCCESS/OK/timestamps, orange for failures
+                    upper_val = val.upper()
+                    color = ModernTheme.SUCCESS if ("SUCCESS" in upper_val or ":" in upper_val or "OK" in upper_val) else ModernTheme.WARNING
+                    lbl.configure(text=val, text_color=color)
+        except Exception as e:
+            print(f"DEBUG: Status update failed: {e}")
             pass
             
         # Refresh every 3 seconds while the widget exists
@@ -221,7 +226,7 @@ class SystemAdminPage:
     def open_backup_folder(self):
         import os
 
-        path = r"C:\MTO\backups\local"
+        path = r"C:\RevenueSystem\backups\local"
         if os.path.exists(path):
             os.startfile(path)
         else:
@@ -233,7 +238,7 @@ class SystemAdminPage:
         # 1. Pick the file
         file_path = filedialog.askopenfilename(
             title=tr("admin.db.restore.title"),
-            initialdir=r"C:\MTO\backups\local",
+            initialdir=r"C:\RevenueSystem\backups\local",
             filetypes=[("SQL Backup", "*.sql"), ("All Files", "*.*")]
         )
         

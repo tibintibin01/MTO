@@ -5,7 +5,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from backend.generators.base import (
-    BRANDING, safe_text, safe_filename, fmt_currency, draw_field, draw_header
+    BRANDING, safe_text, safe_filename, fmt_currency, draw_field, draw_header, draw_seal
 )
 from backend.generators.soa_gen import _draw_soa_table_header
 
@@ -22,7 +22,10 @@ def generate_delinquency_notice(statement_data, base_dir):
     width, height = A4
     margin_x = 15 * mm
     
-    # Use Danger Color for Header
+    # 1. Background Seal (Watermark)
+    draw_seal(c, width, height)
+
+    # 2. Header
     danger_color = colors.HexColor(BRANDING["branding_colors"]["danger"])
     draw_header(c, "NOTICE OF DELINQUENCY", width, height, margin_x, color=danger_color)
 

@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
-import db_manager as db
+from sqlalchemy import text, func
+from sqlalchemy.orm import Session
+from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment, PropertyEditLock
 from backend.services.auth_service import get_username, require_permission
 import backend.services.billing_service as billing
 import backend.services.payment_service as payment
+from fastapi import HTTPException
 
 class SyncConflictError(Exception):
     """Custom exception raised when a version mismatch is detected during save."""
     def __init__(self, server_data, client_data):
         self.server_data = server_data
         self.client_data = client_data
+        self.is_sync_conflict = True # Marker for cross-module identification
         super().__init__("Offline Sync Conflict Detected.")
 
 
@@ -22,248 +26,165 @@ def clean_currency(value):
 
 
 def search_properties(
-    term, limit=100, cursor=None, kind=None, year_start=None, year_end=None, barangay=None
+    term, limit=100, cursor=None, kind=None, year_start=None, year_end=None, barangay=None, db_session: Session = None
 ):
     """
-    Enhanced search with optional filters for kind and effectivity year ranges.
+    Enhanced search with optional filters using SQLAlchemy ORM.
     """
-    clean_term = str(term).strip() if term else ""
-    where_clauses = ["is_deleted = 0"]
-    params = []
+    if not db_session:
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
 
-    # 1. Term Search
-    if clean_term:
+    query = db_session.query(Property).filter(Property.is_deleted == False)
+    
+    if term:
+        clean_term = str(term).strip()
         if "-" in clean_term:
-            where_clauses.append("(td_number = %s OR pin = %s)")
-            params.extend([clean_term, clean_term])
+            query = query.filter((Property.td_number == clean_term) | (Property.pin == clean_term))
         else:
-            where_clauses.append(
-                "(td_number LIKE %s OR owner_name LIKE %s OR pin LIKE %s OR location LIKE %s)"
-            )
             like_term = f"%{clean_term}%"
-            params.extend([like_term, like_term, like_term, like_term])
-
-    # 2. Advanced Filters
-    if kind and kind != "ALL":
-        where_clauses.append("kind_of_property = %s")
-        params.append(kind)
-
-    if year_start:
-        where_clauses.append("effectivity_date >= %s")
-        params.append(year_start)
-
-    if year_end:
-        where_clauses.append("effectivity_date <= %s")
-        params.append(year_end)
-
-    if barangay and barangay != "ALL":
-        where_clauses.append("barangay = %s")
-        params.append(barangay)
-
-    # 3. Cursor Pagination (Performance Injection)
-    if cursor:
-        where_clauses.append("id < %s")
-        params.append(int(cursor))
-
-    query = f"""
-        SELECT id, td_number, owner_name, payor_name, lot_number, area, location, kind_of_property,
-               accountable_officer, assessed_value, (assessed_value * 0.01) as basic, (assessed_value * 0.01) as sef,
-               penalty, discount, (assessed_value * 0.02 + penalty - discount) as total, or_number, or_date, tax_year,
-               pin, block_number, prev_td_number, effectivity_date, barangay
-        FROM properties
-        WHERE {" AND ".join(where_clauses)}
-        ORDER BY id DESC
-        LIMIT %s
-    """
-    params.append(int(limit))
-    return db.db_query(query, params, fetch=True, commit=False) or []
-
-
-def get_barangays():
-    """Returns a list of all unique barangay names in the database."""
-    query = "SELECT DISTINCT barangay FROM properties WHERE barangay IS NOT NULL AND barangay != '' ORDER BY barangay ASC"
-    rows = db.db_query(query, fetch=True, commit=False)
-    return [r[0] for r in rows] if rows else []
-
-
-def get_property_by_id(property_id):
-    query = "SELECT * FROM properties WHERE id = %s AND is_deleted = 0 LIMIT 1"
-    rows = db.db_query(query, (property_id,), fetch=True, commit=False)
-    if not rows:
-        return None
-    return rows[0]
-
-
-def release_all_property_locks(username):
-    """Clears any orphaned property locks for a user on login."""
-    query = "DELETE FROM property_edit_locks WHERE locked_by = %s"
-    db.db_query(query, (username,))
-
-
-def save_property(data, editing_id=None, user=None):
-    """
-    Main orchestrator for saving or updating a property.
-    Refactored into single-responsibility helpers.
-    """
-    def transaction_wrapper(cur):
-        # 1. Validate Business Rules
-        from backend.services.validation_service import enforce_property_rules, ValidationError
-        try:
-            enforce_property_rules(data)
-        except ValidationError as e:
-            # We can re-raise as HTTPException in main.py, or handle here
-            raise Exception(f"VALIDATION_ERROR: {str(e)}")
-
-        # 2. Normalize and Prepare Data
-        params = _prepare_property_params(data, editing_id, cur)
-        
-        # 3. Perform DB Upsert
-        client_version = data.get("version", 0)
-        prop_id, old_data, conflict_info = _upsert_property_record(cur, params, editing_id, client_version)
-
-        # Last-write-wins: Log the conflict but continue with update
-        if conflict_info.get("conflict_detected"):
-            import logging
-            logging.warning(
-                f"Last-write-wins conflict resolved for property {prop_id}: "
-                f"client ver={conflict_info['client_version']}, server ver={conflict_info['server_version']}"
+            query = query.filter(
+                (Property.td_number.like(like_term)) | 
+                (Property.owner_name.like(like_term)) | 
+                (Property.pin.like(like_term)) | 
+                (Property.location.like(like_term))
             )
+    
+    if kind and kind != "ALL":
+        query = query.filter(Property.kind_of_property == kind)
+    
+    if year_start:
+        query = query.filter(Property.effectivity_date >= str(year_start))
+    
+    if year_end:
+        query = query.filter(Property.effectivity_date <= str(year_end))
+        
+    if barangay and barangay != "ALL":
+        query = query.filter(Property.barangay == barangay)
+        
+    if cursor:
+        query = query.filter(Property.id < int(cursor))
+        
+    results = query.order_by(Property.id.desc()).limit(limit).all()
+    
+    return [
+        (
+            p.id, p.td_number, p.owner_name, p.payor_name, p.lot_number, p.area, p.location, p.kind_of_property,
+            p.accountable_officer, float(p.assessed_value or 0), float(p.assessed_value or 0) * 0.01, float(p.assessed_value or 0) * 0.01,
+            float(p.penalty or 0), float(p.discount or 0), float(p.assessed_value or 0) * 0.02 + float(p.penalty or 0) - float(p.discount or 0),
+            p.or_number, p.or_date, p.tax_year, p.pin, p.block_number, p.prev_td_number, p.effectivity_date, p.barangay
+        )
+        for p in results
+    ]
 
-        # 4. Detailed Audit Log (with Snapshots)
-        from backend.services.history_service import log_data_change
-        action = "UPDATE" if editing_id else "CREATE"
+
+def get_barangays(db_session: Session):
+    """Returns a list of all unique barangay names in the database."""
+    results = db_session.query(Property.barangay).filter(Property.barangay != None, Property.barangay != "").distinct().order_by(Property.barangay.asc()).all()
+    return [r[0] for r in results]
+
+
+def get_property_by_id(property_id, db_session: Session):
+    return db_session.query(Property).filter(Property.id == property_id, Property.is_deleted == False).first()
+
+
+def release_all_property_locks(username, db_session: Session = None):
+    """Clears any orphaned property locks for a user on login."""
+    if not db_session:
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
         
-        # Convert tuple params to dict for history
-        col_names = ["td_number", "owner_name", "payor_name", "lot_number", "area", "location", "kind_of_property", 
-                     "accountable_officer", "assessed_value", "penalty", "discount", "or_number", "or_date", 
-                     "tax_year", "pin", "block_number", "prev_td_number", "effectivity_date", "barangay"]
-        after_data = dict(zip(col_names, params))
+    db_session.query(PropertyEditLock).filter(PropertyEditLock.locked_by == username).delete()
+    db_session.commit()
+
+
+def save_property(data, editing_id=None, user=None, db_session: Session = None):
+    """
+    Main orchestrator for saving or updating a property using ORM.
+    """
+    if not db_session:
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
+
+    from backend.services.validation_service import enforce_property_rules, ValidationError
+    from backend.services.history_service import log_data_change
+    
+    try:
+        # 1. Validate
+        enforce_property_rules(data)
         
-        # Map old_data tuple to dict if present
-        before_data = None
-        if old_data:
-            # Note: properties table has id as index 0, so we skip it
-            before_data = dict(zip(col_names, old_data[1:20]))
+        # 2. Get or Create Property
+        if editing_id:
+            prop = db_session.query(Property).filter(Property.id == editing_id).first()
+            if not prop:
+                raise HTTPException(status_code=404, detail="Property not found")
             
-        log_data_change(user["id"] if user else 0, "properties", prop_id, action, before=before_data, after=after_data)
-        
-        # 5. Synchronize Billings and Payments
-        _sync_financial_records(cur, prop_id, data)
+            # Conflict Detection
+            client_version = data.get("version", 0)
+            if client_version is not None and int(client_version) < prop.version:
+                raise SyncConflictError(prop.__dict__, data)
+            
+            action = "UPDATE"
+            before_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
+        else:
+            prop = Property()
+            db_session.add(prop)
+            action = "CREATE"
+            before_data = None
 
+        # 3. Map Fields (Normalize)
+        def _up(v): return str(v).strip().upper() if v else None
+        
+        prop.td_number = _up(data.get("TD Number", prop.td_number))
+        prop.owner_name = _up(data.get("Owner Name", prop.owner_name))
+        prop.payor_name = _up(data.get("Payor", prop.payor_name) or data.get("Owner Name", prop.owner_name))
+        prop.lot_number = _up(data.get("Lot Number", prop.lot_number))
+        prop.area = _up(data.get("Area", prop.area))
+        prop.location = _up(data.get("Location", prop.location))
+        prop.kind_of_property = _up(data.get("Kind of Property", prop.kind_of_property))
+        prop.accountable_officer = _up(data.get("Accountable Officer", prop.accountable_officer))
+        prop.assessed_value = clean_currency(data.get("Assessed Value", prop.assessed_value))
+        prop.penalty = clean_currency(data.get("Penalty", prop.penalty))
+        prop.discount = clean_currency(data.get("Discount", prop.discount))
+        prop.or_number = _up(data.get("OR Number", prop.or_number))
+        prop.or_date = data.get("OR Date", prop.or_date)
+        prop.tax_year = _up(data.get("Tax Year", prop.tax_year))
+        prop.pin = _up(data.get("PIN", prop.pin))
+        prop.block_number = _up(data.get("Block Number", prop.block_number))
+        prop.prev_td_number = _up(data.get("Previous TD Number", prop.prev_td_number))
+        prop.effectivity_date = data.get("Effectivity Date", prop.effectivity_date)
+        prop.barangay = _up(data.get("Barangay", prop.barangay) or data.get("Location", prop.location))
+        
+        if editing_id:
+            prop.version += 1
+        else:
+            prop.version = 1
+            prop.is_deleted = False
+
+        db_session.flush() # Get ID for new properties
+        
+        # 4. Log Change
+        after_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
+        log_data_change(user["id"] if user else 0, "properties", prop.id, action, before=before_data, after=after_data)
+        
+        # 5. Financial Sync
+        _sync_financial_records(prop.id, data, db_session)
+        
+        db_session.commit()
         return {
             "ok": True,
-            "property_id": prop_id,
-            "conflict_resolved": conflict_info.get("conflict_detected", False),
-            "new_version": conflict_info.get("server_version", 1)
+            "property_id": prop.id,
+            "new_version": prop.version
         }
 
-    return db.execute_transaction(transaction_wrapper)
+    except Exception as e:
+        db_session.rollback()
+        if isinstance(e, (ValidationError, SyncConflictError)):
+            raise
+        raise HTTPException(status_code=500, detail=f"Save failed: {str(e)}")
 
 
-def _prepare_property_params(data, editing_id, cur):
-    """Normalizes and prepares parameters for the SQL query using dictionary mapping."""
-    old_data_dict = {}
-    if editing_id:
-        cur.execute("SELECT * FROM properties WHERE id=%s", (editing_id,))
-        row = cur.fetchone()
-        if row:
-            columns = [col[0] for col in cur.description]
-            old_data_dict = dict(zip(columns, row))
-
-    def _up(v):
-        return str(v).strip().upper() if v else None
-
-    def get_v(key, col_name):
-        if key in data: return data.get(key)
-        return old_data_dict.get(col_name)
-
-    return (
-        _up(get_v("TD Number", "td_number")),
-        _up(get_v("Owner Name", "owner_name")),
-        _up(get_v("Payor", "payor_name") or get_v("Owner Name", "owner_name")),
-        _up(get_v("Lot Number", "lot_number")),
-        _up(get_v("Area", "area")),
-        _up(get_v("Location", "location")),
-        _up(get_v("Kind of Property", "kind_of_property")),
-        _up(get_v("Accountable Officer", "accountable_officer")),
-        clean_currency(get_v("Assessed Value", "assessed_value")),
-        clean_currency(get_v("Penalty", "penalty")),
-        clean_currency(get_v("Discount", "discount")),
-        _up(get_v("OR Number", "or_number")),
-        get_v("OR Date", "or_date"),
-        _up(get_v("Tax Year", "tax_year")),
-        _up(get_v("PIN", "pin")),
-        _up(get_v("Block Number", "block_number")),
-        _up(get_v("Previous TD Number", "prev_td_number")),
-        get_v("Effectivity Date", "effectivity_date"),
-        _up(get_v("Barangay", "barangay") or get_v("Location", "location")),
-    )
-
-
-def _upsert_property_record(cur, params, editing_id, client_version=None):
-    """Handles the actual SQL INSERT/UPDATE with last-write-wins conflict resolution."""
-    old_data = None
-    if editing_id:
-        cur.execute("SELECT * FROM properties WHERE id=%s", (editing_id,))
-        old_data = cur.fetchone()
-
-        if not old_data:
-            raise Exception("Record not found for update.")
-
-        # CONFLICT DETECTION (Optimistic Locking) - STRICT ENFORCEMENT
-        columns = [c[0] for c in cur.description]
-        version_idx = columns.index("version")
-        raw_version = old_data[version_idx]
-        server_version = int(raw_version) if raw_version is not None else 1
-        
-        if client_version is not None and int(client_version) < server_version:
-            server_data_dict = dict(zip(columns, old_data))
-            raise SyncConflictError(server_data_dict, params)
-
-        cur.execute(f"""
-            UPDATE properties SET
-                td_number=%s, owner_name=%s, payor_name=%s, lot_number=%s, area=%s, location=%s,
-                kind_of_property=%s, accountable_officer=%s, assessed_value=%s, penalty=%s, discount=%s,
-                or_number=%s, or_date=%s, tax_year=%s, pin=%s, block_number=%s,
-                prev_td_number=%s, effectivity_date=%s, barangay=%s,
-                version = COALESCE(version, 1) + 1
-            WHERE id=%s
-        """, (*params, editing_id))
-
-        # Return conflict info so caller can decide how to handle
-        return editing_id, old_data, {
-            "conflict_detected": conflict_detected,
-            "client_version": client_ver_for_update,
-            "server_version": server_version + 1,  # New version after update
-            "server_data": dict(zip(columns, old_data)) if conflict_detected else None
-        }
-    else:
-        cur.execute("""
-            INSERT INTO properties (
-                td_number, owner_name, payor_name, lot_number, area, location, kind_of_property,
-                accountable_officer, assessed_value, penalty, discount, or_number, or_date, tax_year,
-                pin, block_number, prev_td_number, effectivity_date, barangay, is_deleted, version
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, 1)
-        """, params)
-        return cur.lastrowid, None, {"conflict_detected": False}
-
-
-def _audit_property_change(cur, prop_id, params, old_data, editing_id, user):
-    """Records the change in the audit trail if a user is provided."""
-    if not user:
-        return
-        
-    action = "UPDATE_PROPERTY" if editing_id else "CREATE_PROPERTY"
-    # Convert tuple to dict for audit logging
-    col_names = ["td_number", "owner_name", "payor_name", "lot_number", "area", "location", "kind_of_property", 
-                 "accountable_officer", "assessed_value", "penalty", "discount", "or_number", "or_date", 
-                 "tax_year", "pin", "block_number", "prev_td_number", "effectivity_date", "barangay"]
-    new_data_dict = dict(zip(col_names, params))
-    
-    db.record_audit_log_with_cur(cur, user, action, "properties", prop_id, old_data, new_data_dict)
-
-
-def _sync_financial_records(cur, prop_id, data):
+def _sync_financial_records(prop_id, data, db_session: Session):
     """Synchronizes property billings and payments based on the saved property data."""
     tax_years = billing.normalize_tax_years(data.get("Tax Year"))
     av = clean_currency(data.get("Assessed Value"))
@@ -280,33 +201,53 @@ def _sync_financial_records(cur, prop_id, data):
     
     for year, a_s, p_s, d_s in zip(tax_years, av_shares, pen_shares, disc_shares):
         billing_rows.append(
-            billing.sync_property_billing(cur, prop_id, year, a_s, p_s, d_s, has_payment=should_pay)
+            billing.sync_property_billing(None, prop_id, year, a_s, p_s, d_s, has_payment=should_pay, db_session=db_session)
         )
         
     if should_pay:
         paid = clean_currency(data.get("Amount Paid"))
         allocated = billing.allocate_payment_amount(billing_rows, paid)
         
-        # Upsert payment record
-        cur.execute("""
-            SELECT id FROM payments WHERE property_id = %s AND or_number = %s AND date_paid = %s 
-            ORDER BY id DESC LIMIT 1 FOR UPDATE
-        """, (prop_id, data.get("OR Number"), data.get("OR Date")))
+        # Upsert payment record using ORM
+        from backend.models import Payment
+        or_no = data.get("OR Number")
+        or_dt_raw = data.get("OR Date")
         
-        pay_row = cur.fetchone()
-        pay_params = (paid, data.get("OR Number"), data.get("OR Date"), data.get("Tax Year"), 
-                      data.get("Accountable Officer"), data.get("Payor") or data.get("Owner Name"))
+        # Parse or_date if it's a string
+        or_dt = None
+        if or_dt_raw:
+            if isinstance(or_dt_raw, str):
+                try:
+                    or_dt = datetime.strptime(or_dt_raw, "%Y-%m-%d")
+                except:
+                    pass
+            elif isinstance(or_dt_raw, datetime):
+                or_dt = or_dt_raw
+
+        pay_obj = db_session.query(Payment).filter(
+            Payment.property_id == prop_id,
+            Payment.or_number == or_no,
+            Payment.date_paid == or_dt
+        ).order_by(Payment.id.desc()).first()
         
-        if pay_row:
-            cur.execute("UPDATE payments SET amount=%s, or_number=%s, date_paid=%s, tax_year=%s, posted_by=%s, payor_name=%s WHERE id=%s", 
-                        (*pay_params, pay_row[0]))
-            payment_id = pay_row[0]
-        else:
-            cur.execute("INSERT INTO payments (property_id, amount, or_number, date_paid, tax_year, posted_by, payor_name) VALUES (%s, %s, %s, %s, %s, %s, %s)", 
-                        (prop_id, *pay_params))
-            payment_id = cur.lastrowid
+        payor_name = data.get("Payor") or data.get("Owner Name")
+        tax_year_str = data.get("Tax Year")
+        posted_by = data.get("Accountable Officer")
+
+        if not pay_obj:
+            pay_obj = Payment(property_id=prop_id)
+            db_session.add(pay_obj)
             
-        billing.sync_payment_billings(cur, payment_id, allocated)
+        pay_obj.amount = paid
+        pay_obj.or_number = or_no
+        pay_obj.date_paid = or_dt
+        pay_obj.tax_year = tax_year_str
+        pay_obj.posted_by = posted_by
+        pay_obj.payor_name = payor_name
+        
+        db_session.flush() # Get payment_id
+        billing.sync_payment_billings(None, pay_obj.id, allocated, db_session=db_session)
+
 
 
 @require_permission("property_edit")
@@ -316,159 +257,201 @@ def update_property_details(prop_id, data, user):
 
 
 @require_permission("property_delete")
-def soft_delete_property(property_id, user=None, ip_address=None):
+def soft_delete_property(property_id, user=None, ip_address=None, db_session: Session = None):
     """Soft deletes a property - requires 'property_delete' permission."""
-    old_data = get_property_by_id(property_id)
+    if not db_session:
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
 
-    def operation(cur):
-        cur.execute(
-            "UPDATE properties SET is_deleted = 1 WHERE id = %s", (property_id,)
+    prop = db_session.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        return 0
+    
+    old_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
+    prop.is_deleted = True
+    
+    if user:
+        from datetime import datetime
+        audit = AuditLog(
+            user_id=user.get("id"),
+            username=user.get("username", "unknown"),
+            action="SOFT_DELETE",
+            table_name="properties",
+            record_id=property_id,
+            old_values=str(old_data),
+            new_values=str({"is_deleted": 1}),
+            ip_address=ip_address,
+            timestamp=datetime.now()
         )
-        return cur.rowcount
-
-    res = db.execute_transaction(operation)
-    if res and user:
-        db.record_audit_log(
-            user,
-            "SOFT_DELETE",
-            "properties",
-            property_id,
-            old_data,
-            {"is_deleted": 1},
-            ip_address,
-        )
-    return res
+        db_session.add(audit)
+        
+    db_session.commit()
+    return 1
 
 
-def get_deleted_properties(limit=50, offset=0):
+def get_deleted_properties(limit=50, offset=0, db_session: Session = None):
     """Fetches all properties marked as deleted with pagination support."""
     safe_limit = max(1, int(limit))
     safe_offset = max(0, int(offset))
-    query = f"""
-        SELECT id, td_number, owner_name, location, assessed_value 
-        FROM properties 
-        WHERE is_deleted = 1 
-        ORDER BY id DESC
-        LIMIT {safe_limit} OFFSET {safe_offset}
-    """
-    return db.db_query(query, fetch=True, commit=False) or []
+    
+    if not db_session:
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
+
+    rows = (
+        db_session.query(Property)
+        .filter(Property.is_deleted == True)
+        .order_by(Property.id.desc())
+        .limit(safe_limit)
+        .offset(safe_offset)
+        .all()
+    )
+    return [
+        (
+            prop.id,
+            prop.td_number,
+            prop.owner_name,
+            prop.location,
+            prop.assessed_value,
+        )
+        for prop in rows
+    ]
 
 
 @require_permission("property_edit")
-def restore_property(property_id, user=None):
+def restore_property(property_id, user=None, db_session: Session = None):
     """Restores a soft-deleted property."""
+    if not db_session:
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
 
-    def operation(cur):
-        cur.execute(
-            "UPDATE properties SET is_deleted = 0 WHERE id = %s", (property_id,)
+    prop = db_session.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        return 0
+    
+    prop.is_deleted = False
+    
+    if user:
+        from datetime import datetime
+        audit = AuditLog(
+            user_id=user.get("id"),
+            username=user.get("username", "unknown"),
+            action="RESTORE",
+            table_name="properties",
+            record_id=property_id,
+            old_values=str({"is_deleted": 1}),
+            new_values=str({"is_deleted": 0}),
+            timestamp=datetime.now()
         )
-        return cur.rowcount
-
-    res = db.execute_transaction(operation)
-    if res and user:
-        db.record_audit_log(
-            user,
-            "RESTORE",
-            "properties",
-            property_id,
-            {"is_deleted": 1},
-            {"is_deleted": 0},
-        )
-    return res
+        db_session.add(audit)
+        
+    db_session.commit()
+    return 1
 
 
 @require_permission("property_delete")
-def purge_property(property_id, user=None):
+def purge_property(property_id, user=None, db_session: Session = None):
     """Permanently deletes a property from the database."""
-    old_data = get_property_by_id(
-        property_id
-    )  # This might return None since it filters for is_deleted=0
-    # Let's get it specifically for purging
-    query = "SELECT * FROM properties WHERE id = %s LIMIT 1"
-    raw = db.db_query(query, (property_id,), fetch=True, dictionary=True)
-    full_data = raw[0] if raw else None
+    if not db_session:
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
 
-    def operation(cur):
-        # Delete associated billings and payments first if needed (cascade or manual)
-        # Assuming database has cascade or we handle it here
-        cur.execute(
-            "DELETE FROM property_billings WHERE property_id = %s", (property_id,)
-        )
-        cur.execute("DELETE FROM payments WHERE property_id = %s", (property_id,))
-        cur.execute("DELETE FROM properties WHERE id = %s", (property_id,))
-        return cur.rowcount
+    prop = db_session.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        return 0
+        
+    full_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
 
-    res = db.execute_transaction(operation)
-    if res and user:
+    # Delete associated billings and payments first
+    db_session.query(PropertyBilling).filter(PropertyBilling.property_id == property_id).delete()
+    db_session.query(Payment).filter(Payment.property_id == property_id).delete()
+    db_session.delete(prop)
+    db_session.commit()
+
+    if user:
+        import db_manager as db
         db.record_audit_log(user, "PURGE", "properties", property_id, full_data, None)
-    return res
+    return 1
 
 
-def get_unspecified_properties():
+def get_unspecified_properties(db_session: Session = None):
     """Fetches all properties where barangay is NULL, empty, or 'UNSPECIFIED'."""
-    query = """
-        SELECT id, td_number, owner_name, location, barangay
-        FROM properties
-        WHERE is_deleted = 0 
-          AND (barangay IS NULL OR TRIM(barangay) = '' OR barangay = 'UNSPECIFIED')
-        ORDER BY owner_name ASC
-    """
-    return db.db_query(query, fetch=True, commit=False) or []
+    if not db_session:
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
+
+    results = db_session.query(Property).filter(
+        Property.is_deleted == False,
+        (Property.barangay == None) | (text("TRIM(barangay) = ''")) | (Property.barangay == "UNSPECIFIED")
+    ).order_by(Property.owner_name.asc()).all()
+
+    return [
+        (p.id, p.td_number, p.owner_name, p.location, p.barangay)
+        for p in results
+    ]
 
 
 @require_permission("property_edit")
-def bulk_update_barangay(property_ids, new_barangay, user=None):
+def bulk_update_barangay(property_ids, new_barangay, user=None, db_session: Session = None):
     """Updates the barangay for multiple properties at once."""
     if not property_ids or not new_barangay:
         return 0
 
-    def operation(cur):
-        placeholders = ", ".join(["%s"] * len(property_ids))
-        query = f"UPDATE properties SET barangay = %s WHERE id IN ({placeholders})"
-        params = [new_barangay] + list(property_ids)
-        cur.execute(query, params)
-        return cur.rowcount
+    if not db_session:
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
 
-    res = db.execute_transaction(operation)
-    if res and user:
-        db.record_audit_log(
-            user,
-            "BULK_UPDATE",
-            "properties",
-            None,
-            {"ids": property_ids},
-            {"barangay": new_barangay},
-        )
-    return res
+    count = db_session.query(Property).filter(Property.id.in_(property_ids)).update({Property.barangay: new_barangay}, synchronize_session=False)
+    db_session.commit()
+    
+    if count and user:
+        import db_manager as db
+        db.record_audit_log(user, "BULK_UPDATE", "properties", None, {"ids": property_ids}, {"barangay": new_barangay})
+    return count
 
 
-def get_property_by_td(td_number):
-    query = "SELECT * FROM properties WHERE td_number = %s AND is_deleted = 0 LIMIT 1"
-    res = db.db_query(query, (td_number,), fetch=True, dictionary=True)
-    return res[0] if res else None
+def get_property_by_td(td_number, db_session: Session = None):
+    if not db_session:
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
+        
+    prop = db_session.query(Property).filter(Property.td_number == td_number, Property.is_deleted == False).first()
+    if not prop:
+        return None
+    return {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
 
 
-def get_assessment_roll(limit=100, offset=0):
+def get_assessment_roll(limit=100, offset=0, db_session: Session = None):
     safe_limit = max(1, int(limit))
     safe_offset = max(0, int(offset))
-    query = f"SELECT td_number, owner_name, location, kind_of_property, assessed_value FROM properties WHERE is_deleted = 0 ORDER BY owner_name ASC LIMIT {safe_limit} OFFSET {safe_offset}"
-    return db.db_query(query, fetch=True, commit=False) or []
+    
+    if not db_session:
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
+        
+    results = db_session.query(Property).filter(Property.is_deleted == False).order_by(Property.owner_name.asc()).limit(safe_limit).offset(safe_offset).all()
+    return [(p.td_number, p.owner_name, p.location, p.kind_of_property, float(p.assessed_value or 0)) for p in results]
 
 
-def get_receivables_by_barangay():
-    query = """
-        SELECT 
-            COALESCE(prop.barangay, 'UNSPECIFIED') as barangay,
-            SUM(bill.assessed_value) as total_assessed,
-            SUM((bill.assessed_value * 0.02) + bill.penalty - bill.discount) as total_due,
-            SUM(bill.penalty) as total_penalty,
-            SUM(bill.discount) as total_discount,
-            SUM(bill.amount_paid) as total_collected,
-            SUM((bill.assessed_value * 0.02) + bill.penalty - bill.discount - bill.amount_paid) as total_receivable
-        FROM properties prop
-        JOIN property_billings bill ON bill.property_id = prop.id
-        WHERE prop.is_deleted = 0
-        GROUP BY prop.barangay
-        ORDER BY total_receivable DESC
-    """
-    return db.db_query(query, fetch=True, commit=False) or []
+def get_receivables_by_barangay(db_session: Session = None):
+    if not db_session:
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
+
+    results = (
+        db_session.query(
+            func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
+            func.sum(PropertyBilling.assessed_value).label("total_assessed"),
+            func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount).label("total_due"),
+            func.sum(PropertyBilling.penalty).label("total_penalty"),
+            func.sum(PropertyBilling.discount).label("total_discount"),
+            func.sum(PropertyBilling.amount_paid).label("total_collected"),
+            func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount - PropertyBilling.amount_paid).label("total_receivable")
+        )
+        .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+        .filter(Property.is_deleted == False)
+        .group_by(Property.barangay)
+        .order_by(text("total_receivable DESC"))
+        .all()
+    )
+    return [tuple(r) for r in results]

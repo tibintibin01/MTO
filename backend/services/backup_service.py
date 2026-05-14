@@ -1,37 +1,26 @@
 import os
 import shutil
 import glob
-import threading
 import subprocess
 from datetime import datetime
-import db_manager as db
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from backend.database import SessionLocal, engine
+from backend.models import BackupHistory
 from backend.services.verification_service import verify_sql_dump
 from backend.services.auth_service import require_permission
 
-BACKUP_BASE_DIR = r"C:\MTO\backups"
+from db_manager import DB_CONFIG
+
+BACKUP_BASE_DIR = r"C:\RevenueSystem\backups"
 LOCAL_DIR = os.path.join(BACKUP_BASE_DIR, "local")
-USB_SECRET_FILE = "mto_backup_drive.txt"
+USB_SECRET_FILE = "revenue_system_backup_drive.txt"
 
 def _ensure_backup_table():
     """Creates the backup_history table if it doesn't exist."""
-    query = """
-    CREATE TABLE IF NOT EXISTS backup_history (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        filename VARCHAR(255),
-        file_path VARCHAR(500),
-        checksum VARCHAR(64),
-        status VARCHAR(20),
-        health VARCHAR(10),
-        user_name VARCHAR(100)
-    )
-    """
-    try:
-        db.db_query(query)
-    except:
-        pass
-
-_ensure_backup_table()
+    # Using engine to create tables if they don't exist is handled by Base.metadata.create_all(bind=engine)
+    # but since this script might be run independently, we can keep a check or rely on migration_service.
+    pass
 
 # State tracking for dashboard
 backup_status = {
@@ -44,21 +33,29 @@ backup_status = {
 }
 
 
-def get_backup_status():
+def get_backup_status(db_session: Session = None):
     """Fetches the latest backup status from the database and maps it to UI keys."""
+    if not db_session:
+        db_session = SessionLocal()
+
     try:
-        query = "SELECT timestamp, checksum, health FROM backup_history ORDER BY id DESC LIMIT 1"
-        res = db.db_query(query, fetch=True, commit=False)
-        if res:
-            row = res[0]
-            ts_str = row[0].strftime("%Y-%m-%d %H:%M:%S") if row[0] else "Never"
+        latest = db_session.query(BackupHistory).order_by(BackupHistory.id.desc()).first()
+        if latest:
+            ts_str = latest.timestamp.strftime("%Y-%m-%d %H:%M:%S") if latest.timestamp else "Never"
+            # Sanitize health status
+            raw_health = latest.health or "UNKNOWN"
+            if raw_health in ["OK", "Success", "SUCCESS"] or "Success" in raw_health or "SUCCESS" in raw_health:
+                health_display = "SUCCESS"
+            else:
+                health_display = raw_health.replace("Issue: ", "").strip()
+
             backup_status.update({
                 "last_local": ts_str,
-                "last_usb": ts_str,  # Assuming hybrid backup includes both
+                "last_usb": ts_str,
                 "last_cloud": ts_str,
-                "last_verify": "Success" if (row[2] == "OK") else f"Issue: {row[2]}",
-                "last_checksum": row[1] or "None",
-                "health": row[2] or "UNKNOWN"
+                "last_verify": health_display,
+                "last_checksum": latest.checksum or "None",
+                "health": raw_health
             })
     except Exception as e:
         print(f"Error fetching backup status: {e}")
@@ -66,10 +63,13 @@ def get_backup_status():
 
 
 @require_permission("backup_restore")
-async def run_hybrid_backup(user=None):
+async def run_hybrid_backup(user=None, db_session: Session = None):
     """Main orchestrator for the Hybrid Backup process (Async)."""
     import asyncio
     from backend.services.auth_service import get_username
+
+    if not db_session:
+        db_session = SessionLocal()
 
     user_name = get_username(user)
     if backup_status["is_running"]:
@@ -84,21 +84,23 @@ async def run_hybrid_backup(user=None):
     backup_status["is_running"] = True
     
     async def report_progress(step, percentage, msg):
-        from backend.main import manager
-        await manager.broadcast({
-            "type": "PROGRESS",
-            "module": "backup",
-            "step": step,
-            "percentage": percentage,
-            "message": msg
-        })
+        try:
+            from backend.main import manager
+            await manager.broadcast({
+                "type": "PROGRESS",
+                "module": "backup",
+                "step": step,
+                "percentage": percentage,
+                "message": msg
+            })
+        except: pass
 
     try:
         # 1. Local Backup
         await report_progress(1, 10, "Creating local SQL dump...")
         os.makedirs(LOCAL_DIR, exist_ok=True)
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"mto_backup_{timestamp}.sql"
+        filename = f"revenue_backup_{timestamp}.sql"
         local_path = os.path.join(LOCAL_DIR, filename)
 
         success = await asyncio.to_thread(_create_local_dump, local_path)
@@ -133,7 +135,7 @@ async def run_hybrid_backup(user=None):
         usb_path = await asyncio.to_thread(_find_usb_drive)
         if usb_path:
             def sync_usb():
-                usb_dest = os.path.join(usb_path, "MTO_Backups")
+                usb_dest = os.path.join(usb_path, "RevenueSystem_Backups")
                 os.makedirs(usb_dest, exist_ok=True)
                 shutil.copy2(local_path, os.path.join(usb_dest, filename))
                 shutil.copy2(local_path + ".sha256", os.path.join(usb_dest, filename + ".sha256"))
@@ -158,12 +160,17 @@ async def run_hybrid_backup(user=None):
             health_detail = backup_status["last_verify"]
             cloud_status = "SYNCED" if cloud_success else "PENDING"
             
-            def log_to_db():
-                db.db_query(
-                    "INSERT INTO backup_history (filename, file_path, checksum, status, health, user_name) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (filename, local_path, checksum, cloud_status, health_detail, user_name)
-                )
-            await asyncio.to_thread(log_to_db)
+            history = BackupHistory(
+                filename=filename,
+                file_path=local_path,
+                checksum=checksum,
+                status=cloud_status,
+                health="OK" if v_success else health_detail,
+                user_name=user_name,
+                timestamp=datetime.now()
+            )
+            db_session.add(history)
+            db_session.commit()
             
         except Exception as db_err:
             print(f"Failed to log backup to DB: {db_err}")
@@ -181,11 +188,12 @@ async def run_hybrid_backup(user=None):
 def _create_local_dump(dest_path):
     from utils import log_error_to_file
 
-    dump_path = db.DB_CONFIG.get("mysqldump_path", "mysqldump")
-    db_user = db.DB_CONFIG["user"]
-    db_pass = db.DB_CONFIG["password"]
-    db_name = db.DB_CONFIG["database"]
-    db_host = db.DB_CONFIG["host"]
+    dump_path = DB_CONFIG.get("mysqldump_path", "mysqldump")
+    db_user = DB_CONFIG["user"]
+    db_pass = DB_CONFIG["password"]
+    db_name = DB_CONFIG["database"]
+    db_host = DB_CONFIG["host"]
+    db_port = DB_CONFIG.get("port", 3306)
 
     # Standard search paths for mysqldump on Windows/XAMPP
     COMMON_DUMP_PATHS = [
@@ -198,9 +206,7 @@ def _create_local_dump(dest_path):
 
     actual_dump_executable = None
     for p in COMMON_DUMP_PATHS:
-        # Check if it's just a command name or a full path
         if "\\" not in p and "/" not in p:
-            # Check if command is in PATH
             if shutil.which(p):
                 actual_dump_executable = p
                 break
@@ -218,15 +224,14 @@ def _create_local_dump(dest_path):
                 actual_dump_executable,
                 f"-u{db_user}",
                 f"-h{db_host}",
+                f"-P{db_port}",
                 "--single-transaction",
                 db_name,
             ]
             if db_pass:
                 cmd.insert(2, f"-p{db_pass}")
-
-            # Use shell=True only on windows if executable is just a name
-            is_win = os.name == 'nt'
-            subprocess.run(cmd, stdout=f, check=True, timeout=300, shell=is_win if "\\" not in actual_dump_executable else False)
+            
+            subprocess.run(cmd, stdout=f, check=True, timeout=300)
         return True
     except subprocess.TimeoutExpired:
         log_error_to_file(
@@ -252,29 +257,25 @@ def _find_usb_drive():
     """Scans all drive letters for the secret file."""
     import string
 
-    # Try common drive letters (skip C: and D: usually)
     for letter in string.ascii_uppercase[4:]:  # E through Z
         drive = f"{letter}:\\"
         if os.path.exists(os.path.join(drive, USB_SECRET_FILE)):
+            return drive
+        if os.path.exists(os.path.join(drive, "mto_backup_drive.txt")):
             return drive
     return None
 
 
 def _sync_to_cloud(file_path):
-    """Placeholder for cloud upload (e.g., S3, Google Drive, or custom API)."""
+    """Placeholder for cloud upload."""
     print(f"Simulating cloud upload for {file_path}...")
-    # In a real scenario, use requests.post or a cloud SDK here
     import time
-
     time.sleep(2)  # Simulate network lag
     return True
 
 
-
-
 def _generate_checksum(file_path):
     import hashlib
-
     sha256_hash = hashlib.sha256()
     with open(file_path, "rb") as f:
         for byte_block in iter(lambda: f.read(4096), b""):

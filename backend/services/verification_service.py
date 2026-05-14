@@ -1,6 +1,8 @@
 import os
 import subprocess
-import db_manager as db
+from sqlalchemy import text
+from backend.database import SessionLocal
+from db_manager import DB_CONFIG
 
 def verify_sql_dump(file_path):
     """
@@ -30,28 +32,56 @@ def verify_sql_dump(file_path):
     return perform_restore_test(file_path)
 
 
-def perform_restore_test(file_path):
+def perform_restore_test(file_path, db_session: Session = None):
     """
     Verifies that the backup can actually be restored by performing
     a dry-run restore into a temporary validation database.
     """
+    if not db_session:
+        db_session = SessionLocal()
+
     # Create a safe temp name (sanitize filename to be a valid DB name)
     base_name = os.path.basename(file_path).split('.')[0]
     safe_name = "".join([c if c.isalnum() else "_" for c in base_name])
     temp_db_name = f"mto_verify_{safe_name}"
     
-    mysql_path = db.DB_CONFIG.get("mysql_path", "mysql")
-    db_user = db.DB_CONFIG["user"]
-    db_pass = db.DB_CONFIG["password"]
-    db_host = db.DB_CONFIG["host"]
+    mysql_path = DB_CONFIG.get("mysql_path", "mysql")
+    db_user = DB_CONFIG["user"]
+    db_pass = DB_CONFIG["password"]
+    db_host = DB_CONFIG["host"]
+
+    # Standard search paths for mysql on Windows/XAMPP
+    COMMON_MYSQL_PATHS = [
+        mysql_path,
+        r"C:\xampp\mysql\bin\mysql.exe",
+        r"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe",
+        r"C:\Program Files\MySQL\MySQL Server 5.7\bin\mysql.exe",
+        r"D:\xampp\mysql\bin\mysql.exe",
+        r"C:\mysql\bin\mysql.exe",
+    ]
+
+    import shutil
+    actual_mysql_executable = None
+    for p in COMMON_MYSQL_PATHS:
+        if "\\" not in p and "/" not in p:
+            if shutil.which(p):
+                actual_mysql_executable = p
+                break
+        elif os.path.exists(p):
+            actual_mysql_executable = p
+            break
+    
+    if not actual_mysql_executable:
+        return False, "Could not locate 'mysql' executable for restore test."
 
     try:
         # 1. Create temporary database
-        db.db_query(f"CREATE DATABASE IF NOT EXISTS {temp_db_name}")
+        db_session.execute(text(f"CREATE DATABASE IF NOT EXISTS {temp_db_name}"))
+        db_session.commit()
         
         # 2. Restore the dump
         cmd = [
-            mysql_path,
+            actual_mysql_executable,
             f"-u{db_user}",
             f"-h{db_host}",
             temp_db_name
@@ -67,11 +97,12 @@ def perform_restore_test(file_path):
             subprocess.run(cmd, stdin=f, check=True, timeout=600, shell=shell_required)
 
         # 3. Verify data exists (e.g., check properties table)
-        res = db.db_query(f"SELECT COUNT(*) FROM {temp_db_name}.properties", fetch=True)
-        count = res[0][0] if res else 0
+        res = db_session.execute(text(f"SELECT COUNT(*) FROM {temp_db_name}.properties")).first()
+        count = res[0] if res else 0
         
         # 4. Cleanup
-        db.db_query(f"DROP DATABASE {temp_db_name}")
+        db_session.execute(text(f"DROP DATABASE {temp_db_name}"))
+        db_session.commit()
         
         if count > 0:
             return True, f"Restore Test Passed: {count} records verified."
@@ -81,7 +112,9 @@ def perform_restore_test(file_path):
     except Exception as e:
         # Cleanup on failure if DB was created
         try:
-            db.db_query(f"DROP DATABASE IF EXISTS {temp_db_name}")
+            db_session.rollback()
+            db_session.execute(text(f"DROP DATABASE IF EXISTS {temp_db_name}"))
+            db_session.commit()
         except:
             pass
         return False, f"Restore Test Failed: {str(e)}"

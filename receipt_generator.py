@@ -6,6 +6,7 @@ from backend.generators.receipt_gen import generate_or_receipt
 from backend.generators.soa_gen import generate_statement_of_account, bulk_generate_soa
 from backend.generators.notice_gen import generate_delinquency_notice
 from backend.generators.dossier_gen import generate_property_dossier
+from backend.generators.computation_gen import generate_delinquency_computation
 
 # Re-exporting for system-wide compatibility
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "bulk_generate_soa",
     "generate_delinquency_notice",
     "generate_property_dossier",
+    "generate_delinquency_computation",
 ]

@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
-import db_manager as db
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
+from backend.models import Property, Payment
+from backend.database import SessionLocal
 
 
-def global_search(query, limit=10):
+def global_search(query, limit=10, db_session: Session = None):
     """
     Performs a unified search across Properties and Payments.
     Returns a list of results categorized by type.
@@ -10,54 +13,52 @@ def global_search(query, limit=10):
     if not query or len(str(query).strip()) < 2:
         return []
 
+    if not db_session:
+        db_session = SessionLocal()
+
     search_term = f"%{query}%"
     results = []
 
     # 1. Search Properties
-    prop_query = """
-        SELECT id, td_number, owner_name, 'property' as type
-        FROM properties
-        WHERE is_deleted = 0 
-          AND (td_number LIKE %s OR owner_name LIKE %s OR pin LIKE %s)
-        LIMIT %s
-    """
-    props = db.db_query(
-        prop_query,
-        (search_term, search_term, search_term, limit),
-        fetch=True,
-        commit=False,
-    )
-    for p in props or []:
+    props = db_session.query(Property).filter(
+        Property.is_deleted == False,
+        or_(
+            Property.td_number.like(search_term),
+            Property.owner_name.like(search_term),
+            Property.pin.like(search_term)
+        )
+    ).limit(limit).all()
+
+    for p in props:
         results.append(
             {
-                "id": p[0],
-                "title": f"🏠 {p[1]}",
-                "subtitle": p[2],
+                "id": p.id,
+                "title": f"🏠 {p.td_number}",
+                "subtitle": p.owner_name,
                 "type": "property",
-                "identifier": p[1],  # TD Number for navigation
+                "identifier": p.td_number,  # TD Number for navigation
             }
         )
 
     # 2. Search Payments/Receipts
-    pay_query = """
-        SELECT pay.id, pay.or_number, prop.owner_name, 'receipt' as type
-        FROM payments pay
-        JOIN properties prop ON prop.id = pay.property_id
-        WHERE prop.is_deleted = 0
-          AND (pay.or_number LIKE %s OR prop.owner_name LIKE %s)
-        LIMIT %s
-    """
-    pays = db.db_query(
-        pay_query, (search_term, search_term, limit), fetch=True, commit=False
-    )
-    for pay in pays or []:
+    pays = db_session.query(Payment, Property.owner_name).join(
+        Property, Property.id == Payment.property_id
+    ).filter(
+        Property.is_deleted == False,
+        or_(
+            Payment.or_number.like(search_term),
+            Property.owner_name.like(search_term)
+        )
+    ).limit(limit).all()
+
+    for pay, owner_name in pays:
         results.append(
             {
-                "id": pay[0],
-                "title": f"📄 OR: {pay[1]}",
-                "subtitle": f"Payor: {pay[2]}",
+                "id": pay.id,
+                "title": f"📄 OR: {pay.or_number}",
+                "subtitle": f"Payor: {owner_name}",
                 "type": "receipt",
-                "identifier": pay[0],  # Payment ID for navigation
+                "identifier": pay.id,  # Payment ID for navigation
             }
         )
 

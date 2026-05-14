@@ -1,47 +1,47 @@
 # -*- coding: utf-8 -*-
 import re
-import db_manager as db
-from services.auth_service import get_username, require_permission
-from services.billing_service import format_tax_years, normalize_date_input
+# import db_manager as db # Mark for removal
+from backend.database import SessionLocal
+from backend.models import ReceiptHistory
+from sqlalchemy import or_, and_, func
+from sqlalchemy.orm import Session
+from backend.models import Payment, Property, PropertyBilling, PaymentBilling
+from backend.services.auth_service import get_username, require_permission
+from backend.services.billing_service import format_tax_years, normalize_date_input
 
 
 def find_duplicate_payment(
-    property_id, or_number, tax_year_text, exclude_payment_id=None, cur=None
+    property_id, or_number, tax_year_text, exclude_payment_id=None, cur=None, db_session: Session = None
 ):
     normalized_years = format_tax_years(tax_year_text)
     if not property_id or not or_number or not normalized_years:
         return None
-    query = """
-        SELECT id, or_number, tax_year, amount, date_paid
-        FROM payments
-        WHERE property_id = %s AND or_number = %s AND COALESCE(tax_year, '') = %s
-    """
-    params = [property_id, or_number, normalized_years]
+
+    if not db_session:
+        db_session = SessionLocal()
+
+    query = db_session.query(Payment).filter(
+        Payment.property_id == property_id,
+        Payment.or_number == or_number,
+        func.coalesce(Payment.tax_year, '') == normalized_years
+    )
     if exclude_payment_id:
-        query += " AND id <> %s"
-        params.append(exclude_payment_id)
-    query += " ORDER BY id DESC LIMIT 1"
-    if cur is not None:
-        cur.execute(query, tuple(params))
-        row = cur.fetchone()
-        if not row:
-            return None
-    else:
-        rows = db.db_query(query, tuple(params), fetch=True, commit=False)
-        if not rows:
-            return None
-        row = rows[0]
+        query = query.filter(Payment.id != exclude_payment_id)
+    
+    row = query.order_by(Payment.id.desc()).first()
+    if not row:
+        return None
     return {
-        "payment_id": row[0],
-        "or_number": row[1],
-        "tax_year": row[2],
-        "amount": float(row[3] or 0),
-        "date_paid": row[4],
+        "payment_id": row.id,
+        "or_number": row.or_number,
+        "tax_year": row.tax_year,
+        "amount": float(row.amount or 0),
+        "date_paid": row.date_paid,
     }
 
 
 def find_duplicate_payment_entry(
-    td_number, or_number, or_date, tax_year_text, exclude_payment_id=None, cur=None
+    td_number, or_number, or_date, tax_year_text, exclude_payment_id=None, cur=None, db_session: Session = None
 ):
     td_text = str(td_number or "").strip()
     or_text = str(or_number or "").strip()
@@ -49,95 +49,77 @@ def find_duplicate_payment_entry(
     normalized_years = format_tax_years(tax_year_text)
     if not td_text or not or_text or not date_text or not normalized_years:
         return None
-    query = """
-        SELECT pay.id, prop.id, prop.td_number, prop.owner_name, pay.or_number, pay.date_paid, pay.tax_year, pay.amount
-        FROM payments pay
-        JOIN properties prop ON prop.id = pay.property_id
-        WHERE prop.is_deleted = 0
-          AND prop.td_number = %s
-          AND pay.or_number = %s
-          AND pay.date_paid = %s
-          AND COALESCE(pay.tax_year, '') = %s
-    """
-    params = [td_text, or_text, date_text, normalized_years]
+
+    if not db_session:
+        db_session = SessionLocal()
+
+    row = db_session.query(Payment, Property).join(Property, Property.id == Payment.property_id).filter(
+        Property.is_deleted == False,
+        Property.td_number == td_text,
+        Payment.or_number == or_text,
+        Payment.date_paid == date_text,
+        func.coalesce(Payment.tax_year, '') == normalized_years
+    )
     if exclude_payment_id:
-        query += " AND pay.id <> %s"
-        params.append(exclude_payment_id)
-    query += " ORDER BY pay.id DESC LIMIT 1"
-    if cur is not None:
-        cur.execute(query, tuple(params))
-        row = cur.fetchone()
-        if not row:
-            return None
-    else:
-        rows = db.db_query(query, tuple(params), fetch=True, commit=False)
-        if not rows:
-            return None
-        row = rows[0]
+        row = row.filter(Payment.id != exclude_payment_id)
+    
+    result = row.order_by(Payment.id.desc()).first()
+    if not result:
+        return None
+    pay, prop = result
     return {
-        "payment_id": row[0],
-        "property_id": row[1],
-        "td_number": row[2],
-        "owner_name": row[3],
-        "or_number": row[4],
-        "date_paid": row[5],
-        "tax_year": row[6],
-        "amount": float(row[7] or 0),
+        "payment_id": pay.id,
+        "property_id": prop.id,
+        "td_number": prop.td_number,
+        "owner_name": prop.owner_name,
+        "or_number": pay.or_number,
+        "date_paid": pay.date_paid,
+        "tax_year": pay.tax_year,
+        "amount": float(pay.amount or 0),
     }
 
 
-def get_existing_payment_amount(property_id, or_number, or_date, tax_year_text):
+def get_existing_payment_amount(property_id, or_number, or_date, tax_year_text, db_session: Session = None):
     normalized_years = format_tax_years(tax_year_text)
     normalized_date = normalize_date_input(or_date)
     if not property_id or not or_number or not normalized_date or not normalized_years:
         return None
-    rows = db.db_query(
-        """
-        SELECT amount
-        FROM payments
-        WHERE property_id = %s
-          AND or_number = %s
-          AND date_paid = %s
-          AND COALESCE(tax_year, '') = %s
-        ORDER BY id DESC
-        LIMIT 1
-        """,
-        (property_id, str(or_number).strip(), normalized_date, normalized_years),
-        fetch=True,
-        commit=False,
-    )
-    if not rows:
-        return None
-    return float(rows[0][0] or 0)
+    
+    if not db_session:
+        db_session = SessionLocal()
+
+    row = db_session.query(Payment.amount).filter(
+        Payment.property_id == property_id,
+        Payment.or_number == str(or_number).strip(),
+        Payment.date_paid == normalized_date,
+        func.coalesce(Payment.tax_year, '') == normalized_years
+    ).order_by(Payment.id.desc()).first()
+    return float(row[0] or 0) if row else None
 
 
 def acquire_payment_post_lock(property_id, user_name, stale_minutes=30):
-    return db._acquire_named_lock(
+    from db_manager import _acquire_named_lock
+    return _acquire_named_lock(
         "payment_post_locks", "property_id", property_id, user_name, stale_minutes
     )
 
 
 def release_payment_post_lock(property_id, user_name):
-    db._release_named_lock("payment_post_locks", "property_id", property_id, user_name)
+    from db_manager import _release_named_lock
+    _release_named_lock("payment_post_locks", "property_id", property_id, user_name)
 
 
 def release_all_payment_post_locks(user_name):
-    db._release_all_named_locks("payment_post_locks", user_name)
+    from db_manager import _release_all_named_locks
+    _release_all_named_locks("payment_post_locks", user_name)
 
 
-def get_next_or_number(default_prefix="OR-"):
-    rows = db.db_query(
-        """
-        SELECT or_number
-        FROM payments
-        WHERE or_number IS NOT NULL AND TRIM(or_number) <> ''
-        ORDER BY id DESC
-        LIMIT 20
-        """,
-        fetch=True,
-        commit=False,
-    )
-    for row in rows or []:
+def get_next_or_number(default_prefix="OR-", db_session: Session = None):
+    if not db_session:
+        db_session = SessionLocal()
+
+    rows = db_session.query(Payment.or_number).filter(Payment.or_number != None, Payment.or_number != '').order_by(Payment.id.desc()).limit(20).all()
+    for row in rows:
         current = str(row[0]).strip()
         match = re.search(r"^(.*?)(\d+)$", current)
         if not match:
@@ -148,244 +130,251 @@ def get_next_or_number(default_prefix="OR-"):
     return f"{default_prefix}000001"
 
 
-def get_recent_payments(limit=8):
+def get_recent_payments(limit=8, db_session: Session = None):
     safe_limit = max(1, int(limit))
-    rows = (
-        db.db_query(
-            f"""
-        SELECT pay.date_paid, pay.or_number, prop.td_number, prop.owner_name, pay.tax_year, pay.amount
-        FROM payments pay
-        JOIN properties prop ON prop.id = pay.property_id
-        WHERE prop.is_deleted = 0
-        ORDER BY COALESCE(pay.date_paid, DATE(pay.created_at)) DESC, pay.id DESC
-        LIMIT {safe_limit}
-        """,
-            fetch=True,
-            commit=False,
-        )
-        or []
-    )
-    cleaned = []
-    for row in rows:
-        if isinstance(row, (list, tuple)) and len(row) >= 6:
-            cleaned.append(row)
-    return cleaned
+    if not db_session:
+        db_session = SessionLocal()
+
+    rows = db_session.query(
+        Payment.date_paid, Payment.or_number, Property.td_number, Property.owner_name, Payment.tax_year, Payment.amount
+    ).join(Property, Property.id == Payment.property_id).filter(
+        Property.is_deleted == False
+    ).order_by(
+        func.coalesce(Payment.date_paid, func.date(Payment.created_at)).desc(), Payment.id.desc()
+    ).limit(safe_limit).all()
+    return [list(r) for r in rows]
 
 
-def get_monthly_collection_trend(months=6):
+def get_monthly_collection_trend(months=6, db_session: Session = None):
     safe_months = max(1, int(months))
-    rows = (
-        db.db_query(
-            f"""
-        SELECT DATE_FORMAT(bucket.month_start, '%%Y-%%m') AS month_key,
-               COALESCE(SUM(pay.amount), 0) AS total_amount
-        FROM (
-            SELECT DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL seq.n MONTH), '%%Y-%%m-01') AS month_start
-            FROM (
-                SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3
-                UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7
-                UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL SELECT 10 UNION ALL SELECT 11
-            ) seq
-            WHERE seq.n < {safe_months}
-        ) bucket
-        LEFT JOIN payments pay
-            ON DATE_FORMAT(COALESCE(pay.date_paid, DATE(pay.created_at)), '%%Y-%%m-01') = bucket.month_start
-        GROUP BY bucket.month_start
-        ORDER BY bucket.month_start
-        """,
-            fetch=True,
-            commit=False,
-        )
-        or []
-    )
-    cleaned = []
-    for row in rows:
-        if isinstance(row, (list, tuple)) and len(row) >= 2:
-            cleaned.append({"month": row[0] or "", "total": float(row[1] or 0)})
-    return cleaned
+    if not db_session:
+        db_session = SessionLocal()
+
+    from datetime import datetime, timedelta
+    start_date = datetime.now() - timedelta(days=30 * safe_months)
+    
+    results = db_session.query(
+        func.date_format(func.coalesce(Payment.date_paid, func.date(Payment.created_at)), '%Y-%m').label('month'),
+        func.sum(Payment.amount).label('total')
+    ).filter(
+        func.coalesce(Payment.date_paid, func.date(Payment.created_at)) >= start_date
+    ).group_by('month').order_by('month').all()
+    
+    return [{"month": r[0], "total": float(r[1] or 0)} for r in results]
 
 
-def get_revenue_by_barangay():
-    query = """
-        SELECT COALESCE(prop.barangay, 'UNSPECIFIED') as brgy, 
-               SUM(pay.amount) as total
-        FROM payments pay
-        JOIN properties prop ON prop.id = pay.property_id
-        WHERE prop.is_deleted = 0
-        GROUP BY brgy
-        ORDER BY total DESC
-    """
-    rows = db.db_query(query, fetch=True, commit=False) or []
-    return [{"barangay": r[0], "total": float(r[1] or 0)} for r in rows]
+def get_revenue_by_barangay(db_session: Session = None):
+    if not db_session:
+        db_session = SessionLocal()
+
+    results = db_session.query(
+        func.coalesce(Property.barangay, 'UNSPECIFIED').label('brgy'),
+        func.sum(Payment.amount).label('total')
+    ).join(Property, Property.id == Payment.property_id).filter(
+        Property.is_deleted == False
+    ).group_by('brgy').order_by(func.sum(Payment.amount).desc()).all()
+    
+    return [{"barangay": r[0], "total": float(r[1] or 0)} for r in results]
 
 
-def get_collection_kpis():
-    query = """
-        SELECT 
-            SUM(amount) as total_revenue,
-            COUNT(id) as payment_count,
-            (SELECT SUM(amount) FROM payments WHERE DATE(date_paid) = CURDATE()) as today_collection,
-            (SELECT SUM(amount) FROM payments WHERE YEAR(date_paid) = YEAR(CURDATE()) AND MONTH(date_paid) = MONTH(CURDATE())) as this_month
-        FROM payments
-    """
-    rows = db.db_query(query, fetch=True, commit=False) or []
-    if not rows:
-        return {"total_revenue": 0, "payment_count": 0, "today": 0, "month": 0}
-    r = rows[0]
+def get_collection_kpis(db_session: Session = None):
+    if not db_session:
+        db_session = SessionLocal()
+
+    total = db_session.query(func.sum(Payment.amount), func.count(Payment.id)).first()
+    today = db_session.query(func.sum(Payment.amount)).filter(func.date(Payment.date_paid) == func.curdate()).scalar()
+    month = db_session.query(func.sum(Payment.amount)).filter(
+        func.year(Payment.date_paid) == func.year(func.curdate()),
+        func.month(Payment.date_paid) == func.month(func.curdate())
+    ).scalar()
+    
     return {
-        "total_revenue": float(r[0] or 0),
-        "payment_count": int(r[1] or 0),
-        "today": float(r[2] or 0),
-        "month": float(r[3] or 0)
+        "total_revenue": float(total[0] or 0),
+        "payment_count": int(total[1] or 0),
+        "today": float(today or 0),
+        "month": float(month or 0)
     }
 
 
-def get_unified_payment_history(term):
+def get_unified_payment_history(term, db_session: Session = None):
     """
     Unified query for the Integrated Ledger & Receipt History.
-    Returns payment details combined with receipt audit info.
+    Returns payment details combined with receipt audit info using SQLAlchemy.
     """
     if not term:
         return []
+
+    if not db_session:
+        db_session = SessionLocal()
+
     like_term = f"%{term}%"
-    query = """
-        SELECT 
-            pay.id as payment_id,
-            pay.date_paid, 
-            pay.or_number, 
-            pay.tax_year,
-            (prop.assessed_value * 0.01) AS basic,
-            (prop.assessed_value * 0.01) AS sef,
-            prop.penalty, 
-            prop.discount,
-            pay.amount, 
-            pay.posted_by,
-            rh.file_path,
-            rh.id as receipt_id,
-            prop.td_number,
-            prop.owner_name
-        FROM payments pay
-        JOIN properties prop ON prop.id = pay.property_id
-        LEFT JOIN receipt_history rh ON rh.payment_id = pay.id
-        WHERE prop.is_deleted = 0
-          AND (prop.td_number = %s OR prop.owner_name LIKE %s OR pay.or_number LIKE %s)
-        ORDER BY pay.date_paid DESC, pay.id DESC
-    """
-    params = (term, like_term, like_term)
-    return db.db_query(query, params, fetch=True, commit=False) or []
+    results = db_session.query(
+        Payment.id.label('payment_id'),
+        Payment.date_paid,
+        Payment.or_number,
+        Payment.tax_year,
+        (Property.assessed_value * 0.01).label('basic'),
+        (Property.assessed_value * 0.01).label('sef'),
+        Property.penalty,
+        Property.discount,
+        Payment.amount,
+        Payment.posted_by,
+        ReceiptHistory.file_path,
+        ReceiptHistory.id.label('receipt_id'),
+        Property.td_number,
+        Property.owner_name
+    ).join(Property, Property.id == Payment.property_id).outerjoin(
+        ReceiptHistory, ReceiptHistory.payment_id == Payment.id
+    ).filter(
+        Property.is_deleted == False,
+        or_(
+            Property.td_number == term,
+            Property.owner_name.like(like_term),
+            Payment.or_number.like(like_term)
+        )
+    ).order_by(Payment.date_paid.desc(), Payment.id.desc()).all()
+    
+    return [list(r) for r in results]
 
 
-def get_payment_ledger(td_number):
+def get_payment_ledger(td_number, db_session: Session = None):
     """
-    Specific ledger query for the Dossier UI.
-    Indices: 0:Date, 1:OR, 2:Year, 3:Basic, 4:SEF, 5:Penalty, 6:Total
+    Specific ledger query for the Dossier UI using SQLAlchemy.
     """
-    query = """
-        SELECT 
-            pay.date_paid, 
-            pay.or_number, 
-            pay.tax_year,
-            (prop.assessed_value * 0.01) AS basic,
-            (prop.assessed_value * 0.01) AS sef,
-            prop.penalty,
-            pay.amount
-        FROM payments pay
-        JOIN properties prop ON prop.id = pay.property_id
-        WHERE prop.td_number = %s AND prop.is_deleted = 0
-        ORDER BY pay.date_paid DESC, pay.id DESC
-    """
-    return db.db_query(query, (td_number,), fetch=True, commit=False) or []
+    if not db_session:
+        db_session = SessionLocal()
+
+    results = db_session.query(
+        Payment.date_paid,
+        Payment.or_number,
+        Payment.tax_year,
+        (Property.assessed_value * 0.01).label('basic'),
+        (Property.assessed_value * 0.01).label('sef'),
+        Property.penalty,
+        Payment.amount
+    ).join(Property, Property.id == Payment.property_id).filter(
+        Property.td_number == td_number,
+        Property.is_deleted == False
+    ).order_by(Payment.date_paid.desc(), Payment.id.desc()).all()
+    return [list(r) for r in results]
 
 
-def get_payment_receipt_records(term, limit=50, offset=0):
+def get_payment_receipt_records(term, limit=50, offset=0, db_session: Session = None):
     safe_limit = max(1, int(limit))
     safe_offset = max(0, int(offset))
+    
+    if not db_session:
+        db_session = SessionLocal()
+
     like_term = f"%{term}%"
-    return (
-        db.db_query(
-            f"""
-        SELECT pay.id, pay.date_paid, prop.td_number, prop.owner_name,
-               prop.kind_of_property, pay.or_number, pay.tax_year, pay.amount,
-               rh.file_path, rh.generated_by, rh.status, rh.id as rh_id
-        FROM payments pay
-        JOIN properties prop ON prop.id = pay.property_id
-        LEFT JOIN receipt_history rh ON rh.payment_id = pay.id
-        WHERE prop.is_deleted = 0
-          AND (prop.td_number LIKE %s OR prop.owner_name LIKE %s OR pay.or_number LIKE %s)
-        ORDER BY pay.date_paid DESC, pay.id DESC
-        LIMIT {safe_limit} OFFSET {safe_offset}
-        """,
-            (like_term, like_term, like_term),
-            fetch=True,
-            commit=False,
+    results = db_session.query(
+        Payment.id,
+        Payment.date_paid,
+        Property.td_number,
+        Property.owner_name,
+        Property.kind_of_property,
+        Payment.or_number,
+        Payment.tax_year,
+        Payment.amount,
+        ReceiptHistory.file_path,
+        ReceiptHistory.generated_by,
+        ReceiptHistory.status,
+        ReceiptHistory.id.label('rh_id')
+    ).join(Property, Property.id == Payment.property_id).outerjoin(
+        ReceiptHistory, ReceiptHistory.payment_id == Payment.id
+    ).filter(
+        Property.is_deleted == False,
+        or_(
+            Property.td_number.like(like_term),
+            Property.owner_name.like(like_term),
+            Payment.or_number.like(like_term)
         )
-        or []
-    )
+    ).order_by(Payment.date_paid.desc(), Payment.id.desc()).limit(safe_limit).offset(safe_offset).all()
+    
+    return [list(r) for r in results]
 
 
-def get_payment_receipt_details(payment_id):
-    rows = db.db_query(
-        """
-        SELECT prop.id, prop.td_number, prop.owner_name, prop.payor_name, prop.lot_number,
-               prop.area, prop.location, prop.kind_of_property, prop.accountable_officer,
-               prop.assessed_value, prop.penalty, pay.id, pay.amount, pay.or_number,
-               pay.date_paid, pay.tax_year, rh.file_path, rh.id as rh_id
-        FROM payments pay
-        JOIN properties prop ON prop.id = pay.property_id
-        LEFT JOIN receipt_history rh ON rh.payment_id = pay.id
-        WHERE pay.id = %s AND prop.is_deleted = 0
-        LIMIT 1
-        """,
-        (payment_id,),
-        fetch=True,
-        commit=False,
-    )
-    if not rows:
+def get_payment_receipt_details(payment_id, db_session: Session = None):
+    if not db_session:
+        db_session = SessionLocal()
+
+    row = db_session.query(
+        Property.id.label('property_id'),
+        Property.td_number,
+        Property.owner_name,
+        Property.payor_name,
+        Property.lot_number,
+        Property.area,
+        Property.location,
+        Property.kind_of_property,
+        Property.accountable_officer,
+        Property.assessed_value,
+        Property.penalty,
+        Payment.id.label('payment_id'),
+        Payment.amount,
+        Payment.or_number,
+        Payment.date_paid,
+        Payment.tax_year,
+        ReceiptHistory.file_path,
+        ReceiptHistory.id.label('rh_id')
+    ).join(Property, Property.id == Payment.property_id).outerjoin(
+        ReceiptHistory, ReceiptHistory.payment_id == Payment.id
+    ).filter(
+        Payment.id == payment_id,
+        Property.is_deleted == False
+    ).first()
+    
+    if not row:
         return None
-    r = rows[0]
     return {
-        "property_id": r[0],
-        "td_number": r[1],
-        "owner_name": r[2],
-        "payor_name": r[3],
-        "lot_number": r[4],
-        "area": r[5],
-        "location": r[6],
-        "kind_of_property": r[7],
-        "accountable_officer": r[8],
-        "assessed_value": float(r[9] or 0),
-        "penalty": float(r[10] or 0),
-        "payment_id": r[11],
-        "amount": float(r[12] or 0),
-        "or_number": r[13],
-        "date_paid": r[14],
-        "tax_year": r[15],
-        "file_path": r[16],
-        "receipt_history_id": r[17],
+        "property_id": row.property_id,
+        "td_number": row.td_number,
+        "owner_name": row.owner_name,
+        "payor_name": row.payor_name,
+        "lot_number": row.lot_number,
+        "area": row.area,
+        "location": row.location,
+        "kind_of_property": row.kind_of_property,
+        "accountable_officer": row.accountable_officer,
+        "assessed_value": float(row.assessed_value or 0),
+        "penalty": float(row.penalty or 0),
+        "payment_id": row.payment_id,
+        "amount": float(row.amount or 0),
+        "or_number": row.or_number,
+        "date_paid": row.date_paid,
+        "tax_year": row.tax_year,
+        "file_path": row.file_path,
+        "receipt_history_id": row.rh_id,
     }
 
 
 @require_permission("receipt_generate")
 def save_receipt_record(
-    property_id, payment_id, details, file_path, user_name, **kwargs
+    property_id, payment_id, details, file_path, user_name, db_session: Session = None, **kwargs
 ):
-    def operation(cur):
-        cur.execute(
-            """
-            INSERT INTO receipt_history (property_id, payment_id, or_number, file_path, generated_by, status)
-            VALUES (%s, %s, %s, %s, %s, 'PDF READY')
-            ON DUPLICATE KEY UPDATE file_path=%s, generated_by=%s, generated_at=NOW(), status='PDF READY'
-            """,
-            (
-                property_id,
-                payment_id,
-                details.get("or_number"),
-                file_path,
-                get_username(user_name),
-                file_path,
-                get_username(user_name),
-            ),
-        )
-        return {"lastrowid": cur.lastrowid}
+    if not db_session:
+        db_session = SessionLocal()
 
-    return db.execute_transaction(operation)
+    from datetime import datetime
+    
+    # Check if exists
+    rh = db_session.query(ReceiptHistory).filter(ReceiptHistory.payment_id == payment_id).first()
+    if rh:
+        rh.file_path = file_path
+        rh.generated_by = get_username(user_name)
+        rh.generated_at = datetime.now()
+        rh.status = 'PDF READY'
+    else:
+        rh = ReceiptHistory(
+            property_id=property_id,
+            payment_id=payment_id,
+            or_number=details.get("or_number"),
+            file_path=file_path,
+            generated_by=get_username(user_name),
+            generated_at=datetime.now(),
+            status='PDF READY'
+        )
+        db_session.add(rh)
+    
+    db_session.commit()
+    return {"id": rh.id}

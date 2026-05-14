@@ -7,10 +7,27 @@ from utils.logger import mto_logger
 CONNECTION_STATUS = "ONLINE" # ONLINE, OFFLINE, SYNCING
 
 import os
+import json
 from pathlib import Path
 
-BASE_URL = "https://localhost:8001"
-API_BASE_URL = BASE_URL  # Alias for auth_service compatibility
+# --- NETWORK CONFIGURATION ---
+# Default to localhost for development
+DEFAULT_SERVER_URL = "https://localhost:8001"
+
+BASE_URL = DEFAULT_SERVER_URL
+
+# Look for an external config file (useful for .exe deployment)
+CONFIG_PATH = Path("server_config.json")
+if CONFIG_PATH.exists():
+    try:
+        with open(CONFIG_PATH, "r") as f:
+            config_data = json.load(f)
+            BASE_URL = config_data.get("server_url", DEFAULT_SERVER_URL)
+            print(f"INFO: Connected to Production Server: {BASE_URL}")
+    except Exception as e:
+        print(f"WARNING: Could not read server_config.json, falling back to {DEFAULT_SERVER_URL}: {e}")
+
+API_BASE_URL = BASE_URL
 
 # --- SECURITY HARDENING: SSL CERTIFICATE PINNING ---
 # We point to the local cert.pem to eliminate MITM vulnerabilities
@@ -65,7 +82,13 @@ def get_token():
 
 
 def api_request(
-    method, endpoint, data=None, params=None, files=None, raw_response=False
+    method,
+    endpoint,
+    data=None,
+    params=None,
+    files=None,
+    raw_response=False,
+    queue_offline=True,
 ):
     """
     Centralized helper for all UI-to-Backend communication.
@@ -115,9 +138,11 @@ def api_request(
             data=data if files else None,
             params=params,
             headers=headers,
+            files=files,
             timeout=120,
             verify=verify_param,
         )
+
 
         mto_logger.info(f"API Response: {response.status_code}", status=response.status_code)
 
@@ -140,6 +165,12 @@ def api_request(
         global CONNECTION_STATUS
         CONNECTION_STATUS = "OFFLINE"
         
+        if not queue_offline:
+            raise Exception(
+                f"Cannot reach API server at {BASE_URL}. "
+                "Start the API server and verify server_config.json."
+            )
+
         # OFFLINE HANDLING
         if method == "GET":
             cached = manager.get_cached_data(f"{method}:{endpoint}:{params}")
@@ -175,6 +206,60 @@ def api_request(
         raise Exception(error_msg)
     except Exception as e:
         raise Exception(f"Unexpected Error: {str(e)}")
+
+
+def api_download_file(method, endpoint, params=None):
+    """
+    Specialized helper for downloading files (PDFs) from the backend.
+    Saves the response content to a temporary file and returns the path.
+    """
+    url = f"{BASE_URL}{endpoint}"
+    headers = {}
+    if _SESSION_TOKEN:
+        if is_token_expired(_SESSION_TOKEN):
+            raise Exception("Your session has expired. Please log in again.")
+        headers["Authorization"] = f"Bearer {_SESSION_TOKEN}"
+    
+    headers["X-Requested-With"] = "XMLHttpRequest"
+    
+    try:
+        import urllib3
+        import tempfile
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
+        verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
+        
+        response = requests.request(
+            method,
+            url,
+            params=params,
+            headers=headers,
+            timeout=120,
+            verify=verify_param,
+            stream=True
+        )
+        
+        response.raise_for_status()
+        
+        # Create a temporary file to store the PDF
+        suffix = ".pdf"
+        if "content-disposition" in response.headers:
+            cd = response.headers["content-disposition"]
+            if "filename=" in cd:
+                fname = cd.split("filename=")[1].strip('"')
+                if "." in fname:
+                    suffix = "." + fname.split(".")[-1]
+        
+        fd, path = tempfile.mkstemp(suffix=suffix)
+        with os.fdopen(fd, 'wb') as tmp:
+            for chunk in response.iter_content(chunk_size=8192):
+                tmp.write(chunk)
+                
+        return path
+        
+    except Exception as e:
+        status_code = getattr(getattr(e, "response", None), "status_code", "N/A")
+        raise Exception(f"File Download Error (Status {status_code}): {str(e)}")
 
 
 # Auto-Cache for successful GET requests

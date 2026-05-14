@@ -92,7 +92,7 @@ class LoginApp(ctk.CTk):
             self.logo_label = ctk.CTkLabel(self.brand_frame, image=self.logo_img, text="")
             self.logo_label.place(relx=0.5, rely=0.5, relwidth=1.1, relheight=1.1, anchor="center")
         except Exception as e:
-            self.logo_label = ctk.CTkLabel(self.brand_frame, text="MTO\nTREASURY", font=ModernTheme.H1, text_color="white")
+            self.logo_label = ctk.CTkLabel(self.brand_frame, text="REVENUE\nSYSTEM", font=ModernTheme.H1, text_color="white")
             self.logo_label.pack(expand=True)
 
         # --- Login Form ---

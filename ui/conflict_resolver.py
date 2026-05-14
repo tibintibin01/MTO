@@ -56,10 +56,20 @@ class ConflictArbitrationModal(ctk.CTkToplevel):
         text_area = ctk.CTkTextbox(card, font=("Consolas", 12))
         text_area.pack(fill="both", expand=True, padx=15, pady=(0, 15))
         
+        other_data = self.server_data if col == 0 else self.local_data
+        
         import json
-        formatted_data = json.dumps(data, indent=4)
-        text_area.insert("0.0", formatted_data)
+        for key, val in data.items():
+            line = f"{key}: {val}\n"
+            if key in other_data and other_data[key] != val:
+                # Highlight difference
+                text_area.insert("end", f"▶ {line}", "diff")
+            else:
+                text_area.insert("end", f"  {line}")
+        
+        text_area.tag_config("diff", foreground="#e74c3c", font=("Consolas", 12, "bold"))
         text_area.configure(state="disabled")
+
 
     def resolve(self, choice):
         """Signals the coordinator to resolve the conflict."""

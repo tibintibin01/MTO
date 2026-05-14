@@ -1,0 +1,21 @@
+﻿python.exe : C:\Users\user\Desktop\MTO\venv\Lib\site-packages\pydantic\_internal\_config.py:386: UserWarning: Valid 
+config keys have changed in V2:
+At line:1 char:1
++ & "C:\Users\user\Desktop\MTO\venv\Scripts\python.exe" "C:\Users\user\ ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\user\D... changed in V2::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+* 'allow_population_by_field_name' has been renamed to 'validate_by_name'
+  warnings.warn(message, UserWarning)
+C:\Users\user\Desktop\MTO\backend\main.py:30: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [17644]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8001 (Press CTRL+C to quit)

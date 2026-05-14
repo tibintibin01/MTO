@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
-import base64
-import hashlib
+from backend.models import User, RefreshToken, AuditLog
+from backend.database import SessionLocal, engine
+from utils import log_error_to_file, hash_password, is_password_hashed
 import secrets
+import hashlib
+import base64
 import binascii
-import db_manager as db
-from utils import log_error_to_file
+from datetime import datetime, timedelta
+
 from functools import wraps
 from fastapi import HTTPException
 import asyncio
@@ -46,10 +49,9 @@ def require_permission(permission: str):
     return decorator
 
 
-PASSWORD_SCHEME = "pbkdf2_sha256"
-PASSWORD_ITERATIONS = 200000
 
 ROLE_ALIASES = {
+
     "staff": "cashier",
 }
 
@@ -124,34 +126,18 @@ def has_permission(user, permission):
     return permission in ROLE_PERMISSIONS.get(role, set())
 
 
-def hash_password(password):
-    if password is None:
-        raise ValueError("Password is required.")
-    password_text = str(password)
-    salt = secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256",
-        password_text.encode("utf-8"),
-        salt,
-        PASSWORD_ITERATIONS,
-    )
-    salt_b64 = base64.b64encode(salt).decode("ascii")
-    digest_b64 = base64.b64encode(digest).decode("ascii")
-    return f"{PASSWORD_SCHEME}${PASSWORD_ITERATIONS}${salt_b64}${digest_b64}"
-
-
-def is_password_hashed(password_value):
-    return str(password_value).startswith(f"{PASSWORD_SCHEME}$")
-
 
 def verify_password(password, stored_value):
+
     if stored_value is None:
         return False
     stored_text = str(stored_value)
     if not is_password_hashed(stored_text):
         return str(password) == stored_text
     try:
+        from utils import PASSWORD_SCHEME
         scheme, iteration_text, salt_b64, digest_b64 = stored_text.split("$", 3)
+
         if scheme != PASSWORD_SCHEME:
             return False
         salt = base64.b64decode(salt_b64.encode("ascii"))
@@ -171,217 +157,272 @@ def verify_password(password, stored_value):
 
 
 def acquire_user_lock(user_id, user_name, stale_minutes=30):
-    return db._acquire_named_lock(
+    from db_manager import _acquire_named_lock
+    return _acquire_named_lock(
         "user_edit_locks", "user_id", user_id, user_name, stale_minutes
     )
 
 
 def release_user_lock(user_id, user_name):
-    db._release_named_lock("user_edit_locks", "user_id", user_id, user_name)
+    from db_manager import _release_named_lock
+    _release_named_lock("user_edit_locks", "user_id", user_id, user_name)
 
 
 def release_all_user_locks(user_name):
-    db._release_all_named_locks("user_edit_locks", user_name)
+    from db_manager import _release_all_named_locks
+    _release_all_named_locks("user_edit_locks", user_name)
 
 
-def get_user_by_username(username):
-    rows = db.db_query(
-        "SELECT id, username, role FROM users WHERE username=%s AND is_deleted=0 LIMIT 1",
-        (username,),
-        fetch=True,
-        commit=False,
-    )
-    if not rows:
+
+def get_user_by_username(username, db_session: Session):
+    u = db_session.query(User).filter(User.username == username, User.is_deleted == False).first()
+    if not u:
         return None
-    r = rows[0]
-    return {"id": r[0], "username": r[1], "role": r[2]}
+    return {"id": u.id, "username": u.username, "role": u.role}
 
 
-def verify_user_login(username, password):
-    rows = db.db_query(
-        "SELECT id, username, password, role, is_active, failed_attempts, lockout_until FROM users WHERE username=%s AND is_deleted=0 LIMIT 1",
-        (username,),
-        fetch=True,
-        commit=False,
-    )
-    if not rows:
+def verify_user_login(username, password, db_session: Session):
+    from datetime import datetime, timedelta
+    user = db_session.query(User).filter(User.username == username, User.is_deleted == False).first()
+    if not user:
         return None
-
-    user_id, stored_username, stored_password, role, is_active, failed_attempts, lockout_until = rows[0]
 
     # 1. Check if account is manually disabled
-    if not bool(is_active):
+    if not user.is_active:
         raise ValueError("Account is disabled. Please contact the administrator.")
 
     # 2. Check for active security lockout
-    from datetime import datetime
-    if lockout_until and lockout_until > datetime.now():
-        diff = lockout_until - datetime.now()
+    if user.lockout_until and user.lockout_until > datetime.now():
+        diff = user.lockout_until - datetime.now()
         minutes = int(diff.total_seconds() // 60) + 1
         raise ValueError(f"Account temporarily locked due to multiple failed attempts. Please try again in {minutes} minute(s).")
 
-    match = verify_password(password, stored_password)
+    match = verify_password(password, user.password)
 
     if not match:
         # Increment failed attempts
-        new_attempts = failed_attempts + 1
-        if new_attempts >= 5:
+        user.failed_attempts = (user.failed_attempts or 0) + 1
+        if user.failed_attempts >= 5:
             # Enforce 5-minute lockout
-            db.db_query(
-                "UPDATE users SET failed_attempts=%s, lockout_until=DATE_ADD(NOW(), INTERVAL 5 MINUTE) WHERE id=%s",
-                (new_attempts, user_id)
-            )
+            user.lockout_until = datetime.now() + timedelta(minutes=5)
+            db_session.commit()
             raise ValueError("Account locked for 5 minutes after 5 failed attempts.")
         else:
-            db.db_query(
-                "UPDATE users SET failed_attempts=%s WHERE id=%s",
-                (new_attempts, user_id)
-            )
-            remaining = 5 - new_attempts
+            db_session.commit()
+            remaining = 5 - user.failed_attempts
             raise ValueError(f"Invalid password. {remaining} attempt(s) remaining before lockout.")
 
     # 3. Successful login - Reset security counters
-    db.db_query(
-        "UPDATE users SET last_login=NOW(), failed_attempts=0, lockout_until=NULL WHERE id=%s", 
-        (user_id,)
-    )
+    user.last_login = datetime.now()
+    user.failed_attempts = 0
+    user.lockout_until = None
+    
+    # Auto-upgrade password hash if legacy
+    if user.password and not is_password_hashed(user.password):
+        user.password = hash_password(password)
+        
+    db_session.commit()
 
-    if stored_password and not is_password_hashed(stored_password):
-        upgraded_hash = hash_password(password)
-        db.db_query(
-            "UPDATE users SET password=%s WHERE id=%s", (upgraded_hash, user_id)
-        )
-
-    # Import locally to avoid circular dependencies
+    # Clear locks on login
     import backend.services.property_service as prop_service
-
     try:
-        prop_service.release_all_property_locks(stored_username)
+        prop_service.release_all_property_locks(user.username)
     except Exception as e:
         log_error_to_file("Failed to clear orphaned locks on login", error=e)
+
+    # 4. Generate tokens
+    from backend.deps import create_access_token
+    access_token = create_access_token(
+        data={"sub": user.username, "role": user.role, "id": user.id},
+        expires_delta=timedelta(minutes=15) # Short-lived access token
+    )
+    
+    refresh_token = create_refresh_token(user.id, db_session)
+
+    return {
+        "id": user.id, 
+        "username": user.username, 
+        "role": user.role,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer"
+    }
+
+def create_refresh_token(user_id: int, db_session: Session):
+    """Generates a long-lived refresh token and stores it in the DB."""
+    import secrets
+    from datetime import datetime, timedelta
+    
+    token = secrets.token_urlsafe(64)
+    expires_at = datetime.now() + timedelta(days=7)
+    
+    new_token = RefreshToken(
+        user_id=user_id,
+        token=token,
+        expires_at=expires_at
+    )
+    db_session.add(new_token)
+    db_session.commit()
+    return token
+
+def refresh_access_token(refresh_token_str: str, db_session: Session):
+    """Validates a refresh token and generates a new access token."""
+    from backend.deps import create_access_token
+    from datetime import datetime, timedelta
+    
+    token_record = db_session.query(RefreshToken).filter(
+        RefreshToken.token == refresh_token_str,
+        RefreshToken.is_revoked == False,
+        RefreshToken.expires_at > datetime.now()
+    ).first()
+    
+    if not token_record:
+        raise ValueError("Invalid or expired refresh token.")
         
-    return {"id": user_id, "username": stored_username, "role": role}
+    user = db_session.query(User).filter(User.id == token_record.user_id).first()
+    if not user:
+        raise ValueError("User not found.")
+        
+    access_token = create_access_token(
+        data={"sub": user.username, "role": user.role, "id": user.id},
+        expires_delta=timedelta(minutes=15)
+    )
+    
+    return {"access_token": access_token, "token_type": "bearer"}
 
 
-def create_user(username, full_name, password, role, admin_user):
+
+def create_user(username, full_name, password, role, admin_user, db_session: Session):
     """Securely creates a new system user with hashed password."""
+    # 1. Check for duplicates
+    if db_session.query(User).filter(User.username == username, User.is_deleted == False).first():
+        raise Exception(f"Username '{username}' is already taken.")
 
-    def operation(cur):
-        # 1. Check for duplicates
-        cur.execute(
-            "SELECT id FROM users WHERE username=%s AND is_deleted=0", (username,)
-        )
-        if cur.fetchone():
-            raise Exception(f"Username '{username}' is already taken.")
+    # 2. Hash password
+    hashed = hash_password(password)
 
-        # 2. Hash password
-        hashed = hash_password(password)
+    # 3. Insert
+    new_user = User(
+        username=username,
+        full_name=full_name,
+        password=hashed,
+        role=normalize_role(role),
+        is_active=True,
+        is_deleted=False
+    )
+    db_session.add(new_user)
+    db_session.flush()
 
-        # 3. Insert
-        cur.execute(
-            """
-            INSERT INTO users (username, full_name, password, role, is_active, is_deleted)
-            VALUES (%s, %s, %s, %s, 1, 0)
-            """,
-            (username, full_name, hashed, normalize_role(role)),
-        )
-        user_id = cur.lastrowid
-
-        # 4. Audit
-        db.record_audit_log_with_cur(
-            cur,
-            admin_user,
-            f"Created new user: {username} ({full_name})",
-            table_name="users",
-            record_id=user_id,
-            new_values={"username": username, "role": role},
-        )
-        return user_id
-
-    return db.execute_transaction(operation)
+    # 4. Audit
+    db.record_audit_log(
+        admin_user,
+        f"Created new user: {username} ({full_name})",
+        table_name="users",
+        record_id=new_user.id,
+        new_values={"username": username, "role": role},
+    )
+    db_session.commit()
+    return new_user.id
 
 
 # --- User Management (Admin) ---
 
 
-def get_all_users(limit=50, offset=0):
+def get_all_users(limit=50, offset=0, db_session: Session = None):
     safe_limit = max(1, int(limit))
     safe_offset = max(0, int(offset))
-    rows = db.db_query(
-        f"SELECT id, username, full_name, role, is_active, last_login, created_at FROM users WHERE is_deleted=0 ORDER BY username ASC LIMIT {safe_limit} OFFSET {safe_offset}",
-        fetch=True,
-        commit=False,
-    )
+    
+    if not db_session:
+        # Temporary fallback until all callers are updated
+        from backend.database import SessionLocal
+        db_session = SessionLocal()
+        
+    users = db_session.query(User).filter(User.is_deleted == False).order_by(User.username.asc()).limit(safe_limit).offset(safe_offset).all()
     return [
         {
-            "id": r[0],
-            "username": r[1],
-            "full_name": r[2],
-            "role": r[3],
-            "is_active": bool(r[4]),
-            "last_login": r[5],
-            "created_at": r[6],
+            "id": u.id,
+            "username": u.username,
+            "full_name": u.full_name,
+            "role": u.role,
+            "is_active": u.is_active,
+            "last_login": u.last_login,
+            "created_at": u.created_at,
         }
-        for r in rows
+        for u in users
     ]
 
 
-def update_user_role(user_id, new_role, admin_user):
-    def operation(cur):
-        # Audit old value
-        cur.execute("SELECT role FROM users WHERE id=%s", (user_id,))
-        old_role = cur.fetchone()[0]
-
-        cur.execute("UPDATE users SET role=%s WHERE id=%s", (new_role, user_id))
-
-        db.record_audit_log_with_cur(
-            cur,
-            admin_user,
-            f"Changed role for user ID {user_id}",
-            table_name="users",
-            record_id=user_id,
-            old_values={"role": old_role},
-            new_values={"role": new_role},
-        )
-        return True
-
-    return db.execute_transaction(operation)
+def update_user_role(user_id, new_role, admin_user, db_session: Session):
+    user = db_session.query(User).filter(User.id == user_id).first()
+    if not user:
+        return False
+    
+    old_role = user.role
+    user.role = new_role
+    db_session.commit()
+    
+    db.record_audit_log(
+        admin_user,
+        f"Changed role for user ID {user_id}",
+        table_name="users",
+        record_id=user_id,
+        old_values={"role": old_role},
+        new_values={"role": new_role},
+    )
+    return True
 
 
-def update_user_status(user_id, is_active, admin_user):
-    def operation(cur):
-        cur.execute("SELECT is_active FROM users WHERE id=%s", (user_id,))
-        old_status = bool(cur.fetchone()[0])
-
-        cur.execute(
-            "UPDATE users SET is_active=%s WHERE id=%s", (int(is_active), user_id)
-        )
-
-        db.record_audit_log_with_cur(
-            cur,
-            admin_user,
-            f"{'Enabled' if is_active else 'Disabled'} user ID {user_id}",
-            table_name="users",
-            record_id=user_id,
-            old_values={"is_active": old_status},
-            new_values={"is_active": is_active},
-        )
-        return True
-
-    return db.execute_transaction(operation)
+def update_user_status(user_id, is_active, admin_user, db_session: Session):
+    user = db_session.query(User).filter(User.id == user_id).first()
+    if not user:
+        return False
+    
+    old_status = user.is_active
+    user.is_active = is_active
+    db_session.commit()
+    
+    db.record_audit_log(
+        admin_user,
+        f"{'Enabled' if is_active else 'Disabled'} user ID {user_id}",
+        table_name="users",
+        record_id=user_id,
+        old_values={"is_active": old_status},
+        new_values={"is_active": is_active},
+    )
+    return True
 
 
-def reset_user_password(user_id, new_password, admin_user):
-    def operation(cur):
-        hashed = hash_password(new_password)
-        cur.execute("UPDATE users SET password=%s WHERE id=%s", (hashed, user_id))
+def reset_user_password(user_id, new_password, admin_user, db_session: Session):
+    user = db_session.query(User).filter(User.id == user_id).first()
+    if not user:
+        return False
+        
+    user.password = hash_password(new_password)
+    db_session.commit()
+    
+    db.record_audit_log(
+        admin_user,
+        f"Force password reset for user ID {user_id}",
+        table_name="users",
+        record_id=user_id,
+    )
+    return True
 
-        db.record_audit_log(
-            admin_user,
-            f"Force password reset for user ID {user_id}",
-            table_name="users",
-            record_id=user_id,
-        )
-        return True
 
-    return db.execute_transaction(operation)
+def delete_user(user_id, admin_user, db_session: Session):
+    """Permanently removes a user from the system."""
+    user = db_session.query(User).filter(User.id == user_id).first()
+    if not user:
+        return False
+        
+    username = user.username
+    db_session.delete(user)
+    db_session.commit()
+    
+    db.record_audit_log(
+        admin_user,
+        f"DELETED user account: {username} (ID: {user_id})",
+        table_name="users",
+        record_id=user_id,
+    )
+    return True

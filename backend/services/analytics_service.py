@@ -1,68 +1,80 @@
 # -*- coding: utf-8 -*-
-import db_manager as db
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+from backend.models import Payment, Property
+from backend.database import SessionLocal
 from datetime import datetime
 
-def get_collection_summary():
+def get_collection_summary(db_session: Session = None):
     """Returns key collection totals for today, this month, and this year."""
-    now = datetime.now()
-    today = now.strftime('%Y-%m-%d')
-    this_month = now.strftime('%Y-%m-%%')
-    this_year = now.strftime('%Y-%%')
+    if not db_session:
+        db_session = SessionLocal()
 
-    query = """
-        SELECT 
-            SUM(CASE WHEN date_paid = %s THEN amount ELSE 0 END) as today_total,
-            SUM(CASE WHEN date_paid LIKE %s THEN amount ELSE 0 END) as month_total,
-            SUM(CASE WHEN date_paid LIKE %s THEN amount ELSE 0 END) as year_total,
-            COUNT(CASE WHEN date_paid = %s THEN 1 END) as today_count
-        FROM payments
-    """
-    rows = db.db_query(query, (today, this_month, this_year, today), fetch=True, commit=False)
-    if not rows:
-        return {"today": 0, "month": 0, "year": 0, "count": 0}
-    
-    row = rows[0]
+    now = datetime.now()
+    today = now.date()
+    this_month_start = today.replace(day=1)
+    this_year_start = today.replace(month=1, day=1)
+
+    # Today's total and count
+    today_data = db_session.query(
+        func.coalesce(func.sum(Payment.amount), 0),
+        func.count(Payment.id)
+    ).filter(func.date(Payment.date_paid) == today).first()
+
+    # Month total
+    month_total = db_session.query(
+        func.coalesce(func.sum(Payment.amount), 0)
+    ).filter(func.date(Payment.date_paid) >= this_month_start).scalar()
+
+    # Year total
+    year_total = db_session.query(
+        func.coalesce(func.sum(Payment.amount), 0)
+    ).filter(func.date(Payment.date_paid) >= this_year_start).scalar()
+
     return {
-        "today": float(row[0] or 0),
-        "month": float(row[1] or 0),
-        "year": float(row[2] or 0),
-        "count": int(row[3] or 0)
+        "today": float(today_data[0] or 0),
+        "month": float(month_total or 0),
+        "year": float(year_total or 0),
+        "count": int(today_data[1] or 0)
     }
 
-def get_monthly_revenue_trend():
+def get_monthly_revenue_trend(db_session: Session = None):
     """Returns the last 12 months of revenue for trend analysis."""
-    query = """
-        SELECT DATE_FORMAT(date_paid, '%Y-%m') as month, SUM(amount) as total
-        FROM payments
-        WHERE date_paid >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
-        GROUP BY month
-        ORDER BY month ASC
-    """
-    rows = db.db_query(query, fetch=True, commit=False)
-    return [{"month": r[0], "total": float(r[1] or 0)} for r in rows] if rows else []
+    if not db_session:
+        db_session = SessionLocal()
 
-def get_barangay_distribution():
+    from datetime import timedelta
+    start_date = datetime.now() - timedelta(days=365)
+    
+    results = db_session.query(
+        func.date_format(Payment.date_paid, '%Y-%m').label('month'),
+        func.sum(Payment.amount).label('total')
+    ).filter(Payment.date_paid >= start_date).group_by('month').order_by('month').all()
+    
+    return [{"month": r[0], "total": float(r[1] or 0)} for r in results]
+
+def get_barangay_distribution(db_session: Session = None):
     """Returns revenue distribution across barangays."""
-    query = """
-        SELECT prop.barangay, SUM(pay.amount) as total
-        FROM payments pay
-        JOIN properties prop ON pay.property_id = prop.id
-        WHERE prop.is_deleted = 0
-        GROUP BY prop.barangay
-        ORDER BY total DESC
-        LIMIT 10
-    """
-    rows = db.db_query(query, fetch=True, commit=False)
-    return [{"name": r[0] or "UNKNOWN", "value": float(r[1] or 0)} for r in rows] if rows else []
+    if not db_session:
+        db_session = SessionLocal()
 
-def get_tax_year_distribution():
+    results = db_session.query(
+        Property.barangay,
+        func.sum(Payment.amount).label('total')
+    ).join(Payment, Payment.property_id == Property.id).filter(
+        Property.is_deleted == False
+    ).group_by(Property.barangay).order_by(func.sum(Payment.amount).desc()).limit(10).all()
+    
+    return [{"name": r[0] or "UNKNOWN", "value": float(r[1] or 0)} for r in results]
+
+def get_tax_year_distribution(db_session: Session = None):
     """Returns the distribution of payments across tax years."""
-    query = """
-        SELECT tax_year, SUM(amount) as total
-        FROM payments
-        GROUP BY tax_year
-        ORDER BY tax_year DESC
-        LIMIT 5
-    """
-    rows = db.db_query(query, fetch=True, commit=False)
-    return [{"year": r[0] or "N/A", "total": float(r[1] or 0)} for r in rows] if rows else []
+    if not db_session:
+        db_session = SessionLocal()
+
+    results = db_session.query(
+        Payment.tax_year,
+        func.sum(Payment.amount).label('total')
+    ).group_by(Payment.tax_year).order_by(Payment.tax_year.desc()).limit(5).all()
+    
+    return [{"year": r[0] or "N/A", "total": float(r[1] or 0)} for r in results]

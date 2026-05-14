@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 import pandas as pd
 import io
-import db_manager as db
-from datetime import datetime
 import re
+from datetime import datetime
+from typing import Dict, Any, List, Optional
+from sqlalchemy import or_, text
+from sqlalchemy.orm import Session
+from backend.models import Property, PropertyAssessmentHistory
+from backend.database import SessionLocal
+
 
 class DataCleanser:
     @staticmethod
@@ -31,12 +36,15 @@ class DataCleanser:
         if val == "S. POBLACION": return "SOUTH POBLACION"
         return val
 
-def validate_property_import(file_content, file_extension):
+def validate_property_import(file_content, file_extension, db_session: Session = None):
     """
     Validates a CSV or Excel file for property bulk import.
     Returns a list of rows with validation status and error messages.
     """
     try:
+        if not db_session:
+            db_session = SessionLocal()
+
         if file_extension.lower() == '.csv':
             df = pd.read_csv(io.BytesIO(file_content))
         else:
@@ -45,7 +53,7 @@ def validate_property_import(file_content, file_extension):
         # Standardize column names (lowercase and underscores)
         df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
         
-        # Required fields mapping (Mapping typical spreadsheet headers to DB fields)
+        # Required fields mapping
         required_fields = {
             "td_number": ["td_no", "td_number", "tax_declaration"],
             "owner_name": ["owner", "owner_name", "declared_owner"],
@@ -61,10 +69,7 @@ def validate_property_import(file_content, file_extension):
             found_cols[db_field] = match
         
         # Get existing TD numbers for duplicate check
-        existing_tds = set()
-        rows = db.db_query("SELECT td_number FROM properties", fetch=True, commit=False) or []
-        for r in rows:
-            existing_tds.add(str(r[0]).strip())
+        existing_tds = {r[0] for r in db_session.query(Property.td_number).all()}
             
         results = []
         rows_to_import = []
@@ -95,7 +100,7 @@ def validate_property_import(file_content, file_extension):
             status = "❌ ERROR" if errors else "✅ VALID"
             
             results.append({
-                "row_index": index + 2, # +2 for Excel/CSV row numbering (1-indexed + header)
+                "row_index": index + 2,
                 "td_number": td,
                 "owner_name": owner,
                 "status": status,
@@ -115,11 +120,14 @@ def validate_property_import(file_content, file_extension):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-def validate_assessment_import(file_content, file_extension):
+def validate_assessment_import(file_content, file_extension, db_session: Session = None):
     """
     Validates an Excel file for Assessment Roll import.
     """
     try:
+        if not db_session:
+            db_session = SessionLocal()
+
         if file_extension.lower() == '.csv':
             df = pd.read_csv(io.BytesIO(file_content))
         else:
@@ -134,9 +142,14 @@ def validate_assessment_import(file_content, file_extension):
             "assessed_value": ["ASSESSED VALUE", "VALUE", "MARKET VALUE", "ASS_VALUE", "ASSESSMENT"],
             "location": ["LOCATION", "ADDRESS", "BARANGAY", "SITIO", "BRGY"],
             "kind": ["CLASSIFICATION", "KIND", "KIND OF PROPERTY", "CLASS"],
-            "tax_year": ["YEAR", "TAX YEAR", "TAX_YEAR", "PERIOD"],
-            "area": ["AREA", "TOTAL AREA", "SQM"]
+            "tax_year": ["YEAR", "TAX YEAR", "TAX_YEAR", "PERIOD", "TAX_PERIOD"],
+            "area": ["AREA", "TOTAL AREA", "SQM", "SQ.M.", "SIZE"],
+            "lot_number": ["LOT NO.", "LOT NO", "LOT", "LOT_NUMBER", "LOT_NO", "L.", "LOT AND BLK", "LOT/BLK", "LOT & BLK"],
+            "block_number": ["BLOCK NO.", "BLOCK NO", "BLOCK", "BLOCK_NUMBER", "BLK", "BLOCK_NO", "B."]
         }
+
+
+
         
         found_cols = {}
         for db_field, aliases in mapping.items():
@@ -147,10 +160,7 @@ def validate_assessment_import(file_content, file_extension):
         rows_to_import = []
         
         # Get existing TD numbers to determine INSERT vs UPDATE
-        existing_tds = set()
-        rows = db.db_query("SELECT td_number FROM properties", fetch=True, commit=False) or []
-        for r in rows:
-            existing_tds.add(str(r[0]).strip())
+        existing_tds = {r[0] for r in db_session.query(Property.td_number).all()}
 
         for index, row in df.iterrows():
             errors = []
@@ -170,23 +180,58 @@ def validate_assessment_import(file_content, file_extension):
                 "row_index": index + 2,
                 "td_number": td,
                 "owner_name": owner,
+                "lot_number": DataCleanser.to_str(row.get(found_cols.get("lot_number"))),
                 "status": status,
+
                 "action": action if not errors else "N/A",
                 "message": "; ".join(errors) if errors else f"Ready for {action}"
             })
             
             if not errors:
                 # Store cleaned data for commit
-                rows_to_import.append({
+                raw_row = {
                     "td_number": td,
                     "owner_name": owner,
                     "assessed_value": val,
                     "location": DataCleanser.to_str(row.get(found_cols.get("location"))),
-                    "kind": DataCleanser.to_str(row.get(found_cols.get("kind"), "LAND")).upper(),
                     "pin": DataCleanser.to_str(row.get(found_cols.get("pin"))),
                     "tax_year": DataCleanser.to_str(row.get(found_cols.get("tax_year"))),
-                    "area": DataCleanser.to_str(row.get(found_cols.get("area")))
-                })
+                    "area": DataCleanser.to_str(row.get(found_cols.get("area"))),
+                    "kind_of_property": DataCleanser.to_str(row.get(found_cols.get("kind"), "LAND")).upper(),
+                    "lot_number": DataCleanser.to_str(row.get(found_cols.get("lot_number"))),
+                    "block_number": DataCleanser.to_str(row.get(found_cols.get("block_number")))
+                }
+                
+                # Smart Split: Handle combined Lot/Block with comma or space
+                raw_lot = raw_row["lot_number"]
+                if not raw_row["block_number"] and raw_lot:
+                    # Rule 1: Split by comma
+                    if "," in raw_lot:
+                        raw_lot = raw_lot.split(",", 1)[0].strip()
+                    # Rule 2: Split by 3+ spaces
+                    import re
+                    if re.search(r"\s{3,}", raw_lot):
+                        raw_lot = re.split(r"\s{3,}", raw_lot, 1)[0].strip()
+                    
+                    # Rule 3: Space Split with "Lot" preservation
+                    if " " in raw_lot:
+                        parts = raw_lot.split(" ")
+                        if parts[0].upper() == "LOT" and len(parts) > 1:
+                            raw_lot = f"{parts[0]} {parts[1]}".strip()
+                        else:
+                            raw_lot = parts[0].strip()
+                    
+                    raw_row["lot_number"] = raw_lot
+                
+                rows_to_import.append(raw_row)
+
+
+
+
+
+
+
+
 
         return {
             "success": True,
@@ -196,17 +241,22 @@ def validate_assessment_import(file_content, file_extension):
             "data": rows_to_import
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        import traceback
+        err_msg = f"Validation Error: {str(e)}"
+        print(f"IMPORT FAILED: {err_msg}")
+        traceback.print_exc()
+        return {"success": False, "error": err_msg}
 
-# Alias for backward compatibility and specific wizard mode
-validate_assessment_import = validate_property_import
 
-def commit_assessment_import(data_list, user):
+def commit_assessment_import(data_list, user, db_session: Session = None):
     """
     Saves the validated assessment rows with real-time progress updates.
     """
     from backend.services.system_service import log_action
     
+    if not db_session:
+        db_session = SessionLocal()
+
     async def report_progress(percentage, msg):
         try:
             from backend.main import manager
@@ -225,75 +275,85 @@ def commit_assessment_import(data_list, user):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     
-    def operation(cur):
-        inserted = 0
-        updated = 0
-        total = len(data_list)
-        
+    inserted = 0
+    updated = 0
+    total = len(data_list)
+    
+    try:
         for i, row in enumerate(data_list):
             td = row["td_number"]
-            cur.execute("SELECT id FROM properties WHERE td_number = %s", (td,))
-            exists = cur.fetchone()
+            prop = db_session.query(Property).filter(Property.td_number == td).first()
             
-            if exists:
-                prop_id = exists[0]
+            if prop:
                 # 1. Capture current state for history before updating
-                cur.execute(
-                    """
-                    INSERT INTO property_assessment_history 
-                    (property_id, td_number, assessed_value, kind_of_property, tax_year, changed_by)
-                    SELECT id, td_number, assessed_value, kind_of_property, tax_year, %s
-                    FROM properties WHERE id = %s
-                    """,
-                    (user.get("username", "system"), prop_id)
+                history = PropertyAssessmentHistory(
+                    property_id=prop.id,
+                    td_number=prop.td_number,
+                    assessed_value=prop.assessed_value,
+                    kind_of_property=prop.kind_of_property,
+                    tax_year=prop.tax_year,
+                    changed_by=user.get("username", "system")
                 )
+                db_session.add(history)
 
                 # 2. Perform the update
-                cur.execute(
-                    """
-                    UPDATE properties 
-                    SET owner_name = %s, assessed_value = %s, location = %s, 
-                        kind_of_property = %s, pin = %s, tax_year = %s, area = %s, 
-                        updated_at = NOW() 
-                    WHERE id = %s
-                    """,
-                    (
-                        row["owner_name"], row["assessed_value"], row["location"], 
-                        row["kind"], row["pin"], row["tax_year"], row["area"], 
-                        prop_id
-                    )
-                )
+                prop.owner_name = row["owner_name"]
+                prop.assessed_value = row["assessed_value"]
+                prop.location = row["location"]
+                prop.kind_of_property = row["kind_of_property"]
+                prop.pin = row["pin"]
+
+                prop.tax_year = row["tax_year"]
+                prop.area = row["area"]
+                prop.lot_number = row.get("lot_number")
+                prop.block_number = row.get("block_number")
+
                 updated += 1
+
             else:
-                cur.execute(
-                    """
-                    INSERT INTO properties 
-                    (td_number, owner_name, assessed_value, location, kind_of_property, 
-                     pin, tax_year, area, created_at, updated_at) 
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-                    """,
-                    (
-                        td, row["owner_name"], row["assessed_value"], row["location"], 
-                        row["kind"], row["pin"], row["tax_year"], row["area"]
-                    )
+                new_prop = Property(
+                    td_number=td,
+                    owner_name=row["owner_name"],
+                    assessed_value=row["assessed_value"],
+                    location=row["location"],
+                    kind_of_property=row["kind_of_property"],
+                    pin=row["pin"],
+
+                    tax_year=row["tax_year"],
+                    area=row["area"],
+                    lot_number=row.get("lot_number"),
+                    block_number=row.get("block_number")
                 )
+                db_session.add(new_prop)
                 inserted += 1
             
             if i % 10 == 0 or i == total - 1:
+                db_session.flush()
                 percentage = int(((i + 1) / total) * 100)
-                loop.run_until_complete(report_progress(percentage, f"Importing: {i+1} / {total} records"))
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        report_progress(percentage, f"Importing: {i+1} / {total} records"), 
+                        loop
+                    )
+                except: pass
         
-        log_action(user, f"Wizard Assessment Import: {inserted} new, {updated} updated.")
+        db_session.commit()
+
+        log_action(user, f"Wizard Assessment Import: {inserted} new, {updated} updated.", db_session=db_session)
         return {"inserted": inserted, "updated": updated}
+    except Exception as e:
+        db_session.rollback()
+        raise e
 
-    return db.execute_transaction(operation)
-
-def commit_property_import(data_list, user):
+def commit_property_import(data_list, user, db_session: Session = None):
     """
     Saves the validated rows to the database with real-time progress updates.
     """
     from backend.services.system_service import log_action
     
+    if not db_session:
+        db_session = SessionLocal()
+
     async def report_progress(percentage, msg):
         try:
             from backend.main import manager
@@ -312,36 +372,48 @@ def commit_property_import(data_list, user):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     
-    def operation(cur):
-        count = 0
-        total = len(data_list)
+    count = 0
+    total = len(data_list)
+    try:
         for i, row in enumerate(data_list):
-            cur.execute(
-                """
-                INSERT INTO properties (td_number, owner_name, assessed_value, created_at, updated_at)
-                VALUES (%s, %s, %s, NOW(), NOW())
-                """,
-                (row.get("td_number"), row.get("owner_name"), row.get("assessed_value"))
+            new_prop = Property(
+                td_number=row.get("td_number"),
+                owner_name=row.get("owner_name"),
+                assessed_value=row.get("assessed_value"),
+                created_at=datetime.now(),
+                updated_at=datetime.now()
             )
+            db_session.add(new_prop)
             count += 1
             
             if i % 10 == 0 or i == total - 1:
+                db_session.flush()
                 percentage = int(((i + 1) / total) * 100)
-                loop.run_until_complete(report_progress(percentage, f"Processing: {i+1} / {total} properties"))
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        report_progress(percentage, f"Processing: {i+1} / {total} properties"), 
+                        loop
+                    )
+                except: pass
         
-        log_action(user, f"Bulk imported {count} property records.")
+        db_session.commit()
+
+        log_action(user, f"Bulk imported {count} property records.", db_session=db_session)
         return count
+    except Exception as e:
+        db_session.rollback()
+        raise e
 
-    return db.execute_transaction(operation)
-
-def import_assessment_roll_from_excel(file_path, user):
+def import_assessment_roll_from_excel(file_path, user, db_session: Session = None):
     """
     Imports the entire Assessment Roll from an Excel file.
     Updates existing records or inserts new ones based on TD Number.
     """
     from backend.services.system_service import log_action
-    import pandas as pd
     
+    if not db_session:
+        db_session = SessionLocal()
+
     try:
         df = pd.read_excel(file_path)
         # Standardize headers
@@ -354,21 +426,40 @@ def import_assessment_roll_from_excel(file_path, user):
             "OWNER": ["PROPERTY OWNER", "OWNER NAME", "OWNER"],
             "LOCATION": ["LOCATION", "ADDRESS", "BARANGAY"],
             "VALUE": ["ASSESSED VALUE", "VALUE", "MARKET VALUE"],
-            "KIND": ["CLASSIFICATION", "KIND", "KIND OF PROPERTY"]
+            "KIND": ["CLASSIFICATION", "KIND", "KIND OF PROPERTY"],
+            "LOT": ["LOT NO.", "LOT NO", "LOT", "LOT_NUMBER", "LOT_NO", "L.", "LOT AND BLK", "LOT/BLK", "LOT & BLK"],
+            "BLK": ["BLOCK NO.", "BLOCK NO", "BLOCK", "BLOCK_NUMBER", "BLK", "BLOCK_NO", "B."]
         }
+
+
+
+
+
         
         found_cols = {}
         for key, aliases in mapping.items():
             match = next((c for c in df.columns if c in aliases), None)
             found_cols[key] = match
 
-        def operation(cur):
-            inserted = 0
-            updated = 0
-            failed = 0
-            errors = []
+        inserted = 0
+        updated = 0
+        failed = 0
+        errors = []
+        
+        # Bulk Processing
+        records = df.to_dict('records')
+        batch_size = 500
+        
+        for i in range(0, len(records), batch_size):
+            batch = records[i:i + batch_size]
+            td_numbers = [str(r.get(found_cols["TD NUMBER"], "")).strip() for r in batch if str(r.get(found_cols["TD NUMBER"], "")).strip()]
             
-            for index, row in df.iterrows():
+            # Fetch existing properties in this batch
+            existing_props = {p.td_number: p for p in db_session.query(Property).filter(Property.td_number.in_(td_numbers)).all()}
+            
+            to_insert = []
+            
+            for index_in_batch, row in enumerate(batch):
                 try:
                     td = str(row.get(found_cols["TD NUMBER"], "")).strip()
                     if not td: continue
@@ -380,30 +471,75 @@ def import_assessment_roll_from_excel(file_path, user):
                         val = float(row.get(found_cols["VALUE"], 0))
                     except:
                         val = 0.0
-                        
-                    # Check if exists
-                    cur.execute("SELECT id FROM properties WHERE td_number = %s", (td,))
-                    exists = cur.fetchone()
                     
-                    if exists:
-                        cur.execute(
-                            "UPDATE properties SET owner_name = %s, kind_of_property = %s, assessed_value = %s, updated_at = NOW() WHERE id = %s",
-                            (owner, kind, val, exists[0])
-                        )
-                        updated += 1
-                    else:
-                        cur.execute(
-                            "INSERT INTO properties (td_number, owner_name, kind_of_property, assessed_value, location, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, NOW(), NOW())",
-                            (td, owner, kind, val, loc)
-                        )
-                        inserted += 1
+                        lot_val = str(row.get(found_cols["LOT"], "")).strip() if found_cols["LOT"] else ""
+                        blk_val = str(row.get(found_cols["BLK"], "")).strip() if found_cols["BLK"] else ""
+                        
+                        # Smart Split: Handle combined Lot/Block with comma or space
+                        if lot_val and not blk_val:
+                            # Rule 1: Comma
+                            if "," in lot_val:
+                                lot_val = lot_val.split(",", 1)[0].strip()
+                            
+                            # Rule 2: 3+ Spaces
+                            import re
+                            if re.search(r"\s{3,}", lot_val):
+                                lot_val = re.split(r"\s{3,}", lot_val, 1)[0].strip()
+
+                            # Rule 3: Space Split with "Lot" preservation
+                            if " " in lot_val:
+                                parts = lot_val.split(" ")
+                                if parts[0].upper() == "LOT" and len(parts) > 1:
+                                    lot_val = f"{parts[0]} {parts[1]}".strip()
+                                else:
+                                    lot_val = parts[0].strip()
+
+                        if td in existing_props:
+
+                            prop = existing_props[td]
+                            prop.owner_name = owner
+                            prop.kind_of_property = kind
+                            prop.assessed_value = val
+                            prop.lot_number = lot_val
+                            prop.block_number = "" # Discard the second part as requested
+                            updated += 1
+
+                        else:
+                            to_insert.append({
+                                "td_number": td,
+                                "owner_name": owner,
+                                "kind_of_property": kind,
+                                "assessed_value": val,
+                                "location": loc,
+                                "lot_number": lot_val,
+                                "block_number": "" # Discard the second part as requested
+                            })
+                            inserted += 1
+
+
+
+
                 except Exception as row_err:
                     failed += 1
-                    errors.append(f"Row {index+2}: {str(row_err)}")
+                    errors.append(f"Row {i + index_in_batch + 2}: {str(row_err)}")
             
-            log_action(user, f"Bulk Assessment Import: {inserted} new, {updated} updated.")
-            return {"inserted": inserted, "updated": updated, "failed": failed, "errors": errors}
+            if to_insert:
+                db_session.bulk_insert_mappings(Property, to_insert)
+            
+            db_session.flush() 
+        
+        db_session.commit()
+        
+        # Refresh system stats after bulk import
+        try:
+            from backend.services.stats_service import refresh_system_stats
+            refresh_system_stats(db_session=db_session)
+        except Exception as stats_err:
+            print(f"Stats refresh failed: {stats_err}")
 
-        return db.execute_transaction(operation)
+        log_action(user, f"Bulk Assessment Import: {inserted} new, {updated} updated.", db_session=db_session)
+        return {"inserted": inserted, "updated": updated, "failed": failed, "errors": errors}
+
     except Exception as e:
+        db_session.rollback()
         return {"success": False, "error": str(e)}

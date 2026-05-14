@@ -34,6 +34,7 @@ class PropertySaveSchema(BaseSanitizedModel):
     pin: Optional[str] = Field(None, alias="PIN")
     prev_td_number: Optional[str] = Field(None, alias="Previous TD Number")
     effectivity_date: Optional[str] = Field(None, alias="Effectivity Date")
+    version: Optional[int] = None
 
     @field_validator("td_number", "pin", "prev_td_number", mode="before")
     @classmethod

@@ -9,7 +9,7 @@ class SystemHelpPage:
         # Header with bright color
         ctk.CTkLabel(
             self.container,
-            text="MTO Treasury System Help Guide",
+            text="Municipal Revenue System Help Guide",
             font=ModernTheme.H1,
             text_color="#3498db",
         ).pack(anchor="w", pady=(0, 20))

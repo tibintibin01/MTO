@@ -1,5 +1,5 @@
 {
-    "office_name": "MUNICIPAL TREASURY OFFICE",
+    "office_name": "MUNICIPAL REVENUE OFFICE",
     "branding_colors": {
         "primary": "#1f538d",
         "secondary": "#7f8c8d",
@@ -11,5 +11,7 @@
         "header": "Helvetica-Bold",
         "body": "Helvetica"
     },
-    "footer_text": "This document was generated electronically by the MTO System."
+    "footer_text": "This document was generated electronically by the Municipal Revenue System.",
+    "logo_path": "assets/official/logo.png",
+    "seal_path": "assets/official/seal.png"
 }

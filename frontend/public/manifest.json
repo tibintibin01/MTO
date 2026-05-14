@@ -1,0 +1,21 @@
+{
+  "name": "MTO Treasury Portal",
+  "short_name": "MTO Portal",
+  "description": "Secure Municipal Treasury Portal",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1f4e78",
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

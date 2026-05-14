@@ -1,35 +1,35 @@
-# --- Security & Credentials ---
-.env
-db_config.json
-*.sql
-*.db
-*.sqlite
-
-# --- Sensitive Office Data ---
-backups/
-receipts/
-statements/
-temp_docs/
-logs/
-*.pdf
-*.png
-!assets/*.png
-!office_logo.png
-!bagongpilipinas.png
-
-# --- Python & Environment ---
-venv/
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
 env/
-pip-log.txt
-pip-delete-this-directory.txt
+.env
 
-# --- IDEs & OS ---
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.next/
+out/
+build/
+dist/
+
+# Database
+# Keep the local db if you want, but usually it's excluded
+# mto_local.db
+
+# Local config
+# config.json
+# server_config.json
+
+# IDEs
 .vscode/
 .idea/
+
+# OS
 .DS_Store
 Thumbs.db

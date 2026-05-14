@@ -4,7 +4,7 @@ import sys
 import os
 
 if __name__ == "__main__":
-    print("🚀 MTO INDUSTRIAL TEST RUNNER")
+    print("MTO INDUSTRIAL TEST RUNNER")
     print("----------------------------")
     
     # Ensure project root is in path

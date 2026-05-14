@@ -127,7 +127,7 @@ class DashboardApp(ctk.CTk):
         self.bind_all("<Any-Button>", lambda e: self.watchdog.reset())
 
     def setup_main_window(self):
-        self.title(f"MTO Treasury System | {self.username.upper()}")
+        self.title(f"Municipal Revenue System | {self.username.upper()}")
         self.geometry("1400x900")
         self.minsize(1200, 800)
         self.grid_columnconfigure(1, weight=1)
@@ -188,13 +188,23 @@ class DashboardApp(ctk.CTk):
         self.after(0, lambda: show_toast(self, f"🔔 {data.get('title')}: {data.get('message')}", type=data.get("level", "info")))
 
     def _handle_progress(self, data):
-        from ui_components import ProgressOverlay
-        module = data.get("module")
-        if module not in self.progress_overlays:
-            self.progress_overlays[module] = ProgressOverlay(self, title=f"{module.upper()} TASK")
-        self.progress_overlays[module].update(data.get("percentage"), data.get("message"))
-        if data.get("percentage") >= 100:
-            self.after(2000, lambda: self.progress_overlays.pop(module, None))
+        """Thread-safe handler for background task progress updates."""
+        def update_ui():
+            from ui_components import ProgressOverlay
+            module = data.get("module", "system")
+            if module not in self.progress_overlays:
+                self.progress_overlays[module] = ProgressOverlay(self, title=f"{module.upper()} TASK")
+            
+            percentage = data.get("percentage", 0)
+            message = data.get("message", "Processing...")
+            
+            self.progress_overlays[module].update(percentage, message)
+            
+            if percentage >= 100:
+                # Keep it visible for a moment before clearing
+                self.after(3000, lambda: self.progress_overlays.pop(module, None).destroy() if module in self.progress_overlays else None)
+        
+        self.after(0, update_ui)
 
     def open_command_palette(self):
         CommandPalette(self, self.user_data, self.handle_palette_selection)
@@ -261,69 +271,6 @@ class DashboardApp(ctk.CTk):
         ctk.CTkLabel(content, text=tr("common.session_expired_msg"), font=("Segoe UI", 12), wraplength=350).pack(pady=10)
         ctk.CTkButton(content, text=tr("common.ok"), command=self.destroy, fg_color="#e74c3c", hover_color="#c0392b", width=120).pack(pady=(15, 0))
 
-def open_dashboard(user_data):
-    app = DashboardApp(user_data)
-    app.mainloop()
-
-
-class SystemHelpPage:
-    def __init__(self, parent, user):
-        self.container = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        self.container.pack(fill="both", expand=True, padx=20, pady=20)
-
-        # Header with bright color
-        ctk.CTkLabel(
-            self.container,
-            text="MTO Treasury System Help Guide",
-            font=ModernTheme.H1,
-            text_color="#3498db",
-        ).pack(anchor="w", pady=(0, 20))
-
-        help_text = [
-            (
-                "🏠 Dashboard",
-                "View real-time revenue collection charts and protection status.",
-            ),
-            (
-                "📋 Property Records",
-                "Search, edit, or delete property assessments. Use the 'Export' button to save to Excel.",
-            ),
-            (
-                "🏦 Unified Ledger",
-                "View all payment history. Use 'View Receipt' to open a PDF copy.",
-            ),
-            (
-                "⌨️ Keyboard Shortcuts",
-                "Ctrl + F: Quick Search / Command Palette\nCtrl + P: Open Command Palette\nCtrl + E: Export visible table data to Excel/CSV",
-            ),
-            (
-                "🛡️ Data Protection",
-                "The 'Restore Test' on the dashboard verifies that your backups are 100% healthy and ready for disaster recovery.",
-            ),
-            (
-                "💼 Audit Trail",
-                "Administrators can view all changes made to any record in the System Settings > Audit Logs tab.",
-            ),
-        ]
-
-        for title, desc in help_text:
-            # Card-like frame for each help item
-            f = ctk.CTkFrame(
-                self.container, fg_color=("#ebebeb", "#262626"), corner_radius=10
-            )
-            f.pack(fill="x", pady=8, padx=5)
-
-            ctk.CTkLabel(f, text=title, font=ModernTheme.H3, text_color="#3498db").pack(
-                anchor="w", padx=15, pady=(10, 2)
-            )
-            ctk.CTkLabel(
-                f,
-                text=desc,
-                font=ModernTheme.BODY,
-                wraplength=700,
-                justify="left",
-            ).pack(anchor="w", padx=15, pady=(0, 15))
-
     def open_sync_manager(self):
         """Opens a modal to view and manage the offline sync queue."""
         pending = manager.get_pending_actions(include_conflicts=True)
@@ -337,26 +284,35 @@ class SystemHelpPage:
         modal.attributes("-topmost", True)
         modal.grab_set()
         
-        ctk.CTkLabel(modal, text="PENDING MUNICIPAL SYNCHRONIZATION", font=ModernTheme.H2).pack(pady=20)
+        modal.update_idletasks()
         
         scroll = ctk.CTkScrollableFrame(modal)
         scroll.pack(fill="both", expand=True, padx=20, pady=10)
         
+        # Ensure scroll frame is ready before adding children
+        modal.update_idletasks()
+        
+        if not pending:
+            ctk.CTkLabel(scroll, text="No pending synchronizations found.").pack(pady=20)
+            return
+
         for item in pending:
-            frame = ctk.CTkFrame(scroll)
-            frame.pack(fill="x", pady=5)
+            frame = ctk.CTkFrame(master=scroll)
+            frame.pack(fill="x", pady=5, padx=5)
             
             # Identify if it's a conflict
             is_conflict = item.get("status") == "CONFLICT"
-            status_color = "#e67e22" if is_conflict else "#3498db"
             
-            ctk.CTkLabel(frame, text=f"{item['method']} {item['endpoint']}", font=ModernTheme.BODY_BOLD).pack(side="left", padx=10, pady=10)
+            method_lbl = ctk.CTkLabel(frame, text=f"{item.get('method', 'REQ')} {item.get('endpoint', '')}", font=("Segoe UI", 12, "bold"))
+            method_lbl.pack(side="left", padx=15, pady=12)
             
             if is_conflict:
-                ctk.CTkButton(frame, text="RESOLVE", width=100, fg_color="#e67e22", 
-                             command=lambda i=item: self._resolve_manual(i, modal)).pack(side="right", padx=10)
+                res_btn = ctk.CTkButton(frame, text="RESOLVE CONFLICT", width=140, fg_color="#e67e22", hover_color="#d35400",
+                             command=lambda i=item: self._resolve_manual(i, modal))
+                res_btn.pack(side="right", padx=15)
             else:
-                ctk.CTkLabel(frame, text="PENDING", text_color="#3498db", font=ModernTheme.BODY_SMALL).pack(side="right", padx=10)
+                status_lbl = ctk.CTkLabel(frame, text="PENDING SYNC", text_color="#3498db", font=("Segoe UI", 10, "bold"))
+                status_lbl.pack(side="right", padx=15)
 
     def _resolve_manual(self, item, parent_modal):
         """Opens the arbitration modal for a specific item."""
@@ -367,8 +323,51 @@ class SystemHelpPage:
             item["id"], 
             item["payload"], 
             {"info": "Conflict detected during background sync. Server state has diverged."},
-            self._handle_resolution
+            self._handle_resolution_callback
         )
+
+    def _handle_resolution_callback(self, action_id, resolution):
+        """Bridge for manual resolution from the Sync Manager."""
+        from api_clients.offline_manager import manager
+        if resolution == "LOCAL":
+            manager.resolve_conflict(action_id, resolution="LOCAL")
+            show_toast(self, "Resolved: Local version forced.", "success")
+        else:
+            manager.resolve_conflict(action_id, resolution="DISCARD")
+            show_toast(self, "Resolved: Local version discarded.", "info")
+
+def open_dashboard(user_data):
+    app = DashboardApp(user_data)
+    app.mainloop()
+
+
+class SystemHelpPage:
+    def __init__(self, parent, user_data=None):
+        self.container = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        self.container.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Header
+        ctk.CTkLabel(
+            self.container,
+            text="MTO Treasury System Help Guide",
+            font=("Segoe UI", 28, "bold"),
+            text_color="#3498db",
+        ).pack(anchor="w", pady=(0, 20))
+
+        help_text = [
+            ("🏠 Dashboard", "View real-time revenue collection charts and protection status."),
+            ("📋 Property Records", "Search, edit, or delete property assessments. Use the 'Export' button to save to Excel."),
+            ("🏦 Unified Ledger", "View all payment history. Use 'View Receipt' to open a PDF copy."),
+            ("⌨️ Shortcuts", "Ctrl+F: Quick Search | Ctrl+P: Command Palette | Ctrl+K: Global Search"),
+            ("🛡️ Data Protection", "The 'Restore Test' on the dashboard verifies that your backups are 100% healthy."),
+            ("💼 Audit Trail", "Administrators can view all changes made to any record in the System Settings."),
+        ]
+
+        for title, desc in help_text:
+            f = ctk.CTkFrame(self.container, fg_color=("#ebebeb", "#262626"), corner_radius=10)
+            f.pack(fill="x", pady=8, padx=5)
+            ctk.CTkLabel(f, text=title, font=("Segoe UI", 16, "bold"), text_color="#3498db").pack(anchor="w", padx=15, pady=(10, 2))
+            ctk.CTkLabel(f, text=desc, font=("Segoe UI", 12), wraplength=700, justify="left").pack(anchor="w", padx=15, pady=(0, 15))
 
     def _handle_resolution(self, action_id, choice):
         if choice == "LOCAL":

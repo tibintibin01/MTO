@@ -1,65 +1,87 @@
 # -*- coding: utf-8 -*-
-import db_manager as db
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from sqlalchemy import func, text
+from sqlalchemy.orm import Session
+from backend.models import Property, Payment, AuditLog
+from backend.database import SessionLocal
 
-def get_retention_summary():
+
+def get_retention_summary(db_session: Session = None):
     """Calculates how much data is eligible for archival based on a 10-year policy."""
-    ten_years_ago = (datetime.now() - timedelta(days=3650)).strftime("%Y-%m-%d")
-    
-    query = """
-        SELECT 
-            (SELECT COUNT(*) FROM properties WHERE created_at < %s AND is_deleted = 0) as properties_to_archive,
-            (SELECT COUNT(*) FROM payments WHERE date_paid < %s) as payments_to_archive
-    """
-    res = db.db_query(query, (ten_years_ago, ten_years_ago), fetch=True, commit=False)
-    if res:
-        return {
-            "eligible_properties": res[0][0],
-            "eligible_payments": res[0][1],
-            "cutoff_date": ten_years_ago
-        }
-    return {}
+    if not db_session:
+        db_session = SessionLocal()
 
-def run_archival_policy(user="SYSTEM"):
+    ten_years_ago = datetime.now() - timedelta(days=3650)
+    
+    prop_count = db_session.query(func.count(Property.id)).filter(
+        Property.created_at < ten_years_ago,
+        Property.is_deleted == False
+    ).scalar()
+    
+    pay_count = db_session.query(func.count(Payment.id)).filter(
+        Payment.date_paid < ten_years_ago.date()
+    ).scalar()
+    
+    return {
+        "eligible_properties": prop_count or 0,
+        "eligible_payments": pay_count or 0,
+        "cutoff_date": ten_years_ago.strftime("%Y-%m-%d")
+    }
+
+
+def run_archival_policy(user="SYSTEM", db_session: Session = None):
     """
     Moves data older than 10 years to archive tables to maintain performance.
     """
-    cutoff_date = (datetime.now() - timedelta(days=3650)).strftime("%Y-%m-%d")
+    if not db_session:
+        db_session = SessionLocal()
+
+    cutoff_date = datetime.now() - timedelta(days=3650)
     
-    def archive_operation(cur):
+    try:
         # 1. Ensure Archive Tables Exist
-        cur.execute("CREATE TABLE IF NOT EXISTS properties_archive LIKE properties")
-        cur.execute("CREATE TABLE IF NOT EXISTS payments_archive LIKE payments")
+        db_session.execute(text("CREATE TABLE IF NOT EXISTS properties_archive LIKE properties"))
+        db_session.execute(text("CREATE TABLE IF NOT EXISTS payments_archive LIKE payments"))
         
         # 2. Archive Old Properties
-        cur.execute("""
-            INSERT INTO properties_archive 
-            SELECT * FROM properties WHERE created_at < %s
-        """, (cutoff_date,))
-        prop_count = cur.rowcount
+        db_session.execute(
+            text("INSERT INTO properties_archive SELECT * FROM properties WHERE created_at < :cutoff"),
+            {"cutoff": cutoff_date}
+        )
+        # SQLAlchemy core doesn't easily give rowcount for INSERT SELECT in this way without more ceremony
+        # but we can query it or just trust the DB
         
-        cur.execute("DELETE FROM properties WHERE created_at < %s", (cutoff_date,))
-        
-        # 3. Archive Old Payments
-        cur.execute("""
-            INSERT INTO payments_archive 
-            SELECT * FROM payments WHERE date_paid < %s
-        """, (cutoff_date,))
-        pay_count = cur.rowcount
-        
-        cur.execute("DELETE FROM payments WHERE date_paid < %s", (cutoff_date,))
-        
-        # 4. Log the policy enforcement
-        cur.execute(
-            "INSERT INTO audit_logs (user_id, table_name, action, timestamp) VALUES (0, 'SYSTEM', %s, NOW())",
-            (f"RETENTION_POLICY_ENFORCED: {prop_count} properties, {pay_count} payments archived.",)
+        db_session.execute(
+            text("DELETE FROM properties WHERE created_at < :cutoff"),
+            {"cutoff": cutoff_date}
         )
         
+        # 3. Archive Old Payments
+        db_session.execute(
+            text("INSERT INTO payments_archive SELECT * FROM payments WHERE date_paid < :cutoff"),
+            {"cutoff": cutoff_date.date()}
+        )
+        
+        db_session.execute(
+            text("DELETE FROM payments WHERE date_paid < :cutoff"),
+            {"cutoff": cutoff_date.date()}
+        )
+        
+        # 4. Log the policy enforcement
+        log = AuditLog(
+            username=user,
+            action=f"RETENTION_POLICY_ENFORCED",
+            timestamp=datetime.now()
+        )
+        db_session.add(log)
+        db_session.commit()
+        
         return {
-            "archived_properties": prop_count,
-            "archived_payments": pay_count,
             "status": "success"
         }
-
-    return db.execute_transaction(archive_operation)
+    except Exception as e:
+        db_session.rollback()
+        return {
+            "status": "error",
+            "message": str(e)
+        }

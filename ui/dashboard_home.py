@@ -17,6 +17,12 @@ class DashboardHomePage:
         self.start_data_refresh()
 
     def setup_ui(self):
+        # Progress bar at the very top (outside scrollable frame)
+        self.loading_bar = ctk.CTkProgressBar(self.parent, height=2, corner_radius=0, progress_color=ModernTheme.PRIMARY)
+        self.loading_bar.pack(fill="x")
+        self.loading_bar.set(0)
+        self.loading_bar.pack_forget()
+
         self.container = ctk.CTkScrollableFrame(self.parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
@@ -38,7 +44,33 @@ class DashboardHomePage:
             "collections_month": self._make_stat_card(stats_frame, 2, tr("dashboard.stats.collections_month"), "P 0.00", ModernTheme.WARNING),
         }
 
+        # Quick Actions
+        actions_frame = ctk.CTkFrame(self.container, fg_color="transparent")
+        actions_frame.pack(fill="x", pady=(0, 20))
+        
+        ctk.CTkLabel(actions_frame, text="🚀 QUICK ACTIONS", font=ModernTheme.BODY_BOLD, text_color="gray").pack(anchor="w", padx=10, pady=(0, 10))
+        
+        btns_fr = ctk.CTkFrame(actions_frame, fg_color="transparent")
+        btns_fr.pack(fill="x")
+        
+        def open_wizard():
+            from ui.computation_wizard import ComputationWizard
+            ComputationWizard(self.parent.winfo_toplevel())
+
+        self.wizard_btn = ctk.CTkButton(
+            btns_fr, 
+            text="➕ NEW COMPUTATION WIZARD", 
+            command=open_wizard,
+            height=50,
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.PRIMARY,
+            hover_color=ModernTheme.PRIMARY_HOVER,
+            image=None # Could add an icon later
+        )
+        self.wizard_btn.pack(side="left", padx=5)
+
         # Charts Section
+
         charts_frame = ctk.CTkFrame(self.container, fg_color="transparent")
         charts_frame.pack(fill="both", expand=True)
         charts_frame.grid_columnconfigure((0, 1), weight=1)
@@ -76,6 +108,22 @@ class DashboardHomePage:
             self.backup_btn = None
             ctk.CTkLabel(self.backup_card, text="🛡️ Administrative credentials required to trigger manual backup.", font=("Segoe UI", 10, "italic"), text_color="gray").pack(pady=(0, 20), padx=20, anchor="e")
 
+
+    def _show_loading(self):
+        try:
+            self.loading_bar.pack(fill="x", side="top", before=self.container)
+            self.loading_bar.start()
+        except Exception:
+            pass
+
+    def _hide_loading(self):
+        try:
+            self.loading_bar.stop()
+            self.loading_bar.pack_forget()
+        except Exception:
+            pass
+
+
     def _make_stat_card(self, parent, col, title, value, color):
         card = ctk.CTkFrame(parent, height=120, border_width=1, border_color=ModernTheme.BORDER_DARK if ctk.get_appearance_mode().lower() == "dark" else ModernTheme.BORDER_LIGHT)
         card.grid(row=0, column=col, padx=10, sticky="nsew")
@@ -98,18 +146,29 @@ class DashboardHomePage:
         return lbl
 
     def start_data_refresh(self):
+        self._show_loading()
         threading.Thread(target=self.refresh_data, daemon=True).start()
 
     def refresh_data(self):
         try:
             summary = self.callbacks["get_summary"]() or {}
+            
+            # Inject Infrastructure Stats
+            try:
+                summary["infra_stats"] = system.get_system_stats()
+            except:
+                summary["infra_stats"] = None
+            
             trend_rows = self.callbacks["get_trend"](6) or []
             self.parent.after(0, lambda: self._update_ui(summary, trend_rows))
         except Exception as e:
             print(f"Dashboard refresh error: {e}")
+            self.parent.after(0, self._hide_loading)
 
     def _update_ui(self, summary, trend_rows):
+        self._hide_loading()
         if not self.stat_cards["total_properties"].winfo_exists(): return
+
         self.stat_cards["total_properties"].configure(text=str(summary.get("total_properties", 0)))
         self.stat_cards["collections_today"].configure(text=f"P {float(summary.get('collections_today', 0) or 0):,.2f}")
         self.stat_cards["collections_month"].configure(text=f"P {float(summary.get('collections_month', 0) or 0):,.2f}")
@@ -124,13 +183,55 @@ class DashboardHomePage:
         self.backup_labels["usb"].configure(text=b.get("last_usb", "Never"))
         self.backup_labels["cloud"].configure(text=b.get("last_cloud", "Never"))
         v = b.get("last_verify", "Unknown")
-        v_color = "#2ecc71" if "Success" in v else "#e74c3c" if "Failed" in v else "gray"
+        upper_val = v.upper()
+        v_color = ModernTheme.SUCCESS if ("SUCCESS" in upper_val or ":" in upper_val or "OK" in upper_val) else "#e74c3c" if "FAILED" in upper_val else "gray"
         self.backup_labels["verify"].configure(text=v, text_color=v_color)
 
         if self.backup_btn:
             if b.get("is_running"): self.backup_btn.configure(state="disabled", text="BACKUP IN PROGRESS...")
             else: self.backup_btn.configure(state="normal", text="RUN HYBRID BACKUP NOW")
+
+        # Update Infrastructure Health (New Phase 4 Hardening)
+        stats = summary.get("infra_stats")
+        if stats:
+            self._update_infra_ui(stats)
+
         show_toast(self.parent.winfo_toplevel(), "Dashboard data refreshed", type="info")
+
+    def _update_infra_ui(self, stats):
+        """Updates the new infrastructure health indicators."""
+        if not hasattr(self, "infra_section"):
+            self._setup_infra_section()
+        
+        p = stats.get("pool", {})
+        c = stats.get("cache", {})
+        
+        self.pool_lbl.configure(text=f"POOL: {p.get('active', 0)} ACTIVE | {p.get('idle', 0)} IDLE | {p.get('overflow', 0)} OVERFLOW")
+        self.cache_lbl.configure(text=f"CACHE: {c.get('items', 0)} ITEMS | NAMESPACES: {', '.join(c.get('namespaces', []))}")
+        
+        # Color coding for pool health
+        if p.get('overflow', 0) > 0: self.pool_lbl.configure(text_color="#e67e22")
+        elif p.get('active', 0) > 40: self.pool_lbl.configure(text_color="#e74c3c")
+        else: self.pool_lbl.configure(text_color="#2ecc71")
+
+    def _setup_infra_section(self):
+        """Creates the layout for infra diagnostics."""
+        self.infra_section = ctk.CTkFrame(self.container, fg_color="transparent")
+        self.infra_section.pack(fill="x", pady=(0, 20))
+        
+        f = ctk.CTkFrame(self.infra_section, border_width=1, border_color="#34495e")
+        f.pack(fill="x")
+        
+        ctk.CTkLabel(f, text="🏛️ INFRASTRUCTURE HEALTH (REAL-TIME)", font=("Segoe UI", 10, "bold"), text_color="gray").pack(pady=(10, 5), padx=20, anchor="w")
+        
+        inner = ctk.CTkFrame(f, fg_color="transparent")
+        inner.pack(fill="x", padx=20, pady=(0, 10))
+        
+        self.pool_lbl = ctk.CTkLabel(inner, text="POOL: LOADING...", font=("Segoe UI", 11, "bold"), text_color="#2ecc71")
+        self.pool_lbl.pack(side="left")
+        
+        self.cache_lbl = ctk.CTkLabel(inner, text="CACHE: LOADING...", font=("Segoe UI", 11), text_color="gray")
+        self.cache_lbl.pack(side="right")
 
     def trigger_manual_backup(self):
         try:

@@ -63,15 +63,18 @@ class ImportWizardModal(ctk.CTkToplevel):
         table_fr = ctk.CTkFrame(self.main_container)
         table_fr.pack(fill="both", expand=True)
         
-        cols = ("ROW", "TD NUMBER", "OWNER", "ACTION", "STATUS", "MESSAGE")
+        cols = ("ROW", "TD NUMBER", "OWNER", "LOT", "ACTION", "STATUS", "MESSAGE")
         self.tree = ttk.Treeview(table_fr, columns=cols, show="headings")
+
         
         for col in cols:
             self.tree.heading(col, text=col)
             self.tree.column(col, anchor="center", width=80)
         
-        self.tree.column("MESSAGE", width=300, anchor="w")
-        self.tree.column("OWNER", width=150, anchor="w")
+        self.tree.column("MESSAGE", width=250, anchor="w")
+        self.tree.column("OWNER", width=120, anchor="w")
+        self.tree.column("LOT", width=100, anchor="w")
+
         
         self.tree.tag_configure("ERROR", background="#ffdada")
         self.tree.tag_configure("VALID", background="#eaffea")
@@ -89,10 +92,12 @@ class ImportWizardModal(ctk.CTkToplevel):
                 r["row_index"],
                 r["td_number"],
                 r["owner_name"],
+                r.get("lot_number", "N/A"),
                 r.get("action", "N/A"),
                 r["status"],
                 r["message"]
             ), tags=(tag,))
+
         
         # Bottom controls
         btn_fr = ctk.CTkFrame(self.main_container, fg_color="transparent")
@@ -128,11 +133,14 @@ class ImportWizardModal(ctk.CTkToplevel):
                     self.raw_report = res.get("report", [])
                     self.after(0, lambda: self.show_step_2(self.raw_report, res["total_rows"], res["valid_rows"]))
                 else:
-                    self.after(0, lambda: messagebox.showerror("Validation Failed", res.get("error", "Unknown error")))
+                    self.after(0, lambda err=res.get("error"): messagebox.showerror("Validation Failed", err or "Unknown error", parent=self))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Error", str(e)))
+                err_str = str(e)
+                self.after(0, lambda err=err_str: messagebox.showerror("Error", err, parent=self))
+
             finally:
                 self.after(0, loading.destroy)
+
         
         threading.Thread(target=worker, daemon=True).start()
 
@@ -141,18 +149,22 @@ class ImportWizardModal(ctk.CTkToplevel):
             messagebox.showwarning("No Data", "No valid rows found to import.")
             return
             
-        if not messagebox.askyesno("Confirm Import", f"Are you sure you want to import {len(self.validated_data)} property records into the system?"):
+        if not messagebox.askyesno("Confirm Import", f"Are you sure you want to import {len(self.validated_data)} property records into the system?", parent=self):
             return
+
             
         def worker():
             try:
                 res = system.commit_import(self.validated_data, mode=self.mode)
                 if res.get("status") == "success":
-                    self.after(0, lambda: self.finish_import(res["imported"]))
+                    self.after(0, lambda r=res: self.finish_import(r["imported"]))
                 else:
-                    self.after(0, lambda: messagebox.showerror("Import Failed", "Database error during bulk save."))
+                    self.after(0, lambda: messagebox.showerror("Import Failed", "Database error during bulk save.", parent=self))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Error", str(e)))
+                err_str = str(e)
+                self.after(0, lambda err=err_str: messagebox.showerror("Error", err, parent=self))
+
+
         
         threading.Thread(target=worker, daemon=True).start()
 
@@ -161,8 +173,9 @@ class ImportWizardModal(ctk.CTkToplevel):
             msg = f"Import Complete!\n\n🆕 New Records: {stats.get('inserted', 0)}\n🔄 Updated Records: {stats.get('updated', 0)}"
         else:
             msg = f"Successfully imported {stats} records!"
-        messagebox.showinfo("Success", msg)
+        messagebox.showinfo("Success", msg, parent=self)
         self.destroy()
+
 
     def clear_container(self):
         for widget in self.main_container.winfo_children():

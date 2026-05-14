@@ -14,7 +14,7 @@ try:
 except:
     # Fallback to defaults if file missing
     BRANDING = {
-        "office_name": "MUNICIPAL TREASURY OFFICE",
+        "office_name": "MUNICIPAL REVENUE OFFICE",
         "branding_colors": {
             "primary": "#1f538d", 
             "secondary": "#7f8c8d", 
@@ -23,7 +23,7 @@ except:
             "success": "#27ae60"
         },
         "fonts": {"header": "Helvetica-Bold", "body": "Helvetica"},
-        "footer_text": "This document was generated electronically by the MTO System."
+        "footer_text": "This document was generated electronically by the Municipal Revenue System."
     }
 
 def safe_text(value):
@@ -39,21 +39,26 @@ def fmt_currency(value):
     except Exception:
         return "0.00"
 
-def draw_field(c, label, value, x, y, width=78 * mm):
+def draw_field(c, label, value, x, y, width=80 * mm):
     c.setFont(BRANDING["fonts"]["header"], 8)
     c.setFillColor(colors.HexColor(BRANDING["branding_colors"]["secondary"]))
     c.drawString(x, y, label.upper())
     
     text = safe_text(value)
-    font_size = 10
-    # Dynamic scaling for long text
-    if len(text) > 30 and width < 90 * mm:
-        font_size = 8
-    elif len(text) > 45:
+    # Even more dynamic scaling for very long text
+    text_len = len(text)
+    if text_len > 50:
+        font_size = 6
+    elif text_len > 35:
         font_size = 7
+    elif text_len > 20:
+        font_size = 8
+    else:
+        font_size = 9
         
     c.setFont(BRANDING["fonts"]["body"], font_size)
     c.setFillColor(colors.black)
+    # Ensure value is drawn at the right boundary of the specified width
     c.drawRightString(x + width, y, text)
 
 def draw_header(c, title, width, height, margin_x, color=None):
@@ -62,11 +67,37 @@ def draw_header(c, title, width, height, margin_x, color=None):
     c.setFillColor(primary_color)
     c.rect(0, height - 40 * mm, width, 40 * mm, fill=1, stroke=0)
     
-    c.setFillColor(colors.white)
-    c.setFont(BRANDING["fonts"]["header"], 22)
-    c.drawString(margin_x, height - 20 * mm, title.upper())
-    c.setFont(BRANDING["fonts"]["body"], 10)
-    c.drawString(margin_x, height - 26 * mm, BRANDING["office_name"])
+    # Draw Logo if exists
+    logo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), BRANDING.get("logo_path", ""))
+    logo_drawn = False
+    if os.path.exists(logo_path):
+        try:
+            c.drawImage(logo_path, margin_x, height - 35 * mm, width=25 * mm, height=25 * mm, mask='auto')
+            logo_drawn = True
+        except:
+            pass
+
+    text_offset = 30 * mm if logo_drawn else 0
     
-    c.drawRightString(width - margin_x, height - 20 * mm, datetime.now().strftime("%B %d, %Y"))
-    c.drawRightString(width - margin_x, height - 26 * mm, datetime.now().strftime("%I:%M %p"))
+    c.setFillColor(colors.white)
+    c.setFont(BRANDING["fonts"]["header"], 18) # Reduced from 22
+    c.drawString(margin_x + text_offset, height - 18 * mm, title.upper())
+    c.setFont(BRANDING["fonts"]["body"], 10)
+    c.drawString(margin_x + text_offset, height - 24 * mm, BRANDING["office_name"])
+    
+    c.setFont(BRANDING["fonts"]["header"], 9)
+    c.drawRightString(width - margin_x, height - 18 * mm, datetime.now().strftime("%B %d, %Y"))
+    c.setFont(BRANDING["fonts"]["body"], 9)
+    c.drawRightString(width - margin_x, height - 24 * mm, datetime.now().strftime("%I:%M %p"))
+
+def draw_seal(c, width, height):
+    """Draws a faded background seal if configured."""
+    seal_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), BRANDING.get("seal_path", ""))
+    if os.path.exists(seal_path):
+        try:
+            c.saveState()
+            c.setFillAlpha(0.05) # Very subtle watermark
+            c.drawImage(seal_path, (width - 120 * mm) / 2, (height - 120 * mm) / 2, width=120 * mm, height=120 * mm, mask='auto')
+            c.restoreState()
+        except:
+            pass
