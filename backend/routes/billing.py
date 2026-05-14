@@ -18,13 +18,7 @@ class BillingBulkRequest(BaseModel):
     property_ids: List[int]
     filename_prefix: str = "Bulk_SOA"
 
-class CustomComputationRequest(BaseModel):
-    property_ids: List[int]
-    penalty_rate: float = 0.02
-    discount_rate: float = 0.0
-    amnesty_year: Optional[int] = None
-    last_payment_year: Optional[int] = None
-    project_until: Optional[int] = None
+
 
 
 
@@ -112,54 +106,7 @@ async def generate_bulk_soa_pdf(
     # ... logic for bulk PDF ...
     return {"status": "success", "message": "Bulk PDF generation logic here"}
 
-@router.post("/billing/compute/preview", dependencies=[Depends(read_only)])
-async def compute_preview(
-    request: CustomComputationRequest, 
-    current_user: dict = Depends(get_current_user), 
-    db_session: Session = Depends(get_db)
-):
-    """Calculates a live preview of the computation with overrides."""
-    return bill_svc.generate_custom_computation(
-        request.property_ids,
-        penalty_rate=request.penalty_rate,
-        discount_rate=request.discount_rate,
-        amnesty_year=request.amnesty_year,
-        last_payment_year=request.last_payment_year,
-        project_until=request.project_until,
-        db_session=db_session
-    )
 
-@router.post("/billing/compute/export", dependencies=[Depends(read_only)])
-async def compute_export(
-    request: CustomComputationRequest, 
-    current_user: dict = Depends(get_current_user), 
-    db_session: Session = Depends(get_db)
-):
-    """Generates and returns a professional consolidated PDF of the custom computation."""
-    from fastapi.responses import FileResponse
-    from backend.generators.custom_computation_gen import generate_custom_computation_pdf
-    
-    # 1. Get the data
-    data = bill_svc.generate_custom_computation(
-        request.property_ids, 
-        penalty_rate=request.penalty_rate, 
-        discount_rate=request.discount_rate,
-        amnesty_year=request.amnesty_year,
-        last_payment_year=request.last_payment_year,
-        project_until=request.project_until,
-        db_session=db_session
-    )
-
-    
-    # 2. Generate PDF
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    pdf_path = generate_custom_computation_pdf(data, base_dir)
-    
-    return FileResponse(
-        pdf_path, 
-        media_type="application/pdf", 
-        filename=os.path.basename(pdf_path)
-    )
 
 
 

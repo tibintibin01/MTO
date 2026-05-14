@@ -355,23 +355,6 @@ def get_property_statement_data(property_id, db_session: Session = None):
         total_paid += item["amount_paid"]
         grand_total += item["total_amount"]
 
-    # --- ADDED: LAST PAYMENT TRACKING ---
-    last_payment_info = {
-        "year": "None",
-        "date": "N/A",
-        "or_number": "N/A"
-    }
-    last_pay = db_session.query(Payment).filter(
-        Payment.property_id == property_id
-    ).order_by(Payment.date_paid.desc(), Payment.id.desc()).first()
-    
-    if last_pay:
-        last_payment_info = {
-            "year": last_pay.tax_year or "N/A",
-            "date": last_pay.date_paid.strftime("%m/%d/%Y") if last_pay.date_paid else "N/A",
-            "or_number": last_pay.or_number or "N/A"
-        }
-
     return {
         "id": prop.id,
         "td_number": prop.td_number,
@@ -384,13 +367,12 @@ def get_property_statement_data(property_id, db_session: Session = None):
         "block_number": prop.block_number,
         "area": prop.area,
         "pin": prop.pin,
-
         "total_balance": total_balance,
         "total_paid": total_paid,
         "grand_total": grand_total,
-        "billing_rows": billing_rows,
-        "last_payment": last_payment_info
+        "billing_rows": billing_rows
     }
+
 
 
 
@@ -512,168 +494,6 @@ def get_total_due(property_id, db_session: Session = None):
         "billing_rows": data["billing_rows"]
     }
 
-def generate_custom_computation(property_ids, penalty_rate=0.02, discount_rate=0.0, amnesty_year=None, last_payment_year=None, project_until=None, db_session: Session = None):
-    """
-    Calculates detailed billing for multiple properties with override rates and amnesty support.
-    """
-    try:
-        if not db_session:
-            db_session = SessionLocal()
-            
-        all_details = []
-        grand_total = 0.0
-        
-        amn_y = int(amnesty_year) if amnesty_year else 0
-        prj_until = int(project_until) if project_until else 2026
-        
-        mto_logger.info(f"Computing custom preview for {len(property_ids)} properties. Penalty: {penalty_rate}, Amnesty Until: {amn_y}, Project Until: {prj_until}")
 
-        
-        for pid in property_ids:
-            data = get_property_statement_data(pid, db_session=db_session)
-            if not data: 
-                mto_logger.warning(f"Property ID {pid} not found for computation.")
-                continue
-            
-            prop_rows = []
-            raw_billings = [r for r in data["billing_rows"] if r["billing_status"] != "Paid"]
-            
-            # --- SMART PROJECTION: Fill gaps between Last Payment and first billing ---
-            lp_year = last_payment_year if last_payment_year is not None else data["last_payment"].get("year")
-            
-            if lp_year and str(lp_year).isdigit():
-                try:
-                    start_year = int(lp_year) + 1
-                    first_recorded = min([int(r["tax_year"]) for r in raw_billings]) if raw_billings else prj_until + 1
-                    
-                    if start_year < first_recorded:
-
-                        # Project missing years using the earliest known assessed value
-                        fallback_av = data["assessed_value"]
-                        if raw_billings:
-                            raw_billings.sort(key=lambda x: int(x["tax_year"]))
-                            fallback_av = float(raw_billings[0]["assessed_value"] or data["assessed_value"])
-                            
-                        for y in range(start_year, first_recorded):
-                            # Insert virtual billing for projection
-                            raw_billings.append({
-                                "tax_year": str(y),
-                                "assessed_value": fallback_av,
-                                "basic_amount": fallback_av * 0.01,
-                                "sef_amount": fallback_av * 0.01,
-                                "penalty": 0, # Will be calculated by overrides below
-                                "amount_paid": 0,
-                                "billing_status": "Pending"
-                            })
-                except:
-                    pass
-            
-            # --- FORWARD PROJECTION: Fill up to prj_until ---
-            if raw_billings:
-                last_recorded = max([int(str(r["tax_year"])) for r in raw_billings])
-                if last_recorded < prj_until:
-                    # Sort to get the latest assessed value
-                    raw_billings.sort(key=lambda x: int(str(x["tax_year"])))
-                    fallback_av = float(raw_billings[-1]["assessed_value"] or data["assessed_value"])
-                    for y in range(last_recorded + 1, prj_until + 1):
-                        raw_billings.append({
-                            "tax_year": str(y),
-                            "assessed_value": fallback_av,
-                            "basic_amount": fallback_av * 0.01,
-                            "sef_amount": fallback_av * 0.01,
-                            "penalty": 0,
-                            "amount_paid": 0,
-                            "billing_status": "Pending"
-                        })
-
-            raw_billings.sort(key=lambda x: int(str(x["tax_year"]))) # Ensure chronolocial
-
-
-            
-            if not raw_billings:
-                continue
-                
-            # GROUPING LOGIC: Group years with same Assessed Value
-            grouped_rows = []
-            current_group = None
-            
-            for row in raw_billings:
-                basic = float(row["basic_amount"] or 0)
-                sef = float(row["sef_amount"] or 0)
-                principal = basic + sef
-                av = float(row["assessed_value"] or 0)
-                year = int(row["tax_year"])
-                
-                # Penalty/Discount Overrides
-                current_year_val = datetime.now().year
-                if year <= amn_y:
-                    penalty = 0
-                elif year < current_year_val:
-                    # Full year penalty for past years
-                    penalty = principal * float(penalty_rate or 0) * 12 
-                else:
-                    # Partial year penalty for current year (monthly)
-                    months_late = datetime.now().month
-                    penalty = principal * float(penalty_rate or 0) * months_late
-                    
-                discount = principal * float(discount_rate or 0)
-
-
-
-                total = principal + penalty - discount - float(row["amount_paid"] or 0)
-                
-                if current_group and current_group["assessed_value"] == av:
-
-                    # Same AV, extend the group
-                    current_group["year_to"] = year
-                    current_group["basic"] += basic
-                    current_group["sef"] += sef
-                    current_group["penalty"] += penalty
-                    current_group["discount"] += discount
-                    current_group["total"] += total
-                else:
-                    # New AV group
-                    if current_group:
-                        grouped_rows.append(current_group)
-                    
-                    current_group = {
-                        "year_from": year,
-                        "year_to": year,
-                        "assessed_value": av,
-                        "basic": basic,
-                        "sef": sef,
-                        "penalty": penalty,
-                        "discount": discount,
-                        "total": total
-                    }
-                grand_total += total
-                
-            if current_group:
-                grouped_rows.append(current_group)
-            
-            all_details.append({
-                "td_number": data["td_number"],
-                "owner_name": data["owner_name"],
-                "location": data["location"],
-                "pin": data["pin"],
-                "lot_no": data["lot_number"],
-                "block_no": data["block_number"],
-                "area": data.get("area", "N/A"),
-                "last_payment": data["last_payment"],
-                "kind_of_property": data["kind_of_property"],
-                "rows": grouped_rows
-            })
-            
-        return {
-            "properties": all_details,
-            "grand_total": grand_total,
-            "penalty_rate_applied": penalty_rate,
-            "discount_rate_applied": discount_rate,
-            "date_computed": datetime.now().strftime("%B %Y")
-        }
-
-    except Exception as e:
-        mto_logger.error(f"Computation Error: {str(e)}", exc_info=True)
-        raise e
 
 

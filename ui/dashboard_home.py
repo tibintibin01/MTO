@@ -53,21 +53,7 @@ class DashboardHomePage:
         btns_fr = ctk.CTkFrame(actions_frame, fg_color="transparent")
         btns_fr.pack(fill="x")
         
-        def open_wizard():
-            from ui.computation_wizard import ComputationWizard
-            ComputationWizard(self.parent.winfo_toplevel())
 
-        self.wizard_btn = ctk.CTkButton(
-            btns_fr, 
-            text="➕ NEW COMPUTATION WIZARD", 
-            command=open_wizard,
-            height=50,
-            font=ModernTheme.BUTTON,
-            fg_color=ModernTheme.PRIMARY,
-            hover_color=ModernTheme.PRIMARY_HOVER,
-            image=None # Could add an icon later
-        )
-        self.wizard_btn.pack(side="left", padx=5)
 
         # Charts Section
 
