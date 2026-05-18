@@ -19,7 +19,9 @@ echo.
 echo [SUCCESS] Both servers launched successfully!
 echo Launching browser to http://localhost:3000/...
 start http://localhost:3000/
-start http://localhost:3000/admin/login
+
+echo Starting MTO Desktop Cashier App...
+VENV\Scripts\python.exe main.py
 
 echo.
 echo =============================================================
