@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 from datetime import datetime
 from sqlalchemy import text, func
 from sqlalchemy.orm import Session
@@ -273,8 +274,8 @@ def soft_delete_property(property_id, user=None, ip_address=None, db_session: Se
             action="SOFT_DELETE",
             table_name="properties",
             record_id=property_id,
-            old_values=str(old_data),
-            new_values=str({"is_deleted": 1}),
+            old_values=json.dumps(old_data, default=str),
+            new_values=json.dumps({"is_deleted": 1}),
             ip_address=ip_address,
             timestamp=datetime.now()
         )

@@ -22,14 +22,13 @@ def sync_property_billing(
     normalized_tax_year = (
         str(tax_year).strip() if str(tax_year).strip() else str(datetime.now().year)
     )
-    assessed_value = float(assessed_value or 0)
-    penalty = float(penalty or 0)
-    discount = float(discount or 0)
-    basic_amount = assessed_value * 0.01
-    sef_amount = assessed_value * 0.01
+    assessed_value = Decimal(str(assessed_value or 0))
+    penalty = Decimal(str(penalty or 0))
+    discount = Decimal(str(discount or 0))
+    basic_amount = (assessed_value * Decimal("0.01")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    sef_amount = (assessed_value * Decimal("0.01")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     total_amount = basic_amount + sef_amount + penalty - discount
-    # billing_status = "Paid" if has_payment else "Pending" # Replaced by logic below
-    initial_amount_paid = total_amount if has_payment else 0.0
+    initial_amount_paid = total_amount if has_payment else Decimal("0.00")
 
     billing = db_session.query(PropertyBilling).filter(
         PropertyBilling.property_id == property_id,
@@ -54,20 +53,20 @@ def sync_property_billing(
     return {
         "billing_id": billing.id,
         "tax_year": normalized_tax_year,
-        "assessed_value": assessed_value,
-        "penalty": penalty,
-        "discount": discount,
-        "basic_amount": basic_amount,
-        "sef_amount": sef_amount,
-        "total_amount": total_amount,
-        "amount_paid": billing.amount_paid,
-        "balance_amount": max(0, total_amount - billing.amount_paid),
+        "assessed_value": float(assessed_value),
+        "penalty": float(penalty),
+        "discount": float(discount),
+        "basic_amount": float(basic_amount),
+        "sef_amount": float(sef_amount),
+        "total_amount": float(total_amount),
+        "amount_paid": float(billing.amount_paid),
+        "balance_amount": float(max(Decimal("0.00"), total_amount - billing.amount_paid)),
         "billing_status": "Paid" if billing.amount_paid >= total_amount else "Partial" if billing.amount_paid > 0 else "Pending",
     }
 
 
 def allocate_payment_amount(billing_rows, amount_paid):
-    remaining = float(amount_paid or 0)
+    remaining = Decimal(str(amount_paid or 0))
     allocated = []
 
     def _sort_key(row):
@@ -75,12 +74,12 @@ def allocate_payment_amount(billing_rows, amount_paid):
         return (0, int(tax_year)) if tax_year.isdigit() else (1, tax_year)
 
     for billing_row in sorted(billing_rows, key=_sort_key):
-        due_amount = max(0.0, float(billing_row.get("total_amount") or 0))
+        due_amount = max(Decimal("0.00"), Decimal(str(billing_row.get("total_amount") or 0)))
         applied_amount = min(due_amount, remaining)
         row_copy = dict(billing_row)
-        row_copy["applied_amount"] = applied_amount
+        row_copy["applied_amount"] = float(applied_amount)
         allocated.append(row_copy)
-        remaining = max(0.0, remaining - applied_amount)
+        remaining = max(Decimal("0.00"), remaining - applied_amount)
 
     return allocated
 

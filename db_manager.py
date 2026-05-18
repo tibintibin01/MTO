@@ -208,13 +208,13 @@ def _init_pool():
         DB_ENGINE = create_engine(
             uri,
             poolclass=QueuePool,
-            pool_size=50,
-            max_overflow=20,
+            pool_size=20,
+            max_overflow=5,
             pool_recycle=1800,  # Recycled every 30 mins to prevent stale connections
             pool_timeout=30,    # Max wait time for a connection before failing
             pool_pre_ping=True  # Automatic recovery from drops (Health Check)
         )
-        print(f"SQLAlchemy Connection Pool initialized (Size: 50 + 20 Overflow)")
+        print(f"SQLAlchemy Connection Pool initialized (Size: 20 + 5 Overflow)")
     except Exception as e:
         log_error_to_file("Failed to initialize SQLAlchemy engine", e)
         DB_ENGINE = None

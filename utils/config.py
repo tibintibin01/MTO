@@ -1,6 +1,6 @@
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator, HttpUrl
+from pydantic import Field, field_validator, HttpUrl, AliasChoices
 from typing import Optional, List, Any
 
 class MTOSettings(BaseSettings):
@@ -22,11 +22,11 @@ class MTOSettings(BaseSettings):
     LOG_LEVEL: str = Field(default="INFO")
     
     # --- DATABASE ---
-    DB_HOST: str = Field(default="127.0.0.1")
-    DB_PORT: int = Field(default=3306, ge=1, le=65535)
-    DB_USER: str = Field(default="")
-    DB_NAME: str = Field(default="")
-    DB_PASSWORD: str = Field(default="")
+    DB_HOST: str = Field(default="127.0.0.1", validation_alias=AliasChoices("MTO_DB_HOST", "DB_HOST"))
+    DB_PORT: int = Field(default=3306, ge=1, le=65535, validation_alias=AliasChoices("MTO_DB_PORT", "DB_PORT"))
+    DB_USER: str = Field(default="", validation_alias=AliasChoices("MTO_DB_USER", "DB_USER"))
+    DB_NAME: str = Field(default="", validation_alias=AliasChoices("MTO_DB_NAME", "DB_NAME"))
+    DB_PASSWORD: str = Field(default="", validation_alias=AliasChoices("MTO_DB_PASSWORD", "DB_PASSWORD"))
     DB_CONNECT_TIMEOUT: int = Field(default=5, ge=1, le=60)
     
     # --- BINARY PATHS ---
