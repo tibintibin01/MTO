@@ -16,14 +16,14 @@ Unlike the old monolithic setup, this system uses a **Centralized API Server**.
 
 ### **A. Secure Database Preparation** 🛡️🗄️
 1. Open XAMPP Control Panel and start **MySQL**.
-2. **CRITICAL:** Do NOT use the default `root` account with an empty password. Run the following SQL to create a restricted application user:
+2. **CRITICAL:** Do NOT use the default `root` account with an empty password. Run the following SQL to create a restricted application user with least-privilege access:
    ```sql
    -- REPLACE 'SecurePass123!' with a strong, unique password
-   CREATE USER 'mto_admin'@'%' IDENTIFIED BY 'SecurePass123!';
-   GRANT ALL PRIVILEGES ON property_system.* TO 'mto_admin'@'%';
+   CREATE USER 'mto_app'@'%' IDENTIFIED BY 'SecurePass123!';
+   GRANT SELECT, INSERT, UPDATE ON property_system.* TO 'mto_app'@'%';
    FLUSH PRIVILEGES;
    ```
-3. Update the `.env` file with these new credentials (`MTO_DB_USER=mto_admin`).
+3. Update the `.env` file with these new credentials (`MTO_DB_USER=mto_app`).
 
 ### **B. Start the API Engine**
 1. Navigate to the project root.
