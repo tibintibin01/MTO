@@ -255,7 +255,26 @@ async def get_property_dossier(
                 else:
                     ancestry.append(clean_data(parent_prop))
 
-        logs = sys_svc.get_audit_logs(limit=10, db_session=db_session)
+        from backend.models import AuditLog
+        raw_logs = db_session.query(AuditLog).filter(
+            AuditLog.table_name == "properties",
+            AuditLog.record_id == prop.get("id")
+        ).order_by(AuditLog.timestamp.desc()).limit(10).all()
+        logs = [
+            {
+                "id": log.id,
+                "user_id": log.user_id,
+                "username": log.username,
+                "action": log.action,
+                "table_name": log.table_name,
+                "record_id": log.record_id,
+                "old_values": log.old_values,
+                "new_values": log.new_values,
+                "ip_address": log.ip_address,
+                "timestamp": log.timestamp.strftime("%Y-%m-%d %H:%M:%S") if log.timestamp else ""
+            }
+            for log in raw_logs
+        ]
         
         # Use ORM for history
         from backend.models import PropertyAssessmentHistory
