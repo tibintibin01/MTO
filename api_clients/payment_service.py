@@ -61,3 +61,6 @@ def update_receipt_history(history_id, file_path, user_name):
     return api_request(
         "POST", f"/payments/receipt-history/{history_id}/update", data=data
     )
+
+def delete_payment(payment_id):
+    return api_request("DELETE", f"/payments/{payment_id}")

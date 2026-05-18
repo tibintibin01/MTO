@@ -44,14 +44,7 @@ class DashboardHomePage:
             "collections_month": self._make_stat_card(stats_frame, 2, tr("dashboard.stats.collections_month"), "P 0.00", ModernTheme.WARNING),
         }
 
-        # Quick Actions
-        actions_frame = ctk.CTkFrame(self.container, fg_color="transparent")
-        actions_frame.pack(fill="x", pady=(0, 20))
-        
-        ctk.CTkLabel(actions_frame, text="🚀 QUICK ACTIONS", font=ModernTheme.BODY_BOLD, text_color="gray").pack(anchor="w", padx=10, pady=(0, 10))
-        
-        btns_fr = ctk.CTkFrame(actions_frame, fg_color="transparent")
-        btns_fr.pack(fill="x")
+
         
 
 
@@ -66,6 +59,8 @@ class DashboardHomePage:
 
         self.trend_chart = ModernChartWidget(charts_frame, tr("dashboard.charts.collection_trend"))
         self.trend_chart.pack(row=0, column=1, padx=(10, 0), sticky="nsew")
+
+
 
         # Backup Status Section
         backup_frame = ctk.CTkFrame(self.container, fg_color="transparent")

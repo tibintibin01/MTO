@@ -34,7 +34,7 @@ def sync_property_billing(
     billing = db_session.query(PropertyBilling).filter(
         PropertyBilling.property_id == property_id,
         PropertyBilling.tax_year == normalized_tax_year
-    ).first()
+    ).with_for_update().first()
     
     if not billing:
         billing = PropertyBilling(

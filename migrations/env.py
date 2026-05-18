@@ -6,7 +6,11 @@ from alembic import context
 
 # Add project root to sys.path for db_manager import
 sys.path.append(os.getcwd())
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from db_manager import DB_CONFIG
+from backend.database import Base
+import backend.models
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -28,11 +32,7 @@ sqlalchemy_url = f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
 
 config.set_main_option("sqlalchemy.url", sqlalchemy_url)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
+target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""

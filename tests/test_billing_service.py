@@ -33,8 +33,14 @@ def test_get_total_due_logic(mock_db_session):
     )
     mock_db_session.query.return_value.filter.return_value.first.return_value = mock_prop
     
-    # Mocking date/time if needed or assuming service uses calculate_penalty internally
-    total_data = get_total_due(1, db_session=mock_db_session) # Property ID 1
+    from unittest.mock import patch
+    with patch("backend.services.billing_service.get_property_billing_history") as mock_hist:
+        mock_hist.return_value = [
+            [
+                "2023", 100000.0, 1000.0, 1000.0, 0.0, 2000.0, 0.0, 2000.0, "Pending", None
+            ]
+        ]
+        total_data = get_total_due(1, db_session=mock_db_session) # Property ID 1
     
     assert total_data["assessed_value"] == 100000.0
     assert total_data["basic"] == 1000.0

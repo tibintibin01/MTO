@@ -62,6 +62,7 @@ ROLE_PERMISSIONS = {
         "property_edit",
         "property_delete",
         "payment_post",
+        "payment_delete",
         "receipt_view",
         "receipt_generate",
         "ledger_view",
@@ -157,20 +158,15 @@ def verify_password(password, stored_value):
 
 
 def acquire_user_lock(user_id, user_name, stale_minutes=30):
-    from db_manager import _acquire_named_lock
-    return _acquire_named_lock(
-        "user_edit_locks", "user_id", user_id, user_name, stale_minutes
-    )
+    return {"ok": True, "locked_by": user_name}
 
 
 def release_user_lock(user_id, user_name):
-    from db_manager import _release_named_lock
-    _release_named_lock("user_edit_locks", "user_id", user_id, user_name)
+    pass
 
 
 def release_all_user_locks(user_name):
-    from db_manager import _release_all_named_locks
-    _release_all_named_locks("user_edit_locks", user_name)
+    pass
 
 
 
@@ -314,6 +310,7 @@ def create_user(username, full_name, password, role, admin_user, db_session: Ses
     db_session.flush()
 
     # 4. Audit
+    import db_manager as db
     db.record_audit_log(
         admin_user,
         f"Created new user: {username} ({full_name})",

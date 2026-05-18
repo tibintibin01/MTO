@@ -130,9 +130,10 @@ export default function PropertyDetail() {
 
       <div className="mb-12">
         <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-6">
-          <History className="w-5 h-5 text-[#1f4e78]" />
+          <FileText className="w-5 h-5 text-[#1f4e78]" />
           Recent Payment History
         </h3>
+
         
         {history.length > 0 ? (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">

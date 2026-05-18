@@ -86,7 +86,8 @@ class AuditTrailPage:
         ).pack(side="right", padx=15)
 
         # --- TABLE ---
-        table_fr = ctk.CTkFrame(self.container, fg_color="white", corner_radius=12)
+        table_fr = ctk.CTkFrame(self.container, fg_color="transparent", corner_radius=12)
+
         table_fr.pack(fill="both", expand=True)
 
         self.cols = (

@@ -17,26 +17,72 @@ class RestoreRequest(BaseModel):
     file_path: str
 
 @router.get("/healthz")
-async def health_check():
-    """Enterprise-grade health check for orchestration tools."""
-    health = {"status": "healthy", "timestamp": datetime.now().isoformat()}
+async def health_check(db_session: Session = Depends(get_db)):
+    """Enterprise-grade deep health probe for K8s Liveness & Readiness checks."""
+    import shutil
+    from utils.cache_manager import cache
+    from utils.secrets_manager import secrets
+
+    health = {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "database": "unknown",
+        "cache": "unknown",
+        "storage": "unknown",
+        "vault": "unknown"
+    }
+    
+    # 1. Database Connection Check
     try:
-        db.db_query("SELECT 1", fetch=True, commit=False)
+        from sqlalchemy import text
+        db_session.execute(text("SELECT 1"))
         health["database"] = "connected"
     except Exception as e:
         health["status"] = "unhealthy"
         health["database"] = f"disconnected: {str(e)}"
+
+    # 2. Cache Connection Check
     try:
-        from backend.services.backup_service import get_backup_status
-        status = get_backup_status()
-        health["last_backup"] = status.get("health", "UNKNOWN")
-        if health["last_backup"] != "OK":
+        health["cache"] = {
+            "engine": cache.engine,
+            "status": "online" if (cache.engine.startswith("REDIS") or cache.engine.startswith("IN-MEMORY")) else "degraded"
+        }
+    except Exception as e:
+        health["cache"] = f"error: {str(e)}"
+        health["status"] = "unhealthy"
+
+    # 3. Disk Space / Backup Volume Storage Check
+    try:
+        # Check free disk space in the current database backup directory
+        backup_dir = os.path.expanduser("~/.mto")
+        if not os.path.exists(backup_dir):
+            os.makedirs(backup_dir, exist_ok=True)
+        total, used, free = shutil.disk_usage(backup_dir)
+        health["storage"] = {
+            "path": backup_dir,
+            "total_gb": round(total / (1024**3), 2),
+            "free_gb": round(free / (1024**3), 2),
+            "status": "sufficient" if (free > 500 * 1024 * 1024) else "low_space"
+        }
+        if health["storage"]["status"] == "low_space":
             health["status"] = "degraded"
-    except:
-        health["last_backup"] = "error_fetching"
+    except Exception as e:
+        health["storage"] = f"error: {str(e)}"
+        
+    # 4. Vault Check
+    try:
+        jwt_ok = len(secrets.jwt_secret) > 0
+        health["vault"] = {
+            "status": "accessible" if jwt_ok else "unauthorized"
+        }
+    except Exception as e:
+        health["vault"] = f"error: {str(e)}"
+        health["status"] = "unhealthy"
+
     if health["status"] == "unhealthy":
         raise HTTPException(status_code=503, detail=health)
     return health
+
 
 @router.get("/search/global")
 async def global_search(q: str = "", current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
@@ -111,21 +157,31 @@ async def validate_bulk_import(
     if mode == "assessment":
         from backend.services.import_service import validate_assessment_import
         return validate_assessment_import(content, ext)
+    if mode == "payments":
+        from backend.services.import_service import validate_payment_import
+        return validate_payment_import(content, ext)
     return validate_property_import(content, ext)
 
 @router.post("/system/import/commit", dependencies=[Depends(write_access)])
 async def commit_bulk_import(
-    request: Request, data: List[PropertySaveSchema], current_user: dict = Depends(get_current_user)
+    request: Request, data: List[dict], current_user: dict = Depends(get_current_user)
 ):
     from utils import is_feature_enabled
     if not is_feature_enabled("BULK_IMPORT"):
         raise HTTPException(status_code=403, detail="Bulk Import feature is currently disabled.")
     mode = request.query_params.get("mode", "property")
-    payload = [d.model_dump(exclude_unset=True) for d in data]
+    if data and hasattr(data[0], "model_dump"):
+        payload = [d.model_dump(exclude_unset=True) for d in data]
+    else:
+        payload = data
     if mode == "assessment":
         from backend.services.import_service import commit_assessment_import
         res = commit_assessment_import(payload, current_user)
         return {"status": "success", "imported": res["inserted"] + res["updated"], "details": res}
+    if mode == "payments":
+        from backend.services.import_service import commit_payment_import
+        res = commit_payment_import(payload, current_user)
+        return {"status": "success", "imported": res["inserted"]}
     from backend.services.import_service import commit_property_import
     count = commit_property_import(payload, current_user)
     return {"status": "success", "imported": count}

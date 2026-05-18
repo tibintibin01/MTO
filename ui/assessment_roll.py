@@ -147,7 +147,8 @@ class AssessmentRollPage:
         ).pack(side="right")
 
         # --- TABLE ---
-        table_fr = ctk.CTkFrame(self.container, fg_color="white", corner_radius=12)
+        table_fr = ctk.CTkFrame(self.container, fg_color="transparent", corner_radius=12)
+
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -202,7 +203,8 @@ class AssessmentRollPage:
 
         self.tree.column("ID", width=0, stretch=tk.NO)
         self.tree.column("PROPERTY OWNER", anchor="w")
-        self.tree.column("LOCATION", anchor="w")
+        self.tree.column("LOCATION", anchor="center")
+
 
         scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrolly.set)

@@ -49,9 +49,20 @@ class PropertyPage:
 
         ctk.CTkButton(filter_bar, text=f"🎯 {tr('property.filters.apply')}", command=self.refresh_table, width=120, height=28, font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.SUCCESS).pack(side="right", padx=15)
 
-        table_fr = ctk.CTkFrame(self.container, fg_color="white", corner_radius=12)
+        table_fr = ctk.CTkFrame(self.container, fg_color="transparent", corner_radius=12)
         style = ttk.Style()
-        style.configure("Prop.Treeview", rowheight=35, font=ModernTheme.BODY)
+        style.theme_use("clam")
+        style.configure("Prop.Treeview", 
+                        rowheight=35, 
+                        font=ModernTheme.BODY,
+                        background="#1e1e1e",
+                        fieldbackground="#1e1e1e",
+                        foreground="white")
+        style.configure("Prop.Treeview.Heading", 
+                        font=ModernTheme.BODY_BOLD,
+                        background="#333333",
+                        foreground="white")
+        style.map("Prop.Treeview", background=[("selected", ModernTheme.PRIMARY)])
         
         self.cols = (tr("property.table.id"), tr("property.table.td"), tr("property.table.owner"), tr("property.table.location"), tr("property.table.value"), tr("property.table.penalty"), tr("property.table.discount"), tr("property.table.due"))
         self.tree = ttk.Treeview(table_fr, columns=self.cols, show="headings", style="Prop.Treeview")
@@ -186,8 +197,8 @@ class PropertyEditModal(ctk.CTkToplevel):
         else: self.recompute()
 
     def setup_ui(self):
-        self.configure(fg_color="#f5f6fa")
-        self.scroll_form = ctk.CTkScrollableFrame(self, fg_color="white", corner_radius=10)
+        self.configure(fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK))
+        self.scroll_form = ctk.CTkScrollableFrame(self, fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK), corner_radius=10)
         self.scroll_form.pack(fill="both", expand=True, padx=20, pady=(20, 10))
 
         fields = [("TD Number", "td_number"), ("Owner Name", "owner_name"), ("Payor", "payor_name"), ("Lot Number", "lot_number"), ("Area", "area"), ("Location", "location"), ("Kind", "kind_of_property"), ("Tax Year", "tax_year"), ("OR Number", "or_number"), ("OR Date", "or_date"), ("Assessed Value", "assessed_value"), ("Penalty", "penalty"), ("Discount", "discount"), ("Amount Paid", "amount_paid")]
@@ -203,7 +214,7 @@ class PropertyEditModal(ctk.CTkToplevel):
                 if key in ["assessed_value", "penalty", "discount"]: self.vars[key].trace_add("write", lambda *a: self.recompute())
                 else: self.vars[key].trace_add("write", lambda *a: self.validate())
 
-        self.calc_box = ctk.CTkFrame(self.scroll_form, fg_color="#f1f2f6", corner_radius=8)
+        self.calc_box = ctk.CTkFrame(self.scroll_form, fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK), corner_radius=8)
         self.calc_box.pack(fill="x", padx=10, pady=15)
         self.total_lbl = ctk.CTkLabel(self.calc_box, text="TOTAL TAX DUE: 0.00", font=("Segoe UI", 12, "bold"), text_color="#1f538d")
         self.total_lbl.pack(pady=15)
@@ -305,12 +316,12 @@ class BulkBarangayUpdateModal(ctk.CTkToplevel):
         self.load_unspecified()
 
     def setup_ui(self):
-        self.configure(fg_color="#f5f6fa")
+        self.configure(fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK))
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=20, pady=20)
         ctk.CTkLabel(header, text="UNSPECIFIED PROPERTIES", font=("Segoe UI", 18, "bold")).pack(side="left")
         
-        table_fr = ctk.CTkFrame(self, fg_color="white", corner_radius=12)
+        table_fr = ctk.CTkFrame(self, fg_color="transparent", corner_radius=12)
         table_fr.pack(fill="both", expand=True, padx=20, pady=10)
         self.tree = ttk.Treeview(table_fr, columns=("ID", "TD", "Owner", "Location"), show="headings")
         for c in ("ID", "TD", "Owner", "Location"):

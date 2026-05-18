@@ -70,3 +70,12 @@ async def generate_receipt_pdf(
     return FileResponse(
         pdf_path, media_type="application/pdf", filename=os.path.basename(pdf_path)
     )
+
+@router.delete("/{payment_id}")
+async def delete_payment(
+    payment_id: int, current_user: dict = Depends(write_access), db_session: Session = Depends(get_db)
+):
+    try:
+        return pay_svc.delete_payment_record(payment_id, current_user, db_session=db_session)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

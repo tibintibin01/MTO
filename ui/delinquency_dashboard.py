@@ -7,8 +7,6 @@ from theme_manager import ModernTheme
 from utils import format_curr, tr
 from ui_components import LoadingOverlay, ErrorDialog
 import os
-from ui.computation_wizard import ComputationWizard
-
 
 class DelinquencyDashboardPage:
     def __init__(self, parent, user=None):
@@ -52,7 +50,7 @@ class DelinquencyDashboardPage:
         ).pack(side="left", padx=20, pady=10)
 
         # Table Container
-        table_fr = ctk.CTkFrame(self.container, fg_color="white", corner_radius=12)
+        table_fr = ctk.CTkFrame(self.container, fg_color="transparent", corner_radius=12)
         table_fr.pack(fill="both", expand=True)
 
         # Style Treeview
@@ -165,14 +163,10 @@ class DelinquencyDashboardPage:
 
     def generate_computation(self):
         sel = self.tree.selection()
-        initial_search = ""
-        if sel:
-            initial_search = self.tree.item(sel[0])["values"][2]
+        if not sel: return
+        prop_id = self.tree.item(sel[0])["values"][0]
+        td_no = self.tree.item(sel[0])["values"][1]
             
-        wizard = ComputationWizard(self.container, initial_search=initial_search)
-        wizard.focus_set()
-
-        
         overlay = LoadingOverlay(self.container, f"GENERATING COMPUTATION FOR {td_no}...")
         
         def worker():

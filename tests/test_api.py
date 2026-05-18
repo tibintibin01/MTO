@@ -10,6 +10,18 @@ def test_health_check():
     assert response.status_code == 200
     assert "message" in response.json()
 
+def test_deep_healthz():
+    """Verify the enterprise deep health probe is active and responsive."""
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    json_data = response.json()
+    assert json_data["status"] == "healthy"
+    assert "database" in json_data
+    assert "cache" in json_data
+    assert "storage" in json_data
+    assert "vault" in json_data
+
+
 def test_invalid_login():
     """Verify the security bouncer rejects bad credentials."""
     payload = {"username": "wrong_user", "password": "wrong_password"}

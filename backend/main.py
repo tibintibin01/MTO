@@ -18,9 +18,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-# Add parent directory to path to import existing services
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from utils.config import config as mto_config
 from utils.resilience import CircuitBreaker
 from utils.metrics import MetricsManager

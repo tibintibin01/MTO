@@ -54,22 +54,21 @@ async def list_properties(
 
 @router.get("/{property_id}/history")
 async def get_property_history(property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
-    query = """
-        SELECT id, td_number, assessed_value, kind_of_property, tax_year, changed_by, created_at
-        FROM property_assessment_history
-        WHERE property_id = %s
-        ORDER BY created_at DESC
-    """
-    rows = db.db_query(query, (property_id,), fetch=True, commit=False) or []
+    from backend.models import PropertyAssessmentHistory
+    
+    rows = db_session.query(PropertyAssessmentHistory).filter(
+        PropertyAssessmentHistory.property_id == property_id
+    ).order_by(PropertyAssessmentHistory.created_at.desc()).all()
+    
     return [
         {
-            "id": r[0],
-            "td_number": r[1],
-            "assessed_value": float(r[2]),
-            "kind": r[3],
-            "tax_year": r[4],
-            "changed_by": r[5],
-            "date": r[6].strftime("%Y-%m-%d %H:%M:%S") if hasattr(r[6], "strftime") else str(r[6])
+            "id": r.id,
+            "td_number": r.td_number,
+            "assessed_value": float(r.assessed_value or 0),
+            "kind": r.kind_of_property,
+            "tax_year": r.tax_year,
+            "changed_by": r.changed_by,
+            "date": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if hasattr(r.created_at, "strftime") else str(r.created_at)
         }
         for r in rows
     ]

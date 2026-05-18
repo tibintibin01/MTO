@@ -67,6 +67,42 @@ class MTOLogger:
         # We use a custom attribute to pass extra data to the formatter
         self.logger.log(lvl, message, extra={"extra_data": extra} if extra else None)
 
+        # Asynchronous Immutable Log Shipping Hook
+        if level.upper() in ["WARNING", "ERROR"]:
+            try:
+                from utils.secrets_manager import secrets
+                sink_url = secrets.audit_log_sink_url
+                if sink_url:
+                    import threading
+                    import urllib.request
+                    import json
+                    from datetime import datetime
+                    
+                    payload = {
+                        "timestamp": datetime.now().isoformat(),
+                        "level": level.upper(),
+                        "message": message,
+                        "metadata": extra or {}
+                    }
+                    
+                    def ship_log():
+                        try:
+                            req = urllib.request.Request(
+                                sink_url,
+                                data=json.dumps(payload).encode("utf-8"),
+                                headers={"Content-Type": "application/json"},
+                                method="POST"
+                            )
+                            with urllib.request.urlopen(req, timeout=2.0) as response:
+                                response.read()
+                        except Exception:
+                            pass
+                            
+                    threading.Thread(target=ship_log, daemon=True).start()
+            except Exception:
+                pass
+
+
     def info(self, message: str, **kwargs):
         self.log("INFO", message, kwargs)
 

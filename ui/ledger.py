@@ -63,6 +63,16 @@ class LedgerPage:
                                         font=ModernTheme.BUTTON, fg_color=ModernTheme.WARNING, width=120, height=35)
         self.export_btn.pack(side="right", padx=5)
 
+        self.import_btn = ctk.CTkButton(toolbar, text=f"🚀 {tr('property.btn_import')}", command=self.open_import_wizard,
+                                        font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY, width=120, height=35)
+        self.import_btn.pack(side="right", padx=5)
+
+        if auth.has_permission(self.user, "payment_delete"):
+            self.del_btn = ctk.CTkButton(toolbar, text="🗑️ DELETE", command=self.delete_payment,
+                                         font=ModernTheme.BUTTON, fg_color=ModernTheme.DANGER, width=120, height=35, state="disabled")
+            self.del_btn.pack(side="right", padx=5)
+
+
         # --- THE LEDGER TABLE ---
         t_frame = ctk.CTkFrame(self.container)
         t_frame.pack(fill="both", expand=True, pady=(0, 20))
@@ -129,6 +139,8 @@ class LedgerPage:
                 state if auth.has_permission(self.user, "receipt_generate") else "disabled"
             )
             self.regen_btn.configure(state=regen_state)
+        if hasattr(self, "del_btn"):
+            self.del_btn.configure(state=state)
 
     def load_ledger(self):
         term = self.search_ent.get().strip()
@@ -229,6 +241,10 @@ class LedgerPage:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def open_import_wizard(self):
+        from ui.import_wizard import ImportWizardModal
+        ImportWizardModal(self.container.winfo_toplevel(), mode="payments")
+
     def do_export(self):
         data = []
         for child in self.tree.get_children():
@@ -239,3 +255,29 @@ class LedgerPage:
             return
             
         export_data_to_excel(data, self.cols, filename_prefix="LedgerExport")
+
+    def delete_payment(self):
+        sel = self.tree.selection()
+        if not sel: return
+        
+        item = self.tree.item(sel[0])
+        pay_id = item["values"][0]
+        or_no = item["values"][2]
+        
+        if not messagebox.askyesno("Delete Payment", f"Are you sure you want to permanently delete payment OR {or_no}?\n\nThis will reverse its impact on the corresponding billing balances.", icon="warning"):
+            return
+            
+        overlay = LoadingOverlay(self.container, "Deleting Payment...")
+        
+        def worker():
+            try:
+                res = payment.delete_payment(pay_id)
+                self.container.after(0, lambda: messagebox.showinfo("Success", res.get("message", "Payment deleted.")))
+                self.container.after(0, self.load_ledger)
+            except Exception as e:
+                err_msg = str(e)
+                self.container.after(0, lambda: messagebox.showerror("Error", err_msg))
+            finally:
+                self.container.after(0, lambda: overlay.hide())
+
+        threading.Thread(target=worker, daemon=True).start()

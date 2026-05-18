@@ -9,6 +9,7 @@ ROLE_PERMISSIONS = {
         "property_edit",
         "property_delete",
         "payment_post",
+        "payment_delete",
         "receipt_view",
         "receipt_generate",
         "ledger_view",

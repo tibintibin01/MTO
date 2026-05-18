@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
-from backend.models import Property, PropertyAssessmentHistory
+from backend.models import Property, PropertyAssessmentHistory, Payment, PropertyBilling
 from backend.database import SessionLocal
 
 
@@ -15,8 +15,14 @@ class DataCleanser:
     def to_float(val):
         if pd.isna(val) or val == "": return 0.0
         if isinstance(val, (int, float)): return float(val)
-        # Remove currency symbols, commas, and other junk
-        clean = re.sub(r'[^\d.]', '', str(val))
+        
+        s = str(val).strip()
+        # Handle accounting parentheses: (100.00) -> -100.00
+        if s.startswith("(") and s.endswith(")"):
+            s = "-" + s[1:-1]
+            
+        # Remove everything except digits, dots, and minus signs
+        clean = re.sub(r'[^\d.-]', '', s)
         try: return float(clean)
         except: return 0.0
 
@@ -543,3 +549,192 @@ def import_assessment_roll_from_excel(file_path, user, db_session: Session = Non
     except Exception as e:
         db_session.rollback()
         return {"success": False, "error": str(e)}
+
+def validate_payment_import(file_content, file_extension, db_session: Session = None):
+    """
+    Validates a payment Excel file with smart conflict detection for Assessed Value.
+    """
+    try:
+        if not db_session: db_session = SessionLocal()
+        df = pd.read_excel(io.BytesIO(file_content)) if file_extension.lower() != '.csv' else pd.read_csv(io.BytesIO(file_content))
+        df.columns = [str(c).strip().upper() for c in df.columns]
+        
+        mapping = {
+            "td_number": ["TD NO.", "TD NUMBER", "TAX DECLARATION", "TD_NO"],
+            "owner_name": ["OWNER", "OWNER NAME", "DECLARED OWNER", "OWNER_NAME"],
+            "or_number": ["OR NO.", "OR NUMBER", "RECEIPT NO", "OR_NO"],
+            "tax_year": ["YEAR", "TAX YEAR", "TAX_YEAR", "PERIOD"],
+            "amount_paid": ["TOTAL", "TOTAL PAID", "AMOUNT", "AMOUNT PAID", "TOTAL_AMOUNT", "BASIC"],
+            "penalty": ["PENALTY", "SURCHARGE", "PENALTY_AMOUNT"],
+            "discount": ["DISCOUNT", "LESS", "DISCOUNT_AMOUNT"],
+            "date_paid": ["DATE", "DATE PAID", "PAYMENT DATE", "OR DATE"],
+            "assessed_value": ["ASSESSED VALUE", "VALUE", "MARKET VALUE", "ASS_VALUE"]
+        }
+        
+        found_cols = {f: next((c for c in df.columns if c in aliases), None) for f, aliases in mapping.items()}
+        
+        results = []
+        data_to_import = []
+        
+        # Pre-fetch properties for speed
+        td_list = [DataCleanser.to_str(r.get(found_cols["td_number"])) for _, r in df.iterrows()]
+        props = {p.td_number: p for p in db_session.query(Property).filter(Property.td_number.in_(td_list)).all()}
+
+        for index, row in df.iterrows():
+            errors = []
+            td = DataCleanser.to_str(row.get(found_cols["td_number"]))
+            excel_owner = DataCleanser.to_str(row.get(found_cols["owner_name"]))
+            or_no = DataCleanser.to_str(row.get(found_cols["or_number"]))
+            amt = DataCleanser.to_float(row.get(found_cols["amount_paid"]))
+            pnlty = DataCleanser.to_float(row.get(found_cols["penalty"]))
+            dscnt = DataCleanser.to_float(row.get(found_cols["discount"]))
+            excel_av = DataCleanser.to_float(row.get(found_cols["assessed_value"]))
+            
+            prop = props.get(td)
+            status = "✅ VALID"
+            msg = "Ready to import"
+            system_owner = prop.owner_name if prop else "N/A"
+            
+            if not td: errors.append("Missing TD Number")
+            elif not prop: errors.append(f"TD {td} not found in system")
+            
+            if not or_no: errors.append("Missing OR Number")
+            if amt <= 0 and pnlty <= 0: errors.append("Invalid Amount")
+            
+            if errors:
+                status = "❌ ERROR"
+                msg = "; ".join(errors)
+            elif prop:
+                # AV CONFLICT CHECK
+                db_av = float(prop.assessed_value)
+                if excel_av > 0 and abs(excel_av - db_av) > 0.01:
+                    status = "⚠️ CONFLICT"
+                    msg = f"AV Mismatch: System has {db_av:,.2f}, Excel has {excel_av:,.2f}"
+            
+            results.append({
+                "row_index": index + 2,
+                "td_number": td,
+                "system_owner": system_owner,
+                "or_number": or_no,
+                "tax_year": DataCleanser.to_str(row.get(found_cols["tax_year"])),
+                "amount_paid": f"{amt:,.2f}",
+                "penalty": f"{pnlty:,.2f}",
+                "discount": f"{dscnt:,.2f}",
+                "status": status,
+                "message": msg
+            })
+            
+            if status != "❌ ERROR":
+                data_to_import.append({
+                    "property_id": prop.id if prop else None,
+                    "td_number": td,
+                    "amount": amt,
+                    "penalty": abs(pnlty),
+                    "discount": abs(dscnt),
+                    "or_number": or_no,
+                    "tax_year": DataCleanser.to_str(row.get(found_cols["tax_year"])),
+                    "date_paid": DataCleanser.to_str(row.get(found_cols["date_paid"])),
+                    "posted_by": "NONE"
+                })
+
+        return {"success": True, "report": results, "total_rows": len(df), "valid_rows": len(data_to_import), "data": data_to_import}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def commit_payment_import(data_list, user, db_session: Session = None):
+    """
+    Commits validated payment records to the financial ledger.
+    """
+    from backend.services.system_service import log_action
+    if not db_session: db_session = SessionLocal()
+    
+    try:
+        inserted = 0
+        for row in data_list:
+            pid = row.get("property_id")
+            if not pid: continue
+            
+            # Robust Date Parsing
+            raw_date = row.get("date_paid")
+            try:
+                if raw_date:
+                    date_obj = pd.to_datetime(raw_date).to_pydatetime()
+                else:
+                    date_obj = datetime.now()
+            except:
+                date_obj = datetime.now()
+
+            # 1. Save Payment Record
+            payment = Payment(
+                property_id=pid,
+                amount=row["amount"],
+                penalty=row.get("penalty", 0.0),
+                discount=row.get("discount", 0.0),
+                or_number=row["or_number"],
+                tax_year=row["tax_year"],
+                date_paid=date_obj,
+                posted_by=row.get("posted_by", "NONE")
+            )
+            db_session.add(payment)
+            db_session.flush() # Populate payment.id
+            
+            # 2. Update Property Billing (to reflect in Receivables)
+            year = row["tax_year"]
+            billing = db_session.query(PropertyBilling).filter(
+                PropertyBilling.property_id == pid,
+                PropertyBilling.tax_year == year
+            ).first()
+            
+            if not billing:
+                # Find the property to get assessed value
+                prop = db_session.query(Property).filter(Property.id == pid).first()
+                av = float(prop.assessed_value or 0.0) if prop else 0.0
+                
+                # Determine penalty and discount
+                is_prop_year = (year == (prop.tax_year if prop else ""))
+                billing_pen = float(row.get("penalty", 0.0))
+                billing_disc = float(row.get("discount", 0.0))
+                if is_prop_year and prop:
+                    billing_pen = max(billing_pen, float(prop.penalty or 0.0))
+                    billing_disc = max(billing_disc, float(prop.discount or 0.0))
+                
+                billing = PropertyBilling(
+                    property_id=pid,
+                    tax_year=year,
+                    assessed_value=av,
+                    penalty=billing_pen,
+                    discount=billing_disc,
+                    amount_paid=0.0
+                )
+                db_session.add(billing)
+                db_session.flush() # Populate billing.id
+            else:
+                # Add penalty and discount
+                billing.penalty = float(billing.penalty or 0.0) + float(row.get("penalty", 0.0))
+                billing.discount = float(billing.discount or 0.0) + float(row.get("discount", 0.0))
+                
+            # 3. Create PaymentBilling Link and update amount_paid
+            from backend.services.billing_service import sync_payment_billings
+            sync_payment_billings(
+                None, 
+                payment.id, 
+                [{"billing_id": billing.id, "tax_year": year, "applied_amount": row["amount"]}], 
+                db_session=db_session
+            )
+
+            inserted += 1
+            
+        db_session.commit()
+        
+        # 3. Refresh System Stats for Dashboard & Reports
+        try:
+            from backend.services.stats_service import refresh_system_stats
+            refresh_system_stats(db_session=db_session)
+        except:
+            pass
+
+        log_action(user, f"Bulk Imported {inserted} Payment Records to Ledger.", db_session=db_session)
+        return {"inserted": inserted}
+    except Exception as e:
+        db_session.rollback()
+        raise e

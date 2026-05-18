@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from backend.models import Payment, Property
+from backend.models import Payment, Property, PropertyBilling
 from backend.database import SessionLocal
 from datetime import datetime
 
@@ -31,12 +31,42 @@ def get_collection_summary(db_session: Session = None):
         func.coalesce(func.sum(Payment.amount), 0)
     ).filter(func.date(Payment.date_paid) >= this_year_start).scalar()
 
+    # Modern telemetry fields for Next.js Unified Dashboard
+    total_receivables = db_session.query(
+        func.coalesce(func.sum(Property.assessed_value), 0)
+    ).filter(Property.is_deleted == False).scalar()
+
+    total_collected = db_session.query(
+        func.coalesce(func.sum(Payment.amount), 0)
+    ).scalar()
+
+    collection_rate = float((float(total_collected) / float(total_receivables)) * 100) if float(total_receivables) > 0 else 0.0
+
+    total_properties = db_session.query(
+        func.count(Property.id)
+    ).filter(Property.is_deleted == False).scalar()
+
+    # Calculate active delinquencies (where outstanding balance > 0)
+    balance_expr = func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount - PropertyBilling.amount_paid)
+    try:
+        active_delinquencies = db_session.query(Property.id).join(
+            PropertyBilling, PropertyBilling.property_id == Property.id
+        ).filter(Property.is_deleted == False).group_by(Property.id).having(balance_expr > 0).count()
+    except Exception:
+        active_delinquencies = 0
+
     return {
         "today": float(today_data[0] or 0),
         "month": float(month_total or 0),
         "year": float(year_total or 0),
-        "count": int(today_data[1] or 0)
+        "count": int(today_data[1] or 0),
+        "total_receivables": float(total_receivables or 0),
+        "total_collected": float(total_collected or 0),
+        "collection_rate": float(collection_rate),
+        "total_properties": int(total_properties or 0),
+        "active_delinquencies": int(active_delinquencies or 0)
     }
+
 
 def get_monthly_revenue_trend(db_session: Session = None):
     """Returns the last 12 months of revenue for trend analysis."""

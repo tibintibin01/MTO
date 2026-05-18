@@ -57,6 +57,8 @@ class Payment(Base):
     id = Column(Integer, primary_key=True, index=True)
     property_id = Column(Integer, ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
     amount = Column(DECIMAL(12, 2), nullable=False, default=0.00)
+    penalty = Column(DECIMAL(12, 2), default=0.00)
+    discount = Column(DECIMAL(12, 2), default=0.00)
     or_number = Column(String(255), nullable=True)
     date_paid = Column(DateTime, nullable=True)
     tax_year = Column(String(20), nullable=True)

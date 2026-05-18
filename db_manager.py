@@ -532,91 +532,17 @@ def _create_cursor(conn, dictionary=False):
         return conn.cursor()
 
 
-# Lock management (generic helpers used by services)
+# Lock management (Deprecated - unified to SQLAlchemy database-level pessimistic locking)
 def _acquire_named_lock(table_name, key_column, key_value, user_name, stale_minutes=30):
-    # Use a whitelist for allowed table names to prevent SQL injection
-    ALLOWED_LOCK_TABLES = [
-        "property_locks",
-        "ledger_locks",
-        "user_locks",
-        "payment_post_locks",
-    ]
-    if table_name not in ALLOWED_LOCK_TABLES:
-        raise ValueError(f"Unauthorized lock table: {table_name}")
-
-    ALLOWED_LOCK_COLUMNS = ["property_id", "receipt_number", "user_id", "td_number"]
-    if key_column not in ALLOWED_LOCK_COLUMNS:
-        raise ValueError(f"Unauthorized lock column: {key_column}")
-
-    # Import locally to avoid circular dependency
-    from backend.services.auth_service import get_username
-
-    user_name = get_username(user_name)
-
-    def lock_transaction(cur):
-        cur.execute(
-            f"DELETE FROM {table_name} WHERE locked_at < NOW() - INTERVAL %s MINUTE",
-            (stale_minutes,),
-        )
-        cur.execute(
-            f"SELECT locked_by FROM {table_name} WHERE {key_column} = %s LIMIT 1",
-            (key_value,),
-        )
-        row = cur.fetchone()
-        if row and row[0] != user_name:
-            return {"ok": False, "locked_by": row[0]}
-        if row and row[0] == user_name:
-            cur.execute(
-                f"UPDATE {table_name} SET locked_at = NOW() WHERE {key_column} = %s",
-                (key_value,),
-            )
-            return {"ok": True, "locked_by": user_name}
-        cur.execute(
-            f"INSERT INTO {table_name} ({key_column}, locked_by, locked_at) VALUES (%s, %s, NOW())",
-            (key_value, user_name),
-        )
-        return {"ok": True, "locked_by": user_name}
-
-    return execute_transaction(lock_transaction, show_errors=False)
+    return {"ok": True, "locked_by": user_name}
 
 
 def _release_named_lock(table_name, key_column, key_value, user_name):
-    ALLOWED_LOCK_TABLES = [
-        "property_locks",
-        "ledger_locks",
-        "user_locks",
-        "payment_post_locks",
-    ]
-    if table_name not in ALLOWED_LOCK_TABLES:
-        raise ValueError(f"Unauthorized lock table: {table_name}")
-
-    ALLOWED_LOCK_COLUMNS = ["property_id", "receipt_number", "user_id", "td_number"]
-    if key_column not in ALLOWED_LOCK_COLUMNS:
-        raise ValueError(f"Unauthorized lock column: {key_column}")
-
-    from backend.services.auth_service import get_username
-
-    user_name = get_username(user_name)
-    db_query(
-        f"DELETE FROM {table_name} WHERE {key_column} = %s AND locked_by = %s",
-        (key_value, user_name),
-    )
+    pass
 
 
 def _release_all_named_locks(table_name, user_name):
-    ALLOWED_LOCK_TABLES = [
-        "property_locks",
-        "ledger_locks",
-        "user_locks",
-        "payment_post_locks",
-    ]
-    if table_name not in ALLOWED_LOCK_TABLES:
-        raise ValueError(f"Unauthorized lock table: {table_name}")
-
-    from backend.services.auth_service import get_username
-
-    user_name = get_username(user_name)
-    db_query(f"DELETE FROM {table_name} WHERE locked_by = %s", (user_name,))
+    pass
 def get_infrastructure_stats():
     """
     Returns real-time diagnostics for the database pool and result cache.

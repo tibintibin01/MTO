@@ -4,6 +4,7 @@ from tkinter import ttk, messagebox, filedialog
 import threading
 import api_clients.system_service as system
 from utils import tr
+from theme_manager import ModernTheme
 
 class ImportWizardModal(ctk.CTkToplevel):
     def __init__(self, parent, mode="property"):
@@ -11,11 +12,11 @@ class ImportWizardModal(ctk.CTkToplevel):
         self.mode = mode
         title_map = {
             "property": "Property Bulk Import Wizard",
-            "assessment": "Assessment Roll Import Wizard"
+            "assessment": "Assessment Roll Import Wizard",
+            "payments": "Financial Ledger Import Wizard"
         }
         self.title(title_map.get(mode, "Bulk Import Wizard"))
         self.geometry("900x650")
-        self.attributes("-topmost", True)
         self.grab_set()
         
         self.validated_data = []
@@ -60,43 +61,85 @@ class ImportWizardModal(ctk.CTkToplevel):
         ctk.CTkLabel(self.main_container, text=f"STEP 2: VALIDATION PREVIEW ({valid}/{total} Rows Ready)", font=("Segoe UI", 14, "bold")).pack(pady=10)
         
         # Table
-        table_fr = ctk.CTkFrame(self.main_container)
-        table_fr.pack(fill="both", expand=True)
+        table_fr = ctk.CTkFrame(self.main_container, fg_color="transparent", border_width=1, border_color="#334155")
+        table_fr.pack(fill="both", expand=True, pady=10)
         
-        cols = ("ROW", "TD NUMBER", "OWNER", "LOT", "ACTION", "STATUS", "MESSAGE")
-        self.tree = ttk.Treeview(table_fr, columns=cols, show="headings")
+        if self.mode == "payments":
+            cols = ("ROW", "TD NUMBER", "SYSTEM OWNER", "OR NUMBER", "YEAR", "TOTAL", "PENALTY", "DISCOUNT", "STATUS", "MESSAGE")
+        else:
+            cols = ("ROW", "TD NUMBER", "OWNER", "LOT", "ACTION", "STATUS", "MESSAGE")
+            
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("Import.Treeview", 
+                        rowheight=35, 
+                        font=ModernTheme.BODY,
+                        background="#1e1e1e",
+                        fieldbackground="#1e1e1e",
+                        foreground="white")
+        style.configure("Import.Treeview.Heading", 
+                        font=ModernTheme.BODY_BOLD,
+                        background="#333333",
+                        foreground="white")
+        
+        self.tree = ttk.Treeview(table_fr, columns=cols, show="headings", style="Import.Treeview")
 
-        
+
         for col in cols:
             self.tree.heading(col, text=col)
             self.tree.column(col, anchor="center", width=80)
         
-        self.tree.column("MESSAGE", width=250, anchor="w")
-        self.tree.column("OWNER", width=120, anchor="w")
-        self.tree.column("LOT", width=100, anchor="w")
+        if self.mode == "payments":
+            self.tree.column("SYSTEM OWNER", width=150, anchor="w")
+            self.tree.column("MESSAGE", width=250, anchor="w")
+        else:
+            self.tree.column("MESSAGE", width=250, anchor="w")
+            self.tree.column("OWNER", width=120, anchor="w")
+            self.tree.column("LOT", width=100, anchor="w")
 
-        
-        self.tree.tag_configure("ERROR", background="#ffdada")
-        self.tree.tag_configure("VALID", background="#eaffea")
+        self.tree.tag_configure("ERROR", background="#ffdada", foreground="black")
+        self.tree.tag_configure("VALID", background="#eaffea", foreground="black")
+        self.tree.tag_configure("CONFLICT", background="#fff4d1", foreground="black")
         
         scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrolly.set)
+        scrollx = ttk.Scrollbar(table_fr, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=scrolly.set, xscrollcommand=scrollx.set)
         
-        self.tree.pack(side="left", fill="both", expand=True, padx=5, pady=5)
         scrolly.pack(side="right", fill="y")
+        scrollx.pack(side="bottom", fill="x")
+        self.tree.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+
         
         # Fill table
         for r in report_data:
-            tag = "ERROR" if "ERROR" in r["status"] else "VALID"
-            self.tree.insert("", "end", values=(
-                r["row_index"],
-                r["td_number"],
-                r["owner_name"],
-                r.get("lot_number", "N/A"),
-                r.get("action", "N/A"),
-                r["status"],
-                r["message"]
-            ), tags=(tag,))
+            if "ERROR" in r["status"]: tag = "ERROR"
+            elif "CONFLICT" in r["status"]: tag = "CONFLICT"
+            else: tag = "VALID"
+            
+            if self.mode == "payments":
+                vals = (
+                    r["row_index"],
+                    r["td_number"],
+                    r.get("system_owner", "N/A"),
+                    r.get("or_number", "N/A"),
+                    r.get("tax_year", "N/A"),
+                    r.get("amount_paid", "0.00"),
+                    r.get("penalty", "0.00"),
+                    r.get("discount", "0.00"),
+                    r["status"],
+                    r["message"]
+                )
+            else:
+                vals = (
+                    r["row_index"],
+                    r["td_number"],
+                    r["owner_name"],
+                    r.get("lot_number", "N/A"),
+                    r.get("action", "N/A"),
+                    r["status"],
+                    r["message"]
+                )
+            self.tree.insert("", "end", values=vals, tags=(tag,))
 
         
         # Bottom controls
@@ -116,6 +159,8 @@ class ImportWizardModal(ctk.CTkToplevel):
         
         if valid < total:
             ctk.CTkLabel(btn_fr, text="⚠️ Fix errors in your file and re-upload to import everything.", text_color="#e67e22").pack(side="right", padx=20)
+
+        self.update() # Force GUI refresh
 
     def browse_file(self):
         fpath = filedialog.askopenfilename(filetypes=[("Data Files", "*.csv *.xlsx")])
@@ -149,7 +194,8 @@ class ImportWizardModal(ctk.CTkToplevel):
             messagebox.showwarning("No Data", "No valid rows found to import.")
             return
             
-        if not messagebox.askyesno("Confirm Import", f"Are you sure you want to import {len(self.validated_data)} property records into the system?", parent=self):
+        msg = f"Are you sure you want to import {len(self.validated_data)} {'payment' if self.mode == 'payments' else 'property'} records into the system?"
+        if not messagebox.askyesno("Confirm Import", msg, parent=self):
             return
 
             

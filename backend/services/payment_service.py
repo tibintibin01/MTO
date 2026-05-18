@@ -98,20 +98,15 @@ def get_existing_payment_amount(property_id, or_number, or_date, tax_year_text, 
 
 
 def acquire_payment_post_lock(property_id, user_name, stale_minutes=30):
-    from db_manager import _acquire_named_lock
-    return _acquire_named_lock(
-        "payment_post_locks", "property_id", property_id, user_name, stale_minutes
-    )
+    return {"ok": True, "locked_by": user_name}
 
 
 def release_payment_post_lock(property_id, user_name):
-    from db_manager import _release_named_lock
-    _release_named_lock("payment_post_locks", "property_id", property_id, user_name)
+    pass
 
 
 def release_all_payment_post_locks(user_name):
-    from db_manager import _release_all_named_locks
-    _release_all_named_locks("payment_post_locks", user_name)
+    pass
 
 
 def get_next_or_number(default_prefix="OR-", db_session: Session = None):
@@ -215,8 +210,8 @@ def get_unified_payment_history(term, db_session: Session = None):
         Payment.tax_year,
         (Property.assessed_value * 0.01).label('basic'),
         (Property.assessed_value * 0.01).label('sef'),
-        Property.penalty,
-        Property.discount,
+        Payment.penalty,
+        Payment.discount,
         Payment.amount,
         Payment.posted_by,
         ReceiptHistory.file_path,
@@ -250,7 +245,8 @@ def get_payment_ledger(td_number, db_session: Session = None):
         Payment.tax_year,
         (Property.assessed_value * 0.01).label('basic'),
         (Property.assessed_value * 0.01).label('sef'),
-        Property.penalty,
+        Payment.penalty,
+        Payment.discount,
         Payment.amount
     ).join(Property, Property.id == Payment.property_id).filter(
         Property.td_number == td_number,
@@ -309,7 +305,8 @@ def get_payment_receipt_details(payment_id, db_session: Session = None):
         Property.kind_of_property,
         Property.accountable_officer,
         Property.assessed_value,
-        Property.penalty,
+        Payment.penalty,
+        Payment.discount,
         Payment.id.label('payment_id'),
         Payment.amount,
         Payment.or_number,
@@ -338,6 +335,7 @@ def get_payment_receipt_details(payment_id, db_session: Session = None):
         "accountable_officer": row.accountable_officer,
         "assessed_value": float(row.assessed_value or 0),
         "penalty": float(row.penalty or 0),
+        "discount": float(row.discount or 0),
         "payment_id": row.payment_id,
         "amount": float(row.amount or 0),
         "or_number": row.or_number,
@@ -378,3 +376,54 @@ def save_receipt_record(
     
     db_session.commit()
     return {"id": rh.id}
+
+
+@require_permission("payment_delete")
+def delete_payment_record(payment_id, user_name, db_session: Session = None, **kwargs):
+    """
+    Deletes a payment record and reverses its impact on the corresponding PropertyBilling.
+    """
+    if not db_session:
+        db_session = SessionLocal()
+
+    from backend.services.system_service import log_action
+
+    # 1. Fetch Payment
+    payment = db_session.query(Payment).filter(Payment.id == payment_id).first()
+    if not payment:
+        raise Exception("Payment record not found.")
+
+    prop_id = payment.property_id
+    tax_year = payment.tax_year
+    amt = float(payment.amount or 0)
+    pen = float(payment.penalty or 0)
+    disc = float(payment.discount or 0)
+    or_no = payment.or_number
+
+    # 2. Reverse Billing Balances (if billing exists)
+    billing = db_session.query(PropertyBilling).filter(
+        PropertyBilling.property_id == prop_id,
+        PropertyBilling.tax_year == tax_year
+    ).with_for_update().first()
+
+    if billing:
+        # Subtract the amounts back out
+        billing.amount_paid = max(0.0, float(billing.amount_paid or 0) - amt)
+        billing.penalty = max(0.0, float(billing.penalty or 0) - pen)
+        billing.discount = max(0.0, float(billing.discount or 0) - disc)
+
+    # 3. Delete Payment (cascade will handle ReceiptHistory and PaymentBilling)
+    db_session.delete(payment)
+
+    # 4. Audit & Commit
+    log_action(user_name, f"Deleted Payment OR {or_no} (Amount: {amt}) and reversed billing.", db_session=db_session)
+    db_session.commit()
+    
+    # 5. Refresh System Stats
+    try:
+        from backend.services.stats_service import refresh_system_stats
+        refresh_system_stats(db_session=db_session)
+    except:
+        pass
+
+    return {"success": True, "message": "Payment deleted successfully."}

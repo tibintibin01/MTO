@@ -16,7 +16,7 @@ SQLALCHEMY_DATABASE_URL = f"mysql+pymysql://{mto_config.DB_USER}:{secrets.db_pas
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    pool_size=50,
+    pool_size=100,
     max_overflow=20,
     pool_recycle=1800,
     pool_pre_ping=True
@@ -32,7 +32,7 @@ def connect(dbapi_connection, connection_record):
 @event.listens_for(engine, "checkout")
 def checkout(dbapi_connection, connection_record, connection_proxy):
     checked_out = engine.pool.checkedout()
-    if checked_out > 40:
+    if checked_out > 80:
         mto_logger.warning("High DB Pool Usage detected", checked_out=checked_out, pool_size=engine.pool.size())
 
 
