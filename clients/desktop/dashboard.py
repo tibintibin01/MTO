@@ -44,6 +44,7 @@ class DashboardApp(ctk.CTk):
         super().__init__()
         self.user_data = user_data
         self.username = auth.get_username(user_data)
+        self.logged_out = False
 
         # --- LOAD PERSISTED CONFIGURATION ---
         from utils import ConfigManager
@@ -260,9 +261,11 @@ class DashboardApp(ctk.CTk):
     def logout(self):
         from tkinter import messagebox
         if messagebox.askyesno(tr("common.logout_confirm"), tr("common.logout_msg")):
+            self.logged_out = True
             self.destroy()
 
     def logout_automatic(self):
+        self.logged_out = True
         expired_win = ctk.CTkToplevel(self)
         expired_win.title(tr("common.session_expired_title"))
         expired_win.geometry("450x250")
@@ -345,6 +348,7 @@ class DashboardApp(ctk.CTk):
 def open_dashboard(user_data):
     app = DashboardApp(user_data)
     app.mainloop()
+    return getattr(app, "logged_out", False)
 
 
 class SystemHelpPage:

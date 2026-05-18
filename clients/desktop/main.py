@@ -75,6 +75,7 @@ class LoginApp(ctk.CTk):
         # Step 2: Bind resize for responsiveness
         self.bind("<Configure>", self._on_resize)
         self.is_dark = True
+        self.auth_result = None
 
         # Grid layout
         self.grid_columnconfigure(0, weight=1)
@@ -214,12 +215,20 @@ class LoginApp(ctk.CTk):
     def handle_login_result(self, auth_result):
         if auth_result:
             system.log_action(auth_result, "User login successful")
+            self.auth_result = auth_result
             self.destroy()
-            dashboard.open_dashboard(auth_result)
         else:
             self.overlay.destroy()
             self.p_err.configure(text=tr("login.error_invalid"))
 
 if __name__ == "__main__":
-    app = LoginApp()
-    app.mainloop()
+    while True:
+        app = LoginApp()
+        app.mainloop()
+        
+        auth_res = getattr(app, "auth_result", None)
+        if auth_res:
+            should_relogin = dashboard.open_dashboard(auth_res)
+            if should_relogin:
+                continue
+        break
