@@ -195,8 +195,13 @@ class ImportWizardModal(ctk.CTkToplevel):
             return
             
         msg = f"Are you sure you want to import {len(self.validated_data)} {'payment' if self.mode == 'payments' else 'property'} records into the system?"
-        if not messagebox.askyesno("Confirm Import", msg, parent=self):
+        
+        self.grab_release()
+        confirmed = messagebox.askyesno("Confirm Import", msg, parent=self)
+        if not confirmed:
+            self.grab_set()
             return
+        self.grab_set()
 
         # Disable button and show loading indicator
         self.commit_btn.configure(state="disabled", text="⏳ IMPORTING... PLEASE WAIT")
@@ -212,10 +217,10 @@ class ImportWizardModal(ctk.CTkToplevel):
                 if res.get("status") == "success":
                     self.after(0, lambda r=res: self.finish_import(r["imported"]))
                 else:
-                    self.after(0, lambda: messagebox.showerror("Import Failed", "Database error during bulk save.", parent=self))
+                    self.after(0, lambda: self.safe_show_error("Import Failed", "Database error during bulk save."))
             except Exception as e:
                 err_str = str(e)
-                self.after(0, lambda err=err_str: messagebox.showerror("Error", err, parent=self))
+                self.after(0, lambda err=err_str: self.safe_show_error("Error", err))
             finally:
                 self.after(0, loading.destroy)
                 try:
@@ -225,14 +230,20 @@ class ImportWizardModal(ctk.CTkToplevel):
         
         threading.Thread(target=worker, daemon=True).start()
 
+    def safe_show_error(self, title, msg):
+        self.grab_release()
+        messagebox.showerror(title, msg, parent=self)
+        self.grab_set()
+
     def finish_import(self, stats):
         if isinstance(stats, dict):
             msg = f"Import Complete!\n\n🆕 New Records: {stats.get('inserted', 0)}\n🔄 Updated Records: {stats.get('updated', 0)}"
         else:
             msg = f"Successfully imported {stats} records!"
+            
+        self.grab_release()
         messagebox.showinfo("Success", msg, parent=self)
         self.destroy()
-
 
     def clear_container(self):
         for widget in self.main_container.winfo_children():
