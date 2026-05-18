@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
+from datetime import datetime
 from sqlalchemy import text, func
 from sqlalchemy.orm import Session
-from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment
+from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment, AuditLog
 from backend.services.auth_service import get_username, require_permission
 import backend.services.billing_service as billing
 import backend.services.payment_service as payment
@@ -266,7 +267,6 @@ def soft_delete_property(property_id, user=None, ip_address=None, db_session: Se
     prop.is_deleted = True
     
     if user:
-        from datetime import datetime
         audit = AuditLog(
             user_id=user.get("id"),
             username=user.get("username", "unknown"),

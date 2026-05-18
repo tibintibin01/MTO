@@ -28,8 +28,7 @@ from backend.deps import limiter, manager
 SENTRY_DSN = os.getenv("SENTRY_DSN")
 sentry_circuit = CircuitBreaker(name="SentryTelemetry", failure_threshold=3, recovery_timeout=300)
 
-from backend.services.migration_service import run_migrations
-run_migrations()
+
 
 if SENTRY_AVAILABLE and SENTRY_DSN:
     def init_sentry():
@@ -48,8 +47,7 @@ if SENTRY_AVAILABLE and SENTRY_DSN:
 elif not SENTRY_AVAILABLE and SENTRY_DSN:
     print("WARNING: Sentry DSN provided but sentry_sdk NOT FOUND. Telemetry disabled.")
 
-from backend.services.migration_service import run_migrations
-run_migrations()
+
 
 app = FastAPI(
     title="Municipal Revenue System",
