@@ -339,21 +339,18 @@ class RegisterUserModal(ctk.CTkToplevel):
         # Initial Password
         ctk.CTkLabel(form, text=tr("users.modal.fields.password"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
         
-        pass_frame = ctk.CTkFrame(form, fg_color="transparent")
-        pass_frame.pack(fill="x", pady=(5, 30))
+        self.pass_ent = ctk.CTkEntry(form, placeholder_text=tr("users.messages.error_password"), height=40, show="*", font=ModernTheme.BODY)
+        self.pass_ent.pack(fill="x", pady=(5, 30))
         
-        self.pass_ent = ctk.CTkEntry(pass_frame, placeholder_text=tr("users.messages.error_password"), height=40, show="*", font=ModernTheme.BODY)
-        self.pass_ent.pack(side="left", fill="x", expand=True)
-        
-        self.peek_btn = ctk.CTkButton(
-            pass_frame, text="👁", width=40, height=40, 
-            fg_color=ModernTheme.SECONDARY, hover_color=ModernTheme.PRIMARY,
-            text_color="white", font=("Segoe UI", 14)
+        self.peek_lbl = ctk.CTkLabel(
+            self.pass_ent, text="👁", width=30, height=30, 
+            text_color=ModernTheme.TEXT_GRAY, font=("Segoe UI", 14),
+            cursor="hand2"
         )
-        self.peek_btn.pack(side="right", padx=(10, 0))
+        self.peek_lbl.place(relx=0.97, rely=0.5, anchor="e")
         
-        self.peek_btn.bind("<ButtonPress-1>", lambda e: self.pass_ent.configure(show=""))
-        self.peek_btn.bind("<ButtonRelease-1>", lambda e: self.pass_ent.configure(show="*"))
+        self.peek_lbl.bind("<ButtonPress-1>", lambda e: self.pass_ent.configure(show=""))
+        self.peek_lbl.bind("<ButtonRelease-1>", lambda e: self.pass_ent.configure(show="*"))
 
         # Buttons
         btn_fr = ctk.CTkFrame(self, fg_color="transparent")
@@ -426,21 +423,18 @@ class ResetPasswordModal(ctk.CTkToplevel):
         # Password Entry field with Peek Option
         ctk.CTkLabel(form, text=tr("users.modal.fields.password"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
         
-        pass_frame = ctk.CTkFrame(form, fg_color="transparent")
-        pass_frame.pack(fill="x", pady=(5, 20))
+        self.pass_ent = ctk.CTkEntry(form, placeholder_text=tr("users.messages.error_password"), height=40, show="*", font=ModernTheme.BODY)
+        self.pass_ent.pack(fill="x", pady=(5, 20))
         
-        self.pass_ent = ctk.CTkEntry(pass_frame, placeholder_text=tr("users.messages.error_password"), height=40, show="*", font=ModernTheme.BODY)
-        self.pass_ent.pack(side="left", fill="x", expand=True)
-        
-        self.peek_btn = ctk.CTkButton(
-            pass_frame, text="👁", width=40, height=40, 
-            fg_color=ModernTheme.SECONDARY, hover_color=ModernTheme.PRIMARY,
-            text_color="white", font=("Segoe UI", 14)
+        self.peek_lbl = ctk.CTkLabel(
+            self.pass_ent, text="👁", width=30, height=30, 
+            text_color=ModernTheme.TEXT_GRAY, font=("Segoe UI", 14),
+            cursor="hand2"
         )
-        self.peek_btn.pack(side="right", padx=(10, 0))
+        self.peek_lbl.place(relx=0.97, rely=0.5, anchor="e")
         
-        self.peek_btn.bind("<ButtonPress-1>", lambda e: self.pass_ent.configure(show=""))
-        self.peek_btn.bind("<ButtonRelease-1>", lambda e: self.pass_ent.configure(show="*"))
+        self.peek_lbl.bind("<ButtonPress-1>", lambda e: self.pass_ent.configure(show=""))
+        self.peek_lbl.bind("<ButtonRelease-1>", lambda e: self.pass_ent.configure(show="*"))
 
         # Buttons
         btn_fr = ctk.CTkFrame(self, fg_color="transparent")
