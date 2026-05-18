@@ -290,7 +290,7 @@ class ProgressOverlay(ctk.CTkToplevel):
         self.inner = ctk.CTkFrame(self, fg_color="transparent")
         self.inner.pack(fill="both", expand=True, padx=2, pady=2)
         
-        self.progress_widget = ModernProgressBar(self.inner, title=title, fg_color=ModernTheme.BG_CARD_DARK)
+        self.progress_widget = ModernProgressBar(self.inner, title=title, fg_color=ModernTheme.CARD_DARK)
         self.progress_widget.pack(fill="both", expand=True)
         
     def update(self, percentage, message):
