@@ -89,7 +89,7 @@ class PropertyDossierModal(ctk.CTkToplevel):
                 "date": str(p[0]),
                 "type": "PAYMENT",
                 "title": f"Official Receipt: {p[1]}",
-                "subtitle": f"Amount Paid: P {float(p[6] or 0):,.2f}",
+                "subtitle": f"Amount Paid: P {float(p[7] or 0):,.2f}",
                 "detail": f"Tax Year: {p[2]}",
                 "color": "#2ecc71" # Green
             })
