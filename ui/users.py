@@ -239,19 +239,13 @@ class UserAccessPage:
 
     def reset_password(self):
         if not self.selected_user: return
-        new_pass = simpledialog.askstring(tr("users.messages.reset_title"), tr("users.messages.reset_prompt").replace("{user}", self.selected_user['username']), show="*")
-        if not new_pass: return
-        
-        if len(new_pass) < 6:
-            ErrorDialog(self.container.winfo_toplevel(), tr("common.error"), tr("users.messages.error_password"))
-            return
-            
-        try:
-            auth.reset_user_password(self.selected_user["id"], new_pass)
-            show_toast(self.container.winfo_toplevel(), tr("users.messages.success_reset"), type="success")
-            self.refresh_audit_trace(self.selected_user["id"])
-        except Exception as e:
-            ErrorDialog(self.container.winfo_toplevel(), tr("common.error"), str(e))
+        ResetPasswordModal(
+            self.container, 
+            self.selected_user['username'], 
+            self.selected_user['id'], 
+            self.refresh_users, 
+            self.refresh_audit_trace
+        )
 
     def delete_user_account(self):
         if not self.selected_user: return
@@ -344,8 +338,22 @@ class RegisterUserModal(ctk.CTkToplevel):
 
         # Initial Password
         ctk.CTkLabel(form, text=tr("users.modal.fields.password"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
-        self.pass_ent = ctk.CTkEntry(form, placeholder_text=tr("users.messages.error_password"), height=40, show="*", font=ModernTheme.BODY)
-        self.pass_ent.pack(fill="x", pady=(5, 30))
+        
+        pass_frame = ctk.CTkFrame(form, fg_color="transparent")
+        pass_frame.pack(fill="x", pady=(5, 30))
+        
+        self.pass_ent = ctk.CTkEntry(pass_frame, placeholder_text=tr("users.messages.error_password"), height=40, show="*", font=ModernTheme.BODY)
+        self.pass_ent.pack(side="left", fill="x", expand=True)
+        
+        self.peek_btn = ctk.CTkButton(
+            pass_frame, text="👁", width=40, height=40, 
+            fg_color=ModernTheme.SECONDARY, hover_color=ModernTheme.PRIMARY,
+            text_color="white", font=("Segoe UI", 14)
+        )
+        self.peek_btn.pack(side="right", padx=(10, 0))
+        
+        self.peek_btn.bind("<ButtonPress-1>", lambda e: self.pass_ent.configure(show=""))
+        self.peek_btn.bind("<ButtonRelease-1>", lambda e: self.pass_ent.configure(show="*"))
 
         # Buttons
         btn_fr = ctk.CTkFrame(self, fg_color="transparent")
@@ -376,5 +384,88 @@ class RegisterUserModal(ctk.CTkToplevel):
                 self.destroy()
             else:
                 ErrorDialog(self, tr("common.error"), "Failed to create account.")
+        except Exception as e:
+            ErrorDialog(self, tr("common.error"), str(e))
+
+
+class ResetPasswordModal(ctk.CTkToplevel):
+    def __init__(self, parent, username, user_id, callback, refresh_audit_cb):
+        super().__init__(parent)
+        self.title(tr("users.messages.reset_title"))
+        self.geometry("450x350")
+        self.resizable(False, False)
+        self.username = username
+        self.user_id = user_id
+        self.callback = callback
+        self.refresh_audit_cb = refresh_audit_cb
+        
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self.attributes("-topmost", True)
+        
+        # Center
+        self.update_idletasks()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"+{(sw-450)//2}+{(sh-350)//2}")
+        
+        self.setup_ui()
+
+    def setup_ui(self):
+        self.configure(fg_color="white")
+        
+        # Header
+        header_fr = ctk.CTkFrame(self, fg_color=ModernTheme.WARNING, height=70, corner_radius=0)
+        header_fr.pack(fill="x")
+        ctk.CTkLabel(header_fr, text=f"🔑 Reset Password: {self.username}", font=ModernTheme.H3, text_color="white").pack(pady=20)
+
+        form = ctk.CTkFrame(self, fg_color="transparent")
+        form.pack(fill="both", expand=True, padx=40, pady=20)
+
+        ctk.CTkLabel(form, text=tr("users.messages.reset_prompt").replace("{user}", self.username), font=ModernTheme.BODY, text_color=ModernTheme.TEXT_GRAY, wraplength=370, justify="left").pack(anchor="w", pady=(0, 15))
+
+        # Password Entry field with Peek Option
+        ctk.CTkLabel(form, text=tr("users.modal.fields.password"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
+        
+        pass_frame = ctk.CTkFrame(form, fg_color="transparent")
+        pass_frame.pack(fill="x", pady=(5, 20))
+        
+        self.pass_ent = ctk.CTkEntry(pass_frame, placeholder_text=tr("users.messages.error_password"), height=40, show="*", font=ModernTheme.BODY)
+        self.pass_ent.pack(side="left", fill="x", expand=True)
+        
+        self.peek_btn = ctk.CTkButton(
+            pass_frame, text="👁", width=40, height=40, 
+            fg_color=ModernTheme.SECONDARY, hover_color=ModernTheme.PRIMARY,
+            text_color="white", font=("Segoe UI", 14)
+        )
+        self.peek_btn.pack(side="right", padx=(10, 0))
+        
+        self.peek_btn.bind("<ButtonPress-1>", lambda e: self.pass_ent.configure(show=""))
+        self.peek_btn.bind("<ButtonRelease-1>", lambda e: self.pass_ent.configure(show="*"))
+
+        # Buttons
+        btn_fr = ctk.CTkFrame(self, fg_color="transparent")
+        btn_fr.pack(fill="x", side="bottom", pady=20, padx=40)
+
+        ctk.CTkButton(btn_fr, text=tr("users.modal.btn_cancel"), command=self.destroy, fg_color=ModernTheme.SECONDARY, height=40, width=100, font=ModernTheme.BUTTON).pack(side="left")
+        ctk.CTkButton(btn_fr, text=tr("users.messages.reset_title"), command=self.save, fg_color=ModernTheme.SUCCESS, height=40, width=250, font=ModernTheme.BUTTON).pack(side="right")
+
+    def save(self):
+        pwd = self.pass_ent.get().strip()
+
+        if not pwd:
+            ErrorDialog(self, tr("common.error"), tr("users.messages.error_fields"))
+            return
+        
+        if len(pwd) < 6:
+            ErrorDialog(self, tr("common.error"), tr("users.messages.error_password"))
+            return
+
+        try:
+            auth.reset_user_password(self.user_id, pwd)
+            from ui_components import show_toast
+            show_toast(self.master.winfo_toplevel(), tr("users.messages.success_reset"), type="success")
+            self.refresh_audit_cb(self.user_id)
+            self.callback()
+            self.destroy()
         except Exception as e:
             ErrorDialog(self, tr("common.error"), str(e))

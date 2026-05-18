@@ -118,8 +118,21 @@ class LoginApp(ctk.CTk):
         self.u_err = ctk.CTkLabel(self.content_frame, text="", text_color=ModernTheme.DANGER, font=ModernTheme.BODY_SMALL)
         self.u_err.pack()
 
-        self.pe = ctk.CTkEntry(self.content_frame, width=320, height=50, placeholder_text=tr("login.password"), show="*", font=ModernTheme.BODY)
-        self.pe.pack(pady=5)
+        pass_frame = ctk.CTkFrame(self.content_frame, fg_color="transparent")
+        pass_frame.pack(pady=5)
+        
+        self.pe = ctk.CTkEntry(pass_frame, width=270, height=50, placeholder_text=tr("login.password"), show="*", font=ModernTheme.BODY)
+        self.pe.pack(side="left")
+        
+        self.peek_btn = ctk.CTkButton(
+            pass_frame, text="👁", width=40, height=50, 
+            fg_color=ModernTheme.SECONDARY, hover_color=ModernTheme.PRIMARY,
+            text_color="white", font=("Segoe UI", 16)
+        )
+        self.peek_btn.pack(side="right", padx=(10, 0))
+        
+        self.peek_btn.bind("<ButtonPress-1>", lambda e: self.pe.configure(show=""))
+        self.peek_btn.bind("<ButtonRelease-1>", lambda e: self.pe.configure(show="*"))
         self.p_err = ctk.CTkLabel(self.content_frame, text="", text_color=ModernTheme.DANGER, font=ModernTheme.BODY_SMALL)
         self.p_err.pack()
 
