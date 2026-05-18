@@ -26,7 +26,7 @@ services:
     environment:
       MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-mto_secure_root}
       MARIADB_DATABASE: mto_treasury
-      MARIADB_USER: mto_admin
+      MARIADB_USER: mto_app
       MARIADB_PASSWORD: ${DB_PASSWORD:-mto_pass_2024}
     volumes:
       - mto_data:/var/lib/mysql
