@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from sqlalchemy import text, func
 from sqlalchemy.orm import Session
-from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment, PropertyEditLock
+from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment
 from backend.services.auth_service import get_username, require_permission
 import backend.services.billing_service as billing
 import backend.services.payment_service as payment
@@ -89,13 +89,8 @@ def get_property_by_id(property_id, db_session: Session):
 
 
 def release_all_property_locks(username, db_session: Session = None):
-    """Clears any orphaned property locks for a user on login."""
-    if not db_session:
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-        
-    db_session.query(PropertyEditLock).filter(PropertyEditLock.locked_by == username).delete()
-    db_session.commit()
+    """No-op. Deprecated in favor of native Optimistic Concurrency Control (OCC)."""
+    pass
 
 
 def save_property(data, editing_id=None, user=None, db_session: Session = None):

@@ -142,14 +142,7 @@ class ReceiptHistory(Base):
     generated_at = Column(DateTime, nullable=False)
     status = Column(String(50), default="PDF READY")
 
-class PropertyEditLock(Base):
-    __tablename__ = "property_edit_locks"
 
-    id = Column(Integer, primary_key=True, index=True)
-    property_id = Column(Integer, ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
-    locked_by = Column(String(150), nullable=False)
-    locked_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-    expires_at = Column(DateTime, nullable=True)
 
 class SystemStats(Base):
     __tablename__ = "system_stats"
