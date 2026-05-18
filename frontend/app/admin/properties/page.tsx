@@ -55,15 +55,16 @@ export default function AdminProperties() {
       
       if (!res.ok) throw new Error("Failed to retrieve property records.");
       const json = await res.json();
-      setProperties(Array.isArray(json) ? json : []);
+      if (Array.isArray(json)) {
+        setProperties(json);
+      } else if (json && Array.isArray(json.items)) {
+        setProperties(json.items);
+      } else {
+        setProperties([]);
+      }
     } catch (err: any) {
       setError(err.message);
-      // Fallback fallback mockup so user can immediately test!
-      setProperties([
-        { id: 1, td_number: "TD-2023-001", pin: "PIN-001", owner_name: "Juan Dela Cruz", assessed_value: 1200000.00, barangay: "Poblacion", kind: "Residential", status: "UPDATED" },
-        { id: 2, td_number: "TD-2023-002", pin: "PIN-002", owner_name: "Maria Santos", assessed_value: 2400000.00, barangay: "San Jose", kind: "Commercial", status: "DELINQUENT" },
-        { id: 3, td_number: "TD-2023-003", pin: "PIN-003", owner_name: "Pedro Penduko", assessed_value: 950000.00, barangay: "Santo Tomas", kind: "Agricultural", status: "UPDATED" }
-      ]);
+      setProperties([]);
     } finally {
       setLoading(false);
     }

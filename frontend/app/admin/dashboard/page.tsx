@@ -36,30 +36,7 @@ export default function AdminDashboard() {
       setData(json);
     } catch (err: any) {
       setError(err.message);
-      // Fallback mockup data so that dashboard always renders beautifully!
-      setData({
-        summary: {
-          total_receivables: 14250320.00,
-          total_collected: 8794120.50,
-          collection_rate: 61.7,
-          total_properties: 3418,
-          active_delinquencies: 142
-        },
-        trend: [
-          { month: "Jan", revenue: 450000 },
-          { month: "Feb", revenue: 520000 },
-          { month: "Mar", revenue: 610000 },
-          { month: "Apr", revenue: 580000 },
-          { month: "May", revenue: 670000 }
-        ],
-        barangays: [
-          { name: "Poblacion", value: 3200000, collected: 2100000, percentage: 65.6 },
-          { name: "San Jose", value: 1800000, collected: 1300000, percentage: 72.2 },
-          { name: "Santo Tomas", value: 2400000, collected: 1100000, percentage: 45.8 },
-          { name: "Santa Cruz", value: 1500000, collected: 950000, percentage: 63.3 },
-          { name: "San Vicente", value: 1200000, collected: 780000, percentage: 65.0 }
-        ]
-      });
+      setData(null);
     } finally {
       setLoading(false);
       setRefreshing(false);

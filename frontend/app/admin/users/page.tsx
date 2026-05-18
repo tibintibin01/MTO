@@ -40,12 +40,7 @@ export default function AdminUsers() {
       setUsers(Array.isArray(json) ? json : []);
     } catch (err: any) {
       setError(err.message);
-      // Fallback fallback mockup so user can immediately test!
-      setUsers([
-        { id: 1, username: "admin", full_name: "Super Administrator", role: "admin", is_active: true },
-        { id: 2, username: "cashier1", full_name: "Cashier Clerk 1", role: "cashier", is_active: true },
-        { id: 3, username: "cashier2", full_name: "Cashier Clerk 2", role: "cashier", is_active: false }
-      ]);
+      setUsers([]);
     } finally {
       setLoading(false);
     }
