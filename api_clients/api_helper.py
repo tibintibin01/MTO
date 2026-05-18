@@ -196,7 +196,7 @@ def api_request(
         if status_code in [502, 503, 504]:
             CONNECTION_STATUS = "OFFLINE"
 
-        if e.response and e.response.text:
+        if e.response is not None and e.response.text:
             try:
                 error_data = e.response.json()
                 if "detail" in error_data:

@@ -201,7 +201,11 @@ class LoginApp(ctk.CTk):
         except Exception as e:
             err_msg = str(e)
             log_error_to_file("Login Background Task Failed", e)
-            self.after(0, lambda m=err_msg: self._hide_overlay_with_error(f"{tr('login.error_network')}: {m}"))
+            if err_msg.startswith("Error: "):
+                clean_msg = err_msg[7:]
+            else:
+                clean_msg = f"{tr('login.error_network')}: {err_msg}"
+            self.after(0, lambda m=clean_msg: self._hide_overlay_with_error(m))
 
     def _hide_overlay_with_error(self, msg):
         self.overlay.destroy()
