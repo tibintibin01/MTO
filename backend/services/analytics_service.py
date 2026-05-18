@@ -88,14 +88,42 @@ def get_barangay_distribution(db_session: Session = None):
     if not db_session:
         db_session = SessionLocal()
 
-    results = db_session.query(
+    # 1. Get receivables per barangay (2% basic tax)
+    receivables_query = db_session.query(
         Property.barangay,
-        func.sum(Payment.amount).label('total')
+        func.coalesce(func.sum(Property.assessed_value * 0.02), 0).label('receivables')
+    ).filter(Property.is_deleted == False).group_by(Property.barangay).all()
+
+    # 2. Get collected per barangay
+    collected_query = db_session.query(
+        Property.barangay,
+        func.coalesce(func.sum(Payment.amount), 0).label('collected')
     ).join(Payment, Payment.property_id == Property.id).filter(
         Property.is_deleted == False
-    ).group_by(Property.barangay).order_by(func.sum(Payment.amount).desc()).limit(10).all()
-    
-    return [{"name": r[0] or "UNKNOWN", "value": float(r[1] or 0)} for r in results]
+    ).group_by(Property.barangay).all()
+
+    data = {}
+    for r in receivables_query:
+        brgy = r[0] or "UNKNOWN"
+        data[brgy] = {"name": brgy, "value": float(r[1]), "collected": 0.0, "percentage": 0.0}
+
+    for c in collected_query:
+        brgy = c[0] or "UNKNOWN"
+        if brgy not in data:
+            data[brgy] = {"name": brgy, "value": 0.0, "collected": float(c[1]), "percentage": 0.0}
+        else:
+            data[brgy]["collected"] = float(c[1])
+
+    result = []
+    for brgy, stats in data.items():
+        if stats["value"] > 0:
+            stats["percentage"] = (stats["collected"] / stats["value"]) * 100
+        else:
+            stats["percentage"] = 0.0 if stats["collected"] == 0 else 100.0
+        result.append(stats)
+        
+    result.sort(key=lambda x: x["collected"], reverse=True)
+    return result[:10]
 
 def get_tax_year_distribution(db_session: Session = None):
     """Returns the distribution of payments across tax years."""
