@@ -202,6 +202,9 @@ class ImportWizardModal(ctk.CTkToplevel):
         self.commit_btn.configure(state="disabled", text="⏳ IMPORTING... PLEASE WAIT")
         loading = ctk.CTkLabel(self.main_container, text="Saving records to database... This may take a few moments.", font=("Segoe UI", 12, "italic", "bold"), text_color="#e67e22")
         loading.pack(pady=10)
+        
+        # FORCE IMMEDIATE UI REPAINT to clear the messagebox artifact
+        self.update()
             
         def worker():
             try:
