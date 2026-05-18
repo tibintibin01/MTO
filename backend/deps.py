@@ -38,24 +38,66 @@ class ConnectionManager:
     def __init__(self):
         from fastapi import WebSocket
         self.active_connections: List[WebSocket] = []
+        self.redis = None
+        self.pubsub = None
+        
+        if REDIS_URL:
+            try:
+                import redis.asyncio as aioredis
+                import asyncio
+                self.redis = aioredis.from_url(REDIS_URL, decode_responses=True)
+                self.pubsub = self.redis.pubsub()
+                asyncio.create_task(self._listen_redis())
+            except Exception as e:
+                print(f"Redis Pub/Sub init failed: {e}")
+
+    async def _listen_redis(self):
+        if not self.pubsub: return
+        try:
+            await self.pubsub.subscribe("mto_notifications")
+            async for message in self.pubsub.listen():
+                if message["type"] == "message":
+                    data = message["data"]
+                    for connection in self.active_connections:
+                        try:
+                            await connection.send_text(data)
+                        except:
+                            pass
+        except Exception:
+            pass
 
     async def connect(self, websocket):
         await websocket.accept()
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket):
-        self.active_connections.remove(websocket)
+        try:
+            self.active_connections.remove(websocket)
+        except ValueError:
+            pass
 
     async def send_personal_message(self, message: str, websocket):
         await websocket.send_text(message)
 
     async def broadcast(self, message: dict):
         import json
-        for connection in self.active_connections:
+        msg_str = json.dumps(message)
+        if self.redis:
             try:
-                await connection.send_text(json.dumps(message))
-            except:
-                pass
+                await self.redis.publish("mto_notifications", msg_str)
+            except Exception:
+                # Fallback if publish fails
+                for connection in self.active_connections:
+                    try:
+                        await connection.send_text(msg_str)
+                    except:
+                        pass
+        else:
+            for connection in self.active_connections:
+                try:
+                    await connection.send_text(msg_str)
+                except:
+                    pass
 
 manager = ConnectionManager()
 
@@ -91,11 +133,28 @@ async def get_current_user(request: Request, token: Optional[str] = None):
         print(f"AUTH ERROR: {str(e)}")
         raise credentials_exception
 
+async def verify_csrf_token(request: Request):
+    if request.method in ["POST", "PUT", "DELETE", "PATCH"]:
+        csrf_token = request.headers.get("X-CSRF-Token")
+        csrf_cookie = request.cookies.get("csrf_token")
+        
+        # Desktop app might use Bearer token without cookies
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            return # Skip CSRF for pure Bearer token clients (Desktop app)
+            
+        if not csrf_token or not csrf_cookie or csrf_token != csrf_cookie:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="CSRF token validation failed"
+            )
+
 class RoleChecker:
     def __init__(self, allowed_roles: List[str]):
         self.allowed_roles = allowed_roles
 
-    def __call__(self, current_user: dict = Depends(get_current_user)):
+    async def __call__(self, request: Request, current_user: dict = Depends(get_current_user)):
+        await verify_csrf_token(request)
         role = str(current_user.get("role", "")).strip().lower()
         if role not in self.allowed_roles:
             raise HTTPException(

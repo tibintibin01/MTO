@@ -1,5 +1,6 @@
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
+import secrets
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from typing import Dict
@@ -77,8 +78,8 @@ async def login(credentials: Dict[str, str], request: Request, response: Respons
             key="access_token",
             value=user_data["access_token"],
             httponly=True,
-            secure=False,  # Set to True in production
-            samesite="lax",
+            secure=True,
+            samesite="strict",
             max_age=15 * 60  # 15 minutes
         )
         # TELEMETRY: Verify what we are returning
@@ -97,3 +98,16 @@ async def read_users_me(current_user: dict = Depends(get_current_user)):
 async def logout(response: Response):
     response.delete_cookie(key="access_token")
     return {"message": "Successfully logged out"}
+
+@router.get("/api/auth/csrf")
+async def get_csrf_token(response: Response):
+    token = secrets.token_hex(32)
+    response.set_cookie(
+        key="csrf_token",
+        value=token,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        max_age=3600  # 1 hour
+    )
+    return {"csrf_token": token}

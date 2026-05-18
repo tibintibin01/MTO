@@ -16,6 +16,13 @@ router = APIRouter(tags=["System"])
 class RestoreRequest(BaseModel):
     file_path: str
 
+@router.get("/metrics")
+async def get_metrics():
+    """Prometheus telemetry export endpoint"""
+    from utils.metrics import MetricsManager
+    metrics_data, content_type = MetricsManager.get_latest_metrics()
+    return Response(content=metrics_data, media_type=content_type)
+
 @router.get("/healthz")
 @router.get("/health")
 @router.get("/ready")
