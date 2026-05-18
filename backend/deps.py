@@ -59,12 +59,22 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)):
+async def get_current_user(request: Request, token: Optional[str] = None):
+    # Support cookie auth (Web portal BFF) and Bearer auth (Desktop & Tests)
+    if not token:
+        token = request.cookies.get("access_token")
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+            
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    if not token:
+        raise credentials_exception
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: int = payload.get("id")

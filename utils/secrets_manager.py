@@ -68,6 +68,9 @@ class SecretsManager:
 
     @property
     def jwt_secret(self) -> str:
+        env_mode = os.getenv("MTO_ENV", "development").lower()
+        if env_mode == "production":
+            return self.get("MTO_JWT_SECRET", required=True)
         return self.get("MTO_JWT_SECRET", default="TEMPORARY_DEV_SECRET_DO_NOT_USE_IN_PROD", required=True)
 
     @property

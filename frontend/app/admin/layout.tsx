@@ -29,25 +29,29 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       return;
     }
 
-    const token = localStorage.getItem("mto_token");
-    const userStr = localStorage.getItem("mto_user");
+    const verifyAuth = async () => {
+      try {
+        const res = await fetch("/api/v1/me");
+        if (!res.ok) {
+          window.location.href = "/admin/login";
+          return;
+        }
+        const data = await res.json();
+        setUser(data);
+        localStorage.setItem("mto_user", JSON.stringify(data));
+        setLoading(false);
+      } catch {
+        window.location.href = "/admin/login";
+      }
+    };
 
-    if (!token || !userStr) {
-      window.location.href = "/admin/login";
-      return;
-    }
-
-    try {
-      setUser(JSON.parse(userStr));
-    } catch {
-      window.location.href = "/admin/login";
-      return;
-    }
-
-    setLoading(false);
+    verifyAuth();
   }, [pathname]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/v1/api/auth/logout", { method: "POST" });
+    } catch {}
     localStorage.removeItem("mto_token");
     localStorage.removeItem("mto_user");
     window.location.href = "/admin/login";

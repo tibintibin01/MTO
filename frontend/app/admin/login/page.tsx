@@ -32,8 +32,7 @@ export default function AdminLogin() {
 
       const data = await res.json();
       
-      // Save credentials in localStorage
-      localStorage.setItem("mto_token", data.access_token);
+      // Save user credentials in localStorage
       localStorage.setItem("mto_user", JSON.stringify({ username: data.username, role: data.role }));
 
       // Redirect to admin dashboard

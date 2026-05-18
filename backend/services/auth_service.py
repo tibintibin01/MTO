@@ -133,8 +133,6 @@ def verify_password(password, stored_value):
     if stored_value is None:
         return False
     stored_text = str(stored_value)
-    if not is_password_hashed(stored_text):
-        return str(password) == stored_text
     try:
         from utils import PASSWORD_SCHEME
         scheme, iteration_text, salt_b64, digest_b64 = stored_text.split("$", 3)
