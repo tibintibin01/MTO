@@ -1,8 +1,17 @@
 import os
 import subprocess
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 from backend.database import SessionLocal
-from db_manager import DB_CONFIG
+from utils.config import config as mto_config
+from utils.secrets_manager import secrets
+
+DB_CONFIG = {
+    "mysql_path": getattr(mto_config, "MYSQL_PATH", "mysql"),
+    "user": mto_config.DB_USER,
+    "password": secrets.db_password,
+    "host": mto_config.DB_HOST,
+}
 
 def verify_sql_dump(file_path):
     """

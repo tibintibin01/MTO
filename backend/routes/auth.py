@@ -61,7 +61,15 @@ async def login(credentials: Dict[str, str], request: Request, response: Respons
     
     mto_logger.info(f"Login attempt received for user: {username}", ip=request.client.host)
     
-    user_data = auth_svc.verify_user_login(username, password, db_session=db_session)
+    try:
+        user_data = auth_svc.verify_user_login(username, password, db_session=db_session)
+    except ValueError as ve:
+        mto_logger.security(f"Login failed: {str(ve)}", user=username, ip=request.client.host)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve)
+        )
+    
     if user_data:
         mto_logger.info("Login successful", user=username, ip=request.client.host)
         # Set access token in secure HTTP-Only cookie for BFF pattern
@@ -79,7 +87,7 @@ async def login(credentials: Dict[str, str], request: Request, response: Respons
 
     else:
         mto_logger.security("Login failed: Invalid credentials or account locked", user=username, ip=request.client.host)
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
 @router.get("/me")
 async def read_users_me(current_user: dict = Depends(get_current_user)):

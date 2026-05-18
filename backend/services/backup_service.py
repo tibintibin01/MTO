@@ -86,7 +86,7 @@ async def run_hybrid_backup(user=None, db_session: Session = None):
     
     async def report_progress(step, percentage, msg):
         try:
-            from backend.main import manager
+            from backend.deps import manager
             await manager.broadcast({
                 "type": "PROGRESS",
                 "module": "backup",

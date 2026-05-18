@@ -265,7 +265,7 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
 
     async def report_progress(percentage, msg):
         try:
-            from backend.main import manager
+            from backend.deps import manager
             await manager.broadcast({
                 "type": "PROGRESS",
                 "module": "import",
@@ -362,7 +362,7 @@ def commit_property_import(data_list, user, db_session: Session = None):
 
     async def report_progress(percentage, msg):
         try:
-            from backend.main import manager
+            from backend.deps import manager
             await manager.broadcast({
                 "type": "PROGRESS",
                 "module": "import",
