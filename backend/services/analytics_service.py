@@ -33,7 +33,7 @@ def get_collection_summary(db_session: Session = None):
 
     # Modern telemetry fields for Next.js Unified Dashboard
     total_receivables = db_session.query(
-        func.coalesce(func.sum(Property.assessed_value), 0)
+        func.coalesce(func.sum(Property.assessed_value * 0.02), 0)
     ).filter(Property.is_deleted == False).scalar()
 
     total_collected = db_session.query(
