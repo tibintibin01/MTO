@@ -174,3 +174,14 @@ class BackupHistory(Base):
     health = Column(String(100), default="UNKNOWN")
     user_name = Column(String(255), nullable=True)
     timestamp = Column(DateTime, nullable=False, default=datetime.now)
+
+# --- SECURE GOVERNMENT COMPLIANCE: AUDIT LOG IMMUTABILITY ---
+from sqlalchemy import event
+
+@event.listens_for(AuditLog, "before_update")
+def prevent_audit_log_update(mapper, connection, target):
+    raise ValueError("Security Violation: Audit logs are strictly immutable (append-only) and cannot be updated.")
+
+@event.listens_for(AuditLog, "before_delete")
+def prevent_audit_log_delete(mapper, connection, target):
+    raise ValueError("Security Violation: Audit logs are strictly immutable (append-only) and cannot be deleted.")
