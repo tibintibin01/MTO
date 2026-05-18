@@ -123,7 +123,7 @@ def get_barangay_distribution(db_session: Session = None):
         result.append(stats)
         
     result.sort(key=lambda x: x["collected"], reverse=True)
-    return result[:10]
+    return result
 
 def get_tax_year_distribution(db_session: Session = None):
     """Returns the distribution of payments across tax years."""
