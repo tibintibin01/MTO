@@ -198,6 +198,10 @@ class ImportWizardModal(ctk.CTkToplevel):
         if not messagebox.askyesno("Confirm Import", msg, parent=self):
             return
 
+        # Disable button and show loading indicator
+        self.commit_btn.configure(state="disabled", text="⏳ IMPORTING... PLEASE WAIT")
+        loading = ctk.CTkLabel(self.main_container, text="Saving records to database... This may take a few moments.", font=("Segoe UI", 12, "italic", "bold"), text_color="#e67e22")
+        loading.pack(pady=10)
             
         def worker():
             try:
@@ -209,8 +213,12 @@ class ImportWizardModal(ctk.CTkToplevel):
             except Exception as e:
                 err_str = str(e)
                 self.after(0, lambda err=err_str: messagebox.showerror("Error", err, parent=self))
-
-
+            finally:
+                self.after(0, loading.destroy)
+                try:
+                    self.after(0, lambda: self.commit_btn.configure(state="normal", text=f"🚀 IMPORT {len(self.validated_data)} RECORDS"))
+                except:
+                    pass
         
         threading.Thread(target=worker, daemon=True).start()
 
