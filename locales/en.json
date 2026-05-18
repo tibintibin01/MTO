@@ -9,7 +9,8 @@
         "error_invalid": "Invalid Username or Password",
         "error_required": "Required",
         "error_network": "Network Error",
-        "toggle_theme": "🌓 Toggle Theme"
+        "toggle_theme": "🌓 Toggle Theme",
+        "remember_me": "Remember Me"
     },
     "common": {
         "ok": "OK",

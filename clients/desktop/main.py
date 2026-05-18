@@ -123,6 +123,27 @@ class LoginApp(ctk.CTk):
         self.p_err = ctk.CTkLabel(self.content_frame, text="", text_color=ModernTheme.DANGER, font=ModernTheme.BODY_SMALL)
         self.p_err.pack()
 
+        # Remember Me Checkbox
+        self.remember_var = ctk.BooleanVar(value=False)
+        self.remember_cb = ctk.CTkCheckBox(
+            self.content_frame, 
+            text=tr("login.remember_me"), 
+            variable=self.remember_var, 
+            font=ModernTheme.BODY_SMALL,
+            fg_color=ModernTheme.PRIMARY,
+            hover_color=ModernTheme.PRIMARY_HOVER,
+            text_color=ModernTheme.TEXT_GRAY
+        )
+        self.remember_cb.pack(pady=(5, 10), anchor="w")
+
+        # Load remembered username
+        from utils import ConfigManager
+        ConfigManager.load()
+        remembered = ConfigManager.get("remembered_username", "")
+        if remembered:
+            self.ue.insert(0, remembered)
+            self.remember_var.set(True)
+
         self.login_btn = ctk.CTkButton(
             self.content_frame, text=tr("login.button"), command=self.start_login_thread,
             width=320, height=50, font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY, hover_color=ModernTheme.PRIMARY_HOVER
@@ -216,6 +237,15 @@ class LoginApp(ctk.CTk):
         if auth_result:
             system.log_action(auth_result, "User login successful")
             self.auth_result = auth_result
+            
+            # Save or clear remembered username
+            from utils import ConfigManager
+            ConfigManager.load()
+            if self.remember_var.get():
+                ConfigManager.set("remembered_username", self.ue.get().strip())
+            else:
+                ConfigManager.set("remembered_username", "")
+                
             self.destroy()
         else:
             self.overlay.destroy()

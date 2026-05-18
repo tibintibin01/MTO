@@ -9,7 +9,8 @@
         "error_invalid": "Maling Pangalan ng User o Password",
         "error_required": "Kailangan",
         "error_network": "Error sa Network",
-        "toggle_theme": "🌓 Palitan ang Tema"
+        "toggle_theme": "🌓 Palitan ang Tema",
+        "remember_me": "Tandaan Ako"
     },
     "common": {
         "ok": "OK",
