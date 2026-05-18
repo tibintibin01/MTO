@@ -222,11 +222,14 @@ class ImportWizardModal(ctk.CTkToplevel):
                 err_str = str(e)
                 self.after(0, lambda err=err_str: self.safe_show_error("Error", err))
             finally:
-                self.after(0, loading.destroy)
-                try:
-                    self.after(0, lambda: self.commit_btn.configure(state="normal", text=f"🚀 IMPORT {len(self.validated_data)} RECORDS"))
-                except:
-                    pass
+                def cleanup():
+                    if self.winfo_exists():
+                        try:
+                            loading.destroy()
+                            self.commit_btn.configure(state="normal", text=f"🚀 IMPORT {len(self.validated_data)} RECORDS")
+                        except:
+                            pass
+                self.after(0, cleanup)
         
         threading.Thread(target=worker, daemon=True).start()
 
@@ -243,7 +246,7 @@ class ImportWizardModal(ctk.CTkToplevel):
             
         self.grab_release()
         messagebox.showinfo("Success", msg, parent=self)
-        self.destroy()
+        self.after(50, self.destroy) # Defer destruction to avoid focus_set TclError on dead window
 
     def clear_container(self):
         for widget in self.main_container.winfo_children():
