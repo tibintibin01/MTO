@@ -17,7 +17,7 @@ timeout /t 6 /nobreak > nul
 
 echo.
 echo Starting MTO Desktop Cashier App...
-VENV\Scripts\python.exe main.py
+VENV\Scripts\python.exe clients/desktop/main.py
 
 echo.
 echo =============================================================

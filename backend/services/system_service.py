@@ -3,7 +3,8 @@ import sys
 import subprocess
 from datetime import datetime
 
-from db_manager import DB_CONFIG
+from utils.config import config as mto_config
+from utils.secrets_manager import secrets
 from backend.database import SessionLocal
 from sqlalchemy import or_, and_, func
 from sqlalchemy.orm import Session
@@ -12,12 +13,12 @@ from backend.services.auth_service import get_username
 
 
 def backup_database(destination_path):
-    dump_path = DB_CONFIG.get("mysqldump_path", "mysqldump")
-    db_user = DB_CONFIG["user"]
-    db_pass = DB_CONFIG["password"]
-    db_name = DB_CONFIG["database"]
-    db_host = DB_CONFIG["host"]
-    db_port = DB_CONFIG.get("port", 3306)
+    dump_path = mto_config.MYSQLDUMP_PATH
+    db_user = mto_config.DB_USER
+    db_pass = secrets.db_password
+    db_name = mto_config.DB_NAME
+    db_host = mto_config.DB_HOST
+    db_port = mto_config.DB_PORT
 
     try:
         dest_dir = os.path.dirname(destination_path)
@@ -44,12 +45,12 @@ def backup_database(destination_path):
 
 
 def restore_database(sql_file_path):
-    mysql_path = DB_CONFIG.get("mysql_path", "mysql")
-    db_user = DB_CONFIG["user"]
-    db_pass = DB_CONFIG["password"]
-    db_name = DB_CONFIG["database"]
-    db_host = DB_CONFIG["host"]
-    db_port = DB_CONFIG.get("port", 3306)
+    mysql_path = mto_config.MYSQL_PATH
+    db_user = mto_config.DB_USER
+    db_pass = secrets.db_password
+    db_name = mto_config.DB_NAME
+    db_host = mto_config.DB_HOST
+    db_port = mto_config.DB_PORT
 
     if not sql_file_path or not os.path.isfile(sql_file_path):
         raise FileNotFoundError("The selected SQL backup file was not found.")

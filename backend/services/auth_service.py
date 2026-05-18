@@ -308,14 +308,16 @@ def create_user(username, full_name, password, role, admin_user, db_session: Ses
     db_session.flush()
 
     # 4. Audit
-    import db_manager as db
-    db.record_audit_log(
-        admin_user,
-        f"Created new user: {username} ({full_name})",
+    import json
+    audit_log = AuditLog(
+        username=get_username(admin_user),
+        action=f"Created new user: {username} ({full_name})",
         table_name="users",
         record_id=new_user.id,
-        new_values={"username": username, "role": role},
+        new_values=json.dumps({"username": username, "role": role}),
+        timestamp=datetime.now()
     )
+    db_session.add(audit_log)
     db_session.commit()
     return new_user.id
 

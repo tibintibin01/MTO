@@ -8,13 +8,16 @@ from PIL import Image
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
-# Step 1: Define absolute paths
+# Add root folder to sys.path so nested desktop client scripts can import api_clients and utils seamlessly
 BASE_DIR = Path(__file__).resolve().parent
-ASSETS_DIR = BASE_DIR # In this repo, assets are currently in root
+ROOT_DIR = BASE_DIR.parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+ASSETS_DIR = ROOT_DIR # In this repo, assets are currently in root
+
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=ROOT_DIR / ".env")
 
 import api_clients.auth_service as auth
 import api_clients.system_service as system
@@ -23,13 +26,15 @@ from utils import log_error_to_file, tr
 import dashboard
 from theme_manager import setup_theme, ModernTheme
 from ui_components import ErrorDialog
-import migration_manager
 
 # Ensure database is up to date
-print("DEBUG: Checking database migrations...")
 try:
+    import migration_manager
+    print("DEBUG: Checking database migrations...")
     migration_manager.run_migrations()
     print("DEBUG: Migrations completed successfully.")
+except ImportError:
+    print("DEBUG: migration_manager not found (headless/standalone client mode). Skipping database migrations.")
 except Exception as e:
     print(f"DEBUG: Migration manager crashed: {e}")
     log_error_to_file("Migration auto-run failed", e)

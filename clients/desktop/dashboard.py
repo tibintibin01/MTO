@@ -7,6 +7,12 @@ from typing import Any, Optional, Dict
 from PIL import Image
 from pathlib import Path
 
+# Add root folder to sys.path so nested desktop client scripts can import api_clients and utils seamlessly
+BASE_DIR = Path(__file__).resolve().parent
+ROOT_DIR = BASE_DIR.parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import api_clients.auth_service as auth
 import api_clients.property_service as prop
 import api_clients.payment_service as payment

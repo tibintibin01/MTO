@@ -10,7 +10,8 @@ from backend.models import BackupHistory
 from backend.services.verification_service import verify_sql_dump
 from backend.services.auth_service import require_permission
 
-from db_manager import DB_CONFIG
+from utils.config import config as mto_config
+from utils.secrets_manager import secrets
 
 BACKUP_BASE_DIR = r"C:\RevenueSystem\backups"
 LOCAL_DIR = os.path.join(BACKUP_BASE_DIR, "local")
@@ -188,12 +189,12 @@ async def run_hybrid_backup(user=None, db_session: Session = None):
 def _create_local_dump(dest_path):
     from utils import log_error_to_file
 
-    dump_path = DB_CONFIG.get("mysqldump_path", "mysqldump")
-    db_user = DB_CONFIG["user"]
-    db_pass = DB_CONFIG["password"]
-    db_name = DB_CONFIG["database"]
-    db_host = DB_CONFIG["host"]
-    db_port = DB_CONFIG.get("port", 3306)
+    dump_path = mto_config.MYSQLDUMP_PATH
+    db_user = mto_config.DB_USER
+    db_pass = secrets.db_password
+    db_name = mto_config.DB_NAME
+    db_host = mto_config.DB_HOST
+    db_port = mto_config.DB_PORT
 
     # Standard search paths for mysqldump on Windows/XAMPP
     COMMON_DUMP_PATHS = [
