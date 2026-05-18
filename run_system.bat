@@ -1,36 +1,30 @@
 @echo off
-setlocal
-set PYTHONPATH=%~dp0
-set API_URL=https://localhost:8001/
+title MTO Treasury System Launcher
+color 0B
+echo =============================================================
+echo               MTO TREASURY PORTAL ONE-CLICK LAUNCHER
+echo =============================================================
+echo.
 
-echo ========================================
-echo   MUNICIPAL REVENUE SYSTEM
-echo ========================================
+echo [1/3] Starting FastAPI Backend on Port 8001...
+start "MTO FastAPI Backend Server" cmd /k "title MTO Backend (Port 8001) && VENV\Scripts\python.exe -m uvicorn backend.main:app --reload --port 8001"
 
-:: Check if API is already running
-curl -k -s %API_URL% >nul
-if %ERRORLEVEL% NEQ 0 (
-    echo Starting local API server...
-    start /B "MTO API Server" .\venv\Scripts\python.exe backend\main.py
-)
+echo [2/3] Starting Next.js Frontend Portal...
+start "MTO Next.js Frontend Server" cmd /k "title MTO Frontend (Port 3000) && cd frontend && npm run dev"
 
-echo Waiting for API server...
-for /L %%i in (1,1,30) do (
-    curl -k -s %API_URL% >nul
-    if not errorlevel 1 goto api_ready
-    timeout /t 1 >nul
-)
-
-echo ERROR: API server did not become ready at %API_URL%.
-echo Check the backend console output and logs\system.log.
-pause
-exit /b 1
-
-:api_ready
-
-echo Launching Desktop Interface...
-.\venv\Scripts\python.exe main.py
+echo [3/3] Warming up server environment (waiting 6 seconds)...
+timeout /t 6 /nobreak > nul
 
 echo.
-echo Closing system...
-exit /b
+echo [SUCCESS] Both servers launched successfully!
+echo Launching browser to http://localhost:3000/...
+start http://localhost:3000/
+start http://localhost:3000/admin/login
+
+echo.
+echo =============================================================
+echo  - To view logs: Check the two newly opened cmd windows.
+echo  - To close the system: Simply close both cmd server windows.
+echo =============================================================
+echo.
+pause
