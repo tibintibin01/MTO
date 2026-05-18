@@ -17,6 +17,8 @@ class RestoreRequest(BaseModel):
     file_path: str
 
 @router.get("/healthz")
+@router.get("/health")
+@router.get("/ready")
 async def health_check(db_session: Session = Depends(get_db)):
     """Enterprise-grade deep health probe for K8s Liveness & Readiness checks."""
     import shutil
