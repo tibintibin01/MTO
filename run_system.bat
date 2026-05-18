@@ -16,10 +16,6 @@ echo [3/3] Warming up server environment (waiting 6 seconds)...
 timeout /t 6 /nobreak > nul
 
 echo.
-echo [SUCCESS] Both servers launched successfully!
-echo Launching browser to http://localhost:3000/...
-start http://localhost:3000/
-
 echo Starting MTO Desktop Cashier App...
 VENV\Scripts\python.exe main.py
 
