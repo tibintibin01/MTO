@@ -34,9 +34,6 @@ def log_data_change(user_id: int, table_name: str, record_id: int, action: str,
     Records a detailed audit trail including before/after state snapshots.
     Uses hash-chaining for security.
     """
-    if not db_session:
-        db_session = SessionLocal()
-
     # Calculate Delta
     diff_before = {}
     diff_after = {}
@@ -95,9 +92,6 @@ def undo_last_action(user_id: int, db_session: Session = None):
     """
     Reverses the last action performed by the user by restoring the 'before' state.
     """
-    if not db_session:
-        db_session = SessionLocal()
-
     # 1. Find the last reversible action
     log = db_session.query(AuditLog).filter(
         AuditLog.user_id == user_id,

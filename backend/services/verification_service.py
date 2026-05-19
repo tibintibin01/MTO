@@ -46,9 +46,6 @@ def perform_restore_test(file_path, db_session: Session = None):
     Verifies that the backup can actually be restored by performing
     a dry-run restore into a temporary validation database.
     """
-    if not db_session:
-        db_session = SessionLocal()
-
     # Create a safe temp name (sanitize filename to be a valid DB name)
     base_name = os.path.basename(file_path).split('.')[0]
     safe_name = "".join([c if c.isalnum() else "_" for c in base_name])

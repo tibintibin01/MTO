@@ -18,12 +18,14 @@ def test_has_permission_viewer():
 def test_create_user_mocked(mock_db_session):
     """Test user creation logic without touching the DB."""
     admin_context = {"username": "superuser", "role": "ADMIN"}
-    
+    # Use a password that meets complexity rules: 12+ chars, upper, lower, digit, special
+    strong_password = "TestP@ssw0rd!"
+
     try:
-        create_user("newguy", "New Guy", "password123", "CASHIER", admin_context, db_session=mock_db_session)
+        create_user("newguy", "New Guy", strong_password, "CASHIER", admin_context, db_session=mock_db_session)
     except Exception as e:
         pytest.fail(f"create_user raised {e} unexpectedly!")
-    
+
     assert mock_db_session.add.called
     assert mock_db_session.commit.called
 

@@ -288,11 +288,15 @@ def refresh_access_token(refresh_token_str: str, db_session: Session):
 
 def create_user(username, full_name, password, role, admin_user, db_session: Session):
     """Securely creates a new system user with hashed password."""
-    # 1. Check for duplicates
+    # 1. Validate password complexity first
+    from backend.services.validation_service import validate_password_complexity
+    validate_password_complexity(password)
+
+    # 2. Check for duplicates
     if db_session.query(User).filter(User.username == username, User.deleted_at == None).first():
         raise Exception(f"Username '{username}' is already taken.")
 
-    # 2. Hash password
+    # 3. Hash password
     hashed = hash_password(password)
 
     # 3. Insert
@@ -327,12 +331,7 @@ def create_user(username, full_name, password, role, admin_user, db_session: Ses
 def get_all_users(limit=50, offset=0, db_session: Session = None):
     safe_limit = max(1, int(limit))
     safe_offset = max(0, int(offset))
-    
-    if not db_session:
-        # Temporary fallback until all callers are updated
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-        
+
     users = db_session.query(User).filter(User.deleted_at == None).order_by(User.username.asc()).limit(safe_limit).offset(safe_offset).all()
     return [
         {
@@ -395,10 +394,14 @@ def update_user_status(user_id, is_active, admin_user, db_session: Session):
 
 
 def reset_user_password(user_id, new_password, admin_user, db_session: Session):
+    # Validate complexity before any DB operation
+    from backend.services.validation_service import validate_password_complexity
+    validate_password_complexity(new_password)
+
     user = db_session.query(User).filter(User.id == user_id).first()
     if not user:
         return False
-        
+
     user.password = hash_password(new_password)
     db_session.commit()
     

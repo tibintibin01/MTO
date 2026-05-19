@@ -16,12 +16,9 @@ router = APIRouter(tags=["System"])
 class RestoreRequest(BaseModel):
     file_path: str
 
-@router.get("/metrics")
-async def get_metrics():
-    """Prometheus telemetry export endpoint"""
-    from utils.metrics import MetricsManager
-    metrics_data, content_type = MetricsManager.get_latest_metrics()
-    return Response(content=metrics_data, media_type=content_type)
+# SECURITY: The unauthenticated /metrics endpoint was removed.
+# Use GET /api/v2/metrics (admin_only) for Prometheus scraping instead.
+# Configure infra/prometheus.yml to include an Authorization header.
 
 @router.get("/healthz")
 @router.get("/health")

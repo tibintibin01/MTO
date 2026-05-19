@@ -33,10 +33,6 @@ def search_properties(
     """
     Enhanced search with optional filters using SQLAlchemy ORM.
     """
-    if not db_session:
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-
     query = db_session.query(Property).filter(Property.deleted_at == None)
     
     if term:
@@ -99,10 +95,6 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
     """
     Main orchestrator for saving or updating a property using ORM.
     """
-    if not db_session:
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-
     from backend.services.validation_service import enforce_property_rules, ValidationError
     from backend.services.history_service import log_data_change
     
@@ -216,7 +208,8 @@ def _sync_financial_records(prop_id, data, db_session: Session):
             if isinstance(or_dt_raw, str):
                 try:
                     or_dt = datetime.strptime(or_dt_raw, "%Y-%m-%d")
-                except:
+                except ValueError:
+                    # or_date string is not in expected format; leave or_dt as None
                     pass
             elif isinstance(or_dt_raw, datetime):
                 or_dt = or_dt_raw
@@ -256,10 +249,6 @@ def update_property_details(prop_id, data, user):
 @require_permission("property_delete")
 def soft_delete_property(property_id, user=None, ip_address=None, db_session: Session = None):
     """Soft deletes a property - requires 'property_delete' permission."""
-    if not db_session:
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-
     prop = db_session.query(Property).filter(Property.id == property_id).first()
     if not prop:
         return 0
@@ -289,11 +278,6 @@ def get_deleted_properties(limit=50, offset=0, db_session: Session = None):
     """Fetches all properties marked as deleted with pagination support."""
     safe_limit = max(1, int(limit))
     safe_offset = max(0, int(offset))
-    
-    if not db_session:
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-
     rows = (
         db_session.query(Property)
         .filter(Property.deleted_at != None)
@@ -317,10 +301,6 @@ def get_deleted_properties(limit=50, offset=0, db_session: Session = None):
 @require_permission("property_edit")
 def restore_property(property_id, user=None, db_session: Session = None):
     """Restores a soft-deleted property."""
-    if not db_session:
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-
     prop = db_session.query(Property).filter(Property.id == property_id).first()
     if not prop:
         return 0
@@ -348,10 +328,6 @@ def restore_property(property_id, user=None, db_session: Session = None):
 @require_permission("property_delete")
 def purge_property(property_id, user=None, db_session: Session = None):
     """Permanently deletes a property from the database."""
-    if not db_session:
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-
     prop = db_session.query(Property).filter(Property.id == property_id).first()
     if not prop:
         return 0
@@ -381,10 +357,6 @@ def purge_property(property_id, user=None, db_session: Session = None):
 
 def get_unspecified_properties(db_session: Session = None):
     """Fetches all properties where barangay is NULL, empty, or 'UNSPECIFIED'."""
-    if not db_session:
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-
     results = db_session.query(Property).filter(
         Property.deleted_at == None,
         (Property.barangay == None) | (text("TRIM(barangay) = ''")) | (Property.barangay == "UNSPECIFIED")
@@ -401,12 +373,7 @@ def bulk_update_barangay(property_ids, new_barangay, user=None, db_session: Sess
     """Updates the barangay for multiple properties at once."""
     if not property_ids or not new_barangay:
         return 0
-
-    if not db_session:
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-
-    count = db_session.query(Property).filter(Property.id.in_(property_ids)).update({Property.barangay: new_barangay}, synchronize_session=False)
+        count = db_session.query(Property).filter(Property.id.in_(property_ids)).update({Property.barangay: new_barangay}, synchronize_session=False)
     db_session.commit()
     
     if count and user:
@@ -425,10 +392,6 @@ def bulk_update_barangay(property_ids, new_barangay, user=None, db_session: Sess
 
 
 def get_property_by_td(td_number, db_session: Session = None):
-    if not db_session:
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-        
     prop = db_session.query(Property).filter(Property.td_number == td_number, Property.deleted_at == None).first()
     if not prop:
         return None
@@ -438,20 +401,11 @@ def get_property_by_td(td_number, db_session: Session = None):
 def get_assessment_roll(limit=100, offset=0, db_session: Session = None):
     safe_limit = max(1, int(limit))
     safe_offset = max(0, int(offset))
-    
-    if not db_session:
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-        
     results = db_session.query(Property).filter(Property.deleted_at == None).order_by(Property.owner_name.asc()).limit(safe_limit).offset(safe_offset).all()
     return [(p.td_number, p.owner_name, p.location, p.kind_of_property, float(p.assessed_value or 0)) for p in results]
 
 
 def get_receivables_by_barangay(db_session: Session = None):
-    if not db_session:
-        from backend.database import SessionLocal
-        db_session = SessionLocal()
-
     results = (
         db_session.query(
             func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),

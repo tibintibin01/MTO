@@ -48,9 +48,6 @@ def validate_property_import(file_content, file_extension, db_session: Session =
     Returns a list of rows with validation status and error messages.
     """
     try:
-        if not db_session:
-            db_session = SessionLocal()
-
         if file_extension.lower() == '.csv':
             df = pd.read_csv(io.BytesIO(file_content))
         else:
@@ -139,9 +136,6 @@ def validate_assessment_import(file_content, file_extension, db_session: Session
     Validates an Excel file for Assessment Roll import.
     """
     try:
-        if not db_session:
-            db_session = SessionLocal()
-
         if file_extension.lower() == '.csv':
             df = pd.read_csv(io.BytesIO(file_content))
         else:
@@ -268,9 +262,6 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
     """
     from backend.services.system_service import log_action
     
-    if not db_session:
-        db_session = SessionLocal()
-
     async def report_progress(percentage, msg):
         try:
             from backend.deps import manager
@@ -365,9 +356,6 @@ def commit_property_import(data_list, user, db_session: Session = None):
     """
     from backend.services.system_service import log_action
     
-    if not db_session:
-        db_session = SessionLocal()
-
     async def report_progress(percentage, msg):
         try:
             from backend.deps import manager
@@ -427,9 +415,6 @@ def import_assessment_roll_from_excel(file_path, user, db_session: Session = Non
     """
     from backend.services.system_service import log_action
     
-    if not db_session:
-        db_session = SessionLocal()
-
     try:
         df = pd.read_excel(file_path)
         # Standardize headers
@@ -565,7 +550,6 @@ def validate_payment_import(file_content, file_extension, db_session: Session = 
     Validates a payment Excel file with smart conflict detection for Assessed Value.
     """
     try:
-        if not db_session: db_session = SessionLocal()
         df = pd.read_excel(io.BytesIO(file_content)) if file_extension.lower() != '.csv' else pd.read_csv(io.BytesIO(file_content))
         df.columns = [str(c).strip().upper() for c in df.columns]
         
@@ -656,8 +640,6 @@ def commit_payment_import(data_list, user, db_session: Session = None):
     Commits validated payment records to the financial ledger.
     """
     from backend.services.system_service import log_action
-    if not db_session: db_session = SessionLocal()
-    
     try:
         inserted = 0
         for row in data_list:

@@ -8,9 +8,6 @@ from backend.database import SessionLocal
 
 def get_retention_summary(db_session: Session = None):
     """Calculates how much data is eligible for archival based on a 10-year policy."""
-    if not db_session:
-        db_session = SessionLocal()
-
     ten_years_ago = datetime.now() - timedelta(days=3650)
     
     prop_count = db_session.query(func.count(Property.id)).filter(
@@ -33,9 +30,6 @@ def run_archival_policy(user="SYSTEM", db_session: Session = None):
     """
     Moves data older than 10 years to archive tables to maintain performance.
     """
-    if not db_session:
-        db_session = SessionLocal()
-
     cutoff_date = datetime.now() - timedelta(days=3650)
     
     try:

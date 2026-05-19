@@ -126,8 +126,8 @@ async def maintenance_mode_middleware(request: Request, call_next):
 origins = [
     "http://localhost",
     "http://127.0.0.1",
-    "http://localhost:8001",
-    "https://localhost:8001",
+    "http://localhost:8000",
+    "https://localhost:8000",
     "http://localhost:3000",
 ]
 
@@ -143,8 +143,11 @@ app.add_middleware(
 async def startup_event():
     mto_logger.info("API Server started successfully.")
     try:
+        from backend.database import SessionLocal
         from backend.services.stats_service import refresh_system_stats
-        refresh_system_stats()
+        # Use context manager for startup background tasks (no route/get_db() available)
+        with SessionLocal() as db:
+            refresh_system_stats(db_session=db)
         mto_logger.info("Dashboard stats refreshed successfully on startup.")
     except Exception as e:
         mto_logger.error(f"Failed to refresh dashboard stats on startup: {e}")
@@ -190,9 +193,10 @@ if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.abspath(__file__))
     cert_path = os.path.join(base_dir, "certs", "cert.pem")
     key_path = os.path.join(base_dir, "certs", "key.pem")
+    # Port 8000 matches docker-compose.yml and Dockerfile (8001 was a mismatch)
     if os.path.exists(cert_path) and os.path.exists(key_path):
         print("Starting Secure API (HTTPS) with CORS Enabled...")
-        uvicorn.run(app, host="0.0.0.0", port=8001, ssl_keyfile=key_path, ssl_certfile=cert_path)
+        uvicorn.run(app, host="0.0.0.0", port=8000, ssl_keyfile=key_path, ssl_certfile=cert_path)
     else:
         print("Starting Standard API (HTTP) - SSL Certs not found.")
-        uvicorn.run(app, host="0.0.0.0", port=8001)
+        uvicorn.run(app, host="0.0.0.0", port=8000)

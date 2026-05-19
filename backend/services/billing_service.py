@@ -16,9 +16,6 @@ def sync_property_billing(
     cur, property_id, tax_year, assessed_value, penalty, discount=0.0, has_payment=False, db_session: Session = None
 ):
     """Creates or updates the billing snapshot for one property and one tax year."""
-    if not db_session:
-        db_session = SessionLocal()
-
     normalized_tax_year = (
         str(tax_year).strip() if str(tax_year).strip() else str(datetime.now().year)
     )
@@ -237,9 +234,6 @@ def recalculate_billing_balances(cur, billing_ids, db_session: Session = None):
         if billing_id and billing_id not in seen:
             seen.append(billing_id)
 
-    if not db_session:
-        db_session = SessionLocal()
-
     for billing_id in seen:
         # Recalculate sum of payments for this billing
         total_paid = db_session.query(func.sum(PaymentBilling.amount_paid)).filter(PaymentBilling.billing_id == billing_id).scalar() or 0
@@ -253,9 +247,6 @@ def recalculate_billing_balances(cur, billing_ids, db_session: Session = None):
 def sync_payment_billings(cur, payment_id, billing_rows, db_session: Session = None):
     if not payment_id:
         return
-
-    if not db_session:
-        db_session = SessionLocal()
 
     # 1. Clear existing links
     db_session.query(PaymentBilling).filter(PaymentBilling.payment_id == payment_id).delete()
@@ -285,9 +276,6 @@ def sync_payment_billings(cur, payment_id, billing_rows, db_session: Session = N
 def get_property_billing_history(property_id=None, term=None, limit=50, db_session: Session = None):
     safe_limit = max(1, int(limit))
     
-    if not db_session:
-        db_session = SessionLocal()
-
     query = db_session.query(
         PropertyBilling.tax_year,
         PropertyBilling.assessed_value,
@@ -323,9 +311,6 @@ def get_property_billing_history(property_id=None, term=None, limit=50, db_sessi
 
 
 def get_property_statement_data(property_id, db_session: Session = None):
-    if not db_session:
-        db_session = SessionLocal()
-
     prop = db_session.query(Property).filter(Property.id == property_id, Property.deleted_at == None).first()
     if not prop:
         return None
@@ -376,9 +361,6 @@ def get_property_statement_data(property_id, db_session: Session = None):
 
 
 def get_report_details(selected_month="All", selected_year="All", db_session: Session = None):
-    if not db_session:
-        db_session = SessionLocal()
-
     query = db_session.query(
         Payment.date_paid,
         Payment.or_number,
@@ -404,9 +386,6 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
         ry = int(report_year)
     except:
         ry = datetime.now().year
-
-    if not db_session:
-        db_session = SessionLocal()
 
     # 1. Beginning Receivable (sum of balances for tax years < report_year)
     beg = db_session.query(
@@ -452,9 +431,6 @@ def get_delinquent_accounts(limit=50, offset=0, db_session: Session = None):
     safe_limit = max(1, int(limit))
     safe_offset = max(0, int(offset))
     
-    if not db_session:
-        db_session = SessionLocal()
-
     # Use having clause for balance > 0
     balance_expr = func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount - PropertyBilling.amount_paid)
     

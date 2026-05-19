@@ -43,9 +43,6 @@ def run_migrations(db_session: Session = None):
     """Checks and applies all pending database migrations."""
     print("--- DATABASE MIGRATION ENGINE ---")
     
-    if not db_session:
-        db_session = SessionLocal()
-
     # 1. Ensure the migration tracking table exists
     try:
         db_session.execute(text(MIGRATIONS[0]["sql"]))

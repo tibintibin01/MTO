@@ -33,3 +33,15 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Dead code — removed from repo, ignore if present on disk
+receipt_generator.py
+query_pb.py
+utils_legacy.py_bak
+
+# Generated files
+logs/*.json
+*.log
+mto_local.db
+coverage.xml
+.coverage

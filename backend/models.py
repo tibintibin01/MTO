@@ -23,7 +23,7 @@ class Property(Base):
     __tablename__ = "properties"
 
     id = Column(Integer, primary_key=True, index=True)
-    td_number = Column(String(100), nullable=False, index=True)
+    td_number = Column(String(100), nullable=False, unique=True, index=True)
     owner_name = Column(String(255), nullable=False)
     payor_name = Column(String(255), nullable=True)
     lot_number = Column(String(100), nullable=True)
@@ -89,12 +89,13 @@ class PaymentBilling(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     payment_id = Column(Integer, ForeignKey("payments.id", ondelete="CASCADE"), nullable=False)
-    billing_id = Column(Integer, nullable=False)
+    billing_id = Column(Integer, ForeignKey("property_billings.id", ondelete="RESTRICT"), nullable=False)
     tax_year = Column(String(20), nullable=False)
     amount_paid = Column(DECIMAL(12, 2), nullable=False, default=0.00)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     payment = relationship("Payment", back_populates="billings")
+    billing = relationship("PropertyBilling")
 
 class PropertyAssessmentHistory(Base):
     __tablename__ = "property_assessment_history"

@@ -10,9 +10,6 @@ def refresh_system_stats(db_session: Session = None):
     Recalculates heavy dashboard statistics and persists them to SystemStats.
     This should be called by a background worker or after major data changes.
     """
-    if not db_session:
-        db_session = SessionLocal()
-
     try:
         # 1. Total Properties
         total_props = db_session.query(func.count(Property.id)).filter(Property.deleted_at == None).scalar()
@@ -56,8 +53,5 @@ def _update_stat(db_session: Session, key: str, value: float):
 
 def get_cached_stat(key: str, default=0, db_session: Session = None):
     """Retrieves a pre-calculated stat from the database."""
-    if not db_session:
-        db_session = SessionLocal()
-    
     stat = db_session.query(SystemStats).filter(SystemStats.stat_key == key).first()
     return float(stat.stat_value) if stat else default

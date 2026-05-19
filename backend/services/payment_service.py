@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import re
+from decimal import Decimal, ROUND_HALF_UP
 # import db_manager as db # Mark for removal
 from backend.database import SessionLocal
 from backend.models import ReceiptHistory
@@ -10,15 +11,22 @@ from backend.services.auth_service import get_username, require_permission
 from backend.services.billing_service import format_tax_years, normalize_date_input
 
 
+def _d(value) -> Decimal:
+    """Convert any numeric value to Decimal safely. Use instead of float() for financial values."""
+    if value is None:
+        return Decimal("0")
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return Decimal("0")
+
+
 def find_duplicate_payment(
     property_id, or_number, tax_year_text, exclude_payment_id=None, cur=None, db_session: Session = None
 ):
     normalized_years = format_tax_years(tax_year_text)
     if not property_id or not or_number or not normalized_years:
         return None
-
-    if not db_session:
-        db_session = SessionLocal()
 
     query = db_session.query(Payment).filter(
         Payment.property_id == property_id,
@@ -35,7 +43,7 @@ def find_duplicate_payment(
         "payment_id": row.id,
         "or_number": row.or_number,
         "tax_year": row.tax_year,
-        "amount": float(row.amount or 0),
+        "amount": float(_d(row.amount)),
         "date_paid": row.date_paid,
     }
 
@@ -49,9 +57,6 @@ def find_duplicate_payment_entry(
     normalized_years = format_tax_years(tax_year_text)
     if not td_text or not or_text or not date_text or not normalized_years:
         return None
-
-    if not db_session:
-        db_session = SessionLocal()
 
     row = db_session.query(Payment, Property).join(Property, Property.id == Payment.property_id).filter(
         Property.deleted_at == None,
@@ -75,7 +80,7 @@ def find_duplicate_payment_entry(
         "or_number": pay.or_number,
         "date_paid": pay.date_paid,
         "tax_year": pay.tax_year,
-        "amount": float(pay.amount or 0),
+        "amount": float(_d(pay.amount)),
     }
 
 
@@ -85,16 +90,13 @@ def get_existing_payment_amount(property_id, or_number, or_date, tax_year_text, 
     if not property_id or not or_number or not normalized_date or not normalized_years:
         return None
     
-    if not db_session:
-        db_session = SessionLocal()
-
     row = db_session.query(Payment.amount).filter(
         Payment.property_id == property_id,
         Payment.or_number == str(or_number).strip(),
         Payment.date_paid == normalized_date,
         func.coalesce(Payment.tax_year, '') == normalized_years
     ).order_by(Payment.id.desc()).first()
-    return float(row[0] or 0) if row else None
+    return float(_d(row[0])) if row else None
 
 
 def acquire_payment_post_lock(property_id, user_name, stale_minutes=30):
@@ -110,9 +112,6 @@ def release_all_payment_post_locks(user_name):
 
 
 def get_next_or_number(default_prefix="OR-", db_session: Session = None):
-    if not db_session:
-        db_session = SessionLocal()
-
     rows = db_session.query(Payment.or_number).filter(Payment.or_number != None, Payment.or_number != '').order_by(Payment.id.desc()).limit(20).all()
     for row in rows:
         current = str(row[0]).strip()
@@ -127,9 +126,6 @@ def get_next_or_number(default_prefix="OR-", db_session: Session = None):
 
 def get_recent_payments(limit=8, db_session: Session = None):
     safe_limit = max(1, int(limit))
-    if not db_session:
-        db_session = SessionLocal()
-
     rows = db_session.query(
         Payment.date_paid, Payment.or_number, Property.td_number, Property.owner_name, Payment.tax_year, Payment.amount
     ).join(Property, Property.id == Payment.property_id).filter(
@@ -142,9 +138,6 @@ def get_recent_payments(limit=8, db_session: Session = None):
 
 def get_monthly_collection_trend(months=6, db_session: Session = None):
     safe_months = max(1, int(months))
-    if not db_session:
-        db_session = SessionLocal()
-
     from datetime import datetime, timedelta
     start_date = datetime.now() - timedelta(days=30 * safe_months)
     
@@ -155,13 +148,10 @@ def get_monthly_collection_trend(months=6, db_session: Session = None):
         func.coalesce(Payment.date_paid, func.date(Payment.created_at)) >= start_date
     ).group_by('month').order_by('month').all()
     
-    return [{"month": r[0], "total": float(r[1] or 0)} for r in results]
+    return [{"month": r[0], "total": float(_d(r[1]))} for r in results]
 
 
 def get_revenue_by_barangay(db_session: Session = None):
-    if not db_session:
-        db_session = SessionLocal()
-
     results = db_session.query(
         func.coalesce(Property.barangay, 'UNSPECIFIED').label('brgy'),
         func.sum(Payment.amount).label('total')
@@ -169,13 +159,10 @@ def get_revenue_by_barangay(db_session: Session = None):
         Property.deleted_at == None
     ).group_by('brgy').order_by(func.sum(Payment.amount).desc()).all()
     
-    return [{"barangay": r[0], "total": float(r[1] or 0)} for r in results]
+    return [{"barangay": r[0], "total": float(_d(r[1]))} for r in results]
 
 
 def get_collection_kpis(db_session: Session = None):
-    if not db_session:
-        db_session = SessionLocal()
-
     total = db_session.query(func.sum(Payment.amount), func.count(Payment.id)).first()
     today = db_session.query(func.sum(Payment.amount)).filter(func.date(Payment.date_paid) == func.curdate()).scalar()
     month = db_session.query(func.sum(Payment.amount)).filter(
@@ -184,10 +171,10 @@ def get_collection_kpis(db_session: Session = None):
     ).scalar()
     
     return {
-        "total_revenue": float(total[0] or 0),
+        "total_revenue": float(_d(total[0])),
         "payment_count": int(total[1] or 0),
-        "today": float(today or 0),
-        "month": float(month or 0)
+        "today": float(_d(today)),
+        "month": float(_d(month))
     }
 
 
@@ -198,9 +185,6 @@ def get_unified_payment_history(term, db_session: Session = None):
     """
     if not term:
         return []
-
-    if not db_session:
-        db_session = SessionLocal()
 
     like_term = f"%{term}%"
     results = db_session.query(
@@ -236,9 +220,6 @@ def get_payment_ledger(td_number, db_session: Session = None):
     """
     Specific ledger query for the Dossier UI using SQLAlchemy.
     """
-    if not db_session:
-        db_session = SessionLocal()
-
     results = db_session.query(
         Payment.date_paid,
         Payment.or_number,
@@ -259,9 +240,6 @@ def get_payment_receipt_records(term, limit=50, offset=0, db_session: Session = 
     safe_limit = max(1, int(limit))
     safe_offset = max(0, int(offset))
     
-    if not db_session:
-        db_session = SessionLocal()
-
     like_term = f"%{term}%"
     results = db_session.query(
         Payment.id,
@@ -291,9 +269,6 @@ def get_payment_receipt_records(term, limit=50, offset=0, db_session: Session = 
 
 
 def get_payment_receipt_details(payment_id, db_session: Session = None):
-    if not db_session:
-        db_session = SessionLocal()
-
     row = db_session.query(
         Property.id.label('property_id'),
         Property.td_number,
@@ -333,11 +308,11 @@ def get_payment_receipt_details(payment_id, db_session: Session = None):
         "location": row.location,
         "kind_of_property": row.kind_of_property,
         "accountable_officer": row.accountable_officer,
-        "assessed_value": float(row.assessed_value or 0),
-        "penalty": float(row.penalty or 0),
-        "discount": float(row.discount or 0),
+        "assessed_value": float(_d(row.assessed_value)),
+        "penalty": float(_d(row.penalty)),
+        "discount": float(_d(row.discount)),
         "payment_id": row.payment_id,
-        "amount": float(row.amount or 0),
+        "amount": float(_d(row.amount)),
         "or_number": row.or_number,
         "date_paid": row.date_paid,
         "tax_year": row.tax_year,
@@ -350,9 +325,6 @@ def get_payment_receipt_details(payment_id, db_session: Session = None):
 def save_receipt_record(
     property_id, payment_id, details, file_path, user_name, db_session: Session = None, **kwargs
 ):
-    if not db_session:
-        db_session = SessionLocal()
-
     from datetime import datetime
     
     # Check if exists
@@ -383,9 +355,6 @@ def delete_payment_record(payment_id, user_name, db_session: Session = None, **k
     """
     Deletes a payment record and reverses its impact on the corresponding PropertyBilling.
     """
-    if not db_session:
-        db_session = SessionLocal()
-
     from backend.services.system_service import log_action
 
     # 1. Fetch Payment
@@ -395,9 +364,9 @@ def delete_payment_record(payment_id, user_name, db_session: Session = None, **k
 
     prop_id = payment.property_id
     tax_year = payment.tax_year
-    amt = float(payment.amount or 0)
-    pen = float(payment.penalty or 0)
-    disc = float(payment.discount or 0)
+    amt = _d(payment.amount)
+    pen = _d(payment.penalty)
+    disc = _d(payment.discount)
     or_no = payment.or_number
 
     # 2. Reverse Billing Balances (if billing exists)
@@ -408,9 +377,9 @@ def delete_payment_record(payment_id, user_name, db_session: Session = None, **k
 
     if billing:
         # Subtract the amounts back out
-        billing.amount_paid = max(0.0, float(billing.amount_paid or 0) - amt)
-        billing.penalty = max(0.0, float(billing.penalty or 0) - pen)
-        billing.discount = max(0.0, float(billing.discount or 0) - disc)
+        billing.amount_paid = max(_d(0), _d(billing.amount_paid) - amt)
+        billing.penalty = max(_d(0), _d(billing.penalty) - pen)
+        billing.discount = max(_d(0), _d(billing.discount) - disc)
 
     # 3. Delete Payment (cascade will handle ReceiptHistory and PaymentBilling)
     db_session.delete(payment)

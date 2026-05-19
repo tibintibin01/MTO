@@ -13,9 +13,6 @@ def global_search(query, limit=10, db_session: Session = None):
     if not query or len(str(query).strip()) < 2:
         return []
 
-    if not db_session:
-        db_session = SessionLocal()
-
     search_term = f"%{query}%"
     results = []
 

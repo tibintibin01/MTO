@@ -58,3 +58,22 @@ def enforce_property_rules(payload: Dict[str, Any]):
         raise ValidationError("Owner name is too short or missing.", "owner_name")
     
     return True
+
+def validate_password_complexity(password: str):
+    """
+    Enforces government-grade password complexity requirements.
+    Must be called before hashing inside create_user() and reset_user_password().
+    """
+    if not password or not isinstance(password, str):
+        raise ValidationError("Password is required.", "password")
+    if len(password) < 12:
+        raise ValidationError("Password must be at least 12 characters long.", "password")
+    if not re.search(r"[A-Z]", password):
+        raise ValidationError("Password must contain at least one uppercase letter.", "password")
+    if not re.search(r"[a-z]", password):
+        raise ValidationError("Password must contain at least one lowercase letter.", "password")
+    if not re.search(r"\d", password):
+        raise ValidationError("Password must contain at least one digit (0-9).", "password")
+    if not re.search(r"[!@#$%^&*()\-_=+\[\]{}|;:',.<>?/`~\"\\]", password):
+        raise ValidationError("Password must contain at least one special character.", "password")
+    return True

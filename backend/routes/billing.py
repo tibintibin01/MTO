@@ -293,23 +293,23 @@ async def serve_analytics_dashboard():
 
         <script>
             async function fetchData() {
-                // Secure Token Retrieval from URL
-                const urlParams = new URLSearchParams(window.location.search);
-                const token = urlParams.get('t');
-                const theme = urlParams.get('theme') || 'dark';
-                
+                // SECURITY FIX (#12): Do NOT read JWT from URL params (?t=...).
+                // The desktop WebView injects window.__MTO_TOKEN__ before page load.
+                // This keeps the token out of browser history, logs, and referrer headers.
+                const token = window.__MTO_TOKEN__ || null;
+                const theme = new URLSearchParams(window.location.search).get('theme') || 'dark';
+
                 document.documentElement.setAttribute('data-theme', theme);
 
-                const headers = {};
+                const headers = {
+                    "X-Requested-With": "XMLHttpRequest"
+                };
                 if (token) {
                     headers["Authorization"] = "Bearer " + token;
-    
-                    // CSRF Protection: Include custom header for all state-changing requests
-                    headers["X-Requested-With"] = "XMLHttpRequest";
                 }
 
                 const res = await fetch('/api/analytics/dashboard', { headers: headers });
-                
+
                 if (res.status === 401) {
                     document.body.innerHTML = '<div style="display:flex; height:100vh; align-items:center; justify-content:center; color:white;"><h1>🚫 UNAUTHORIZED: Please launch from the Treasury Desktop App.</h1></div>';
                     return;

@@ -37,8 +37,12 @@ ENV PYTHONUNBUFFERED=1
 ENV APP_ENV=production
 ENV PORT=8000
 
+# Copy entrypoint and make executable
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Expose API port
 EXPOSE 8000
 
-# Run the FastAPI server
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run migrations then start server
+CMD ["/entrypoint.sh"]

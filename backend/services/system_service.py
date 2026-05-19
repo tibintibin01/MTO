@@ -98,9 +98,6 @@ def restore_database(sql_file_path):
 
 
 def log_action(user, action, db_session: Session = None):
-    if not db_session:
-        db_session = SessionLocal()
-        
     log = AuditLog(
         username=get_username(user),
         action=action,
@@ -113,9 +110,6 @@ def log_action(user, action, db_session: Session = None):
 def get_dashboard_summary(db_session: Session = None):
     from backend.services.stats_service import get_cached_stat, refresh_system_stats
     
-    if not db_session:
-        db_session = SessionLocal()
-
     total_props = int(get_cached_stat("total_properties", db_session=db_session))
     
     # Auto-refresh if the cache is empty (likely first run or empty table)
@@ -142,9 +136,6 @@ def get_dashboard_summary(db_session: Session = None):
 
 
 def get_report_summary(selected_month="All", selected_year="All", db_session: Session = None):
-    if not db_session:
-        db_session = SessionLocal()
-
     query = db_session.query(
         func.coalesce(func.sum(Payment.amount), 0),
         func.count(Payment.id),
@@ -167,9 +158,6 @@ def get_report_summary(selected_month="All", selected_year="All", db_session: Se
 
 
 def get_audit_stats(db_session: Session = None):
-    if not db_session:
-        db_session = SessionLocal()
-
     total = db_session.query(func.count(AuditLog.id)).scalar()
     today = db_session.query(func.count(AuditLog.id)).filter(func.date(AuditLog.timestamp) == func.curdate()).scalar()
     active_users = db_session.query(func.count(func.distinct(AuditLog.username))).filter(
@@ -184,9 +172,6 @@ def get_audit_stats(db_session: Session = None):
 
 
 def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit=100, cursor=None, db_session: Session = None):
-    if not db_session:
-        db_session = SessionLocal()
-
     query = db_session.query(AuditLog)
     
     if username and username != "ALL":
@@ -227,9 +212,6 @@ def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit
 
 
 def get_distinct_log_users(db_session: Session = None):
-    if not db_session:
-        db_session = SessionLocal()
-
     results = db_session.query(AuditLog.username).filter(
         AuditLog.username != None, 
         func.trim(AuditLog.username) != ''
@@ -238,9 +220,6 @@ def get_distinct_log_users(db_session: Session = None):
 
 
 def archive_audit_logs(days=365, db_session: Session = None):
-    if not db_session:
-        db_session = SessionLocal()
-        
     cutoff = datetime.now() - func.interval(int(days), 'day')
     results = db_session.query(AuditLog.timestamp, AuditLog.username, AuditLog.action).filter(
         AuditLog.timestamp < cutoff
@@ -248,18 +227,17 @@ def archive_audit_logs(days=365, db_session: Session = None):
     return results or []
 
 
-def delete_old_audit_logs(days=365, db_session: Session = SessionLocal()):
+def delete_old_audit_logs(db_session: Session, days: int = 365):
     cutoff = datetime.now() - func.interval(int(days), 'day')
     count = db_session.query(AuditLog).filter(AuditLog.timestamp < cutoff).delete()
     db_session.commit()
     return count
+
+
 def get_system_stats(db_session: Session = None):
     """
     Aggregates technical metrics for the System Health dashboard.
     """
-    if not db_session:
-        db_session = SessionLocal()
-
     from backend.database import engine
     from backend.models import RefreshToken
     

@@ -7,9 +7,6 @@ from datetime import datetime
 
 def get_collection_summary(db_session: Session = None):
     """Returns key collection totals for today, this month, and this year."""
-    if not db_session:
-        db_session = SessionLocal()
-
     now = datetime.now()
     today = now.date()
     this_month_start = today.replace(day=1)
@@ -70,9 +67,6 @@ def get_collection_summary(db_session: Session = None):
 
 def get_monthly_revenue_trend(db_session: Session = None):
     """Returns the last 12 months of revenue for trend analysis."""
-    if not db_session:
-        db_session = SessionLocal()
-
     from datetime import timedelta
     start_date = datetime.now() - timedelta(days=365)
     
@@ -85,9 +79,6 @@ def get_monthly_revenue_trend(db_session: Session = None):
 
 def get_barangay_distribution(db_session: Session = None):
     """Returns revenue distribution across barangays."""
-    if not db_session:
-        db_session = SessionLocal()
-
     # 1. Get receivables per barangay (2% basic tax)
     receivables_query = db_session.query(
         Property.barangay,
@@ -127,9 +118,6 @@ def get_barangay_distribution(db_session: Session = None):
 
 def get_tax_year_distribution(db_session: Session = None):
     """Returns the distribution of payments across tax years."""
-    if not db_session:
-        db_session = SessionLocal()
-
     results = db_session.query(
         Payment.tax_year,
         func.sum(Payment.amount).label('total')
