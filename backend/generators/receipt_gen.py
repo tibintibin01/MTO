@@ -101,6 +101,10 @@ def generate_or_receipt(receipt_data, base_dir):
             ("Penalty", fmt_currency(receipt_data.get("penalty"))),
         ]
 
+    discount = float(receipt_data.get("discount") or 0)
+    if discount > 0:
+        entries.append(("Discount", f"-{fmt_currency(discount)}"))
+
     c.setFont("Helvetica", 10)
     for label, amount in entries:
         c.drawString(margin_x, current_y, label)

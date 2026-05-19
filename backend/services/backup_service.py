@@ -36,6 +36,10 @@ backup_status = {
 
 def get_backup_status(db_session: Session = None):
     """Fetches the latest backup status from the database and maps it to UI keys."""
+    if not db_session:
+        with SessionLocal() as session:
+            return get_backup_status(db_session=session)
+
     try:
         latest = db_session.query(BackupHistory).order_by(BackupHistory.id.desc()).first()
         if latest:
@@ -63,6 +67,10 @@ def get_backup_status(db_session: Session = None):
 @require_permission("backup_restore")
 async def run_hybrid_backup(user=None, db_session: Session = None):
     """Main orchestrator for the Hybrid Backup process (Async)."""
+    if not db_session:
+        with SessionLocal() as db:
+            return await run_hybrid_backup(user=user, db_session=db)
+
     import asyncio
     from backend.services.auth_service import get_username
 

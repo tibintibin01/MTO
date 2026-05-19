@@ -127,7 +127,7 @@ def get_dashboard_summary(db_session: Session = None):
     # Add backup status from backup_service
     try:
         from backend.services.backup_service import get_backup_status
-        summary["backup"] = get_backup_status()
+        summary["backup"] = get_backup_status(db_session=db_session)
     except:
         summary["backup"] = {}
 

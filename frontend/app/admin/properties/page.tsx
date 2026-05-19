@@ -46,7 +46,7 @@ export default function AdminProperties() {
       const token = localStorage.getItem("mto_token");
       // GET request with search query
       const url = query 
-        ? `/api/v1/properties?query=${encodeURIComponent(query)}`
+        ? `/api/v1/properties?search=${encodeURIComponent(query)}`
         : "/api/v1/properties";
       
       const res = await fetch(url, {
@@ -55,13 +55,29 @@ export default function AdminProperties() {
       
       if (!res.ok) throw new Error("Failed to retrieve property records.");
       const json = await res.json();
-      if (Array.isArray(json)) {
-        setProperties(json);
-      } else if (json && Array.isArray(json.items)) {
-        setProperties(json.items);
-      } else {
-        setProperties([]);
-      }
+      const rawItems = Array.isArray(json) ? json : (json && Array.isArray(json.items) ? json.items : []);
+      const mapped = rawItems.map((item: any) => {
+        if (Array.isArray(item)) {
+          const balance = item[14] || 0;
+          return {
+            id: item[0],
+            td_number: item[1],
+            owner_name: item[2],
+            payor_name: item[3],
+            lot_number: item[4],
+            area: item[5],
+            location: item[6],
+            kind: item[7],
+            assessed_value: item[9],
+            tax_year: item[17],
+            pin: item[18],
+            barangay: item[22],
+            status: balance > 0 ? "DELINQUENT" : "ACTIVE"
+          };
+        }
+        return item;
+      });
+      setProperties(mapped);
     } catch (err: any) {
       setError(err.message);
       setProperties([]);

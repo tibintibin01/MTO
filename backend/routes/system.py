@@ -134,7 +134,9 @@ async def trigger_backup(
 ):
     from backend.services.backup_service import run_hybrid_backup
     async def backup_wrapper():
-        await run_hybrid_backup(user=current_user)
+        from backend.database import SessionLocal
+        with SessionLocal() as db:
+            await run_hybrid_backup(user=current_user, db_session=db)
         await manager.broadcast({
             "type": "NOTIFICATION",
             "title": "Backup Complete",
@@ -145,9 +147,9 @@ async def trigger_backup(
     return {"status": "backup_started", "message": "Hybrid backup is running in the background."}
 
 @router.get("/system/backup/status", dependencies=[Depends(read_only)])
-async def get_backup_health(current_user: dict = Depends(get_current_user)):
+async def get_backup_health(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     from backend.services.backup_service import get_backup_status
-    return get_backup_status()
+    return get_backup_status(db_session=db_session)
 
 @router.post("/system/import/validate", dependencies=[Depends(write_access)])
 async def validate_bulk_import(

@@ -34,7 +34,41 @@ export default function AdminCashier() {
 
       if (!res.ok) throw new Error("Failed to load cashier payment records.");
       const json = await res.json();
-      setPayments(Array.isArray(json) ? json : []);
+      const rawList = Array.isArray(json) ? json : [];
+      const mapped = rawList.map((item: any) => {
+        if (Array.isArray(item)) {
+          if (item.length === 6 || item.length === 7) {
+            // Formatted by get_recent_payments (handling both legacy 6-field and modern 7-field)
+            return {
+              id: item.length === 7 ? item[6] : item[1],
+              date_paid: item[0],
+              or_number: item[1],
+              td_number: item[2],
+              owner_name: item[3],
+              tax_year: item[4],
+              amount: item[5],
+              generated_by: "system"
+            };
+          } else if (item.length === 12) {
+            // Formatted by get_payment_receipt_records
+            return {
+              id: item[0],
+              date_paid: item[1],
+              td_number: item[2],
+              owner_name: item[3],
+              kind: item[4],
+              or_number: item[5],
+              tax_year: item[6],
+              amount: item[7],
+              file_path: item[8],
+              generated_by: item[9] || "system",
+              status: item[10]
+            };
+          }
+        }
+        return item; // already an object
+      });
+      setPayments(mapped);
     } catch (err: any) {
       setError(err.message);
       // Fallback fallback mockup so user can immediately test ledger features!

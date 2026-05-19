@@ -67,6 +67,9 @@ sys.excepthook = handle_global_exception
 class LoginApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
+        
+        # Ensure any residual tokens are cleared on startup of login screen
+        auth.logout()
 
         self.title(f"Treasury Management System | {tr('common.error') if not auth else 'Secure Access'}")
         self.geometry("1100x700")

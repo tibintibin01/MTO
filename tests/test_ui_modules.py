@@ -3,8 +3,10 @@ from unittest.mock import MagicMock
 import sys
 import os
 
-# Add parent directory to path to import modules
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add parent and desktop client directories to path to import modules
+root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(root_dir)
+sys.path.append(os.path.join(root_dir, "clients", "desktop"))
 
 # Mocking CustomTkinter to avoid GUI initialization during tests
 import customtkinter

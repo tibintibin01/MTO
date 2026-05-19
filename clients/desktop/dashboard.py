@@ -261,10 +261,12 @@ class DashboardApp(ctk.CTk):
     def logout(self):
         from tkinter import messagebox
         if messagebox.askyesno(tr("common.logout_confirm"), tr("common.logout_msg")):
+            auth.logout()
             self.logged_out = True
             self.destroy()
 
     def logout_automatic(self):
+        auth.logout()
         self.logged_out = True
         expired_win = ctk.CTkToplevel(self)
         expired_win.title(tr("common.session_expired_title"))

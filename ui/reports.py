@@ -17,6 +17,12 @@ class ReportsPage:
         self.setup_ui()
 
     def setup_ui(self):
+        # Progress bar at the very top (outside main container)
+        self.loading_bar = ctk.CTkProgressBar(self.parent, height=2, corner_radius=0, progress_color=ModernTheme.PRIMARY)
+        self.loading_bar.pack(fill="x")
+        self.loading_bar.set(0)
+        self.loading_bar.pack_forget()
+
         self.container = ctk.CTkFrame(self.parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
@@ -37,6 +43,20 @@ class ReportsPage:
         self.setup_collection_tab()
         self.setup_receivables_tab()
         self.setup_barangay_tab()
+
+    def _show_loading(self):
+        try:
+            self.loading_bar.pack(fill="x", side="top", before=self.container)
+            self.loading_bar.start()
+        except Exception:
+            pass
+
+    def _hide_loading(self):
+        try:
+            self.loading_bar.stop()
+            self.loading_bar.pack_forget()
+        except Exception:
+            pass
 
     def setup_collection_tab(self):
         filter_fr = ctk.CTkFrame(self.collection_tab, fg_color=ModernTheme.SECONDARY, corner_radius=8)
@@ -211,6 +231,7 @@ class ReportsPage:
     def generate_collection_report(self):
         month = self.month_cb.get()
         year = self.year_cb.get()
+        self._show_loading()
 
         def worker():
             try:
@@ -220,6 +241,8 @@ class ReportsPage:
                 self.container.after(
                     0, lambda err=e: messagebox.showerror("Error", str(err))
                 )
+            finally:
+                self.container.after(0, self._hide_loading)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -242,6 +265,7 @@ class ReportsPage:
 
     def generate_receivables_report(self):
         year = self.receiv_year_cb.get()
+        self._show_loading()
 
         def worker():
             try:
@@ -251,6 +275,8 @@ class ReportsPage:
                 self.container.after(
                     0, lambda err=e: messagebox.showerror("Error", str(err))
                 )
+            finally:
+                self.container.after(0, self._hide_loading)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -348,6 +374,8 @@ class ReportsPage:
         prog_bar.configure(progress_color=ModernTheme.SUCCESS if efficiency > 70 else ModernTheme.WARNING)
 
     def generate_barangay_receivables(self):
+        self._show_loading()
+
         def worker():
             try:
                 data = prop.get_receivables_by_barangay()
@@ -356,6 +384,8 @@ class ReportsPage:
                 self.container.after(
                     0, lambda err=e: messagebox.showerror("Error", str(err))
                 )
+            finally:
+                self.container.after(0, self._hide_loading)
 
         threading.Thread(target=worker, daemon=True).start()
 

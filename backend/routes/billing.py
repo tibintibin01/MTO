@@ -64,9 +64,11 @@ async def get_delinquent_list(
     return bill_svc.get_delinquent_accounts(limit, offset, db_session=db_session)
 
 @router.get("/reports/receivables-by-barangay")
-async def get_receivables_by_barangay(current_user: dict = Depends(get_current_user)):
-    # This service doesn't support db_session yet
-    return prop_svc.get_receivables_by_barangay()
+async def get_receivables_by_barangay(
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    return prop_svc.get_receivables_by_barangay(db_session=db_session)
 
 @router.get("/analytics/trends", tags=["Analytics"], dependencies=[Depends(read_only)])
 async def get_analytics_trends(months: int = 12, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
@@ -81,13 +83,13 @@ async def get_analytics_kpis(current_user: dict = Depends(get_current_user), db_
     return pay_svc.get_collection_kpis(db_session=db_session)
 
 @router.get("/api/analytics/dashboard")
-async def get_analytics_dashboard(user: str = Depends(get_current_user)):
+async def get_analytics_dashboard(user: str = Depends(get_current_user), db_session: Session = Depends(get_db)):
     """Returns a comprehensive set of treasury analytics data."""
     return {
-        "summary": analytics.get_collection_summary(),
-        "trend": analytics.get_monthly_revenue_trend(),
-        "barangays": analytics.get_barangay_distribution(),
-        "years": analytics.get_tax_year_distribution()
+        "summary": analytics.get_collection_summary(db_session=db_session),
+        "trend": analytics.get_monthly_revenue_trend(db_session=db_session),
+        "barangays": analytics.get_barangay_distribution(db_session=db_session),
+        "years": analytics.get_tax_year_distribution(db_session=db_session)
     }
 
 @router.post("/billing/bulk-soa", dependencies=[Depends(write_access)])

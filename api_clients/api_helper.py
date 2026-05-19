@@ -12,7 +12,7 @@ from pathlib import Path
 
 # --- NETWORK CONFIGURATION ---
 # Default to localhost for development
-DEFAULT_SERVER_URL = "https://localhost:8001"
+DEFAULT_SERVER_URL = "https://localhost:8000"
 
 BASE_URL = DEFAULT_SERVER_URL
 

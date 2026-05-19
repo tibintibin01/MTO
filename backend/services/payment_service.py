@@ -127,7 +127,7 @@ def get_next_or_number(default_prefix="OR-", db_session: Session = None):
 def get_recent_payments(limit=8, db_session: Session = None):
     safe_limit = max(1, int(limit))
     rows = db_session.query(
-        Payment.date_paid, Payment.or_number, Property.td_number, Property.owner_name, Payment.tax_year, Payment.amount
+        Payment.date_paid, Payment.or_number, Property.td_number, Property.owner_name, Payment.tax_year, Payment.amount, Payment.id
     ).join(Property, Property.id == Payment.property_id).filter(
         Property.deleted_at == None
     ).order_by(

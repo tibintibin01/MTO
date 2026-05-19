@@ -26,7 +26,7 @@ End If
 WshShell.Run "cmd /c cd frontend && npm run dev", 0, False
 
 ' 3. Wait 8 seconds for background API & portal to warm up (increased for high stability)
-WScript.Sleep 8000
+WScript.Sleep 8001
 
 ' 4. Launch Cashier Desktop app using pythonw.exe to completely hide the background console window!
 ' This displays ONLY the modern clean GUI window with no black terminal behind it.

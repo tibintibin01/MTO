@@ -89,6 +89,11 @@ def verify_user_login(username, password):
 
 
 
+def logout():
+    """Clears the global bearer token for client logout/session expiration."""
+    set_token(None)
+
+
 def get_all_users():
     return api_request("GET", "/users")
 

@@ -37,7 +37,15 @@ def search_properties(
     
     if term:
         clean_term = str(term).strip()
-        if "-" in clean_term:
+        if " " in clean_term and not any(c.isalpha() for c in clean_term):
+            dashed_term = clean_term.replace(" ", "-")
+            query = query.filter(
+                (Property.td_number == dashed_term) | 
+                (Property.pin == dashed_term) |
+                (Property.td_number.like(f"%{dashed_term}%")) | 
+                (Property.pin.like(f"%{dashed_term}%"))
+            )
+        elif "-" in clean_term:
             query = query.filter((Property.td_number == clean_term) | (Property.pin == clean_term))
         else:
             like_term = f"%{clean_term}%"
@@ -406,20 +414,29 @@ def get_assessment_roll(limit=100, offset=0, db_session: Session = None):
 
 
 def get_receivables_by_barangay(db_session: Session = None):
-    results = (
-        db_session.query(
-            func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
-            func.sum(PropertyBilling.assessed_value).label("total_assessed"),
-            func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount).label("total_due"),
-            func.sum(PropertyBilling.penalty).label("total_penalty"),
-            func.sum(PropertyBilling.discount).label("total_discount"),
-            func.sum(PropertyBilling.amount_paid).label("total_collected"),
-            func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount - PropertyBilling.amount_paid).label("total_receivable")
+    close_session = False
+    if not db_session:
+        db_session = SessionLocal()
+        close_session = True
+
+    try:
+        results = (
+            db_session.query(
+                func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
+                func.sum(PropertyBilling.assessed_value).label("total_assessed"),
+                func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount).label("total_due"),
+                func.sum(PropertyBilling.penalty).label("total_penalty"),
+                func.sum(PropertyBilling.discount).label("total_discount"),
+                func.sum(PropertyBilling.amount_paid).label("total_collected"),
+                func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount - PropertyBilling.amount_paid).label("total_receivable")
+            )
+            .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+            .filter(Property.deleted_at == None)
+            .group_by(Property.barangay)
+            .order_by(text("total_receivable DESC"))
+            .all()
         )
-        .join(PropertyBilling, PropertyBilling.property_id == Property.id)
-        .filter(Property.deleted_at == None)
-        .group_by(Property.barangay)
-        .order_by(text("total_receivable DESC"))
-        .all()
-    )
-    return [tuple(r) for r in results]
+        return [tuple(r) for r in results]
+    finally:
+        if close_session:
+            db_session.close()
