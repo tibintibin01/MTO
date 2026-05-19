@@ -34,7 +34,7 @@ def get_collection_summary(db_session: Session = None):
     # Modern telemetry fields for Next.js Unified Dashboard
     total_receivables = db_session.query(
         func.coalesce(func.sum(Property.assessed_value * 0.02), 0)
-    ).filter(Property.is_deleted == False).scalar()
+    ).filter(Property.deleted_at == None).scalar()
 
     total_collected = db_session.query(
         func.coalesce(func.sum(Payment.amount), 0)
@@ -44,14 +44,14 @@ def get_collection_summary(db_session: Session = None):
 
     total_properties = db_session.query(
         func.count(Property.id)
-    ).filter(Property.is_deleted == False).scalar()
+    ).filter(Property.deleted_at == None).scalar()
 
     # Calculate active delinquencies (where outstanding balance > 0)
     balance_expr = func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount - PropertyBilling.amount_paid)
     try:
         active_delinquencies = db_session.query(Property.id).join(
             PropertyBilling, PropertyBilling.property_id == Property.id
-        ).filter(Property.is_deleted == False).group_by(Property.id).having(balance_expr > 0).count()
+        ).filter(Property.deleted_at == None).group_by(Property.id).having(balance_expr > 0).count()
     except Exception:
         active_delinquencies = 0
 
@@ -92,14 +92,14 @@ def get_barangay_distribution(db_session: Session = None):
     receivables_query = db_session.query(
         Property.barangay,
         func.coalesce(func.sum(Property.assessed_value * 0.02), 0).label('receivables')
-    ).filter(Property.is_deleted == False).group_by(Property.barangay).all()
+    ).filter(Property.deleted_at == None).group_by(Property.barangay).all()
 
     # 2. Get collected per barangay
     collected_query = db_session.query(
         Property.barangay,
         func.coalesce(func.sum(Payment.amount), 0).label('collected')
     ).join(Payment, Payment.property_id == Property.id).filter(
-        Property.is_deleted == False
+        Property.deleted_at == None
     ).group_by(Property.barangay).all()
 
     data = {}

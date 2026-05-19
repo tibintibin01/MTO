@@ -13,7 +13,7 @@ def test_occ_save_property_success(mock_db_session):
         owner_name="JUAN DELA CRUZ",
         assessed_value=100000.0,
         version=1,
-        is_deleted=False
+        deleted_at=None
     )
     mock_db_session.query.return_value.filter.return_value.first.return_value = mock_prop
     
@@ -42,7 +42,7 @@ def test_occ_save_property_conflict(mock_db_session):
         owner_name="JUAN DELA CRUZ",
         assessed_value=100000.0,
         version=2,
-        is_deleted=False
+        deleted_at=None
     )
     mock_db_session.query.return_value.filter.return_value.first.return_value = mock_prop
     

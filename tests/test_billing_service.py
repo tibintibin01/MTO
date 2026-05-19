@@ -29,7 +29,7 @@ def test_get_total_due_logic(mock_db_session):
     # Mock property data
     mock_prop = Property(
         id=1, td_number="TD-1", owner_name="Owner", assessed_value=100000.0,
-        is_deleted=False
+        deleted_at=None
     )
     mock_db_session.query.return_value.filter.return_value.first.return_value = mock_prop
     

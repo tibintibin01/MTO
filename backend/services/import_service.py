@@ -85,14 +85,14 @@ def validate_property_import(file_content, file_extension, db_session: Session =
             row_data = row.to_dict()
             
             # 1. Check TD Number
-            td = str(row_data.get(found_cols["td_number"], "")).strip()
+            td = DataCleanser.to_str(row_data.get(found_cols["td_number"], ""))
             if not td:
                 errors.append("Missing TD Number")
             elif td in existing_tds:
                 errors.append(f"Duplicate TD Number: {td} already exists")
             
             # 2. Check Owner
-            owner = str(row_data.get(found_cols["owner_name"], "")).strip()
+            owner = DataCleanser.to_str(row_data.get(found_cols["owner_name"], ""))
             if not owner:
                 errors.append("Missing Owner Name")
                 
@@ -114,14 +114,22 @@ def validate_property_import(file_content, file_extension, db_session: Session =
             })
             
             if not errors:
-                rows_to_import.append(row_data)
+                rows_to_import.append({
+                    "td_number": td,
+                    "owner_name": owner,
+                    "assessed_value": val,
+                    "location": DataCleanser.to_str(row_data.get("location")),
+                    "lot_number": DataCleanser.to_str(row_data.get("lot_number")),
+                    "area": DataCleanser.to_str(row_data.get("area")),
+                    "kind_of_property": DataCleanser.to_str(row_data.get("kind_of_property")),
+                })
 
         return {
             "success": True, 
             "report": results, 
             "total_rows": len(df),
             "valid_rows": len(rows_to_import),
-            "data": rows_to_import if len(rows_to_import) == len(df) else []
+            "data": rows_to_import
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -386,8 +394,10 @@ def commit_property_import(data_list, user, db_session: Session = None):
                 td_number=row.get("td_number"),
                 owner_name=row.get("owner_name"),
                 assessed_value=row.get("assessed_value"),
-                created_at=datetime.now(),
-                updated_at=datetime.now()
+                location=row.get("location"),
+                lot_number=row.get("lot_number"),
+                area=row.get("area"),
+                kind_of_property=row.get("kind_of_property")
             )
             db_session.add(new_prop)
             count += 1
@@ -478,49 +488,49 @@ def import_assessment_roll_from_excel(file_path, user, db_session: Session = Non
                     except:
                         val = 0.0
                     
-                        lot_val = str(row.get(found_cols["LOT"], "")).strip() if found_cols["LOT"] else ""
-                        blk_val = str(row.get(found_cols["BLK"], "")).strip() if found_cols["BLK"] else ""
+                    lot_val = str(row.get(found_cols["LOT"], "")).strip() if found_cols["LOT"] else ""
+                    blk_val = str(row.get(found_cols["BLK"], "")).strip() if found_cols["BLK"] else ""
+                    
+                    # Smart Split: Handle combined Lot/Block with comma or space
+                    if lot_val and not blk_val:
+                        # Rule 1: Comma
+                        if "," in lot_val:
+                            lot_val = lot_val.split(",", 1)[0].strip()
                         
-                        # Smart Split: Handle combined Lot/Block with comma or space
-                        if lot_val and not blk_val:
-                            # Rule 1: Comma
-                            if "," in lot_val:
-                                lot_val = lot_val.split(",", 1)[0].strip()
-                            
-                            # Rule 2: 3+ Spaces
-                            import re
-                            if re.search(r"\s{3,}", lot_val):
-                                lot_val = re.split(r"\s{3,}", lot_val, 1)[0].strip()
+                        # Rule 2: 3+ Spaces
+                        import re
+                        if re.search(r"\s{3,}", lot_val):
+                            lot_val = re.split(r"\s{3,}", lot_val, 1)[0].strip()
 
-                            # Rule 3: Space Split with "Lot" preservation
-                            if " " in lot_val:
-                                parts = lot_val.split(" ")
-                                if parts[0].upper() == "LOT" and len(parts) > 1:
-                                    lot_val = f"{parts[0]} {parts[1]}".strip()
-                                else:
-                                    lot_val = parts[0].strip()
+                        # Rule 3: Space Split with "Lot" preservation
+                        if " " in lot_val:
+                            parts = lot_val.split(" ")
+                            if parts[0].upper() == "LOT" and len(parts) > 1:
+                                lot_val = f"{parts[0]} {parts[1]}".strip()
+                            else:
+                                lot_val = parts[0].strip()
 
-                        if td in existing_props:
+                    if td in existing_props:
 
-                            prop = existing_props[td]
-                            prop.owner_name = owner
-                            prop.kind_of_property = kind
-                            prop.assessed_value = val
-                            prop.lot_number = lot_val
-                            prop.block_number = "" # Discard the second part as requested
-                            updated += 1
+                        prop = existing_props[td]
+                        prop.owner_name = owner
+                        prop.kind_of_property = kind
+                        prop.assessed_value = val
+                        prop.lot_number = lot_val
+                        prop.block_number = "" # Discard the second part as requested
+                        updated += 1
 
-                        else:
-                            to_insert.append({
-                                "td_number": td,
-                                "owner_name": owner,
-                                "kind_of_property": kind,
-                                "assessed_value": val,
-                                "location": loc,
-                                "lot_number": lot_val,
-                                "block_number": "" # Discard the second part as requested
-                            })
-                            inserted += 1
+                    else:
+                        to_insert.append({
+                            "td_number": td,
+                            "owner_name": owner,
+                            "kind_of_property": kind,
+                            "assessed_value": val,
+                            "location": loc,
+                            "lot_number": lot_val,
+                            "block_number": "" # Discard the second part as requested
+                        })
+                        inserted += 1
 
 
 

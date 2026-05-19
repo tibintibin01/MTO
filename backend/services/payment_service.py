@@ -54,7 +54,7 @@ def find_duplicate_payment_entry(
         db_session = SessionLocal()
 
     row = db_session.query(Payment, Property).join(Property, Property.id == Payment.property_id).filter(
-        Property.is_deleted == False,
+        Property.deleted_at == None,
         Property.td_number == td_text,
         Payment.or_number == or_text,
         Payment.date_paid == date_text,
@@ -133,7 +133,7 @@ def get_recent_payments(limit=8, db_session: Session = None):
     rows = db_session.query(
         Payment.date_paid, Payment.or_number, Property.td_number, Property.owner_name, Payment.tax_year, Payment.amount
     ).join(Property, Property.id == Payment.property_id).filter(
-        Property.is_deleted == False
+        Property.deleted_at == None
     ).order_by(
         func.coalesce(Payment.date_paid, func.date(Payment.created_at)).desc(), Payment.id.desc()
     ).limit(safe_limit).all()
@@ -166,7 +166,7 @@ def get_revenue_by_barangay(db_session: Session = None):
         func.coalesce(Property.barangay, 'UNSPECIFIED').label('brgy'),
         func.sum(Payment.amount).label('total')
     ).join(Property, Property.id == Payment.property_id).filter(
-        Property.is_deleted == False
+        Property.deleted_at == None
     ).group_by('brgy').order_by(func.sum(Payment.amount).desc()).all()
     
     return [{"barangay": r[0], "total": float(r[1] or 0)} for r in results]
@@ -221,7 +221,7 @@ def get_unified_payment_history(term, db_session: Session = None):
     ).join(Property, Property.id == Payment.property_id).outerjoin(
         ReceiptHistory, ReceiptHistory.payment_id == Payment.id
     ).filter(
-        Property.is_deleted == False,
+        Property.deleted_at == None,
         or_(
             Property.td_number == term,
             Property.owner_name.like(like_term),
@@ -250,7 +250,7 @@ def get_payment_ledger(td_number, db_session: Session = None):
         Payment.amount
     ).join(Property, Property.id == Payment.property_id).filter(
         Property.td_number == td_number,
-        Property.is_deleted == False
+        Property.deleted_at == None
     ).order_by(Payment.date_paid.desc(), Payment.id.desc()).all()
     return [list(r) for r in results]
 
@@ -279,7 +279,7 @@ def get_payment_receipt_records(term, limit=50, offset=0, db_session: Session = 
     ).join(Property, Property.id == Payment.property_id).outerjoin(
         ReceiptHistory, ReceiptHistory.payment_id == Payment.id
     ).filter(
-        Property.is_deleted == False,
+        Property.deleted_at == None,
         or_(
             Property.td_number.like(like_term),
             Property.owner_name.like(like_term),
@@ -318,7 +318,7 @@ def get_payment_receipt_details(payment_id, db_session: Session = None):
         ReceiptHistory, ReceiptHistory.payment_id == Payment.id
     ).filter(
         Payment.id == payment_id,
-        Property.is_deleted == False
+        Property.deleted_at == None
     ).first()
     
     if not row:

@@ -120,7 +120,7 @@ def undo_last_action(user_id: int, db_session: Session = None):
             if table == 'properties':
                 prop = db_session.query(Property).filter(Property.id == rec_id).first()
                 if prop:
-                    prop.is_deleted = False
+                    prop.deleted_at = None
                     prop.updated_at = datetime.now()
             else:
                 return False, f"Undo not supported for deletion on table {table}"

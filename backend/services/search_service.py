@@ -21,7 +21,7 @@ def global_search(query, limit=10, db_session: Session = None):
 
     # 1. Search Properties
     props = db_session.query(Property).filter(
-        Property.is_deleted == False,
+        Property.deleted_at == None,
         or_(
             Property.td_number.like(search_term),
             Property.owner_name.like(search_term),
@@ -44,7 +44,7 @@ def global_search(query, limit=10, db_session: Session = None):
     pays = db_session.query(Payment, Property.owner_name).join(
         Property, Property.id == Payment.property_id
     ).filter(
-        Property.is_deleted == False,
+        Property.deleted_at == None,
         or_(
             Payment.or_number.like(search_term),
             Property.owner_name.like(search_term)

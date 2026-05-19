@@ -15,12 +15,12 @@ def refresh_system_stats(db_session: Session = None):
 
     try:
         # 1. Total Properties
-        total_props = db_session.query(func.count(Property.id)).filter(Property.is_deleted == False).scalar()
+        total_props = db_session.query(func.count(Property.id)).filter(Property.deleted_at == None).scalar()
         _update_stat(db_session, "total_properties", total_props)
 
         # 2. Unpaid Properties (Slow query optimization)
         unpaid_props = db_session.query(func.count(Property.id)).filter(
-            Property.is_deleted == False,
+            Property.deleted_at == None,
             ~Property.id.in_(db_session.query(Payment.property_id))
         ).scalar()
         _update_stat(db_session, "unpaid_properties", unpaid_props)

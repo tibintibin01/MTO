@@ -37,5 +37,5 @@ def sample_property():
         "assessed_value": 100000.0,
         "barangay": "NORTH POBLACION",
         "effectivity_date": "2023-01-01",
-        "is_deleted": 0
+        "deleted_at": None
     }

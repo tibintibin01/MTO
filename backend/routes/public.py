@@ -17,7 +17,7 @@ def search_property_public(query: str, request: Request, db_session: Session = D
     """
     prop = db_session.query(Property).filter(
         (Property.td_number == query) | (Property.pin == query),
-        Property.is_deleted == False
+        Property.deleted_at == None
     ).first()
 
     if not prop:
@@ -47,7 +47,7 @@ def get_property_history_public(query: str, request: Request, db_session: Sessio
     """Exposes payment history for a property with rate-limiting protection."""
     prop = db_session.query(Property).filter(
         (Property.td_number == query) | (Property.pin == query),
-        Property.is_deleted == False
+        Property.deleted_at == None
     ).first()
 
     if not prop:

@@ -1,7 +1,7 @@
 import os
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from backend.deps import get_current_user, write_access, read_only, get_db, Session
 import backend.services.billing_service as bill_svc
@@ -11,6 +11,7 @@ import backend.services.payment_service as pay_svc
 import backend.services.analytics_service as analytics
 from backend.generators import soa_gen, computation_gen, notice_gen
 from utils.logger import mto_logger
+from backend.services.storage_service import storage_service
 
 router = APIRouter(tags=["Billing"])
 
@@ -127,7 +128,21 @@ async def generate_computation_pdf(
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pdf_path = computation_gen.generate_delinquency_computation(details, base_dir)
-        return FileResponse(pdf_path, media_type="application/pdf", filename=os.path.basename(pdf_path))
+        file_name = os.path.basename(pdf_path)
+
+        if storage_service.enabled:
+            s3_key = f"computations/{file_name}"
+            uploaded_key = storage_service.upload_file(pdf_path, s3_key)
+            if uploaded_key:
+                presigned_url = storage_service.generate_presigned_url(s3_key)
+                if presigned_url:
+                    try:
+                        os.remove(pdf_path)
+                    except Exception as cleanup_err:
+                        mto_logger.warning(f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}")
+                    return RedirectResponse(presigned_url, status_code=307)
+
+        return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
     except Exception as e:
         import traceback
         mto_logger.error(f"Failed to generate computation PDF for property {property_id} | Error: {str(e)}\n{traceback.format_exc()}")
@@ -144,7 +159,21 @@ async def generate_statement_pdf(
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pdf_path = soa_gen.generate_statement_of_account(details, base_dir)
-        return FileResponse(pdf_path, media_type="application/pdf", filename=os.path.basename(pdf_path))
+        file_name = os.path.basename(pdf_path)
+
+        if storage_service.enabled:
+            s3_key = f"statements/{file_name}"
+            uploaded_key = storage_service.upload_file(pdf_path, s3_key)
+            if uploaded_key:
+                presigned_url = storage_service.generate_presigned_url(s3_key)
+                if presigned_url:
+                    try:
+                        os.remove(pdf_path)
+                    except Exception as cleanup_err:
+                        mto_logger.warning(f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}")
+                    return RedirectResponse(presigned_url, status_code=307)
+
+        return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
     except Exception as e:
         import traceback
         mto_logger.error(f"Failed to generate SOA PDF for property {property_id} | Error: {str(e)}\n{traceback.format_exc()}")
@@ -161,7 +190,21 @@ async def generate_notice_pdf(
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pdf_path = notice_gen.generate_delinquency_notice(details, base_dir)
-        return FileResponse(pdf_path, media_type="application/pdf", filename=os.path.basename(pdf_path))
+        file_name = os.path.basename(pdf_path)
+
+        if storage_service.enabled:
+            s3_key = f"notices/{file_name}"
+            uploaded_key = storage_service.upload_file(pdf_path, s3_key)
+            if uploaded_key:
+                presigned_url = storage_service.generate_presigned_url(s3_key)
+                if presigned_url:
+                    try:
+                        os.remove(pdf_path)
+                    except Exception as cleanup_err:
+                        mto_logger.warning(f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}")
+                    return RedirectResponse(presigned_url, status_code=307)
+
+        return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
     except Exception as e:
         import traceback
         mto_logger.error(f"Failed to generate Notice PDF for property {property_id} | Error: {str(e)}\n{traceback.format_exc()}")

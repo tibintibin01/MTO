@@ -1,10 +1,11 @@
 import os
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from backend.deps import get_current_user, write_access, get_db, Session
 from backend.schemas import ReceiptRecordSchema
 import backend.services.payment_service as pay_svc
 from backend.generators import receipt_gen
+from backend.services.storage_service import storage_service
 
 router = APIRouter(prefix="/payments", tags=["Financial"])
 
@@ -67,8 +68,23 @@ async def generate_receipt_pdf(
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     pdf_path = receipt_gen.generate_or_receipt(details, base_dir)
+    file_name = os.path.basename(pdf_path)
+
+    if storage_service.enabled:
+        s3_key = f"receipts/{file_name}"
+        uploaded_key = storage_service.upload_file(pdf_path, s3_key)
+        if uploaded_key:
+            presigned_url = storage_service.generate_presigned_url(s3_key)
+            if presigned_url:
+                try:
+                    os.remove(pdf_path)
+                except Exception as cleanup_err:
+                    import logging
+                    logging.getLogger("MTO_SYSTEM").warning(f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}")
+                return RedirectResponse(presigned_url, status_code=307)
+
     return FileResponse(
-        pdf_path, media_type="application/pdf", filename=os.path.basename(pdf_path)
+        pdf_path, media_type="application/pdf", filename=file_name
     )
 
 @router.delete("/{payment_id}")

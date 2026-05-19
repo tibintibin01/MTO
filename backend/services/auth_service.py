@@ -169,7 +169,7 @@ def release_all_user_locks(user_name):
 
 
 def get_user_by_username(username, db_session: Session):
-    u = db_session.query(User).filter(User.username == username, User.is_deleted == False).first()
+    u = db_session.query(User).filter(User.username == username, User.deleted_at == None).first()
     if not u:
         return None
     return {"id": u.id, "username": u.username, "role": u.role}
@@ -177,7 +177,7 @@ def get_user_by_username(username, db_session: Session):
 
 def verify_user_login(username, password, db_session: Session):
     from datetime import datetime, timedelta
-    user = db_session.query(User).filter(User.username == username, User.is_deleted == False).first()
+    user = db_session.query(User).filter(User.username == username, User.deleted_at == None).first()
     if not user:
         return None
 
@@ -289,7 +289,7 @@ def refresh_access_token(refresh_token_str: str, db_session: Session):
 def create_user(username, full_name, password, role, admin_user, db_session: Session):
     """Securely creates a new system user with hashed password."""
     # 1. Check for duplicates
-    if db_session.query(User).filter(User.username == username, User.is_deleted == False).first():
+    if db_session.query(User).filter(User.username == username, User.deleted_at == None).first():
         raise Exception(f"Username '{username}' is already taken.")
 
     # 2. Hash password
@@ -301,8 +301,7 @@ def create_user(username, full_name, password, role, admin_user, db_session: Ses
         full_name=full_name,
         password=hashed,
         role=normalize_role(role),
-        is_active=True,
-        is_deleted=False
+        is_active=True
     )
     db_session.add(new_user)
     db_session.flush()
@@ -334,7 +333,7 @@ def get_all_users(limit=50, offset=0, db_session: Session = None):
         from backend.database import SessionLocal
         db_session = SessionLocal()
         
-    users = db_session.query(User).filter(User.is_deleted == False).order_by(User.username.asc()).limit(safe_limit).offset(safe_offset).all()
+    users = db_session.query(User).filter(User.deleted_at == None).order_by(User.username.asc()).limit(safe_limit).offset(safe_offset).all()
     return [
         {
             "id": u.id,
@@ -358,13 +357,16 @@ def update_user_role(user_id, new_role, admin_user, db_session: Session):
     user.role = new_role
     db_session.commit()
     
-    db.record_audit_log(
-        admin_user,
-        f"Changed role for user ID {user_id}",
+    from backend.services.history_service import log_data_change
+    log_data_change(
+        user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,
+        username=get_username(admin_user),
         table_name="users",
         record_id=user_id,
-        old_values={"role": old_role},
-        new_values={"role": new_role},
+        action="UPDATE_ROLE",
+        before={"role": old_role},
+        after={"role": new_role},
+        db_session=db_session
     )
     return True
 
@@ -378,13 +380,16 @@ def update_user_status(user_id, is_active, admin_user, db_session: Session):
     user.is_active = is_active
     db_session.commit()
     
-    db.record_audit_log(
-        admin_user,
-        f"{'Enabled' if is_active else 'Disabled'} user ID {user_id}",
+    from backend.services.history_service import log_data_change
+    log_data_change(
+        user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,
+        username=get_username(admin_user),
         table_name="users",
         record_id=user_id,
-        old_values={"is_active": old_status},
-        new_values={"is_active": is_active},
+        action="UPDATE_STATUS",
+        before={"is_active": old_status},
+        after={"is_active": is_active},
+        db_session=db_session
     )
     return True
 
@@ -397,29 +402,45 @@ def reset_user_password(user_id, new_password, admin_user, db_session: Session):
     user.password = hash_password(new_password)
     db_session.commit()
     
-    db.record_audit_log(
-        admin_user,
-        f"Force password reset for user ID {user_id}",
+    from backend.services.history_service import log_data_change
+    log_data_change(
+        user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,
+        username=get_username(admin_user),
         table_name="users",
         record_id=user_id,
+        action="RESET_PASSWORD",
+        before=None,
+        after=None,
+        db_session=db_session
     )
     return True
 
 
 def delete_user(user_id, admin_user, db_session: Session):
-    """Permanently removes a user from the system."""
-    user = db_session.query(User).filter(User.id == user_id).first()
+    """Soft removes a user from the system by setting deleted_at."""
+    user = db_session.query(User).filter(User.id == user_id, User.deleted_at == None).first()
     if not user:
         return False
         
     username = user.username
-    db_session.delete(user)
+    old_data = {"deleted_at": None, "is_active": user.is_active}
+    
+    # Revoke all their refresh tokens immediately to end active sessions
+    db_session.query(RefreshToken).filter(RefreshToken.user_id == user_id).update({RefreshToken.is_revoked: True}, synchronize_session=False)
+    
+    user.deleted_at = datetime.now()
+    user.is_active = False # Deactivate deleted users
     db_session.commit()
     
-    db.record_audit_log(
-        admin_user,
-        f"DELETED user account: {username} (ID: {user_id})",
+    from backend.services.history_service import log_data_change
+    log_data_change(
+        user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,
+        username=get_username(admin_user),
         table_name="users",
         record_id=user_id,
+        action="SOFT_DELETE",
+        before=old_data,
+        after={"deleted_at": user.deleted_at.isoformat() if hasattr(user.deleted_at, "isoformat") else str(user.deleted_at), "is_active": False},
+        db_session=db_session
     )
     return True

@@ -12,7 +12,7 @@ class User(Base):
     username = Column(String(150), unique=True, nullable=False, index=True)
     password = Column(String(512), nullable=False)
     role = Column(String(50), nullable=False, default="viewer")
-    is_deleted = Column(Boolean, nullable=False, default=False)
+    deleted_at = Column(DateTime, nullable=True, index=True)
     is_active = Column(Boolean, nullable=False, default=True)
     failed_attempts = Column(Integer, default=0)
     lockout_until = Column(DateTime, nullable=True)
@@ -43,19 +43,19 @@ class Property(Base):
     prev_td_number = Column(String(100), nullable=True)
     effectivity_date = Column(String(100), nullable=True)
     version = Column(Integer, default=1)
-    is_deleted = Column(Boolean, nullable=False, default=False, index=True)
+    deleted_at = Column(DateTime, nullable=True, index=True)
     archived = Column(Boolean, nullable=False, default=False)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
-    payments = relationship("Payment", back_populates="property", cascade="all, delete-orphan")
-    billings = relationship("PropertyBilling", back_populates="property", cascade="all, delete-orphan")
-    assessment_history = relationship("PropertyAssessmentHistory", back_populates="property", cascade="all, delete-orphan")
+    payments = relationship("Payment", back_populates="property")
+    billings = relationship("PropertyBilling", back_populates="property")
+    assessment_history = relationship("PropertyAssessmentHistory", back_populates="property")
 
 class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True, index=True)
-    property_id = Column(Integer, ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+    property_id = Column(Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False)
     amount = Column(DECIMAL(12, 2), nullable=False, default=0.00)
     penalty = Column(DECIMAL(12, 2), default=0.00)
     discount = Column(DECIMAL(12, 2), default=0.00)
@@ -72,7 +72,7 @@ class PropertyBilling(Base):
     __tablename__ = "property_billings"
 
     id = Column(Integer, primary_key=True, index=True)
-    property_id = Column(Integer, ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+    property_id = Column(Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False)
     tax_year = Column(String(20), nullable=False)
     assessed_value = Column(DECIMAL(12, 2), nullable=False, default=0.00)
     penalty = Column(DECIMAL(12, 2), nullable=False, default=0.00)
@@ -100,7 +100,7 @@ class PropertyAssessmentHistory(Base):
     __tablename__ = "property_assessment_history"
 
     id = Column(Integer, primary_key=True, index=True)
-    property_id = Column(Integer, ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+    property_id = Column(Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False)
     td_number = Column(String(100))
     assessed_value = Column(DECIMAL(14, 2))
     tax_year = Column(String(100))
@@ -130,7 +130,7 @@ class ReceiptHistory(Base):
     __tablename__ = "receipt_history"
 
     id = Column(Integer, primary_key=True, index=True)
-    property_id = Column(Integer, ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+    property_id = Column(Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False)
     payment_id = Column(Integer, nullable=True)
     td_number = Column(String(255))
     owner_name = Column(String(255))

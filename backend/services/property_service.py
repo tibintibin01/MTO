@@ -37,7 +37,7 @@ def search_properties(
         from backend.database import SessionLocal
         db_session = SessionLocal()
 
-    query = db_session.query(Property).filter(Property.is_deleted == False)
+    query = db_session.query(Property).filter(Property.deleted_at == None)
     
     if term:
         clean_term = str(term).strip()
@@ -87,7 +87,7 @@ def get_barangays(db_session: Session):
 
 
 def get_property_by_id(property_id, db_session: Session):
-    return db_session.query(Property).filter(Property.id == property_id, Property.is_deleted == False).first()
+    return db_session.query(Property).filter(Property.id == property_id, Property.deleted_at == None).first()
 
 
 def release_all_property_locks(username, db_session: Session = None):
@@ -156,7 +156,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             prop.version += 1
         else:
             prop.version = 1
-            prop.is_deleted = False
+            prop.deleted_at = None
 
         db_session.flush() # Get ID for new properties
         
@@ -265,7 +265,7 @@ def soft_delete_property(property_id, user=None, ip_address=None, db_session: Se
         return 0
     
     old_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
-    prop.is_deleted = True
+    prop.deleted_at = datetime.now()
     
     if user:
         audit = AuditLog(
@@ -275,7 +275,7 @@ def soft_delete_property(property_id, user=None, ip_address=None, db_session: Se
             table_name="properties",
             record_id=property_id,
             old_values=json.dumps(old_data, default=str),
-            new_values=json.dumps({"is_deleted": 1}),
+            new_values=json.dumps({"deleted_at": prop.deleted_at.isoformat() if hasattr(prop.deleted_at, "isoformat") else str(prop.deleted_at)}),
             ip_address=ip_address,
             timestamp=datetime.now()
         )
@@ -296,7 +296,7 @@ def get_deleted_properties(limit=50, offset=0, db_session: Session = None):
 
     rows = (
         db_session.query(Property)
-        .filter(Property.is_deleted == True)
+        .filter(Property.deleted_at != None)
         .order_by(Property.id.desc())
         .limit(safe_limit)
         .offset(safe_offset)
@@ -325,7 +325,7 @@ def restore_property(property_id, user=None, db_session: Session = None):
     if not prop:
         return 0
     
-    prop.is_deleted = False
+    prop.deleted_at = None
     
     if user:
         from datetime import datetime
@@ -335,8 +335,8 @@ def restore_property(property_id, user=None, db_session: Session = None):
             action="RESTORE",
             table_name="properties",
             record_id=property_id,
-            old_values=str({"is_deleted": 1}),
-            new_values=str({"is_deleted": 0}),
+            old_values=str({"deleted_at": "deleted"}),
+            new_values=str({"deleted_at": None}),
             timestamp=datetime.now()
         )
         db_session.add(audit)
@@ -365,8 +365,17 @@ def purge_property(property_id, user=None, db_session: Session = None):
     db_session.commit()
 
     if user:
-        import db_manager as db
-        db.record_audit_log(user, "PURGE", "properties", property_id, full_data, None)
+        from backend.services.history_service import log_data_change
+        log_data_change(
+            user_id=user.get("id") if isinstance(user, dict) else 0,
+            username=get_username(user),
+            table_name="properties",
+            record_id=property_id,
+            action="PURGE",
+            before=full_data,
+            after=None,
+            db_session=db_session
+        )
     return 1
 
 
@@ -377,7 +386,7 @@ def get_unspecified_properties(db_session: Session = None):
         db_session = SessionLocal()
 
     results = db_session.query(Property).filter(
-        Property.is_deleted == False,
+        Property.deleted_at == None,
         (Property.barangay == None) | (text("TRIM(barangay) = ''")) | (Property.barangay == "UNSPECIFIED")
     ).order_by(Property.owner_name.asc()).all()
 
@@ -401,8 +410,17 @@ def bulk_update_barangay(property_ids, new_barangay, user=None, db_session: Sess
     db_session.commit()
     
     if count and user:
-        import db_manager as db
-        db.record_audit_log(user, "BULK_UPDATE", "properties", None, {"ids": property_ids}, {"barangay": new_barangay})
+        from backend.services.history_service import log_data_change
+        log_data_change(
+            user_id=user.get("id") if isinstance(user, dict) else 0,
+            username=get_username(user),
+            table_name="properties",
+            record_id=0,
+            action="BULK_UPDATE_BARANGAY",
+            before={"ids": property_ids},
+            after={"barangay": new_barangay},
+            db_session=db_session
+        )
     return count
 
 
@@ -411,7 +429,7 @@ def get_property_by_td(td_number, db_session: Session = None):
         from backend.database import SessionLocal
         db_session = SessionLocal()
         
-    prop = db_session.query(Property).filter(Property.td_number == td_number, Property.is_deleted == False).first()
+    prop = db_session.query(Property).filter(Property.td_number == td_number, Property.deleted_at == None).first()
     if not prop:
         return None
     return {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
@@ -425,7 +443,7 @@ def get_assessment_roll(limit=100, offset=0, db_session: Session = None):
         from backend.database import SessionLocal
         db_session = SessionLocal()
         
-    results = db_session.query(Property).filter(Property.is_deleted == False).order_by(Property.owner_name.asc()).limit(safe_limit).offset(safe_offset).all()
+    results = db_session.query(Property).filter(Property.deleted_at == None).order_by(Property.owner_name.asc()).limit(safe_limit).offset(safe_offset).all()
     return [(p.td_number, p.owner_name, p.location, p.kind_of_property, float(p.assessed_value or 0)) for p in results]
 
 
@@ -445,7 +463,7 @@ def get_receivables_by_barangay(db_session: Session = None):
             func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount - PropertyBilling.amount_paid).label("total_receivable")
         )
         .join(PropertyBilling, PropertyBilling.property_id == Property.id)
-        .filter(Property.is_deleted == False)
+        .filter(Property.deleted_at == None)
         .group_by(Property.barangay)
         .order_by(text("total_receivable DESC"))
         .all()

@@ -304,7 +304,7 @@ def get_property_billing_history(property_id=None, term=None, limit=50, db_sessi
         ).label('billing_status'),
 
         PropertyBilling.updated_at
-    ).join(Property, Property.id == PropertyBilling.property_id).filter(Property.is_deleted == False)
+    ).join(Property, Property.id == PropertyBilling.property_id).filter(Property.deleted_at == None)
     
     if property_id:
         query = query.filter(PropertyBilling.property_id == property_id)
@@ -326,7 +326,7 @@ def get_property_statement_data(property_id, db_session: Session = None):
     if not db_session:
         db_session = SessionLocal()
 
-    prop = db_session.query(Property).filter(Property.id == property_id, Property.is_deleted == False).first()
+    prop = db_session.query(Property).filter(Property.id == property_id, Property.deleted_at == None).first()
     if not prop:
         return None
         
@@ -388,7 +388,7 @@ def get_report_details(selected_month="All", selected_year="All", db_session: Se
         Payment.tax_year,
         Payment.amount,
         Payment.posted_by
-    ).join(Property, Property.id == Payment.property_id).filter(Property.is_deleted == False)
+    ).join(Property, Property.id == Payment.property_id).filter(Property.deleted_at == None)
     
     if selected_month != "All":
         query = query.filter(func.month(Payment.date_paid) == int(selected_month))
@@ -412,7 +412,7 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
     beg = db_session.query(
         func.coalesce(func.sum(((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty) - PropertyBilling.amount_paid), 0)
     ).join(Property, Property.id == PropertyBilling.property_id).filter(
-        Property.is_deleted == False,
+        Property.deleted_at == None,
         PropertyBilling.tax_year < str(ry)
     ).scalar()
     
@@ -420,7 +420,7 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
     curr_ass = db_session.query(
         func.coalesce(func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty), 0)
     ).join(Property, Property.id == PropertyBilling.property_id).filter(
-        Property.is_deleted == False,
+        Property.deleted_at == None,
         PropertyBilling.tax_year == str(ry)
     ).scalar()
     
@@ -428,7 +428,7 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
     coll = db_session.query(
         func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
     ).join(Payment, Payment.id == PaymentBilling.payment_id).join(Property, Property.id == Payment.property_id).filter(
-        Property.is_deleted == False,
+        Property.deleted_at == None,
         func.year(Payment.date_paid) == ry
     ).scalar()
     
@@ -467,7 +467,7 @@ def get_delinquent_accounts(limit=50, offset=0, db_session: Session = None):
         func.sum(PropertyBilling.amount_paid).label('total_paid'),
         balance_expr.label('balance')
     ).join(PropertyBilling, PropertyBilling.property_id == Property.id).filter(
-        Property.is_deleted == False
+        Property.deleted_at == None
     ).group_by(Property.id).having(balance_expr > 0).order_by(balance_expr.desc()).limit(safe_limit).offset(safe_offset).all()
     
     return [list(r) for r in results]

@@ -15,7 +15,7 @@ def get_retention_summary(db_session: Session = None):
     
     prop_count = db_session.query(func.count(Property.id)).filter(
         Property.created_at < ten_years_ago,
-        Property.is_deleted == False
+        Property.deleted_at == None
     ).scalar()
     
     pay_count = db_session.query(func.count(Payment.id)).filter(

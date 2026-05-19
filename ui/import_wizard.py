@@ -21,8 +21,27 @@ class ImportWizardModal(ctk.CTkToplevel):
         
         self.validated_data = []
         self.raw_report = []
+        self._closing = False
         
         self.setup_ui()
+
+    def ui_after(self, delay_ms, callback):
+        def guarded():
+            try:
+                exists = self.winfo_exists()
+            except tk.TclError:
+                return
+            if self._closing or not exists:
+                return
+            callback()
+        return self.after(delay_ms, guarded)
+
+    def safe_destroy_widget(self, widget):
+        try:
+            if widget.winfo_exists():
+                widget.destroy()
+        except tk.TclError:
+            pass
 
     def setup_ui(self):
         # Header
@@ -176,15 +195,15 @@ class ImportWizardModal(ctk.CTkToplevel):
                 if res.get("success"):
                     self.validated_data = res.get("data", [])
                     self.raw_report = res.get("report", [])
-                    self.after(0, lambda: self.show_step_2(self.raw_report, res["total_rows"], res["valid_rows"]))
+                    self.ui_after(0, lambda: self.show_step_2(self.raw_report, res["total_rows"], res["valid_rows"]))
                 else:
-                    self.after(0, lambda err=res.get("error"): messagebox.showerror("Validation Failed", err or "Unknown error", parent=self))
+                    self.ui_after(0, lambda err=res.get("error"): self.safe_show_error("Validation Failed", err or "Unknown error"))
             except Exception as e:
                 err_str = str(e)
-                self.after(0, lambda err=err_str: messagebox.showerror("Error", err, parent=self))
+                self.ui_after(0, lambda err=err_str: self.safe_show_error("Error", err))
 
             finally:
-                self.after(0, loading.destroy)
+                self.ui_after(0, lambda: self.safe_destroy_widget(loading))
 
         
         threading.Thread(target=worker, daemon=True).start()
@@ -215,12 +234,12 @@ class ImportWizardModal(ctk.CTkToplevel):
             try:
                 res = system.commit_import(self.validated_data, mode=self.mode)
                 if res.get("status") == "success":
-                    self.after(0, lambda r=res: self.finish_import(r["imported"]))
+                    self.ui_after(0, lambda r=res: self.finish_import(r["imported"]))
                 else:
-                    self.after(0, lambda: self.safe_show_error("Import Failed", "Database error during bulk save."))
+                    self.ui_after(0, lambda: self.safe_show_error("Import Failed", "Database error during bulk save."))
             except Exception as e:
                 err_str = str(e)
-                self.after(0, lambda err=err_str: self.safe_show_error("Error", err))
+                self.ui_after(0, lambda err=err_str: self.safe_show_error("Error", err))
             finally:
                 def cleanup():
                     if self.winfo_exists():
@@ -229,24 +248,49 @@ class ImportWizardModal(ctk.CTkToplevel):
                             self.commit_btn.configure(state="normal", text=f"🚀 IMPORT {len(self.validated_data)} RECORDS")
                         except:
                             pass
-                self.after(0, cleanup)
+                self.ui_after(0, cleanup)
         
         threading.Thread(target=worker, daemon=True).start()
 
     def safe_show_error(self, title, msg):
-        self.grab_release()
-        messagebox.showerror(title, msg, parent=self)
-        self.grab_set()
+        try:
+            exists = self.winfo_exists()
+        except tk.TclError:
+            return
+        if self._closing or not exists:
+            return
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        messagebox.showerror(title, msg, parent=self.master)
+        if self.winfo_exists() and not self._closing:
+            try:
+                self.grab_set()
+            except tk.TclError:
+                pass
 
     def finish_import(self, stats):
+        try:
+            exists = self.winfo_exists()
+        except tk.TclError:
+            return
+        if self._closing or not exists:
+            return
         if isinstance(stats, dict):
             msg = f"Import Complete!\n\n🆕 New Records: {stats.get('inserted', 0)}\n🔄 Updated Records: {stats.get('updated', 0)}"
         else:
             msg = f"Successfully imported {stats} records!"
             
-        self.grab_release()
-        messagebox.showinfo("Success", msg, parent=self)
-        self.after(50, self.destroy) # Defer destruction to avoid focus_set TclError on dead window
+        self._closing = True
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        messagebox.showinfo("Success", msg, parent=self.master)
+        if self.winfo_exists():
+            self.withdraw()
+            self.after(300, self.destroy)
 
     def clear_container(self):
         for widget in self.main_container.winfo_children():

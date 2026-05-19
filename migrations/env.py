@@ -8,8 +8,7 @@ from alembic import context
 sys.path.append(os.getcwd())
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from db_manager import DB_CONFIG
-from backend.database import Base
+from backend.database import SQLALCHEMY_DATABASE_URL, Base
 import backend.models
 
 # this is the Alembic Config object, which provides
@@ -22,15 +21,8 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # --- MTO DATABASE BRIDGE ---
-# We dynamically construct the URL from our secured DB_CONFIG
-user = DB_CONFIG["user"]
-password = DB_CONFIG["password"]
-host = DB_CONFIG["host"]
-port = DB_CONFIG["port"]
-database = DB_CONFIG["database"]
-sqlalchemy_url = f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}"
-
-config.set_main_option("sqlalchemy.url", sqlalchemy_url)
+# We dynamically construct the URL from our modern SQLAlchemy setup
+config.set_main_option("sqlalchemy.url", SQLALCHEMY_DATABASE_URL)
 
 target_metadata = Base.metadata
 

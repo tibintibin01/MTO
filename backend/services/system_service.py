@@ -150,7 +150,7 @@ def get_report_summary(selected_month="All", selected_year="All", db_session: Se
         func.count(Payment.id),
         func.count(func.distinct(Payment.property_id)),
         func.max(Payment.date_paid)
-    ).join(Property, Property.id == Payment.property_id).filter(Property.is_deleted == False)
+    ).join(Property, Property.id == Payment.property_id).filter(Property.deleted_at == None)
     
     if selected_month != "All":
         query = query.filter(func.month(Payment.date_paid) == int(selected_month))
