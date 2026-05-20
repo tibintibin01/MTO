@@ -71,14 +71,55 @@ def is_token_expired(token):
         return True  # Default to expired if malformed
 
 
+_SESSION_TOKEN = None
+_REFRESH_TOKEN = None
+
+
 def set_token(token):
     """Sets the global bearer token for all subsequent API requests."""
     global _SESSION_TOKEN
     _SESSION_TOKEN = token
 
+
+def set_refresh_token(token):
+    """Stores the refresh token for silent re-authentication."""
+    global _REFRESH_TOKEN
+    _REFRESH_TOKEN = token
+
+
 def get_token():
     """Returns the current session token."""
     return _SESSION_TOKEN
+
+
+def _try_refresh() -> bool:
+    """
+    Attempts to get a new access token using the stored refresh token.
+    Returns True if successful, False if the refresh token is also expired/missing.
+    Called automatically when the access token expires.
+    """
+    global _SESSION_TOKEN, _REFRESH_TOKEN
+    if not _REFRESH_TOKEN:
+        return False
+    try:
+        import requests as _requests
+        import json as _json
+        resp = _requests.post(
+            f"{BASE_URL}/api/auth/refresh",
+            json={"refresh_token": _REFRESH_TOKEN},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+            timeout=10,
+            verify=str(CERT_PATH) if CERT_PATH.exists() else False,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            new_token = data.get("access_token")
+            if new_token:
+                _SESSION_TOKEN = new_token
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def api_request(
@@ -101,9 +142,10 @@ def api_request(
     if _SESSION_TOKEN:
         # Verify expiration locally before sending
         if is_token_expired(_SESSION_TOKEN):
-            print("SESSION EXPIRED: Token check failed locally.")
-            # We raise a custom exception that the UI can catch to show a login prompt
-            raise Exception("Your session has expired. Please log in again.")
+            # Try silent refresh first — if the refresh token is still valid,
+            # the user never sees an error and the request continues normally.
+            if not _try_refresh():
+                raise Exception("Your session has expired. Please log in again.")
 
         headers["Authorization"] = f"Bearer {_SESSION_TOKEN}"
     
@@ -229,7 +271,8 @@ def api_download_file(method, endpoint, params=None):
     headers = {}
     if _SESSION_TOKEN:
         if is_token_expired(_SESSION_TOKEN):
-            raise Exception("Your session has expired. Please log in again.")
+            if not _try_refresh():
+                raise Exception("Your session has expired. Please log in again.")
         headers["Authorization"] = f"Bearer {_SESSION_TOKEN}"
     
     headers["X-Requested-With"] = "XMLHttpRequest"

@@ -226,7 +226,7 @@ def verify_user_login(username, password, db_session: Session):
     from backend.deps import create_access_token
     access_token = create_access_token(
         data={"sub": user.username, "role": user.role, "id": user.id},
-        expires_delta=timedelta(minutes=15) # Short-lived access token
+        expires_delta=timedelta(minutes=60) # 1-hour access token
     )
     
     refresh_token = create_refresh_token(user.id, db_session)
@@ -277,7 +277,7 @@ def refresh_access_token(refresh_token_str: str, db_session: Session):
         
     access_token = create_access_token(
         data={"sub": user.username, "role": user.role, "id": user.id},
-        expires_delta=timedelta(minutes=15)
+        expires_delta=timedelta(minutes=60)
     )
     
     return {"access_token": access_token, "token_type": "bearer"}

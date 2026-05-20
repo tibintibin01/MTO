@@ -105,12 +105,12 @@ export default function AdminDashboard() {
             <div className="w-10 h-10 bg-blue-500/10 text-blue-400 rounded-xl flex items-center justify-center border border-blue-500/20">
               <DollarSign className="w-5 h-5" />
             </div>
-            <span className="text-[10px] font-extrabold text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-              <TrendingUp className="w-3 h-3" /> +12.3%
+            <span className="text-[10px] font-extrabold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full">
+              ALL YEARS
             </span>
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Collection Receivables</p>
-          <h3 className="text-2xl font-black text-white mt-1">P {(summary.total_receivables || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+          <h3 className="text-2xl font-black text-white mt-1">₱ {(summary.total_receivables || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
         </div>
 
         <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
@@ -118,12 +118,12 @@ export default function AdminDashboard() {
             <div className="w-10 h-10 bg-green-500/10 text-green-400 rounded-xl flex items-center justify-center border border-green-500/20">
               <DollarSign className="w-5 h-5" />
             </div>
-            <span className="text-[10px] font-extrabold text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-              <TrendingUp className="w-3 h-3" /> +18.4%
+            <span className="text-[10px] font-extrabold text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full">
+              POSTED
             </span>
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Actual Collected Revenue</p>
-          <h3 className="text-2xl font-black text-green-400 mt-1">P {(summary.total_collected || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+          <h3 className="text-2xl font-black text-green-400 mt-1">₱ {(summary.total_collected || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
         </div>
 
         <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
@@ -136,7 +136,12 @@ export default function AdminDashboard() {
             </span>
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Treasury Collection Efficiency</p>
-          <h3 className="text-2xl font-black text-white mt-1">{summary.collection_rate || (((summary.total_collected || 0) / (summary.total_receivables || 1)) * 100).toFixed(1)} %</h3>
+          <h3 className="text-2xl font-black text-white mt-1">
+            {(summary.total_receivables > 0
+              ? ((summary.total_collected / summary.total_receivables) * 100)
+              : 0
+            ).toFixed(2)} %
+          </h3>
         </div>
 
         <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
@@ -150,7 +155,6 @@ export default function AdminDashboard() {
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Assessed Tax Properties</p>
           <h3 className="text-2xl font-black text-white mt-1">{(summary.total_properties || 0).toLocaleString()} Properties</h3>
-
         </div>
       </div>
 

@@ -320,6 +320,52 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = None):
         manager.disconnect(websocket)
         mto_logger.info("WebSocket connection closed", user=username)
 
+@router.post("/system/sync-billing-years", dependencies=[Depends(admin_only)])
+async def sync_billing_years(
+    background_tasks: BackgroundTasks,
+    dry_run: bool = False,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Creates missing PropertyBilling records for all active properties.
+
+    For each property, determines the start year from effectivity_date or
+    tax_year, then creates billing rows for every year from start_year to
+    the current year that doesn't already have one.
+
+    This fixes the Delinquency Dashboard showing only one year's balance
+    for properties that have been unpaid for multiple years.
+
+    Set dry_run=true to preview what would be created without writing to DB.
+    """
+    from backend.services.billing_sync_service import sync_billing_years as _sync
+
+    mto_logger.info(
+        f"Billing year sync requested by {current_user.get('username')} "
+        f"(dry_run={dry_run})"
+    )
+
+    if dry_run:
+        # Dry run is fast — run synchronously and return the preview
+        result = _sync(db_session=db_session, dry_run=True)
+        return result
+
+    # Live run — submit as a background job so the UI doesn't time out
+    from backend.services.job_service import submit_job
+    job_id = submit_job(
+        job_type="sync_billing_years",
+        submitted_by=current_user["username"],
+        payload={},
+        db_session=db_session,
+    )
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "message": "Billing year sync queued. Poll /jobs/{job_id} for progress.",
+    }
+
+
 @router.post("/system/restart", dependencies=[Depends(admin_only)])
 async def restart_server(
     background_tasks: BackgroundTasks,

@@ -114,3 +114,22 @@ def check_version_compatibility(client_version: str = "1.0") -> dict:
         "min_client_version": min_client,
         "message": message,
     }
+
+
+def sync_billing_years(dry_run: bool = False):
+    """
+    Syncs missing PropertyBilling records for all active properties.
+    Set dry_run=True to preview without writing to the database.
+    """
+    return api_request(
+        "POST",
+        f"/system/sync-billing-years{'?dry_run=true' if dry_run else ''}",
+    )
+
+
+def get_job_status(job_id: str):
+    """Polls the status of a background job."""
+    try:
+        return api_request("GET", f"/jobs/{job_id}")
+    except Exception:
+        return None

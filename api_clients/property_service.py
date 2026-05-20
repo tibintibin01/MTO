@@ -87,8 +87,11 @@ def get_delinquent_accounts():
     return api_request_with_cache("GET", "/properties/delinquent")
 
 
-def get_receivables_by_barangay():
-    return api_request_with_cache("GET", "/reports/receivables-by-barangay")
+def get_receivables_by_barangay(year=None):
+    params = {}
+    if year:
+        params["year"] = year
+    return api_request_with_cache("GET", "/reports/receivables-by-barangay", params=params if params else None)
 
 
 def get_deleted_properties():

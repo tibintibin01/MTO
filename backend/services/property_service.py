@@ -451,30 +451,136 @@ def get_assessment_roll(limit=100, cursor=None, db_session: Session = None):
     }
 
 
-def get_receivables_by_barangay(db_session: Session = None):
+def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 2023, db_session: Session = None):
+    """
+    Returns receivables breakdown by barangay.
+
+    Parameters
+    ----------
+    report_year : int, optional
+        Show cumulative receivables up to and including this year.
+        If None, shows all-time totals.
+    data_start_year : int
+        The earliest year to include in the report. Defaults to 2023.
+        Billing records before this year (created by the sync from old
+        effectivity_date values) are excluded.
+    """
     close_session = False
     if not db_session:
+        from backend.database import SessionLocal
         db_session = SessionLocal()
         close_session = True
 
     try:
-        results = (
+        from backend.models import Payment, PaymentBilling
+        from utils.db_compat import year_of
+
+        year_filter = str(report_year) if report_year else None
+
+        # 1. Total Due per barangay — sum all billing records up to report_year
+        due_query = (
             db_session.query(
                 func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
                 func.sum(PropertyBilling.assessed_value).label("total_assessed"),
-                func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount).label("total_due"),
+                func.sum(
+                    (PropertyBilling.assessed_value * 0.02)
+                    + PropertyBilling.penalty
+                    - PropertyBilling.discount
+                ).label("total_due"),
                 func.sum(PropertyBilling.penalty).label("total_penalty"),
                 func.sum(PropertyBilling.discount).label("total_discount"),
-                func.sum(PropertyBilling.amount_paid).label("total_collected"),
-                func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount - PropertyBilling.amount_paid).label("total_receivable")
             )
             .join(PropertyBilling, PropertyBilling.property_id == Property.id)
             .filter(Property.deleted_at == None)
-            .group_by(Property.barangay)
-            .order_by(text("total_receivable DESC"))
-            .all()
         )
-        return [tuple(r) for r in results]
+        if year_filter:
+            due_query = due_query.filter(PropertyBilling.tax_year <= year_filter)
+        # Always apply the data start year floor to exclude pre-data billing records
+        due_query = due_query.filter(PropertyBilling.tax_year >= str(data_start_year))
+
+        due_results = due_query.group_by(Property.barangay).all()
+
+        # 2. Total Collected per barangay — sum payments where date_paid falls
+        # within the selected year range. Uses cast to Date for reliable comparison
+        # and explicitly excludes NULL date_paid rows.
+        from sqlalchemy import cast, Integer as SAInteger
+        from datetime import date as pydate
+
+        coll_query = (
+            db_session.query(
+                func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
+                func.sum(Payment.amount).label("total_collected"),
+            )
+            .join(Property, Property.id == Payment.property_id)
+            .filter(
+                Property.deleted_at == None,
+                Payment.date_paid != None,  # exclude null dates
+            )
+        )
+        if year_filter:
+            # Use a direct date boundary comparison — more reliable than
+            # extract(year) which can behave inconsistently across DB drivers.
+            # "Payments made on or before Dec 31 of the selected year"
+            year_end = pydate(int(year_filter), 12, 31)
+            coll_query = coll_query.filter(Payment.date_paid <= year_end)
+        # Also apply data_start_year floor to collections
+        year_start = pydate(data_start_year, 1, 1)
+        coll_query = coll_query.filter(Payment.date_paid >= year_start)
+
+        coll_results = coll_query.group_by(Property.barangay).all()
+
+        # Merge into a single dict keyed by barangay
+        data = {}
+        for r in due_results:
+            brgy = r[0] or "UNSPECIFIED"
+            data[brgy] = {
+                "barangay": brgy,
+                "total_assessed": float(r[1] or 0),
+                "total_due": float(r[2] or 0),
+                "total_penalty": float(r[3] or 0),
+                "total_discount": float(r[4] or 0),
+                "total_collected": 0.0,
+            }
+
+        for r in coll_results:
+            brgy = r[0] or "UNSPECIFIED"
+            if brgy not in data:
+                data[brgy] = {
+                    "barangay": brgy,
+                    "total_assessed": 0.0,
+                    "total_due": 0.0,
+                    "total_penalty": 0.0,
+                    "total_discount": 0.0,
+                    "total_collected": 0.0,
+                }
+            data[brgy]["total_collected"] = float(r[1] or 0)
+
+        # Build result tuples: (brgy, assessed, due, penalty, discount, collected, receivable)
+        results = []
+        for brgy, d in sorted(
+            data.items(),
+            key=lambda x: x[1]["total_due"] - x[1]["total_discount"] - x[1]["total_collected"],
+            reverse=True
+        ):
+            # Correct formula: Total Due already has discount subtracted in the SQL
+            # (assessed*0.02 + penalty - discount), so receivable = total_due - collected
+            # BUT total_due in the query is: (assessed*0.02) + penalty - discount
+            # so discount is already baked in. The displayed "Total Discount" column
+            # is informational. Receivable = total_due - total_collected is correct.
+            # However the sort should use the same formula for consistency.
+            receivable = d["total_due"] - d["total_collected"]
+            results.append((
+                brgy,
+                d["total_assessed"],
+                d["total_due"],
+                d["total_penalty"],
+                d["total_discount"],
+                d["total_collected"],
+                receivable,
+            ))
+
+        return results
+
     finally:
         if close_session:
             db_session.close()

@@ -112,8 +112,8 @@ def _run_job(job: Job, db: Session):
     """Dispatches a job to the correct handler based on job_type."""
     payload = json.loads(job.payload or "{}")
 
-    _update_job(db, job, status="RUNNING", started_at=datetime.now(), progress=5,
-                progress_message="Starting...")
+    # Status already set to RUNNING by the worker loop before calling this
+    _update_job(db, job, progress=5, progress_message="Starting...")
 
     try:
         if job.job_type == "backup":
@@ -125,6 +125,9 @@ def _run_job(job: Job, db: Session):
         elif job.job_type in ("pdf_receipt", "pdf_soa", "pdf_computation",
                                "pdf_notice", "pdf_bulk_soa"):
             _handle_pdf(job, db, payload)
+
+        elif job.job_type == "sync_billing_years":
+            _handle_sync_billing_years(job, db, payload)
 
         else:
             raise ValueError(f"Unknown job type: {job.job_type}")
@@ -139,6 +142,26 @@ def _run_job(job: Job, db: Session):
                     error=str(e),
                     completed_at=datetime.now(),
                     progress=0)
+
+
+def _handle_sync_billing_years(job: Job, db: Session, payload: dict):
+    from backend.services.billing_sync_service import sync_billing_years
+
+    def progress(current, total, msg):
+        pct = int((current / total) * 100) if total > 0 else 0
+        _update_job(db, job, progress=pct, progress_message=msg)
+
+    result = sync_billing_years(db_session=db, dry_run=False, progress_callback=progress)
+
+    _update_job(db, job,
+                status="COMPLETED",
+                result=json.dumps(result),
+                completed_at=datetime.now(),
+                progress=100,
+                progress_message=(
+                    f"Done: {result['records_created']} records created, "
+                    f"{result['records_skipped']} already existed."
+                ))
 
 
 def _handle_backup(job: Job, db: Session, payload: dict):
@@ -279,15 +302,19 @@ def start_worker():
         while _worker_running:
             try:
                 with SessionLocal() as db:
-                    # Pick the oldest PENDING job
+                    # Use a plain query without skip_locked for compatibility
+                    # with all MariaDB/MySQL configurations
                     job = (
                         db.query(Job)
                         .filter(Job.status == "PENDING")
                         .order_by(Job.created_at.asc())
-                        .with_for_update(skip_locked=True)
                         .first()
                     )
                     if job:
+                        # Mark as RUNNING immediately to prevent double-pickup
+                        job.status = "RUNNING"
+                        job.started_at = datetime.now()
+                        db.commit()
                         mto_logger.info(
                             f"Job worker picked up: {job.job_type} [{job.id[:8]}]"
                         )

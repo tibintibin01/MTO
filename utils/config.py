@@ -36,7 +36,7 @@ class MTOSettings(BaseSettings):
     # --- SECURITY ---
     API_SECRET_KEY: str = Field(default="", validation_alias=AliasChoices("MTO_JWT_SECRET", "SECRET_KEY", "MTO_API_SECRET_KEY"))
     JWT_ALGORITHM: str = "HS256"
-    TOKEN_EXPIRE_MINUTES: int = Field(default=480, ge=1) # Default 8 hours
+    TOKEN_EXPIRE_MINUTES: int = Field(default=60, ge=1) # 1 hour
     
     # --- FEATURES ---
     ENABLE_BULK_IMPORT: bool = True

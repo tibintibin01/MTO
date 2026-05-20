@@ -103,7 +103,7 @@ class DashboardApp(ctk.CTk):
         self.progress_overlays = {}
 
         # 1. Initialize Specialized Coordinators
-        self.watchdog = SessionWatchdog(self, 15, self.logout_automatic)
+        self.watchdog = SessionWatchdog(self, 60, self.logout_automatic)
         self.notifier = NotificationListener({
             "on_open": lambda: self.status_bar.set_ws_status(True),
             "on_close": lambda: self.status_bar.set_ws_status(False),
@@ -284,11 +284,111 @@ class DashboardApp(ctk.CTk):
                 self.state("zoomed")
 
     def logout(self):
-        from tkinter import messagebox
-        if messagebox.askyesno(tr("common.logout_confirm"), tr("common.logout_msg")):
+        """Shows a premium custom logout confirmation dialog instead of the OS native dialog."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("")
+        dialog.resizable(False, False)
+        dialog.attributes("-topmost", True)
+        dialog.grab_set()
+        dialog.overrideredirect(True)  # Borderless for premium feel
+
+        # Size and center over the main window
+        dw, dh = 420, 200
+        px = self.winfo_rootx() + (self.winfo_width() // 2) - (dw // 2)
+        py = self.winfo_rooty() + (self.winfo_height() // 2) - (dh // 2)
+        dialog.geometry(f"{dw}x{dh}+{px}+{py}")
+
+        # Outer frame with border
+        outer = ctk.CTkFrame(
+            dialog,
+            fg_color=("#1e2530", "#1e2530"),
+            corner_radius=16,
+            border_width=1,
+            border_color=("#2c3e50", "#2c3e50"),
+        )
+        outer.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Icon + message row
+        msg_fr = ctk.CTkFrame(outer, fg_color="transparent")
+        msg_fr.pack(fill="x", padx=28, pady=(28, 16))
+
+        # Red logout icon circle
+        icon_fr = ctk.CTkFrame(
+            msg_fr, width=48, height=48, corner_radius=24,
+            fg_color="#e74c3c",
+        )
+        icon_fr.pack(side="left", padx=(0, 16))
+        icon_fr.pack_propagate(False)
+        ctk.CTkLabel(
+            icon_fr, text="⏻", font=("Segoe UI", 20, "bold"), text_color="white"
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        text_fr = ctk.CTkFrame(msg_fr, fg_color="transparent")
+        text_fr.pack(side="left", fill="both", expand=True)
+        ctk.CTkLabel(
+            text_fr,
+            text=tr("common.logout_confirm"),
+            font=("Segoe UI", 15, "bold"),
+            text_color="white",
+            anchor="w",
+        ).pack(fill="x")
+        ctk.CTkLabel(
+            text_fr,
+            text=tr("common.logout_msg"),
+            font=("Segoe UI", 11),
+            text_color="gray60",
+            anchor="w",
+            wraplength=260,
+        ).pack(fill="x", pady=(4, 0))
+
+        # Divider
+        ctk.CTkFrame(outer, height=1, fg_color="#2c3e50").pack(fill="x", padx=0)
+
+        # Button row
+        btn_fr = ctk.CTkFrame(outer, fg_color="transparent")
+        btn_fr.pack(fill="x", padx=20, pady=16)
+
+        def confirm():
+            dialog.destroy()
             auth.logout()
             self.logged_out = True
             self.destroy()
+
+        def cancel():
+            dialog.destroy()
+
+        ctk.CTkButton(
+            btn_fr,
+            text="Cancel",
+            command=cancel,
+            fg_color=("#2c3e50", "#2c3e50"),
+            hover_color=("#34495e", "#34495e"),
+            text_color="white",
+            font=("Segoe UI", 12, "bold"),
+            height=38,
+            corner_radius=8,
+            width=120,
+        ).pack(side="right", padx=(8, 0))
+
+        ctk.CTkButton(
+            btn_fr,
+            text="  ⏻  Log Out",
+            command=confirm,
+            fg_color="#e74c3c",
+            hover_color="#c0392b",
+            text_color="white",
+            font=("Segoe UI", 12, "bold"),
+            height=38,
+            corner_radius=8,
+            width=140,
+        ).pack(side="right")
+
+        # Allow Escape to cancel, Enter/Space to confirm
+        dialog.bind("<Escape>", lambda e: cancel())
+        dialog.bind("<Return>", lambda e: confirm())
+        dialog.bind("<space>", lambda e: confirm())
+        # Force keyboard focus to the dialog so bindings fire immediately
+        dialog.focus_set()
 
     def logout_automatic(self):
         auth.logout()

@@ -95,7 +95,7 @@ async def login(credentials: Dict[str, str], request: Request, response: Respons
             httponly=True,
             secure=True,
             samesite="strict",
-            max_age=15 * 60  # 15 minutes
+            max_age=60 * 60  # 1 hour — matches token expiry
         )
         return user_data
 
@@ -106,6 +106,27 @@ async def login(credentials: Dict[str, str], request: Request, response: Respons
 @router.get("/me")
 async def read_users_me(current_user: dict = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/api/auth/refresh")
+async def refresh_access_token(
+    credentials: Dict[str, str],
+    db_session: Session = Depends(get_db)
+):
+    """
+    Issues a new access token using a valid refresh token.
+    Called automatically by the desktop client when the access token expires,
+    so the user stays logged in without seeing a session expired error.
+    """
+    refresh_token = credentials.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(status_code=400, detail="refresh_token is required")
+
+    try:
+        result = auth_svc.refresh_access_token(refresh_token, db_session=db_session)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
 
 @router.post("/api/auth/logout")
 async def logout(response: Response):

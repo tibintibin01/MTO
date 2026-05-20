@@ -64,10 +64,16 @@ async def get_delinquent_list(
 
 @router.get("/reports/receivables-by-barangay")
 async def get_receivables_by_barangay(
+    year: Optional[int] = None,
+    data_start_year: int = 2023,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
-    return prop_svc.get_receivables_by_barangay(db_session=db_session)
+    return prop_svc.get_receivables_by_barangay(
+        report_year=year,
+        data_start_year=data_start_year,
+        db_session=db_session,
+    )
 
 @router.get("/analytics/trends", tags=["Analytics"], dependencies=[Depends(read_only)])
 async def get_analytics_trends(months: int = 12, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):

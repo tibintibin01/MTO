@@ -30,10 +30,19 @@ def get_collection_summary(db_session: Session = None):
         func.coalesce(func.sum(Payment.amount), 0)
     ).filter(cast(Payment.date_paid, Date) >= year_start).scalar()
 
-    # Modern telemetry fields for Next.js Unified Dashboard
+    # Total receivables = sum of all outstanding balances in property_billings
+    # (not from properties table directly — that ignores multi-year billing)
     total_receivables = db_session.query(
-        func.coalesce(func.sum(Property.assessed_value * 0.02), 0)
-    ).filter(Property.deleted_at == None).scalar()
+        func.coalesce(
+            func.sum(
+                (PropertyBilling.assessed_value * 0.02)
+                + PropertyBilling.penalty
+                - PropertyBilling.discount
+            ), 0
+        )
+    ).join(Property, Property.id == PropertyBilling.property_id).filter(
+        Property.deleted_at == None
+    ).scalar()
 
     total_collected = db_session.query(
         func.coalesce(func.sum(Payment.amount), 0)
@@ -94,11 +103,19 @@ def get_barangay_distribution(db_session: Session = None):
         with SessionLocal() as session:
             return get_barangay_distribution(db_session=session)
 
-    # 1. Get receivables per barangay (2% basic tax)
+    # 1. Get receivables per barangay from property_billings (accurate after sync)
     receivables_query = db_session.query(
         Property.barangay,
-        func.coalesce(func.sum(Property.assessed_value * 0.02), 0).label('receivables')
-    ).filter(Property.deleted_at == None).group_by(Property.barangay).all()
+        func.coalesce(
+            func.sum(
+                (PropertyBilling.assessed_value * 0.02)
+                + PropertyBilling.penalty
+                - PropertyBilling.discount
+            ), 0
+        ).label('receivables')
+    ).join(PropertyBilling, PropertyBilling.property_id == Property.id).filter(
+        Property.deleted_at == None
+    ).group_by(Property.barangay).all()
 
     # 2. Get collected per barangay
     collected_query = db_session.query(

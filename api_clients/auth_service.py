@@ -74,6 +74,10 @@ def verify_user_login(username, password):
         )
         if user_info and "access_token" in user_info:
             set_token(user_info["access_token"])
+            # Store refresh token for silent re-authentication when access token expires
+            from api_clients.api_helper import set_refresh_token
+            if user_info.get("refresh_token"):
+                set_refresh_token(user_info["refresh_token"])
             return user_info
         else:
             raise Exception("Login response missing access token.")

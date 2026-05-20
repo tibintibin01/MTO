@@ -12,7 +12,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
-import { useToast } from "../../../components/ToastProvider";
+import { useToast } from "../../components/ToastProvider";
 
 // ---------------------------------------------------------------------------
 // Loading skeleton — mirrors the actual page layout so there's no layout shift
