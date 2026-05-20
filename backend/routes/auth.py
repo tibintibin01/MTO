@@ -8,9 +8,7 @@ from typing import Dict
 import backend.services.auth_service as auth_svc
 from backend.deps import (
     get_current_user,
-    create_access_token,
     limiter,
-    ACCESS_TOKEN_EXPIRE_MINUTES,
     get_db,
     Session
 )
@@ -27,30 +25,39 @@ class Token(BaseModel):
 async def login_for_access_token(
     request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db_session: Session = Depends(get_db)
 ):
+    """
+    OAuth2-compatible token endpoint for the desktop client and Swagger UI.
+    Delegates entirely to verify_user_login() so lockout, refresh token
+    generation, and hash-upgrade logic are identical to /api/auth/login.
+    """
     try:
-        user = auth_svc.verify_user_login(form_data.username, form_data.password, db_session=db_session)
-        if not user:
+        user_data = auth_svc.verify_user_login(
+            form_data.username, form_data.password, db_session=db_session
+        )
+        if not user_data:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect username or password",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = create_access_token(
-            data={"sub": user["username"], "role": user["role"], "id": user["id"]},
-            expires_delta=access_token_expires,
-        )
-        return {"access_token": access_token, "token_type": "bearer"}
+        mto_logger.info("Login successful via /token", user=form_data.username, ip=request.client.host)
+        return {"access_token": user_data["access_token"], "token_type": "bearer"}
     except HTTPException:
         raise
-    except Exception as e:
+    except ValueError as ve:
+        mto_logger.security(f"Login failed via /token: {str(ve)}", user=form_data.username, ip=request.client.host)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
+            detail=str(ve),
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-from fastapi import Response
+    except Exception as e:
+        mto_logger.error(f"Unexpected error during /token login: {str(e)}", user=form_data.username)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication failed",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 @router.post("/api/auth/login")
 async def login(credentials: Dict[str, str], request: Request, response: Response, db_session: Session = Depends(get_db)):
@@ -65,15 +72,23 @@ async def login(credentials: Dict[str, str], request: Request, response: Respons
     try:
         user_data = auth_svc.verify_user_login(username, password, db_session=db_session)
     except ValueError as ve:
-        mto_logger.security(f"Login failed: {str(ve)}", user=username, ip=request.client.host)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(ve)
-        )
+        msg = str(ve)
+        mto_logger.security(f"Login failed: {msg}", user=username, ip=request.client.host)
+
+        from backend.error_codes import raise_api_error, E
+        if msg.startswith("DISABLED:"):
+            raise_api_error(E.AUTH_ACCOUNT_DISABLED, "Account is disabled. Please contact the administrator.")
+        elif msg.startswith("LOCKED:"):
+            minutes = msg.split(":", 1)[1]
+            raise_api_error(E.AUTH_ACCOUNT_LOCKED, f"Account temporarily locked. Please try again in {minutes} minute(s).")
+        elif msg.startswith("INVALID:"):
+            remaining = msg.split(":", 1)[1]
+            raise_api_error(E.AUTH_INVALID_CREDENTIALS, f"Invalid password. {remaining} attempt(s) remaining before lockout.")
+        else:
+            raise_api_error(E.AUTH_INVALID_CREDENTIALS, msg)
     
     if user_data:
         mto_logger.info("Login successful", user=username, ip=request.client.host)
-        # Set access token in secure HTTP-Only cookie for BFF pattern
         response.set_cookie(
             key="access_token",
             value=user_data["access_token"],
@@ -82,8 +97,6 @@ async def login(credentials: Dict[str, str], request: Request, response: Respons
             samesite="strict",
             max_age=15 * 60  # 15 minutes
         )
-        # TELEMETRY: Verify what we are returning
-        mto_logger.info(f"DEBUG: Returning login data for {username}. Token present: {'access_token' in user_data}")
         return user_data
 
     else:
@@ -101,13 +114,26 @@ async def logout(response: Response):
 
 @router.get("/api/auth/csrf")
 async def get_csrf_token(response: Response):
+    """
+    Issues a CSRF token using the double-submit cookie pattern.
+
+    The token is set as a non-httpOnly cookie so JavaScript can read it
+    and copy it into the X-CSRF-Token request header on state-changing calls.
+    The server then compares the header value against the cookie value.
+
+    The CSRF cookie must NOT be httpOnly — that would prevent JS from reading
+    it, breaking the pattern. The auth session cookie (access_token) remains
+    httpOnly because it never needs to be read by JS.
+    """
     token = secrets.token_hex(32)
     response.set_cookie(
         key="csrf_token",
         value=token,
-        httponly=True,
+        httponly=False,   # Must be readable by JS to implement double-submit
         secure=True,
         samesite="strict",
-        max_age=3600  # 1 hour
+        max_age=3600,     # 1 hour
     )
-    return {"csrf_token": token}
+    # Return 204 — the token is in the cookie, clients read it from there.
+    # Returning it in the body too would create a confusing dual-channel.
+    return Response(status_code=204)

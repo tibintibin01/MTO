@@ -35,14 +35,14 @@ COPY . .
 # Environment Variables
 ENV PYTHONUNBUFFERED=1
 ENV APP_ENV=production
-ENV PORT=8000
+ENV PORT=8001
 
 # Copy entrypoint and make executable
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Expose API port
-EXPOSE 8000
+EXPOSE 8001
 
 # Run migrations then start server
 CMD ["/entrypoint.sh"]

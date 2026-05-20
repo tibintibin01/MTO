@@ -282,28 +282,29 @@ def soft_delete_property(property_id, user=None, ip_address=None, db_session: Se
     return 1
 
 
-def get_deleted_properties(limit=50, offset=0, db_session: Session = None):
-    """Fetches all properties marked as deleted with pagination support."""
-    safe_limit = max(1, int(limit))
-    safe_offset = max(0, int(offset))
-    rows = (
-        db_session.query(Property)
-        .filter(Property.deleted_at != None)
-        .order_by(Property.id.desc())
-        .limit(safe_limit)
-        .offset(safe_offset)
-        .all()
-    )
-    return [
-        (
-            prop.id,
-            prop.td_number,
-            prop.owner_name,
-            prop.location,
-            prop.assessed_value,
-        )
-        for prop in rows
-    ]
+def get_deleted_properties(limit=50, cursor=None, db_session: Session = None):
+    """Fetches soft-deleted properties using cursor-based pagination."""
+    safe_limit = min(max(1, int(limit)), 200)
+
+    query = db_session.query(Property).filter(Property.deleted_at != None)
+    if cursor:
+        query = query.filter(Property.id < int(cursor))
+
+    rows = query.order_by(Property.id.desc()).limit(safe_limit + 1).all()
+
+    has_more = len(rows) > safe_limit
+    items = rows[:safe_limit]
+    next_cursor = items[-1].id if has_more and items else None
+
+    return {
+        "items": [
+            (prop.id, prop.td_number, prop.owner_name, prop.location, prop.assessed_value)
+            for prop in items
+        ],
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "count": len(items),
+    }
 
 
 @require_permission("property_edit")
@@ -406,11 +407,48 @@ def get_property_by_td(td_number, db_session: Session = None):
     return {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
 
 
-def get_assessment_roll(limit=100, offset=0, db_session: Session = None):
-    safe_limit = max(1, int(limit))
-    safe_offset = max(0, int(offset))
-    results = db_session.query(Property).filter(Property.deleted_at == None).order_by(Property.owner_name.asc()).limit(safe_limit).offset(safe_offset).all()
-    return [(p.td_number, p.owner_name, p.location, p.kind_of_property, float(p.assessed_value or 0)) for p in results]
+def get_assessment_roll(limit=100, cursor=None, db_session: Session = None):
+    """
+    Returns a paginated assessment roll using cursor-based pagination.
+    Cursor is the last seen Property.id — avoids OFFSET degradation on large tables.
+    """
+    safe_limit = min(max(1, int(limit)), 200)  # hard cap at 200
+
+    query = db_session.query(
+        Property.id,
+        Property.td_number,
+        Property.owner_name,
+        Property.location,
+        Property.kind_of_property,
+        Property.assessed_value,
+    ).filter(Property.deleted_at == None)
+
+    if cursor:
+        query = query.filter(Property.id > int(cursor))
+
+    # Fetch one extra row to determine if there are more pages
+    rows = query.order_by(Property.id.asc()).limit(safe_limit + 1).all()
+
+    has_more = len(rows) > safe_limit
+    items = rows[:safe_limit]
+    next_cursor = items[-1][0] if has_more and items else None
+
+    return {
+        "items": [
+            {
+                "id": r[0],
+                "td_number": r[1],
+                "owner_name": r[2],
+                "location": r[3],
+                "kind_of_property": r[4],
+                "assessed_value": float(r[5] or 0),
+            }
+            for r in items
+        ],
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "count": len(items),
+    }
 
 
 def get_receivables_by_barangay(db_session: Session = None):

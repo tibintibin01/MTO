@@ -183,28 +183,26 @@ def verify_user_login(username, password, db_session: Session):
 
     # 1. Check if account is manually disabled
     if not user.is_active:
-        raise ValueError("Account is disabled. Please contact the administrator.")
+        raise ValueError("DISABLED:Account is disabled. Please contact the administrator.")
 
     # 2. Check for active security lockout
     if user.lockout_until and user.lockout_until > datetime.now():
         diff = user.lockout_until - datetime.now()
         minutes = int(diff.total_seconds() // 60) + 1
-        raise ValueError(f"Account temporarily locked due to multiple failed attempts. Please try again in {minutes} minute(s).")
+        raise ValueError(f"LOCKED:{minutes}")
 
     match = verify_password(password, user.password)
 
     if not match:
-        # Increment failed attempts
         user.failed_attempts = (user.failed_attempts or 0) + 1
         if user.failed_attempts >= 5:
-            # Enforce 5-minute lockout
             user.lockout_until = datetime.now() + timedelta(minutes=5)
             db_session.commit()
-            raise ValueError("Account locked for 5 minutes after 5 failed attempts.")
+            raise ValueError("LOCKED:5")
         else:
             db_session.commit()
             remaining = 5 - user.failed_attempts
-            raise ValueError(f"Invalid password. {remaining} attempt(s) remaining before lockout.")
+            raise ValueError(f"INVALID:{remaining}")
 
     # 3. Successful login - Reset security counters
     user.last_login = datetime.now()
@@ -299,52 +297,72 @@ def create_user(username, full_name, password, role, admin_user, db_session: Ses
     # 3. Hash password
     hashed = hash_password(password)
 
-    # 3. Insert
-    new_user = User(
-        username=username,
-        full_name=full_name,
-        password=hashed,
-        role=normalize_role(role),
-        is_active=True
-    )
-    db_session.add(new_user)
-    db_session.flush()
+    try:
+        # 4. Insert user — flush to get the auto-generated ID for the audit record
+        new_user = User(
+            username=username,
+            full_name=full_name,
+            password=hashed,
+            role=normalize_role(role),
+            is_active=True
+        )
+        db_session.add(new_user)
+        db_session.flush()
 
-    # 4. Audit
-    import json
-    audit_log = AuditLog(
-        username=get_username(admin_user),
-        action=f"Created new user: {username} ({full_name})",
-        table_name="users",
-        record_id=new_user.id,
-        new_values=json.dumps({"username": username, "role": role}),
-        timestamp=datetime.now()
-    )
-    db_session.add(audit_log)
-    db_session.commit()
-    return new_user.id
+        # 5. Audit log staged in the same transaction — user + audit commit atomically
+        import json
+        audit_log = AuditLog(
+            username=get_username(admin_user),
+            action=f"Created new user: {username} ({full_name})",
+            table_name="users",
+            record_id=new_user.id,
+            new_values=json.dumps({"username": username, "role": role}),
+            timestamp=datetime.now()
+        )
+        db_session.add(audit_log)
+        db_session.commit()
+        return new_user.id
+
+    except Exception:
+        db_session.rollback()
+        raise
 
 
 # --- User Management (Admin) ---
 
 
-def get_all_users(limit=50, offset=0, db_session: Session = None):
-    safe_limit = max(1, int(limit))
-    safe_offset = max(0, int(offset))
+def get_all_users(limit=50, cursor=None, db_session: Session = None):
+    """Returns users using cursor-based pagination ordered by username."""
+    safe_limit = min(max(1, int(limit)), 200)
 
-    users = db_session.query(User).filter(User.deleted_at == None).order_by(User.username.asc()).limit(safe_limit).offset(safe_offset).all()
-    return [
-        {
-            "id": u.id,
-            "username": u.username,
-            "full_name": u.full_name,
-            "role": u.role,
-            "is_active": u.is_active,
-            "last_login": u.last_login,
-            "created_at": u.created_at,
-        }
-        for u in users
-    ]
+    query = db_session.query(User).filter(User.deleted_at == None)
+    if cursor:
+        # cursor is the last seen User.id
+        query = query.filter(User.id > int(cursor))
+
+    rows = query.order_by(User.id.asc()).limit(safe_limit + 1).all()
+
+    has_more = len(rows) > safe_limit
+    items = rows[:safe_limit]
+    next_cursor = items[-1].id if has_more and items else None
+
+    return {
+        "items": [
+            {
+                "id": u.id,
+                "username": u.username,
+                "full_name": u.full_name,
+                "role": u.role,
+                "is_active": u.is_active,
+                "last_login": u.last_login,
+                "created_at": u.created_at,
+            }
+            for u in items
+        ],
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "count": len(items),
+    }
 
 
 def update_user_role(user_id, new_role, admin_user, db_session: Session):

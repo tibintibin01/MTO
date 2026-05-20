@@ -1,4 +1,4 @@
-name: MTO Treasury CI/CD
+name: MTO Treasury CI
 
 on:
   push:
@@ -9,6 +9,19 @@ on:
 jobs:
   quality-and-security:
     runs-on: ubuntu-latest
+
+    env:
+      # Tell the app it is running in test mode so config.py does not enforce
+      # production-only DB validation (MTO_DB_USER / MTO_DB_NAME required).
+      # The integration tests use SQLite in-memory — no real DB is needed.
+      MTO_ENVIRONMENT: test
+      ENVIRONMENT: test
+      # JWT secret must be set — secrets_manager.py now fails fast if missing.
+      MTO_JWT_SECRET: ${{ secrets.MTO_JWT_SECRET }}
+      # DB password can be empty in test mode (SQLite is used instead).
+      MTO_DB_PASSWORD: ""
+      # Suppress the MTO_API_KEY requirement for tests that don't use it.
+      MTO_API_KEY: test_api_key_ci
 
     steps:
     - uses: actions/checkout@v4
@@ -42,12 +55,15 @@ jobs:
     - name: 🔒 Audit dependencies for CVEs
       run: pip-audit -r requirements.txt --format markdown
 
-    - name: 🧪 Run Unit Tests
-      env:
-        MTO_JWT_SECRET: ${{ secrets.MTO_JWT_SECRET }}
-        MTO_DB_PASSWORD: ${{ secrets.MTO_DB_PASSWORD }}
+    - name: 🧪 Run unit + integration + financial accuracy tests
       run: |
-        pytest tests/ --ignore=tests/test_ui_modules.py -v --cov=backend --cov-report=xml
+        pytest tests/ \
+          --ignore=tests/test_ui_modules.py \
+          --ignore=tests/load \
+          -v \
+          --cov=backend \
+          --cov-report=xml \
+          --cov-report=term-missing
 
     - name: 📊 Upload coverage to Codecov
       uses: codecov/codecov-action@v4

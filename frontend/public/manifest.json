@@ -1,21 +1,37 @@
 {
-  "name": "MTO Treasury Portal",
+  "name": "MTO Public Treasury Portal",
   "short_name": "MTO Portal",
-  "description": "Secure Municipal Treasury Portal",
+  "description": "Check your property tax status and payment history with the Municipal Treasury Office.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
+  "orientation": "portrait-primary",
+  "background_color": "#f8fafc",
   "theme_color": "#1f4e78",
+  "categories": ["government", "finance"],
+  "lang": "en",
   "icons": [
     {
       "src": "/icons/icon-192x192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
       "src": "/icons/icon-512x512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Search Property",
+      "short_name": "Search",
+      "description": "Look up a property by TDN or PIN",
+      "url": "/",
+      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "192x192" }]
     }
   ]
 }

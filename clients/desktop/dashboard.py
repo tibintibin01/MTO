@@ -135,8 +135,17 @@ class DashboardApp(ctk.CTk):
 
     def setup_main_window(self):
         self.title(f"Municipal Revenue System | {self.username.upper()}")
-        self.geometry("1400x900")
         self.minsize(1200, 800)
+
+        # Centre the dashboard on the screen
+        win_w, win_h = 1400, 900
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        x = (screen_w - win_w) // 2
+        y = (screen_h - win_h) // 2
+        self.geometry(f"{win_w}x{win_h}+{x}+{y}")
+
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
@@ -240,23 +249,39 @@ class DashboardApp(ctk.CTk):
     def toggle_theme(self):
         current = ctk.get_appearance_mode()
         new_mode = "light" if current == "Dark" else "dark"
-        setup_theme(new_mode)
-        from utils import ConfigManager
-        ConfigManager.set("appearance_mode", new_mode)
-        self.after(100, self.refresh_sidebar) # Re-draw sidebar for theme alignment
 
-    def refresh_sidebar(self):
-        self.sidebar.destroy()
-        callbacks = {"load_page": self.load_page, "toggle_theme": self.toggle_theme, "toggle_language": self.toggle_language, "logout": self.logout}
-        self.sidebar = NavigationSidebar(self, self.user_data, self.username, callbacks)
-        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        # Save window state so withdraw/deiconify doesn't exit fullscreen/zoomed.
+        win_state = self.state()
+        self.withdraw()
+        try:
+            setup_theme(new_mode)
+            from utils import ConfigManager
+            ConfigManager.set("appearance_mode", new_mode)
+            self.update_idletasks()
+        finally:
+            self.deiconify()
+            if win_state == "zoomed":
+                self.state("zoomed")
 
     def toggle_language(self):
         from utils import LocalizationManager
         mgr = LocalizationManager()
         mgr.set_locale("tl" if mgr._current_locale == "en" else "en")
-        self.refresh_sidebar()
-        self.load_page(DashboardHomePage)
+
+        # Save window state so withdraw/deiconify doesn't exit fullscreen/zoomed.
+        win_state = self.state()
+        self.withdraw()
+        try:
+            self.sidebar.destroy()
+            callbacks = {"load_page": self.load_page, "toggle_theme": self.toggle_theme, "toggle_language": self.toggle_language, "logout": self.logout}
+            self.sidebar = NavigationSidebar(self, self.user_data, self.username, callbacks)
+            self.sidebar.grid(row=0, column=0, sticky="nsew")
+            self.load_page(DashboardHomePage)
+            self.update_idletasks()
+        finally:
+            self.deiconify()
+            if win_state == "zoomed":
+                self.state("zoomed")
 
     def logout(self):
         from tkinter import messagebox

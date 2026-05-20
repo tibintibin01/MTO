@@ -1,12 +1,12 @@
 from datetime import datetime
 import re
-from sqlalchemy import or_, and_, func, case
-
+from sqlalchemy import or_, and_, func, case, cast
+from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
 from backend.models import Property, PropertyBilling, PaymentBilling, Payment
-# from db_manager import db_query # Mark for removal
 from backend.database import SessionLocal
 from decimal import Decimal, ROUND_HALF_UP
+from utils.db_compat import greatest, year_of, month_of
 
 
 from utils.logger import mto_logger
@@ -284,7 +284,10 @@ def get_property_billing_history(property_id=None, term=None, limit=50, db_sessi
         PropertyBilling.penalty,
         ((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty).label('total_amount'),
         PropertyBilling.amount_paid,
-        func.greatest(((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty) - PropertyBilling.amount_paid, 0).label('balance_amount'),
+        greatest(
+            ((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty) - PropertyBilling.amount_paid,
+            0
+        ).label('balance_amount'),
         case(
             (PropertyBilling.amount_paid <= 0, 'Pending'),
             (PropertyBilling.amount_paid >= ((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty), 'Paid'),
@@ -360,8 +363,11 @@ def get_property_statement_data(property_id, db_session: Session = None):
 
 
 
-def get_report_details(selected_month="All", selected_year="All", db_session: Session = None):
+def get_report_details(selected_month="All", selected_year="All", limit=200, cursor=None, db_session: Session = None):
+    safe_limit = min(max(1, int(limit)), 500)
+
     query = db_session.query(
+        Payment.id,
         Payment.date_paid,
         Payment.or_number,
         Property.td_number,
@@ -371,14 +377,26 @@ def get_report_details(selected_month="All", selected_year="All", db_session: Se
         Payment.amount,
         Payment.posted_by
     ).join(Property, Property.id == Payment.property_id).filter(Property.deleted_at == None)
-    
+
     if selected_month != "All":
-        query = query.filter(func.month(Payment.date_paid) == int(selected_month))
+        query = query.filter(month_of(Payment.date_paid) == int(selected_month))
     if selected_year != "All":
-        query = query.filter(func.year(Payment.date_paid) == int(selected_year))
-        
-    results = query.order_by(Payment.date_paid.desc(), Payment.id.desc()).all()
-    return [list(r) for r in results]
+        query = query.filter(year_of(Payment.date_paid) == int(selected_year))
+    if cursor:
+        query = query.filter(Payment.id < int(cursor))
+
+    rows = query.order_by(Payment.id.desc()).limit(safe_limit + 1).all()
+
+    has_more = len(rows) > safe_limit
+    items = rows[:safe_limit]
+    next_cursor = items[-1][0] if has_more and items else None
+
+    return {
+        "items": [list(r[1:]) for r in items],  # exclude the id from the row data
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "count": len(items),
+    }
 
 
 def get_rpt_receivables_summary(report_year, db_session: Session = None):
@@ -408,7 +426,7 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
         func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
     ).join(Payment, Payment.id == PaymentBilling.payment_id).join(Property, Property.id == Payment.property_id).filter(
         Property.deleted_at == None,
-        func.year(Payment.date_paid) == ry
+        year_of(Payment.date_paid) == ry
     ).scalar()
     
     adj = 0.0
@@ -424,29 +442,67 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
     }
 
 
-def get_delinquent_accounts(limit=50, offset=0, db_session: Session = None):
+def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
     """
-    Fetches properties with outstanding balances across any tax year using SQLAlchemy.
+    Fetches properties with outstanding balances using cursor-based pagination.
+
+    Cursor is the last seen Property.id. Avoids OFFSET on the GROUP BY + HAVING
+    query which degrades badly at scale — each OFFSET page re-scans all prior rows.
     """
-    safe_limit = max(1, int(limit))
-    safe_offset = max(0, int(offset))
-    
-    # Use having clause for balance > 0
-    balance_expr = func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount - PropertyBilling.amount_paid)
-    
-    results = db_session.query(
+    safe_limit = min(max(1, int(limit)), 200)  # hard cap at 200
+
+    balance_expr = func.sum(
+        (PropertyBilling.assessed_value * 0.02)
+        + PropertyBilling.penalty
+        - PropertyBilling.discount
+        - PropertyBilling.amount_paid
+    )
+
+    query = db_session.query(
         Property.id,
         Property.td_number,
         Property.owner_name,
         Property.location,
-        func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount).label('total_due'),
-        func.sum(PropertyBilling.amount_paid).label('total_paid'),
-        balance_expr.label('balance')
-    ).join(PropertyBilling, PropertyBilling.property_id == Property.id).filter(
+        func.sum(
+            (PropertyBilling.assessed_value * 0.02)
+            + PropertyBilling.penalty
+            - PropertyBilling.discount
+        ).label("total_due"),
+        func.sum(PropertyBilling.amount_paid).label("total_paid"),
+        balance_expr.label("balance"),
+    ).join(
+        PropertyBilling, PropertyBilling.property_id == Property.id
+    ).filter(
         Property.deleted_at == None
-    ).group_by(Property.id).having(balance_expr > 0).order_by(balance_expr.desc()).limit(safe_limit).offset(safe_offset).all()
-    
-    return [list(r) for r in results]
+    ).group_by(Property.id).having(balance_expr > 0)
+
+    if cursor:
+        query = query.filter(Property.id > int(cursor))
+
+    # Fetch one extra to detect next page
+    rows = query.order_by(Property.id.asc()).limit(safe_limit + 1).all()
+
+    has_more = len(rows) > safe_limit
+    items = rows[:safe_limit]
+    next_cursor = items[-1][0] if has_more and items else None
+
+    return {
+        "items": [
+            {
+                "id": r[0],
+                "td_number": r[1],
+                "owner_name": r[2],
+                "location": r[3],
+                "total_due": float(r[4] or 0),
+                "total_paid": float(r[5] or 0),
+                "balance": float(r[6] or 0),
+            }
+            for r in items
+        ],
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "count": len(items),
+    }
 
 
 def calculate_penalty(principal, months_late):

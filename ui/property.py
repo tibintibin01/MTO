@@ -185,6 +185,12 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.user = user
         self.vars = {}
         self.barangays = ["NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN", "BUENAVISTA", "CALAOCAN", "DIAMANEN", "DIANED", "DIARABASIN", "DIBUTUNAN", "DIMABUNO", "DINADIAWAN", "DITALE", "GUPA", "IPIL", "LABOY", "LIPIT", "LOBBOT", "MALIGAYA", "MIJARES", "MUCDOL", "PUANGI", "SALAY", "SAPANGKAWAYAN", "TOYTOYAN"]
+
+        # Generate a fresh idempotency key when the form opens — NOT on submit.
+        # This ensures every submission attempt for this form session uses the
+        # same key, so double-clicks and retries are deduplicated by the server.
+        import uuid
+        self._idempotency_key = str(uuid.uuid4())
         
         self.update_idletasks()
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
@@ -291,8 +297,13 @@ class PropertyEditModal(ctk.CTkToplevel):
             data["OR Date"] = clean_date
 
         try:
+            # Only attach the idempotency key when a payment is being posted
+            # (OR Number is filled). For pure property edits without payment,
+            # no key is needed since those are idempotent by nature.
+            has_payment = bool(data.get("OR Number", "").strip())
+            key = self._idempotency_key if has_payment else None
 
-            prop_svc.save_property(data, editing_id=self.property_id, user=self.user)
+            prop_svc.save_property(data, editing_id=self.property_id, user=self.user, idempotency_key=key)
             messagebox.showinfo("Success", "Property record saved successfully.")
             self.callback()
             self.destroy()

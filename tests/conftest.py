@@ -19,14 +19,6 @@ def mock_db_session():
     return session
 
 @pytest.fixture
-def mock_db():
-    """
-    Legacy fixture to mock db_manager.db_query globally for tests.
-    """
-    with patch('db_manager.db_query') as mock:
-        yield mock
-
-@pytest.fixture
 def sample_property():
     """Returns a dummy property record for testing."""
     return {

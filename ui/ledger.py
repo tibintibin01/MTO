@@ -8,7 +8,6 @@ import api_clients.payment_service as payment
 import api_clients.auth_service as auth
 import api_clients.system_service as system
 from utils import format_curr, export_data_to_excel, tr
-from receipt_generator import generate_or_receipt
 from ui_components import LoadingOverlay, ErrorDialog
 
 class LedgerPage:
@@ -222,16 +221,12 @@ class LedgerPage:
         
         def worker():
             try:
-                details = payment.get_payment_receipt_details(pay_id)
-                if not details: raise Exception("Payment details not found.")
-                
-                base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-                new_path = generate_or_receipt(details, base_dir)
-                
-                # Persist path
-                payment.save_receipt_record(details["property_id"], pay_id, details, new_path, self.user)
-                system.log_action(self.user, f"Regenerated receipt OR {details['or_number']}")
-                
+                # Ask the backend to generate the PDF and download it locally
+                new_path = payment.generate_receipt_pdf(pay_id)
+                if not new_path:
+                    raise Exception("Backend did not return a PDF path.")
+
+                system.log_action(self.user, f"Regenerated receipt for payment ID {pay_id}")
                 self.container.after(0, lambda: [self.load_ledger(), os.startfile(new_path)])
             except Exception as e:
                 err_msg = str(e)

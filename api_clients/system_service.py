@@ -62,3 +62,55 @@ def restore_backup(file_path):
 def get_system_stats():
     """Fetches real-time DB pool and cache diagnostics from the server."""
     return api_request("GET", "/system/stats")
+
+
+def restart_server():
+    """Sends a graceful restart command to the backend server. Admin only."""
+    return api_request("POST", "/system/restart")
+
+
+def get_api_version():
+    """
+    Returns the server's API version info.
+    Called on desktop app startup to detect server/client version mismatches.
+    """
+    try:
+        return api_request("GET", "/api/v1/version")
+    except Exception:
+        # Server may be an older version without this endpoint — not fatal
+        return None
+
+
+def check_version_compatibility(client_version: str = "1.0") -> dict:
+    """
+    Checks if this client version is compatible with the running server.
+    Returns {"compatible": True/False, "server_version": "x.y", "message": "..."}
+    """
+    info = get_api_version()
+    if not info:
+        return {"compatible": True, "server_version": "unknown", "message": ""}
+
+    server_version = info.get("api_version", "1.0")
+    min_client = info.get("min_client_version", "1.0")
+
+    # Simple major.minor comparison
+    def _ver(v):
+        parts = str(v).split(".")
+        return tuple(int(x) for x in parts[:2])
+
+    compatible = _ver(client_version) >= _ver(min_client)
+    message = (
+        ""
+        if compatible
+        else (
+            f"This client (v{client_version}) is outdated. "
+            f"The server requires client v{min_client} or newer. "
+            "Please update the desktop app."
+        )
+    )
+    return {
+        "compatible": compatible,
+        "server_version": server_version,
+        "min_client_version": min_client,
+        "message": message,
+    }

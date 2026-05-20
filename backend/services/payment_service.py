@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 import re
 from decimal import Decimal, ROUND_HALF_UP
-# import db_manager as db # Mark for removal
 from backend.database import SessionLocal
 from backend.models import ReceiptHistory
-from sqlalchemy import or_, and_, func
+from sqlalchemy import or_, and_, func, cast
+from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
 from backend.models import Payment, Property, PropertyBilling, PaymentBilling
 from backend.services.auth_service import get_username, require_permission
 from backend.services.billing_service import format_tax_years, normalize_date_input
+from utils.db_compat import date_trunc, year_of, month_of, today
 
 
 def _d(value) -> Decimal:
@@ -131,7 +132,7 @@ def get_recent_payments(limit=8, db_session: Session = None):
     ).join(Property, Property.id == Payment.property_id).filter(
         Property.deleted_at == None
     ).order_by(
-        func.coalesce(Payment.date_paid, func.date(Payment.created_at)).desc(), Payment.id.desc()
+        func.coalesce(Payment.date_paid, cast(Payment.created_at, Date)).desc(), Payment.id.desc()
     ).limit(safe_limit).all()
     return [list(r) for r in rows]
 
@@ -140,15 +141,21 @@ def get_monthly_collection_trend(months=6, db_session: Session = None):
     safe_months = max(1, int(months))
     from datetime import datetime, timedelta
     start_date = datetime.now() - timedelta(days=30 * safe_months)
-    
+
+    effective_date = func.coalesce(Payment.date_paid, cast(Payment.created_at, Date))
+    yr = year_of(effective_date).label('yr')
+    mo = month_of(effective_date).label('mo')
+
     results = db_session.query(
-        func.date_format(func.coalesce(Payment.date_paid, func.date(Payment.created_at)), '%Y-%m').label('month'),
-        func.sum(Payment.amount).label('total')
+        yr, mo, func.sum(Payment.amount).label('total')
     ).filter(
-        func.coalesce(Payment.date_paid, func.date(Payment.created_at)) >= start_date
-    ).group_by('month').order_by('month').all()
-    
-    return [{"month": r[0], "total": float(_d(r[1]))} for r in results]
+        effective_date >= start_date
+    ).group_by('yr', 'mo').order_by('yr', 'mo').all()
+
+    return [
+        {"month": f"{int(r.yr):04d}-{int(r.mo):02d}", "total": float(_d(r.total))}
+        for r in results
+    ]
 
 
 def get_revenue_by_barangay(db_session: Session = None):
@@ -163,18 +170,24 @@ def get_revenue_by_barangay(db_session: Session = None):
 
 
 def get_collection_kpis(db_session: Session = None):
+    from datetime import datetime
+    now = datetime.now()
+    today_date = now.date()
+    month_start = today_date.replace(day=1)
+
     total = db_session.query(func.sum(Payment.amount), func.count(Payment.id)).first()
-    today = db_session.query(func.sum(Payment.amount)).filter(func.date(Payment.date_paid) == func.curdate()).scalar()
-    month = db_session.query(func.sum(Payment.amount)).filter(
-        func.year(Payment.date_paid) == func.year(func.curdate()),
-        func.month(Payment.date_paid) == func.month(func.curdate())
+    today_amt = db_session.query(func.sum(Payment.amount)).filter(
+        cast(Payment.date_paid, Date) == today_date
     ).scalar()
-    
+    month_amt = db_session.query(func.sum(Payment.amount)).filter(
+        cast(Payment.date_paid, Date) >= month_start
+    ).scalar()
+
     return {
         "total_revenue": float(_d(total[0])),
         "payment_count": int(total[1] or 0),
-        "today": float(_d(today)),
-        "month": float(_d(month))
+        "today": float(_d(today_amt)),
+        "month": float(_d(month_amt)),
     }
 
 
@@ -236,12 +249,11 @@ def get_payment_ledger(td_number, db_session: Session = None):
     return [list(r) for r in results]
 
 
-def get_payment_receipt_records(term, limit=50, offset=0, db_session: Session = None):
-    safe_limit = max(1, int(limit))
-    safe_offset = max(0, int(offset))
-    
+def get_payment_receipt_records(term, limit=50, cursor=None, db_session: Session = None):
+    safe_limit = min(max(1, int(limit)), 200)
+
     like_term = f"%{term}%"
-    results = db_session.query(
+    query = db_session.query(
         Payment.id,
         Payment.date_paid,
         Property.td_number,
@@ -263,9 +275,23 @@ def get_payment_receipt_records(term, limit=50, offset=0, db_session: Session = 
             Property.owner_name.like(like_term),
             Payment.or_number.like(like_term)
         )
-    ).order_by(Payment.date_paid.desc(), Payment.id.desc()).limit(safe_limit).offset(safe_offset).all()
-    
-    return [list(r) for r in results]
+    )
+
+    if cursor:
+        query = query.filter(Payment.id < int(cursor))
+
+    rows = query.order_by(Payment.id.desc()).limit(safe_limit + 1).all()
+
+    has_more = len(rows) > safe_limit
+    items = rows[:safe_limit]
+    next_cursor = items[-1][0] if has_more and items else None
+
+    return {
+        "items": [list(r) for r in items],
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "count": len(items),
+    }
 
 
 def get_payment_receipt_details(payment_id, db_session: Session = None):
@@ -326,10 +352,21 @@ def save_receipt_record(
     property_id, payment_id, details, file_path, user_name, db_session: Session = None, **kwargs
 ):
     from datetime import datetime
-    
-    # Check if exists
+    import os
+
+    # Check if a receipt already exists for this payment
     rh = db_session.query(ReceiptHistory).filter(ReceiptHistory.payment_id == payment_id).first()
     if rh:
+        # Delete the old PDF from disk before overwriting the path so stale
+        # files don't accumulate in the receipts directory.
+        old_path = rh.file_path
+        if old_path and old_path != file_path and os.path.isfile(old_path):
+            try:
+                os.remove(old_path)
+            except OSError as del_err:
+                from utils import log_error_to_file
+                log_error_to_file(f"Could not delete old receipt file '{old_path}'", del_err)
+
         rh.file_path = file_path
         rh.generated_by = get_username(user_name)
         rh.generated_at = datetime.now()
@@ -345,7 +382,7 @@ def save_receipt_record(
             status='PDF READY'
         )
         db_session.add(rh)
-    
+
     db_session.commit()
     return {"id": rh.id}
 
@@ -354,6 +391,8 @@ def save_receipt_record(
 def delete_payment_record(payment_id, user_name, db_session: Session = None, **kwargs):
     """
     Deletes a payment record and reverses its impact on the corresponding PropertyBilling.
+    The billing reversal, payment deletion, and audit log are committed atomically.
+    Stats refresh runs after the transaction so a stats failure never rolls back the deletion.
     """
     from backend.services.system_service import log_action
 
@@ -369,30 +408,37 @@ def delete_payment_record(payment_id, user_name, db_session: Session = None, **k
     disc = _d(payment.discount)
     or_no = payment.or_number
 
-    # 2. Reverse Billing Balances (if billing exists)
-    billing = db_session.query(PropertyBilling).filter(
-        PropertyBilling.property_id == prop_id,
-        PropertyBilling.tax_year == tax_year
-    ).with_for_update().first()
+    try:
+        # 2. Reverse Billing Balances (if billing exists)
+        billing = db_session.query(PropertyBilling).filter(
+            PropertyBilling.property_id == prop_id,
+            PropertyBilling.tax_year == tax_year
+        ).with_for_update().first()
 
-    if billing:
-        # Subtract the amounts back out
-        billing.amount_paid = max(_d(0), _d(billing.amount_paid) - amt)
-        billing.penalty = max(_d(0), _d(billing.penalty) - pen)
-        billing.discount = max(_d(0), _d(billing.discount) - disc)
+        if billing:
+            billing.amount_paid = max(_d(0), _d(billing.amount_paid) - amt)
+            billing.penalty = max(_d(0), _d(billing.penalty) - pen)
+            billing.discount = max(_d(0), _d(billing.discount) - disc)
 
-    # 3. Delete Payment (cascade will handle ReceiptHistory and PaymentBilling)
-    db_session.delete(payment)
+        # 3. Delete Payment (cascade handles ReceiptHistory and PaymentBilling)
+        db_session.delete(payment)
 
-    # 4. Audit & Commit
-    log_action(user_name, f"Deleted Payment OR {or_no} (Amount: {amt}) and reversed billing.", db_session=db_session)
-    db_session.commit()
-    
-    # 5. Refresh System Stats
+        # 4. Stage audit log — same transaction as the deletion and billing reversal
+        log_action(user_name, f"Deleted Payment OR {or_no} (Amount: {amt}) and reversed billing.", db_session=db_session)
+
+        # 5. Single atomic commit: billing reversal + deletion + audit
+        db_session.commit()
+
+    except Exception:
+        db_session.rollback()
+        raise
+
+    # 6. Refresh stats outside the transaction — a failure here is non-fatal
     try:
         from backend.services.stats_service import refresh_system_stats
         refresh_system_stats(db_session=db_session)
-    except:
-        pass
+    except Exception as stats_err:
+        from utils import log_error_to_file
+        log_error_to_file("Stats refresh failed after payment deletion", stats_err)
 
     return {"success": True, "message": "Payment deleted successfully."}

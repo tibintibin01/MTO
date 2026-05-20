@@ -1,17 +1,9 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from utils.config import config as mto_config
 from utils.secrets_manager import secrets
 
-# Database Configuration from utils
-user = mto_config.DB_HOST
-password = secrets.db_password
-host = mto_config.DB_HOST
-port = mto_config.DB_PORT
-database = mto_config.DB_NAME
-
-# Re-constructing URI (consistent with db_manager.py)
 SQLALCHEMY_DATABASE_URL = f"mysql+pymysql://{mto_config.DB_USER}:{secrets.db_password}@{mto_config.DB_HOST}:{mto_config.DB_PORT}/{mto_config.DB_NAME}"
 
 engine = create_engine(
@@ -46,3 +38,61 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def wait_for_db(max_attempts: int = 10, base_delay: float = 2.0) -> bool:
+    """
+    Waits for the database to become available using exponential backoff.
+
+    Called once before the uvicorn server starts. This handles the common
+    race condition on Windows where XAMPP/MariaDB takes 5–15 seconds to
+    initialize after boot, causing the backend to crash if it starts first.
+
+    Returns True when the DB is ready, raises SystemExit after max_attempts.
+
+    Backoff schedule (base_delay=2.0, max_attempts=10):
+      Attempt 1: wait 2s   (total waited:  2s)
+      Attempt 2: wait 4s   (total waited:  6s)
+      Attempt 3: wait 8s   (total waited: 14s)
+      Attempt 4: wait 16s  (total waited: 30s)
+      Attempt 5+: wait 30s (capped)
+    """
+    import time
+
+    MAX_DELAY = 30.0
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            mto_logger.info(
+                f"Database connection established on attempt {attempt}."
+            )
+            return True
+        except Exception as e:
+            delay = min(base_delay * (2 ** (attempt - 1)), MAX_DELAY)
+            if attempt < max_attempts:
+                mto_logger.warning(
+                    f"Database not ready (attempt {attempt}/{max_attempts}): {e}. "
+                    f"Retrying in {delay:.0f}s..."
+                )
+                print(
+                    f"[MTO] Waiting for database... attempt {attempt}/{max_attempts} "
+                    f"(retry in {delay:.0f}s)"
+                )
+                time.sleep(delay)
+            else:
+                mto_logger.error(
+                    f"Database unavailable after {max_attempts} attempts. "
+                    "Check that MariaDB/MySQL is running and credentials in .env are correct."
+                )
+                print(
+                    f"\n[MTO] FATAL: Could not connect to the database after "
+                    f"{max_attempts} attempts.\n"
+                    "Please check:\n"
+                    "  1. XAMPP MySQL is running\n"
+                    "  2. MTO_DB_USER, MTO_DB_PASSWORD, MTO_DB_NAME in .env are correct\n"
+                    f"  3. Database host is reachable at "
+                    f"{mto_config.DB_HOST}:{mto_config.DB_PORT}\n"
+                )
+                raise SystemExit(1)

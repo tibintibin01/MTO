@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-from sqlalchemy import func
+from sqlalchemy import func, cast
+from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
 from backend.models import Payment, Property, PropertyBilling
 from backend.database import SessionLocal
 from datetime import datetime
+from utils.db_compat import year_of, month_of, today, this_month_start, this_year_start
 
 def get_collection_summary(db_session: Session = None):
     """Returns key collection totals for today, this month, and this year."""
@@ -11,26 +13,22 @@ def get_collection_summary(db_session: Session = None):
         with SessionLocal() as session:
             return get_collection_summary(db_session=session)
 
-    now = datetime.now()
-    today = now.date()
-    this_month_start = today.replace(day=1)
-    this_year_start = today.replace(month=1, day=1)
+    today_date = today()
+    month_start = this_month_start()
+    year_start = this_year_start()
 
-    # Today's total and count
     today_data = db_session.query(
         func.coalesce(func.sum(Payment.amount), 0),
         func.count(Payment.id)
-    ).filter(func.date(Payment.date_paid) == today).first()
+    ).filter(cast(Payment.date_paid, Date) == today_date).first()
 
-    # Month total
     month_total = db_session.query(
         func.coalesce(func.sum(Payment.amount), 0)
-    ).filter(func.date(Payment.date_paid) >= this_month_start).scalar()
+    ).filter(cast(Payment.date_paid, Date) >= month_start).scalar()
 
-    # Year total
     year_total = db_session.query(
         func.coalesce(func.sum(Payment.amount), 0)
-    ).filter(func.date(Payment.date_paid) >= this_year_start).scalar()
+    ).filter(cast(Payment.date_paid, Date) >= year_start).scalar()
 
     # Modern telemetry fields for Next.js Unified Dashboard
     total_receivables = db_session.query(
@@ -77,13 +75,18 @@ def get_monthly_revenue_trend(db_session: Session = None):
 
     from datetime import timedelta
     start_date = datetime.now() - timedelta(days=365)
-    
+
+    yr = year_of(Payment.date_paid).label('yr')
+    mo = month_of(Payment.date_paid).label('mo')
+
     results = db_session.query(
-        func.date_format(Payment.date_paid, '%Y-%m').label('month'),
-        func.sum(Payment.amount).label('total')
-    ).filter(Payment.date_paid >= start_date).group_by('month').order_by('month').all()
-    
-    return [{"month": r[0], "total": float(r[1] or 0)} for r in results]
+        yr, mo, func.sum(Payment.amount).label('total')
+    ).filter(Payment.date_paid >= start_date).group_by('yr', 'mo').order_by('yr', 'mo').all()
+
+    return [
+        {"month": f"{int(r.yr):04d}-{int(r.mo):02d}", "total": float(r.total or 0)}
+        for r in results
+    ]
 
 def get_barangay_distribution(db_session: Session = None):
     """Returns revenue distribution across barangays."""

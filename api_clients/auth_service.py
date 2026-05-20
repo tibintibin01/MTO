@@ -69,23 +69,55 @@ def has_permission(user, permission):
 def verify_user_login(username, password):
     try:
         payload = {"username": username, "password": password}
-        
-        # Use our standard api_request helper to hit the dedicated login endpoint
         user_info = api_request(
             "POST", "/api/auth/login", data=payload, queue_offline=False
         )
-        print(f"DEBUG: Login Response: {user_info}")
-        
         if user_info and "access_token" in user_info:
-
             set_token(user_info["access_token"])
             return user_info
         else:
             raise Exception("Login response missing access token.")
-            
+
     except Exception as e:
-        print(f"Login failed: {e}")
-        raise e
+        raw = str(e)
+        # Extract structured error code from the API response if present.
+        # The server now returns {"code": "AUTH_ACCOUNT_LOCKED", "detail": "..."}
+        # api_request raises Exception(error_msg) where error_msg may contain
+        # the detail string. We also check for the code in the raw exception.
+        code = None
+        detail = raw
+
+        # Try to parse the JSON body from the exception message
+        try:
+            import re, json
+            # api_request wraps the response detail in "Error: <detail>"
+            match = re.search(r'\{.*\}', raw, re.DOTALL)
+            if match:
+                body = json.loads(match.group())
+                code = body.get("code")
+                detail = body.get("detail", raw)
+        except Exception:
+            pass
+
+        # Raise user-friendly exceptions the login UI can catch by type
+        if code == "AUTH_ACCOUNT_LOCKED" or "locked" in detail.lower():
+            raise AccountLockedError(detail)
+        elif code == "AUTH_ACCOUNT_DISABLED" or "disabled" in detail.lower():
+            raise AccountDisabledError(detail)
+        elif code in ("AUTH_INVALID_CREDENTIALS", "AUTH_TOKEN_INVALID") or "invalid" in detail.lower():
+            raise InvalidCredentialsError(detail)
+        else:
+            raise Exception(detail)
+
+
+class InvalidCredentialsError(Exception):
+    """Raised when username or password is wrong."""
+
+class AccountLockedError(Exception):
+    """Raised when the account is temporarily locked after failed attempts."""
+
+class AccountDisabledError(Exception):
+    """Raised when an admin has disabled the account."""
 
 
 
@@ -95,7 +127,10 @@ def logout():
 
 
 def get_all_users():
-    return api_request("GET", "/users")
+    result = api_request("GET", "/users")
+    if isinstance(result, dict) and "items" in result:
+        return result["items"]
+    return result if isinstance(result, list) else []
 
 
 def update_user(user_id, role=None, is_active=None):

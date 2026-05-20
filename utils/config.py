@@ -34,7 +34,7 @@ class MTOSettings(BaseSettings):
     MYSQLDUMP_PATH: str = Field(default="mysqldump")
     
     # --- SECURITY ---
-    API_SECRET_KEY: str = Field(default="", validation_alias="SECRET_KEY")
+    API_SECRET_KEY: str = Field(default="", validation_alias=AliasChoices("MTO_JWT_SECRET", "SECRET_KEY", "MTO_API_SECRET_KEY"))
     JWT_ALGORITHM: str = "HS256"
     TOKEN_EXPIRE_MINUTES: int = Field(default=480, ge=1) # Default 8 hours
     

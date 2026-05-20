@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 
-# import db_manager as db # Unused in route
 import backend.services.property_service as prop_svc
 import backend.services.billing_service as bill_svc
 import backend.services.payment_service as pay_svc
@@ -80,15 +79,20 @@ async def list_barangays(current_user: dict = Depends(get_current_user), db_sess
 @router.get("/delinquent")
 async def get_delinquent_accounts(
     limit: int = 50,
-    offset: int = 0,
+    cursor: Optional[int] = None,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    return bill_svc.get_delinquent_accounts(limit=limit, cursor=cursor, db_session=db_session)
+
+@router.get("/deleted", dependencies=[Depends(admin_only)])
+async def list_deleted_properties(
+    limit: int = 50,
+    cursor: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db)
 ):
-    return bill_svc.get_delinquent_accounts(limit=limit, offset=offset, db_session=db_session)
-
-@router.get("/deleted", dependencies=[Depends(admin_only)])
-async def list_deleted_properties(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
-    return prop_svc.get_deleted_properties(db_session=db_session)
+    return prop_svc.get_deleted_properties(limit=limit, cursor=cursor, db_session=db_session)
 
 @router.post("/{property_id}/restore", dependencies=[Depends(admin_only)])
 async def restore_property(

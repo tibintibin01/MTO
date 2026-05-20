@@ -12,7 +12,7 @@ from pathlib import Path
 
 # --- NETWORK CONFIGURATION ---
 # Default to localhost for development
-DEFAULT_SERVER_URL = "https://localhost:8000"
+DEFAULT_SERVER_URL = "http://localhost:8001"
 
 BASE_URL = DEFAULT_SERVER_URL
 
@@ -89,6 +89,7 @@ def api_request(
     files=None,
     raw_response=False,
     queue_offline=True,
+    idempotency_key=None,
 ):
     """
     Centralized helper for all UI-to-Backend communication.
@@ -109,6 +110,11 @@ def api_request(
     # CSRF Protection: Include custom header for all state-changing requests
     headers["X-Requested-With"] = "XMLHttpRequest"
 
+    # Idempotency: attach key for POST/PUT so the server can detect duplicate
+    # submissions from double-clicks or network retries.
+    if method in ("POST", "PUT", "PATCH") and idempotency_key:
+        headers["X-Idempotency-Key"] = idempotency_key
+
     mto_logger.info(f"API Request: {method} {endpoint}", method=method, url=url)
 
     try:
@@ -117,7 +123,8 @@ def api_request(
         # verify=False is used because we are using a self-signed certificate for local dev
         import urllib3
         import time
-        from utils import set_request_id, MetricsManager
+        from utils import set_request_id
+        from utils.metrics import MetricsManager
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         
@@ -147,11 +154,16 @@ def api_request(
         mto_logger.info(f"API Response: {response.status_code}", status=response.status_code)
 
         # 2. Telemetry: Measure Latency
-        latency = (time.perf_counter() - start_time) * 1000
-        MetricsManager.record_request(latency, is_error=not response.ok)
-        
+        latency = (time.perf_counter() - start_time)
+        MetricsManager.record_request(
+            method=method,
+            endpoint=endpoint,
+            status=response.status_code,
+            duration=latency,
+        )
+
         # 3. Log structured telemetry
-        mto_logger.info(f"API {method} {endpoint} completed", latency_ms=round(latency, 2), status=response.status_code)
+        mto_logger.info(f"API {method} {endpoint} completed", latency_ms=round(latency * 1000, 2), status=response.status_code)
 
         if raw_response:
             return response

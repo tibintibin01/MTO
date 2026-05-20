@@ -21,12 +21,21 @@ export default function AdminDashboard() {
   const fetchDashboard = async () => {
     try {
       setError("");
-      const token = localStorage.getItem("mto_token");
+      // The access_token is stored as an httpOnly cookie set by /api/auth/login.
+      // Browsers send it automatically — do NOT read it from localStorage
+      // (httpOnly cookies are intentionally inaccessible to JavaScript).
       const res = await fetch("/api/v1/api/analytics/dashboard", {
+        credentials: "include",
         headers: {
-          "Authorization": `Bearer ${token}`
-        }
+          "X-Requested-With": "XMLHttpRequest",
+        },
       });
+
+      if (res.status === 401) {
+        // Session expired or not logged in — redirect to login
+        window.location.href = "/admin/login";
+        return;
+      }
 
       if (!res.ok) {
         throw new Error("Failed to load treasury analytics data.");
@@ -197,18 +206,24 @@ export default function AdminDashboard() {
 
           <div className="flex-1 flex flex-col justify-between space-y-4">
             <div className="space-y-3">
-              {(data?.trend || []).map((t: any, i: number) => (
-                <div key={i} className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-500 uppercase tracking-widest w-12">{t.month}</span>
-                  <div className="flex-1 mx-4 h-6 bg-slate-800/50 border border-slate-800 rounded-lg overflow-hidden flex items-center px-1">
-                    <div 
-                      className="h-4 bg-gradient-to-r from-emerald-500 to-teal-600 rounded"
-                      style={{ width: `${(t.revenue / 800000) * 100}%` }}
-                    ></div>
+              {(() => {
+                const trend = data?.trend || [];
+                const maxRevenue = Math.max(...trend.map((t: any) => t.total || 0), 1);
+                return trend.map((t: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-widest w-12">{t.month}</span>
+                    <div className="flex-1 mx-4 h-6 bg-slate-800/50 border border-slate-800 rounded-lg overflow-hidden flex items-center px-1">
+                      <div
+                        className="h-4 bg-gradient-to-r from-emerald-500 to-teal-600 rounded"
+                        style={{ width: `${Math.min(((t.total || 0) / maxRevenue) * 100, 100)}%` }}
+                      ></div>
+                    </div>
+                    <span className="text-xs font-black text-slate-400">
+                      ₱{((t.total || 0) / 1000).toFixed(0)}k
+                    </span>
                   </div>
-                  <span className="text-xs font-black text-slate-350">P {(t.revenue / 1000).toFixed(0)}k</span>
-                </div>
-              ))}
+                ));
+              })()}
             </div>
 
             <div className="bg-slate-950 rounded-xl p-4 border border-slate-800/80">

@@ -90,6 +90,20 @@ class SystemAdminPage:
         )
         self.backup_btn.pack(side="left", padx=5)
 
+        # Restart Server button — lets admin apply updates from any client PC
+        # without needing physical access to the server machine.
+        self.restart_btn = ctk.CTkButton(
+            btn_fr,
+            text="🔄 RESTART SERVER",
+            command=self.restart_server,
+            height=45,
+            width=180,
+            font=ModernTheme.BUTTON,
+            fg_color="#c0392b",
+            hover_color="#e74c3c",
+        )
+        self.restart_btn.pack(side="left", padx=5)
+
         self.view_btn = ctk.CTkButton(
             btn_fr,
             text=f"📁 {tr('admin.db.btn_view')}",
@@ -225,20 +239,43 @@ class SystemAdminPage:
 
     def open_backup_folder(self):
         import os
+        import subprocess
+        import sys
 
-        path = r"C:\RevenueSystem\backups\local"
-        if os.path.exists(path):
+        # Read from the same env var used by backup_service so the path
+        # is consistent regardless of where the desktop app is installed.
+        backup_base = os.getenv(
+            "MTO_BACKUP_DIR",
+            os.path.join(os.path.expanduser("~"), "mto_backups"),
+        )
+        path = os.path.join(backup_base, "local")
+
+        if not os.path.exists(path):
+            messagebox.showerror("Error", f"Backup folder not found:\n{path}")
+            return
+
+        # Open the folder in the platform's file manager
+        if sys.platform == "win32":
             os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
         else:
-            messagebox.showerror("Error", f"Backup folder not found at {path}")
+            subprocess.Popen(["xdg-open", path])
 
     def restore_backup(self):
         from tkinter import filedialog, simpledialog
-        
+        import os
+
+        backup_base = os.getenv(
+            "MTO_BACKUP_DIR",
+            os.path.join(os.path.expanduser("~"), "mto_backups"),
+        )
+        initial_dir = os.path.join(backup_base, "local")
+
         # 1. Pick the file
         file_path = filedialog.askopenfilename(
             title=tr("admin.db.restore.title"),
-            initialdir=r"C:\RevenueSystem\backups\local",
+            initialdir=initial_dir if os.path.exists(initial_dir) else os.path.expanduser("~"),
             filetypes=[("SQL Backup", "*.sql"), ("All Files", "*.*")]
         )
         
@@ -291,3 +328,65 @@ class SystemAdminPage:
 
         import threading
         threading.Thread(target=run_restore, daemon=True).start()
+
+    def restart_server(self):
+        """
+        Sends a restart command to the backend server.
+        Use this after copying updated files to the server PC via the
+        shared network folder — no physical access to the server needed.
+        """
+        confirm = messagebox.askyesno(
+            "Restart Server",
+            "This will restart the backend server.\n\n"
+            "All connected users will be disconnected for ~10 seconds.\n\n"
+            "Make sure you have copied your updated files first.\n\n"
+            "Continue?",
+            icon="warning"
+        )
+        if not confirm:
+            return
+
+        self.restart_btn.configure(state="disabled", text="⏳ RESTARTING...")
+
+        def run():
+            try:
+                import api_clients.system_service as system_svc
+                res = system_svc.restart_server()
+                msg = res.get("message", "Server is restarting...")
+                self.container.after(
+                    0,
+                    lambda: messagebox.showinfo(
+                        "Restart Initiated",
+                        f"{msg}\n\nThe app will reconnect automatically.\n"
+                        "If it doesn't, close and reopen the desktop app."
+                    )
+                )
+            except Exception as e:
+                # A connection error here is expected — the server shut down
+                # before it could send a full response.
+                err = str(e)
+                if "Connection" in err or "refused" in err.lower() or "reset" in err.lower():
+                    self.container.after(
+                        0,
+                        lambda: messagebox.showinfo(
+                            "Restart Initiated",
+                            "Server is restarting.\n\n"
+                            "Wait 10 seconds then the app will reconnect."
+                        )
+                    )
+                else:
+                    self.container.after(
+                        0,
+                        lambda: messagebox.showerror("Restart Error", err)
+                    )
+            finally:
+                if self.container.winfo_exists():
+                    self.container.after(
+                        0,
+                        lambda: self.restart_btn.configure(
+                            state="normal", text="🔄 RESTART SERVER"
+                        )
+                    )
+
+        import threading
+        threading.Thread(target=run, daemon=True).start()

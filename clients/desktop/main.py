@@ -72,8 +72,16 @@ class LoginApp(ctk.CTk):
         auth.logout()
 
         self.title(f"Treasury Management System | {tr('common.error') if not auth else 'Secure Access'}")
-        self.geometry("1100x700")
         self.minsize(900, 600)
+
+        # Centre the window on the screen
+        win_w, win_h = 1100, 700
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        x = (screen_w - win_w) // 2
+        y = (screen_h - win_h) // 2
+        self.geometry(f"{win_w}x{win_h}+{x}+{y}")
         
         # Step 2: Bind resize for responsiveness
         self.bind("<Configure>", self._on_resize)

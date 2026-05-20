@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime
-from sqlalchemy import func
+from sqlalchemy import func, cast
+from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
 from backend.models import Property, Payment, SystemStats
 from backend.database import SessionLocal
+from utils.db_compat import today, this_month_start
 
 def refresh_system_stats(db_session: Session = None):
     """
@@ -23,15 +25,16 @@ def refresh_system_stats(db_session: Session = None):
         _update_stat(db_session, "unpaid_properties", unpaid_props)
 
         # 3. Collections Today
+        today_date = today()
         today_coll = db_session.query(func.sum(Payment.amount)).filter(
-            func.date(Payment.date_paid) == func.curdate()
+            cast(Payment.date_paid, Date) == today_date
         ).scalar()
         _update_stat(db_session, "collections_today", float(today_coll or 0))
 
         # 4. Collections Month
+        month_start = this_month_start()
         month_coll = db_session.query(func.sum(Payment.amount)).filter(
-            func.year(Payment.date_paid) == func.year(func.curdate()),
-            func.month(Payment.date_paid) == func.month(func.curdate())
+            cast(Payment.date_paid, Date) >= month_start
         ).scalar()
         _update_stat(db_session, "collections_month", float(month_coll or 0))
 

@@ -342,9 +342,8 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                     )
                 except: pass
         
-        db_session.commit()
-
         log_action(user, f"Wizard Assessment Import: {inserted} new, {updated} updated.", db_session=db_session)
+        db_session.commit()
         return {"inserted": inserted, "updated": updated}
     except Exception as e:
         db_session.rollback()
@@ -400,9 +399,8 @@ def commit_property_import(data_list, user, db_session: Session = None):
                     )
                 except: pass
         
-        db_session.commit()
-
         log_action(user, f"Bulk imported {count} property records.", db_session=db_session)
+        db_session.commit()
         return count
     except Exception as e:
         db_session.rollback()
@@ -527,18 +525,19 @@ def import_assessment_roll_from_excel(file_path, user, db_session: Session = Non
             if to_insert:
                 db_session.bulk_insert_mappings(Property, to_insert)
             
-            db_session.flush() 
-        
+            db_session.flush()
+
+        # Stage audit log before commit so data + audit are atomic
+        log_action(user, f"Bulk Assessment Import: {inserted} new, {updated} updated.", db_session=db_session)
         db_session.commit()
-        
-        # Refresh system stats after bulk import
+
+        # Refresh system stats after bulk import — non-fatal, runs after the transaction
         try:
             from backend.services.stats_service import refresh_system_stats
             refresh_system_stats(db_session=db_session)
         except Exception as stats_err:
             print(f"Stats refresh failed: {stats_err}")
 
-        log_action(user, f"Bulk Assessment Import: {inserted} new, {updated} updated.", db_session=db_session)
         return {"inserted": inserted, "updated": updated, "failed": failed, "errors": errors}
 
     except Exception as e:
@@ -716,16 +715,17 @@ def commit_payment_import(data_list, user, db_session: Session = None):
 
             inserted += 1
             
+        # Stage audit log before commit so data + audit are atomic
+        log_action(user, f"Bulk Imported {inserted} Payment Records to Ledger.", db_session=db_session)
         db_session.commit()
-        
-        # 3. Refresh System Stats for Dashboard & Reports
+
+        # Refresh system stats — non-fatal, runs after the transaction
         try:
             from backend.services.stats_service import refresh_system_stats
             refresh_system_stats(db_session=db_session)
         except:
             pass
 
-        log_action(user, f"Bulk Imported {inserted} Payment Records to Ledger.", db_session=db_session)
         return {"inserted": inserted}
     except Exception as e:
         db_session.rollback()

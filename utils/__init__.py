@@ -118,24 +118,6 @@ class JSONFormatter(logging.Formatter):
             log_record["traceback"] = self.formatException(record.exc_info)
         return json.dumps(log_record)
 
-class MetricsManager:
-    _metrics = {"request_count": 0, "error_count": 0, "latency_sum": 0.0, "last_updated": None}
-    _lock = threading.Lock()
-
-    @classmethod
-    def record_request(cls, latency_ms: float, is_error: bool = False):
-        with cls._lock:
-            cls._metrics["request_count"] += 1
-            cls._metrics["latency_sum"] += latency_ms
-            if is_error: cls._metrics["error_count"] += 1
-            cls._metrics["last_updated"] = datetime.now().isoformat()
-            try:
-                # Updated to point to project root/logs
-                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                path = os.path.join(base_dir, "logs", "metrics.json")
-                with open(path, "w") as f: json.dump(cls._metrics, f)
-            except: pass
-
 def format_date_for_db(date_str: Optional[str]) -> Optional[str]:
     if not date_str: return None
     date_str = date_str.replace("/", "-").strip()

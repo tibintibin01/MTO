@@ -3,6 +3,6 @@ global:
 
 scrape_configs:
   - job_name: 'mto-backend'
-    metrics_path: '/api/v2/metrics'
+    metrics_path: '/api/v1/metrics'
     static_configs:
-      - targets: ['api:8000']
+      - targets: ['api:8001']
