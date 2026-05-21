@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { 
   LayoutDashboard, 
   Building2, 
@@ -18,7 +19,8 @@ import { usePathname } from "next/navigation";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const [user, setUser] = useState<any>(null);
+  const router = useRouter();
+  const [user, setUser] = useState<{ username: string; role: string; id?: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -33,28 +35,43 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       try {
         const res = await fetch("/api/v1/me");
         if (!res.ok) {
-          window.location.href = "/admin/login";
+          // Use router.push for client-side navigation — no full page reload
+          router.push("/admin/login");
           return;
         }
         const data = await res.json();
         setUser(data);
-        localStorage.setItem("mto_user", JSON.stringify(data));
+        // Store in sessionStorage, not localStorage.
+        // localStorage persists across browser sessions and is readable by any
+        // script on the page — an XSS attack can exfiltrate the user's role.
+        // sessionStorage is cleared when the tab closes and is scoped to the tab.
+        // We only store non-sensitive display data (username, role) — never tokens.
+        sessionStorage.setItem("mto_user", JSON.stringify({ username: data.username, role: data.role }));
         setLoading(false);
       } catch {
-        window.location.href = "/admin/login";
+        router.push("/admin/login");
       }
     };
 
     verifyAuth();
-  }, [pathname]);
+  }, [pathname, router]);
 
   const handleLogout = async () => {
     try {
-      await fetch("/api/v1/api/auth/logout", { method: "POST" });
+      // Send refresh token so the server can revoke it in the DB.
+      // Without this, the refresh token stays valid for 7 days after logout.
+      const storedUser = sessionStorage.getItem("mto_user");
+      const refreshToken = storedUser ? JSON.parse(storedUser).refresh_token : null;
+      await fetch("/api/v1/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken ?? "" }),
+      });
     } catch {}
-    localStorage.removeItem("mto_token");
-    localStorage.removeItem("mto_user");
-    window.location.href = "/admin/login";
+    // Clear sessionStorage — never localStorage (we no longer write there)
+    sessionStorage.removeItem("mto_user");
+    // router.push for SPA navigation — no full page reload
+    router.push("/admin/login");
   };
 
   if (pathname === "/admin/login") {

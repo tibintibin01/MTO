@@ -237,6 +237,19 @@ def create_refresh_token(user_id: int, db_session: Session):
     db_session.commit()
     return token
 
+def revoke_refresh_token(refresh_token_str: str, db_session: Session):
+    """
+    Marks a single refresh token as revoked.
+    Called on logout so a stolen token cannot generate new access tokens.
+    """
+    token_record = db_session.query(RefreshToken).filter(
+        RefreshToken.token == refresh_token_str
+    ).first()
+    if token_record and not token_record.is_revoked:
+        token_record.is_revoked = True
+        db_session.commit()
+
+
 def refresh_access_token(refresh_token_str: str, db_session: Session):
     """Validates a refresh token and generates a new access token."""
     from backend.deps import create_access_token

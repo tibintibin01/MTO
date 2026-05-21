@@ -119,7 +119,10 @@ async def read_users_me(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/api/auth/refresh")
+@limiter.limit("10/minute")
+@user_limiter.limit("10/minute")
 async def refresh_access_token(
+    request: Request,
     credentials: Dict[str, str],
     db_session: Session = Depends(get_db)
 ):
@@ -127,6 +130,9 @@ async def refresh_access_token(
     Issues a new access token using a valid refresh token.
     Called automatically by the desktop client when the access token expires,
     so the user stays logged in without seeing a session expired error.
+
+    Rate-limited to 10/minute per IP and per user to prevent an attacker
+    with a stolen refresh token from generating unlimited access tokens.
     """
     refresh_token = credentials.get("refresh_token")
     if not refresh_token:
@@ -138,9 +144,34 @@ async def refresh_access_token(
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
+
 @router.post("/api/auth/logout")
-async def logout(response: Response):
+async def logout(
+    credentials: Dict[str, str],
+    response: Response,
+    db_session: Session = Depends(get_db)
+):
+    """
+    Logs out the user by:
+    1. Deleting the access_token cookie from the browser.
+    2. Revoking the refresh token in the database so it cannot be used
+       to generate new access tokens even if stolen.
+
+    Without step 2, a stolen refresh token survives logout and remains
+    valid for 7 days — the attacker stays authenticated indefinitely.
+    """
+    # Revoke the refresh token in the DB if one was provided
+    refresh_token = credentials.get("refresh_token") if credentials else None
+    if refresh_token:
+        try:
+            auth_svc.revoke_refresh_token(refresh_token, db_session=db_session)
+            mto_logger.info("Refresh token revoked on logout")
+        except Exception as e:
+            # Non-fatal — still clear the cookie even if revocation fails
+            mto_logger.warning(f"Failed to revoke refresh token on logout: {e}")
+
     response.delete_cookie(key="access_token")
+    response.delete_cookie(key="csrf_token")
     return {"message": "Successfully logged out"}
 
 @router.get("/api/auth/csrf")

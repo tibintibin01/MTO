@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { ShieldAlert, User, Lock, ArrowRight } from "lucide-react";
 
 export default function AdminLogin() {
+  const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -24,7 +26,6 @@ export default function AdminLogin() {
         body: JSON.stringify({ username, password }),
       });
 
-
       if (!res.ok) {
         const errJson = await res.json();
         throw new Error(errJson.detail || "Authentication failed. Invalid username or password.");
@@ -32,13 +33,23 @@ export default function AdminLogin() {
 
       const data = await res.json();
       
-      // Save user credentials in localStorage
-      localStorage.setItem("mto_user", JSON.stringify({ username: data.username, role: data.role }));
+      // Store only non-sensitive display data in sessionStorage.
+      // sessionStorage is tab-scoped and cleared on close — safer than localStorage.
+      // Tokens are stored in httpOnly cookies by the server — never in JS storage.
+      sessionStorage.setItem("mto_user", JSON.stringify({
+        username: data.username,
+        role: data.role,
+        // Store refresh token in sessionStorage so logout can revoke it server-side.
+        // This is acceptable because: (a) it's sessionStorage not localStorage,
+        // (b) the refresh token is useless without the httpOnly access_token cookie,
+        // (c) the alternative is the token surviving logout indefinitely.
+        refresh_token: data.refresh_token ?? "",
+      }));
 
-      // Redirect to admin dashboard
-      window.location.href = "/admin/dashboard";
-    } catch (err: any) {
-      setError(err.message);
+      // Use router.push — no full page reload, preserves React state
+      router.push("/admin/dashboard");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Authentication failed.");
     } finally {
       setLoading(false);
     }

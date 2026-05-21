@@ -165,10 +165,14 @@ def get_next_or_number(default_prefix="OR-", db_session: Session = None):
 
     or_num = f"{seq.prefix}{seq.next_value:0{seq.digits}d}"
 
-    # Increment and persist within the caller's transaction
+    # Increment within the caller's transaction — do NOT commit here.
+    # Committing mid-transaction would consume the OR number even if the
+    # payment fails afterward, creating gaps in the receipt sequence that
+    # COA auditors will flag. flush() makes the increment visible within
+    # the current transaction without releasing the row lock prematurely.
     seq.next_value += 1
     db_session.add(seq)
-    db_session.commit()
+    db_session.flush()
 
     return or_num
 

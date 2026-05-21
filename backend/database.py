@@ -1,6 +1,5 @@
 from sqlalchemy import create_engine, text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from utils.config import config as mto_config
 from utils.secrets_manager import secrets
 
@@ -13,6 +12,12 @@ engine = create_engine(
     pool_recycle=1800,
     pool_pre_ping=True
 )
+
+# SQLAlchemy 2.0 style base class.
+# declarative_base() from sqlalchemy.ext.declarative is deprecated since 2.0
+# and will be removed in a future version. DeclarativeBase is the replacement.
+class Base(DeclarativeBase):
+    pass
 
 from sqlalchemy import event
 from utils.logger import mto_logger
@@ -29,8 +34,6 @@ def checkout(dbapi_connection, connection_record, connection_proxy):
 
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base = declarative_base()
 
 def get_db():
     db = SessionLocal()
