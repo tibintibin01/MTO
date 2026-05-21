@@ -539,8 +539,16 @@ def get_compliant_accounts(
             last_payment_subq.c.last_paid,
             last_payment_subq.c.last_or,
         )
-        # Compliant = total paid >= total due (zero or positive overpayment)
-        .having(total_paid_expr >= total_due_expr)
+        # Compliant = total paid >= total due AND total due > 0 AND total paid > 0
+        # Without the > 0 guards, properties with zero assessed value pass as
+        # compliant because 0.00 >= 0.00 is true — even if nothing was ever paid.
+        .having(
+            and_(
+                total_due_expr > 0,          # must have something due
+                total_paid_expr > 0,         # must have actually paid something
+                total_paid_expr >= total_due_expr,  # must be fully paid
+            )
+        )
     )
 
     if barangay and barangay.upper() != "ALL":
@@ -623,15 +631,41 @@ def get_compliant_summary_by_barangay(db_session: Session = None):
             per_property.c.barangay,
             func.count(per_property.c.id).label("total"),
             func.sum(
-                case((per_property.c.total_paid >= per_property.c.total_due, 1), else_=0)
+                case(
+                    (
+                        and_(
+                            per_property.c.total_due > 0,
+                            per_property.c.total_paid > 0,
+                            per_property.c.total_paid >= per_property.c.total_due,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
             ).label("compliant"),
             func.sum(
-                case((per_property.c.total_paid < per_property.c.total_due, 1), else_=0)
+                case(
+                    (
+                        or_(
+                            per_property.c.total_due <= 0,
+                            per_property.c.total_paid <= 0,
+                            per_property.c.total_paid < per_property.c.total_due,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
             ).label("delinquent"),
             func.sum(
                 case(
-                    (per_property.c.total_paid >= per_property.c.total_due,
-                     per_property.c.total_paid),
+                    (
+                        and_(
+                            per_property.c.total_due > 0,
+                            per_property.c.total_paid > 0,
+                            per_property.c.total_paid >= per_property.c.total_due,
+                        ),
+                        per_property.c.total_paid,
+                    ),
                     else_=0,
                 )
             ).label("collected_from_compliant"),
