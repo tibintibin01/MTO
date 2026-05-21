@@ -227,7 +227,7 @@
       OFFICIAL USER GUIDE
     </p>
     <p style="font-size:11pt; color:#444; margin-bottom:6mm;">
-      System Modules, User Roles &amp; Delinquency Computation Manual
+      System Modules, User Roles, Delinquency &amp; Compliance Manual
     </p>
     <div class="divider"></div>
     <div class="meta">
@@ -259,13 +259,14 @@
   <div class="toc-entry toc-sub"><span>2.2 Property Records</span><span class="toc-page">4</span></div>
   <div class="toc-entry toc-sub"><span>2.3 Payment &amp; Receipt Ledger</span><span class="toc-page">5</span></div>
   <div class="toc-entry toc-sub"><span>2.4 Delinquency Dashboard</span><span class="toc-page">5</span></div>
-  <div class="toc-entry toc-sub"><span>2.5 Reports</span><span class="toc-page">6</span></div>
-  <div class="toc-entry toc-sub"><span>2.6 Analytics Hub</span><span class="toc-page">6</span></div>
-  <div class="toc-entry toc-sub"><span>2.7 Assessment Roll</span><span class="toc-page">6</span></div>
-  <div class="toc-entry toc-sub"><span>2.8 Audit Trail</span><span class="toc-page">7</span></div>
-  <div class="toc-entry toc-sub"><span>2.9 System Health</span><span class="toc-page">7</span></div>
-  <div class="toc-entry toc-sub"><span>2.10 System Settings</span><span class="toc-page">7</span></div>
-  <div class="toc-entry toc-sub"><span>2.11 System Help</span><span class="toc-page">8</span></div>
+  <div class="toc-entry toc-sub"><span>2.5 Compliant Properties Dashboard</span><span class="toc-page">6</span></div>
+  <div class="toc-entry toc-sub"><span>2.6 Reports</span><span class="toc-page">7</span></div>
+  <div class="toc-entry toc-sub"><span>2.7 Analytics Hub</span><span class="toc-page">7</span></div>
+  <div class="toc-entry toc-sub"><span>2.8 Assessment Roll</span><span class="toc-page">7</span></div>
+  <div class="toc-entry toc-sub"><span>2.9 Audit Trail</span><span class="toc-page">8</span></div>
+  <div class="toc-entry toc-sub"><span>2.10 System Health</span><span class="toc-page">8</span></div>
+  <div class="toc-entry toc-sub"><span>2.11 System Settings</span><span class="toc-page">8</span></div>
+  <div class="toc-entry toc-sub"><span>2.12 System Help</span><span class="toc-page">9</span></div>
 
   <div class="toc-entry"><span><strong>3. Delinquency Computation</strong></span><span class="toc-page">8</span></div>
   <div class="toc-entry toc-sub"><span>3.1 Legal Basis</span><span class="toc-page">8</span></div>
@@ -444,7 +445,33 @@
     <li><strong>Statement of Account (PDF)</strong> — a summary statement showing all billing years, amounts due, amounts paid, and the current balance.</li>
   </ul>
 
-  <h2 class="module-title">2.5 Reports</h2>
+  <h2 class="module-title">2.5 Compliant Properties Dashboard</h2>
+  <p><span class="badge badge-all">All Roles</span> <em style="font-size:9.5pt;color:#555">(requires Property View permission)</em></p>
+  <p>The opposite of the Delinquency Dashboard. Shows all properties that are <strong>fully paid</strong> — where the total amount paid equals or exceeds the total amount due across all billing years. Organized by barangay so the treasurer can immediately see which barangays have high compliance and generate a per-barangay report.</p>
+
+  <h3 class="sub-title">Definition of Compliant</h3>
+  <p>A property is compliant when: <strong>SUM(amount paid) ≥ SUM(total due)</strong> across all its billing years. Properties with no billing records are excluded — they have not been billed yet and cannot be considered compliant.</p>
+
+  <h3 class="sub-title">What you will see</h3>
+  <ul>
+    <li><strong>4 KPI cards</strong> — total compliant properties, municipality-wide compliance rate %, total amount collected from compliant properties, and number of barangays with billing records</li>
+    <li><strong>Barangay Summary Table</strong> — every barangay with its total property count, compliant count, and compliance rate. Click any barangay row to filter the property list below to that barangay only.</li>
+    <li><strong>Compliant Property List</strong> — TD Number, owner name, barangay, kind of property, total amount paid, number of billing years covered, last OR number, and last payment date</li>
+  </ul>
+
+  <h3 class="sub-title">Key functions</h3>
+  <ul>
+    <li><strong>Filter by Barangay</strong> — click any row in the barangay summary table to show only compliant properties in that barangay. Click "ALL BARANGAYS" to return to the full list.</li>
+    <li><strong>Search</strong> — type a name or TDN in the search box to filter the property list instantly without reloading.</li>
+    <li><strong>Export CSV</strong> — downloads the current filtered list as a CSV file ready for Excel. The file is named automatically with the selected barangay and date.</li>
+    <li><strong>Refresh</strong> — reloads both the summary and property list from the database.</li>
+  </ul>
+
+  <div class="note-box">
+    <strong>Use case:</strong> At the end of each collection period, the treasurer can open this dashboard, select a barangay, export the CSV, and submit it as the compliance report for that barangay — showing which property owners have settled their RPT obligations.
+  </div>
+
+  <h2 class="module-title">2.6 Reports</h2>
   <p><span class="badge badge-all">All Roles</span></p>
   <p>Generates the standard reports required for COA submissions, DILG compliance, and internal management review.</p>
   <table>
@@ -456,7 +483,7 @@
   </table>
   <p>All reports can be exported to <strong>Excel (.xlsx)</strong> or printed directly from the browser.</p>
 
-  <h2 class="module-title">2.6 Analytics Hub</h2>
+  <h2 class="module-title">2.7 Analytics Hub</h2>
   <p><span class="badge badge-admin">Admin</span> <span class="badge badge-viewer">Viewer</span></p>
   <p>Visual dashboards for executive-level monitoring. Intended for the Municipal Treasurer and Mayor's Office for monthly performance review — not for daily operations.</p>
   <ul>
@@ -466,7 +493,7 @@
     <li>Year-over-year comparison</li>
   </ul>
 
-  <h2 class="module-title">2.7 Assessment Roll</h2>
+  <h2 class="module-title">2.8 Assessment Roll</h2>
   <p><span class="badge badge-encoder">Encoder</span> <span class="badge badge-admin">Admin</span> <span class="badge badge-viewer">Viewer</span></p>
   <p>A paginated list of all active properties with their current assessed values — the official Assessment Roll as required by the Department of Finance and DILG. Used to verify that all properties are properly assessed before the start of each tax year.</p>
   <ul>
@@ -482,14 +509,14 @@
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════ PAGE 6 — MODULES 2.8–2.11 -->
+<!-- ══════════════════════════════════════════ PAGE 6 — MODULES 2.9–2.12 -->
 <div class="page">
   <div class="page-header">
     <span class="doc-title">MTO Treasury System — User Guide</span>
     <span>Section 2 · System Modules (continued)</span>
   </div>
 
-  <h2 class="module-title">2.8 Audit Trail</h2>
+  <h2 class="module-title">2.9 Audit Trail</h2>
   <p><span class="badge badge-admin">Admin</span></p>
   <p>Every action performed in the system is permanently recorded in the Audit Trail — who did what, when, on which record, and what the data looked like before and after the change. This log is <strong>immutable</strong>: no user, including the Administrator, can edit or delete any audit record.</p>
   <h3 class="sub-title">Search and filter by:</h3>
@@ -502,7 +529,7 @@
     <strong>COA Compliance:</strong> The Audit Trail is your primary evidence document for Commission on Audit (COA) examinations. If an auditor asks "who changed this assessed value and when," this is where you look. Records are retained for a minimum of 10 years per COA Circular 2009-006.
   </div>
 
-  <h2 class="module-title">2.9 System Health</h2>
+  <h2 class="module-title">2.10 System Health</h2>
   <p><span class="badge badge-admin">Admin</span></p>
   <p>Monitors the technical health of the system in real time. This screen is for the Administrator and IT staff — not for daily revenue operations.</p>
   <h3 class="sub-title">What is monitored:</h3>
@@ -516,7 +543,7 @@
   </ul>
   <p>If PDF receipts are not generating or backups are failing, check this screen first. The worker status will indicate whether a job is stuck or a thread has died.</p>
 
-  <h2 class="module-title">2.10 System Settings</h2>
+  <h2 class="module-title">2.11 System Settings</h2>
   <p><span class="badge badge-admin">Admin</span></p>
   <p>Configuration and maintenance functions for the Administrator. Organized into the following sub-sections:</p>
   <table>
@@ -529,7 +556,7 @@
     <tr><td><strong>Data Retention</strong></td><td>Configure how long each type of record is retained, per RA 10173 (Data Privacy Act) and COA requirements.</td></tr>
   </table>
 
-  <h2 class="module-title">2.11 System Help</h2>
+  <h2 class="module-title">2.12 System Help</h2>
   <p><span class="badge badge-all">All Roles</span></p>
   <p>Built-in documentation, keyboard shortcuts, and frequently asked questions. The first stop for new users who need guidance on a specific task without leaving the system.</p>
 
@@ -706,6 +733,9 @@ Total Due       = Annual Tax Due + Penalty − Discount
     <tr><td>Reprint a receipt</td><td>Payment &amp; Receipt Ledger → find payment → View Receipt</td></tr>
     <tr><td>Check who owes tax</td><td>Delinquency Dashboard</td></tr>
     <tr><td>Generate delinquency notice</td><td>Delinquency Dashboard → select property → Generate Notice</td></tr>
+    <tr><td>See which properties are fully paid</td><td>Compliant Properties Dashboard</td></tr>
+    <tr><td>Filter compliant properties by barangay</td><td>Compliant Properties → click a barangay row</td></tr>
+    <tr><td>Export compliant list for a barangay report</td><td>Compliant Properties → select barangay → Export CSV</td></tr>
     <tr><td>Print collection report</td><td>Reports → Collection Report → set date range → Export</td></tr>
     <tr><td>Add a new staff account</td><td>System Settings → User Management → Add User</td></tr>
     <tr><td>Reset a password</td><td>System Settings → User Management → select user → Reset Password</td></tr>
