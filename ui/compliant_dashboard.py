@@ -192,9 +192,13 @@ class CompliantDashboardPage:
         )
         style.map("Summary.Treeview", background=[("selected", _ROW_SEL)])
 
+        # Wrap in dark frame so empty area below rows matches row background
+        sum_container = tk.Frame(parent, bg=_ROW_ODD)
+        sum_container.pack(fill="both", expand=True)
+
         cols = ("BARANGAY", "TOTAL", "✅", "RATE")
         self._sum_tree = ttk.Treeview(
-            parent, columns=cols, show="headings", style="Summary.Treeview"
+            sum_container, columns=cols, show="headings", style="Summary.Treeview"
         )
         for col in cols:
             self._sum_tree.heading(col, text=col)
@@ -203,7 +207,7 @@ class CompliantDashboardPage:
         self._sum_tree.column("✅",       width=55,  anchor="center")
         self._sum_tree.column("RATE",     width=65,  anchor="center")
 
-        scrolly = ttk.Scrollbar(parent, orient="vertical", command=self._sum_tree.yview)
+        scrolly = ttk.Scrollbar(sum_container, orient="vertical", command=self._sum_tree.yview)
         self._sum_tree.configure(yscrollcommand=scrolly.set)
         self._sum_tree.pack(side="left", fill="both", expand=True)
         scrolly.pack(side="right", fill="y")
@@ -266,7 +270,11 @@ class CompliantDashboardPage:
         )
         self._search_entry.pack(side="right")
 
-        # Property treeview
+        # Property treeview — wrap in a dark frame so the empty area below
+        # rows matches the row background instead of showing white
+        tree_container = tk.Frame(parent, bg=_ROW_ODD)
+        tree_container.pack(fill="both", expand=True)
+
         style = ttk.Style()
         # FIX 1 — softer foreground colour
         style.configure(
@@ -288,7 +296,7 @@ class CompliantDashboardPage:
         cols = ("ID", "TD NUMBER", "OWNER NAME", "BARANGAY", "KIND",
                 "TOTAL PAID", "YEARS", "LAST OR", "LAST PAID")
         self._prop_tree = ttk.Treeview(
-            parent, columns=cols, show="headings", style="Compliant.Treeview"
+            tree_container, columns=cols, show="headings", style="Compliant.Treeview"
         )
         for col in cols:
             self._prop_tree.heading(col, text=col)
@@ -303,13 +311,19 @@ class CompliantDashboardPage:
         self._prop_tree.column("LAST OR",    width=110, anchor="w")
         self._prop_tree.column("LAST PAID",  width=95,  anchor="center")
 
-        scrolly = ttk.Scrollbar(parent, orient="vertical", command=self._prop_tree.yview)
+        scrolly = ttk.Scrollbar(tree_container, orient="vertical", command=self._prop_tree.yview)
         self._prop_tree.configure(yscrollcommand=scrolly.set)
         self._prop_tree.pack(side="left", fill="both", expand=True)
         scrolly.pack(side="right", fill="y")
 
         self._prop_tree.tag_configure("oddrow",  background=_ROW_ODD,  foreground=_ROW_FG)
         self._prop_tree.tag_configure("evenrow", background=_ROW_EVEN, foreground=_ROW_FG)
+
+        # Fill the empty space below data rows with the same dark background
+        # so the white gap doesn't appear when there are fewer rows than the
+        # visible height of the widget.
+        style.configure("Compliant.Treeview", rowheight=34)
+        self._prop_tree.configure(style="Compliant.Treeview")
 
     # ── Data loading ──────────────────────────────────────────────────────────
 
