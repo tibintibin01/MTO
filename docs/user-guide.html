@@ -195,35 +195,45 @@
   @media print {
     html, body {
       width: 100%;
-      height: 100%;
       margin: 0;
       padding: 0;
       background: #fff;
+      font-size: 10pt;
     }
 
-    /* Each .page becomes exactly one printed sheet.
-       The padding inside the div IS the margin — no browser margin needed.
-       @page margin: 0 removes the browser's own margin so our padding
-       is the only whitespace. */
+    /* Use @page margins as the document margins.
+       This is the only reliable way to get consistent margins in all browsers.
+       The .page div becomes just a logical grouping — not a physical page. */
+    @page {
+      size: Letter portrait;
+      margin: 18mm 20mm 18mm 22mm;
+    }
+
     .page {
-      width: 100%;           /* fill the printable area */
+      width: 100%;
       min-height: 0;
       margin: 0;
-      padding: 18mm 20mm 18mm 22mm;  /* top right bottom left */
+      padding: 0;           /* @page handles all margins */
       box-shadow: none;
+      background: #fff;
       page-break-after: always;
-      page-break-inside: avoid;
     }
     .page:last-child { page-break-after: auto; }
 
-    .no-print { display: none !important; }
-
-    /* Tell the browser: Letter paper, zero browser margin.
-       Our .page padding provides all the white space. */
-    @page {
-      size: Letter portrait;
-      margin: 0;
+    /* Prevent tables, boxes, and headings from splitting mid-element */
+    table, .formula-box, .example-box, .note-box, .warn-box {
+      page-break-inside: avoid;
     }
+    h1.section-title, h2.module-title, h3.sub-title {
+      page-break-after: avoid;
+    }
+
+    /* Page header and footer stay at top/bottom of each .page div */
+    .page-header, .page-footer {
+      display: flex;
+    }
+
+    .no-print { display: none !important; }
   }
 
   /* ── PRINT BUTTON ── */
