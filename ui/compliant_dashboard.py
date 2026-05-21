@@ -1,7 +1,7 @@
 """
 Compliant Properties Dashboard
 Shows all properties with zero outstanding balance, grouped by barangay.
-Mirrors the style of DelinquencyDashboardPage.
+Matches the Midnight Slate dark theme used throughout the desktop app.
 """
 import csv
 import os
@@ -17,12 +17,22 @@ from utils import format_curr, tr
 from ui_components import LoadingOverlay
 
 
+# ── Muted accent colours that sit comfortably in the dark theme ──────────────
+_GREEN   = "#10b981"   # ModernTheme.SUCCESS — used sparingly
+_GREEN_DIM = "#064e3b" # very dark green for banner bg
+_BLUE    = "#38bdf8"   # ModernTheme.PRIMARY
+_SLATE   = "#64748b"   # ModernTheme.SECONDARY
+_CARD_BG = ("#e2e8f0", "#1e293b")   # light / dark card background
+_BORDER  = ("#cbd5e1", "#334155")   # light / dark border
+
+
 class CompliantDashboardPage:
     def __init__(self, parent, user=None):
         self.parent = parent
         self.user = user
-        self._summary = []          # list of barangay summary dicts
+        self._summary = []
         self._selected_barangay = "ALL"
+        self._all_rows: list = []
 
         self.container = ctk.CTkFrame(parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
@@ -35,13 +45,13 @@ class CompliantDashboardPage:
     def _setup_ui(self):
         # ── Page header ──────────────────────────────────────────────────────
         header_fr = ctk.CTkFrame(self.container, fg_color="transparent")
-        header_fr.pack(fill="x", pady=(0, 16))
+        header_fr.pack(fill="x", pady=(0, 14))
 
         ctk.CTkLabel(
             header_fr,
             text="✅  COMPLIANT PROPERTIES",
             font=ModernTheme.H1,
-            text_color=ModernTheme.SUCCESS,
+            text_color=ModernTheme.PRIMARY,   # sky blue — matches other page titles
         ).pack(side="left")
 
         btn_fr = ctk.CTkFrame(header_fr, fg_color="transparent")
@@ -53,8 +63,8 @@ class CompliantDashboardPage:
             command=self._export_csv,
             width=140,
             font=ModernTheme.BUTTON,
-            fg_color="#2e7d32",
-            hover_color="#1b5e20",
+            fg_color=ModernTheme.SECONDARY,
+            hover_color=ModernTheme.SECONDARY_HOVER,
             height=38,
         ).pack(side="right", padx=(8, 0))
 
@@ -65,12 +75,17 @@ class CompliantDashboardPage:
             width=120,
             font=ModernTheme.BUTTON,
             fg_color=ModernTheme.SECONDARY,
+            hover_color=ModernTheme.SECONDARY_HOVER,
             height=38,
         ).pack(side="right")
 
-        # ── Info banner ───────────────────────────────────────────────────────
+        # ── Info banner — muted, not bright green ─────────────────────────────
         info_fr = ctk.CTkFrame(
-            self.container, fg_color="#1b4332", corner_radius=10
+            self.container,
+            fg_color=("#dbeafe", "#1e293b"),   # light blue tint / dark slate
+            corner_radius=8,
+            border_width=1,
+            border_color=("#93c5fd", "#334155"),
         )
         info_fr.pack(fill="x", pady=(0, 14))
         ctk.CTkLabel(
@@ -80,59 +95,57 @@ class CompliantDashboardPage:
                 "ALL billing years.  Click a barangay row to filter the list below."
             ),
             font=ModernTheme.BODY,
-            text_color="#a7f3d0",
-        ).pack(side="left", padx=20, pady=10)
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(side="left", padx=16, pady=8)
 
-        # ── KPI strip ─────────────────────────────────────────────────────────
-        self._kpi_fr = ctk.CTkFrame(self.container, fg_color="transparent")
-        self._kpi_fr.pack(fill="x", pady=(0, 14))
+        # ── KPI strip — plain cards, no coloured borders ──────────────────────
+        kpi_fr = ctk.CTkFrame(self.container, fg_color="transparent")
+        kpi_fr.pack(fill="x", pady=(0, 14))
 
-        self._kpi_compliant  = self._kpi_card(self._kpi_fr, "COMPLIANT",       "0",    "#2e7d32")
-        self._kpi_rate       = self._kpi_card(self._kpi_fr, "COMPLIANCE RATE", "0.0%", "#1565c0")
-        self._kpi_collected  = self._kpi_card(self._kpi_fr, "TOTAL COLLECTED", "₱0",   "#6a1b9a")
-        self._kpi_barangays  = self._kpi_card(self._kpi_fr, "BARANGAYS",       "0",    "#e65100")
+        self._kpi_compliant  = self._kpi_card(kpi_fr, "COMPLIANT",       "—")
+        self._kpi_rate       = self._kpi_card(kpi_fr, "COMPLIANCE RATE", "—")
+        self._kpi_collected  = self._kpi_card(kpi_fr, "TOTAL COLLECTED", "—")
+        self._kpi_barangays  = self._kpi_card(kpi_fr, "BARANGAYS",       "—")
 
-        # ── Split pane: summary table (left) + property list (right) ─────────
+        # ── Split pane ────────────────────────────────────────────────────────
         pane = ctk.CTkFrame(self.container, fg_color="transparent")
         pane.pack(fill="both", expand=True)
         pane.columnconfigure(0, weight=2)
         pane.columnconfigure(1, weight=5)
         pane.rowconfigure(0, weight=1)
 
-        # Left — barangay summary
         left_fr = ctk.CTkFrame(pane, fg_color="transparent")
         left_fr.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         self._setup_summary_table(left_fr)
 
-        # Right — property list
         right_fr = ctk.CTkFrame(pane, fg_color="transparent")
         right_fr.grid(row=0, column=1, sticky="nsew")
         self._setup_property_table(right_fr)
 
-    # ── KPI card helper ───────────────────────────────────────────────────────
+    # ── KPI card — plain dark card, no coloured border ───────────────────────
 
-    def _kpi_card(self, parent, label, value, color):
+    def _kpi_card(self, parent, label: str, value: str):
         card = ctk.CTkFrame(
             parent,
-            fg_color=("#f0fdf4", "#1a2634"),
+            fg_color=_CARD_BG,
             corner_radius=10,
             border_width=1,
-            border_color=(color, color),
+            border_color=_BORDER,
         )
         card.pack(side="left", fill="both", expand=True, padx=4)
 
         ctk.CTkLabel(
             card,
             text=label,
-            font=("Segoe UI", 9, "bold"),
-            text_color="gray",
+            font=("Inter", 9, "bold"),
+            text_color=ModernTheme.TEXT_GRAY,
         ).pack(pady=(10, 2))
 
         lbl = ctk.CTkLabel(
             card,
             text=value,
-            font=("Segoe UI", 20, "bold"),
-            text_color=color,
+            font=("Inter", 18, "bold"),
+            text_color=ModernTheme.PRIMARY,   # sky blue — consistent with app
         )
         lbl.pack(pady=(0, 10))
         return lbl
@@ -143,27 +156,27 @@ class CompliantDashboardPage:
         ctk.CTkLabel(
             parent,
             text="BY BARANGAY",
-            font=("Segoe UI", 11, "bold"),
-            text_color=ModernTheme.PRIMARY,
+            font=("Inter", 11, "bold"),
+            text_color=ModernTheme.TEXT_GRAY,
             anchor="w",
         ).pack(fill="x", pady=(0, 6))
 
         style = ttk.Style()
         style.configure(
             "Summary.Treeview",
-            rowheight=34,
-            font=ModernTheme.BODY,
-            background="#1e1e1e",
-            fieldbackground="#1e1e1e",
-            foreground="white",
+            rowheight=32,
+            font=("Inter", 12),
+            background="#1e293b",
+            fieldbackground="#1e293b",
+            foreground="#f1f5f9",
         )
         style.configure(
             "Summary.Treeview.Heading",
-            font=ModernTheme.BODY_BOLD,
-            background="#333",
-            foreground="white",
+            font=("Inter", 11, "bold"),
+            background="#0f172a",
+            foreground="#94a3b8",
         )
-        style.map("Summary.Treeview", background=[("selected", "#2e7d32")])
+        style.map("Summary.Treeview", background=[("selected", "#1d4ed8")])
 
         cols = ("BARANGAY", "TOTAL", "✅", "RATE")
         self._sum_tree = ttk.Treeview(
@@ -181,25 +194,28 @@ class CompliantDashboardPage:
         self._sum_tree.pack(side="left", fill="both", expand=True)
         scrolly.pack(side="right", fill="y")
 
-        self._sum_tree.tag_configure("oddrow",  background="#2b2b2b", foreground="white")
-        self._sum_tree.tag_configure("evenrow", background="#333",    foreground="white")
-        self._sum_tree.tag_configure("all_row", background="#1b4332", foreground="#a7f3d0",
-                                     font=("Segoe UI", 11, "bold"))
+        self._sum_tree.tag_configure("oddrow",  background="#1e293b", foreground="#f1f5f9")
+        self._sum_tree.tag_configure("evenrow", background="#0f172a", foreground="#f1f5f9")
+        self._sum_tree.tag_configure(
+            "all_row",
+            background="#1d4ed8",   # blue highlight for the ALL row
+            foreground="#ffffff",
+            font=("Inter", 11, "bold"),
+        )
 
         self._sum_tree.bind("<<TreeviewSelect>>", self._on_barangay_select)
 
     # ── Property list table ───────────────────────────────────────────────────
 
     def _setup_property_table(self, parent):
-        # Header row with label + search
         hdr = ctk.CTkFrame(parent, fg_color="transparent")
         hdr.pack(fill="x", pady=(0, 6))
 
         self._list_label = ctk.CTkLabel(
             hdr,
             text="ALL COMPLIANT PROPERTIES",
-            font=("Segoe UI", 11, "bold"),
-            text_color=ModernTheme.SUCCESS,
+            font=("Inter", 11, "bold"),
+            text_color=ModernTheme.TEXT_GRAY,
             anchor="w",
         )
         self._list_label.pack(side="left")
@@ -218,19 +234,19 @@ class CompliantDashboardPage:
         style = ttk.Style()
         style.configure(
             "Compliant.Treeview",
-            rowheight=36,
-            font=ModernTheme.BODY,
-            background="#1e1e1e",
-            fieldbackground="#1e1e1e",
-            foreground="white",
+            rowheight=34,
+            font=("Inter", 12),
+            background="#1e293b",
+            fieldbackground="#1e293b",
+            foreground="#f1f5f9",
         )
         style.configure(
             "Compliant.Treeview.Heading",
-            font=ModernTheme.BODY_BOLD,
-            background="#333",
-            foreground="white",
+            font=("Inter", 11, "bold"),
+            background="#0f172a",
+            foreground="#94a3b8",
         )
-        style.map("Compliant.Treeview", background=[("selected", "#2e7d32")])
+        style.map("Compliant.Treeview", background=[("selected", "#1d4ed8")])
 
         cols = ("ID", "TD NUMBER", "OWNER NAME", "BARANGAY", "KIND",
                 "TOTAL PAID", "YEARS", "LAST OR", "LAST PAID")
@@ -255,11 +271,8 @@ class CompliantDashboardPage:
         self._prop_tree.pack(side="left", fill="both", expand=True)
         scrolly.pack(side="right", fill="y")
 
-        self._prop_tree.tag_configure("oddrow",  background="#2b2b2b", foreground="white")
-        self._prop_tree.tag_configure("evenrow", background="#333",    foreground="white")
-
-        # Store all rows for client-side search filtering
-        self._all_rows: list = []
+        self._prop_tree.tag_configure("oddrow",  background="#1e293b", foreground="#f1f5f9")
+        self._prop_tree.tag_configure("evenrow", background="#0f172a", foreground="#f1f5f9")
 
     # ── Data loading ──────────────────────────────────────────────────────────
 
@@ -269,7 +282,7 @@ class CompliantDashboardPage:
         def worker():
             try:
                 summary = billing.get_compliant_summary()
-                props   = billing.get_compliant_accounts(
+                props = billing.get_compliant_accounts(
                     barangay=None if self._selected_barangay == "ALL"
                              else self._selected_barangay
                 )
@@ -287,10 +300,13 @@ class CompliantDashboardPage:
         self._summary = summary
         self._all_rows = props
 
-        # ── KPI cards ────────────────────────────────────────────────────────
-        total_props    = sum(r["total_properties"]       for r in summary)
-        total_compliant= sum(r["compliant_count"]        for r in summary)
-        total_collected= sum(r["collected_from_compliant"] for r in summary)
+        # ── KPI cards ─────────────────────────────────────────────────────────
+        total_props     = sum(r.get("total_properties", 0)         for r in summary)
+        total_compliant = sum(r.get("compliant_count", 0)          for r in summary)
+        # Derive total collected directly from the property rows — more reliable
+        # than the summary endpoint's collected_from_compliant which can be 0
+        # when the payment subquery returns no matches.
+        total_collected = sum(r[5] for r in props)   # index 5 = total_paid
         rate = (total_compliant / total_props * 100) if total_props else 0.0
 
         self._kpi_compliant.configure(text=f"{total_compliant:,}")
@@ -298,11 +314,10 @@ class CompliantDashboardPage:
         self._kpi_collected.configure(text=format_curr(total_collected))
         self._kpi_barangays.configure(text=str(len(summary)))
 
-        # ── Summary table ─────────────────────────────────────────────────────
+        # ── Summary table ──────────────────────────────────────────────────────
         for item in self._sum_tree.get_children():
             self._sum_tree.delete(item)
 
-        # ALL row
         all_rate = f"{rate:.1f}%"
         self._sum_tree.insert(
             "", "end",
@@ -311,22 +326,24 @@ class CompliantDashboardPage:
             iid="__ALL__",
         )
 
-        for i, row in enumerate(sorted(summary, key=lambda r: r["barangay"])):
+        for i, row in enumerate(sorted(summary, key=lambda r: r.get("barangay", ""))):
             tag = "evenrow" if i % 2 == 0 else "oddrow"
-            r_str = f"{row['compliance_rate']:.1f}%"
+            r_str = f"{row.get('compliance_rate', 0):.1f}%"
             self._sum_tree.insert(
                 "", "end",
-                values=(row["barangay"], row["total_properties"],
-                        row["compliant_count"], r_str),
+                values=(
+                    row.get("barangay", "—"),
+                    row.get("total_properties", 0),
+                    row.get("compliant_count", 0),
+                    r_str,
+                ),
                 tags=(tag,),
-                iid=row["barangay"],
+                iid=row.get("barangay", str(i)),
             )
 
-        # ── Property list ─────────────────────────────────────────────────────
         self._apply_search()
 
     def _apply_search(self):
-        """Filters _all_rows by the search box and re-renders the property table."""
         term = self._search_var.get().strip().lower()
         rows = self._all_rows
 
@@ -342,19 +359,19 @@ class CompliantDashboardPage:
 
         for i, r in enumerate(rows):
             tag = "evenrow" if i % 2 == 0 else "oddrow"
-            # r: (id, td, owner, barangay, kind, total_paid, years, last_or, last_paid)
             display = list(r)
             display[5] = format_curr(r[5])   # total_paid
+            # Ensure last_or and last_paid show "—" when None/empty
+            display[7] = r[7] if r[7] and r[7] != "None" else "—"
+            display[8] = r[8] if r[8] and r[8] != "None" else "—"
             self._prop_tree.insert("", "end", values=display, tags=(tag,))
 
-        # Update list label
         brgy_label = (
             "ALL COMPLIANT PROPERTIES"
             if self._selected_barangay == "ALL"
             else f"COMPLIANT — {self._selected_barangay}"
         )
-        count_label = f"  ({len(rows)} shown)"
-        self._list_label.configure(text=brgy_label + count_label)
+        self._list_label.configure(text=f"{brgy_label}  ({len(rows)} shown)")
 
     # ── Barangay filter ───────────────────────────────────────────────────────
 
@@ -369,8 +386,7 @@ class CompliantDashboardPage:
     # ── CSV export ────────────────────────────────────────────────────────────
 
     def _export_csv(self):
-        rows = self._all_rows
-        if not rows:
+        if not self._all_rows:
             messagebox.showinfo("Export", "No data to export.")
             return
 
@@ -390,7 +406,7 @@ class CompliantDashboardPage:
                     "ID", "TD Number", "Owner Name", "Barangay", "Kind",
                     "Total Paid", "Years Covered", "Last OR", "Last Paid",
                 ])
-                for r in rows:
+                for r in self._all_rows:
                     writer.writerow(r)
             messagebox.showinfo("Export Complete", f"Saved to:\n{path}")
             os.startfile(path)
