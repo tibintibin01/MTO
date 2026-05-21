@@ -43,11 +43,23 @@ class PropertyPage:
         filter_bar = ctk.CTkFrame(self.container, fg_color=ModernTheme.SECONDARY, corner_radius=8)
         filter_bar.pack(fill="x", pady=(0, 15), padx=5)
 
-        ctk.CTkLabel(filter_bar, text=tr("property.filters.barangay"), font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(15, 5))
-        self.barangay_cmb = ctk.CTkComboBox(filter_bar, values=["ALL"], width=180, height=28, font=ModernTheme.BODY)
-        self.barangay_cmb.pack(side="left", padx=5, pady=8)
+        # Left group — all filters together
+        left_group = ctk.CTkFrame(filter_bar, fg_color="transparent")
+        left_group.pack(side="left", padx=(10, 0), pady=6)
 
-        ctk.CTkButton(filter_bar, text=f"🎯 {tr('property.filters.apply')}", command=self.refresh_table, width=120, height=28, font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.SUCCESS).pack(side="right", padx=15)
+        ctk.CTkLabel(left_group, text=tr("property.filters.barangay"), font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(5, 4))
+        self.barangay_cmb = ctk.CTkComboBox(left_group, values=["ALL"], width=160, height=28, font=ModernTheme.BODY)
+        self.barangay_cmb.pack(side="left", padx=(0, 12))
+
+        ctk.CTkLabel(left_group, text="YEAR FROM:", font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 4))
+        self.year_start_ent = ctk.CTkEntry(left_group, width=70, height=28, placeholder_text="e.g. 2020", font=ModernTheme.BODY)
+        self.year_start_ent.pack(side="left", padx=(0, 6))
+
+        ctk.CTkLabel(left_group, text="TO:", font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 4))
+        self.year_end_ent = ctk.CTkEntry(left_group, width=70, height=28, placeholder_text="e.g. 2024", font=ModernTheme.BODY)
+        self.year_end_ent.pack(side="left", padx=(0, 12))
+
+        ctk.CTkButton(left_group, text=f"🎯 {tr('property.filters.apply')}", command=self.refresh_table, width=130, height=28, font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.SUCCESS).pack(side="left", padx=(0, 5))
 
         table_fr = ctk.CTkFrame(self.container, fg_color="transparent", corner_radius=12)
         style = ttk.Style()
@@ -112,7 +124,19 @@ class PropertyPage:
             try:
                 term = self.search_ent.get().strip()
                 brgy = self.barangay_cmb.get()
-                res = prop_svc.search_properties(term, limit=self.page_size, cursor=self.next_cursor if not reset_page else None, barangay=brgy if brgy != "ALL" else None)
+                year_start_raw = self.year_start_ent.get().strip() if hasattr(self, "year_start_ent") else ""
+                year_end_raw = self.year_end_ent.get().strip() if hasattr(self, "year_end_ent") else ""
+                year_start = int(year_start_raw) if year_start_raw.isdigit() else None
+                year_end = int(year_end_raw) if year_end_raw.isdigit() else None
+                res = prop_svc.search_properties(
+                    term,
+                    limit=self.page_size,
+                    cursor=self.next_cursor if not reset_page else None,
+                    barangay=brgy if brgy != "ALL" else None,
+                    kind=None,
+                    year_start=year_start,
+                    year_end=year_end,
+                )
                 items = res.get("items", [])
                 self.next_cursor = res.get("next_cursor")
                 has_more = res.get("has_more", False)

@@ -1,5 +1,8 @@
 {
-    "office_name": "MUNICIPAL REVENUE OFFICE",
+    "republic_header": "Republic of the Philippines",
+    "province": "Province of Aurora",
+    "municipality": "Municipality of Dipaculao",
+    "office_name": "MUNICIPAL TREASURY OFFICE",
     "branding_colors": {
         "primary": "#1f538d",
         "secondary": "#7f8c8d",
@@ -11,7 +14,7 @@
         "header": "Helvetica-Bold",
         "body": "Helvetica"
     },
-    "footer_text": "This document was generated electronically by the Municipal Revenue System.",
+    "footer_text": "This is a system-generated Official Receipt. Valid without wet signature when printed from the Municipal Revenue System.",
     "logo_path": "assets/official/logo.png",
     "seal_path": "assets/official/seal.png"
 }

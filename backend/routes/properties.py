@@ -11,7 +11,7 @@ import backend.services.billing_service as bill_svc
 import backend.services.payment_service as pay_svc
 
 import backend.services.system_service as sys_svc
-from backend.deps import get_current_user, write_access, admin_only, limiter, get_db, Session
+from backend.deps import get_current_user, write_access, admin_only, limiter, user_limiter, get_db, Session
 from backend.schemas import PropertySaveSchema, BulkUpdateBarangaySchema
 from utils.logger import mto_logger
 
@@ -123,6 +123,7 @@ async def get_property(
 
 @router.post("")
 @limiter.limit("15/minute")
+@user_limiter.limit("15/minute")
 async def create_property(
     request: Request,
     data: PropertySaveSchema, 
@@ -146,6 +147,7 @@ async def create_property(
 
 @router.put("/{property_id}")
 @limiter.limit("20/minute")
+@user_limiter.limit("20/minute")
 async def update_property(
     request: Request,
     property_id: int,

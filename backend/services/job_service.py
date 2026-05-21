@@ -41,11 +41,27 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError, DisconnectionError
 from sqlalchemy.orm import Session
 
-from backend.database import SessionLocal
+from backend.database import SessionLocal, dispose_and_reconnect
 from backend.models import Job
 from utils.logger import mto_logger
+
+# ---------------------------------------------------------------------------
+# DB outage backoff constants
+# ---------------------------------------------------------------------------
+# When the worker detects a DB OperationalError it enters a backoff loop
+# rather than hammering the DB every 5 seconds.
+#
+# Schedule: 2s → 4s → 8s → 16s → 30s (capped), then stays at 30s until
+# the DB comes back. Once reconnected, backoff resets to the base value.
+_DB_BACKOFF_BASE    = 2.0
+_DB_BACKOFF_MAX     = 30.0
+_DB_BACKOFF_FACTOR  = 2.0
+
+# Sentinel exception classes so we can distinguish DB errors from job bugs
+_DB_ERROR_TYPES = (OperationalError, DisconnectionError)
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +82,7 @@ SLOW_JOB_TYPES = frozenset({
     "backup",
     "import_commit",
     "sync_billing_years",
+    "retention_run",
 })
 
 ALL_JOB_TYPES = FAST_JOB_TYPES | SLOW_JOB_TYPES
@@ -200,13 +217,36 @@ def _try_claim_job(worker_id: str, job_types: frozenset) -> Job | None:
 # ---------------------------------------------------------------------------
 
 def _update_job(job_id: str, **kwargs):
-    """Updates job fields by ID using a fresh session."""
-    with SessionLocal() as db:
-        job = db.query(Job).filter(Job.id == job_id).first()
-        if job:
-            for k, v in kwargs.items():
-                setattr(job, k, v)
-            db.commit()
+    """
+    Updates job fields by ID using a fresh session.
+
+    Retries once on OperationalError — a brief DB blip during a long-running
+    job (backup, bulk import) should not prevent the final status update from
+    being written. If the second attempt also fails, the error is logged and
+    the stale-job recovery mechanism will reset the job to PENDING on the
+    next maintenance cycle.
+    """
+    for attempt in (1, 2):
+        try:
+            with SessionLocal() as db:
+                job = db.query(Job).filter(Job.id == job_id).first()
+                if job:
+                    for k, v in kwargs.items():
+                        setattr(job, k, v)
+                    db.commit()
+            return
+        except _DB_ERROR_TYPES as e:
+            if attempt == 1:
+                mto_logger.warning(
+                    "_update_job: DB error on attempt 1, retrying after pool reset: %s", e
+                )
+                dispose_and_reconnect()
+                time.sleep(1)
+            else:
+                mto_logger.error(
+                    "_update_job: DB error on attempt 2, giving up for job %s: %s",
+                    job_id[:8], e,
+                )
 
 
 def _run_job(job: Job):
@@ -223,6 +263,8 @@ def _run_job(job: Job):
             _handle_pdf(job, payload)
         elif job.job_type == "sync_billing_years":
             _handle_sync_billing_years(job, payload)
+        elif job.job_type == "retention_run":
+            _handle_retention_run(job, payload)
         else:
             raise ValueError(f"Unknown job type: {job.job_type}")
 
@@ -262,6 +304,37 @@ def _handle_sync_billing_years(job: Job, payload: dict):
                     f"Done: {result['records_created']} records created, "
                     f"{result['records_skipped']} already existed."
                 ))
+
+
+def _handle_retention_run(job: Job, payload: dict):
+    """Runs the data retention policy for all active policies."""
+    from backend.services.retention_service import run_retention
+
+    dry_run = payload.get("dry_run", False)
+    data_type = payload.get("data_type")  # None = run all
+
+    _update_job(job.id, progress=10,
+                progress_message="Starting retention policy run...")
+
+    with SessionLocal() as db:
+        result = run_retention(
+            executed_by=job.submitted_by,
+            dry_run=dry_run,
+            data_type=data_type,
+            db_session=db,
+        )
+
+    summary = (
+        f"{'DRY RUN — ' if dry_run else ''}"
+        f"{result['policies_run']} policy(ies) run, "
+        f"{result['total_records_affected']} record(s) affected."
+    )
+    _update_job(job.id,
+                status="COMPLETED",
+                result=json.dumps(result),
+                completed_at=datetime.now(timezone.utc),
+                progress=100,
+                progress_message=summary)
 
 
 def _handle_backup(job: Job, payload: dict):
@@ -395,6 +468,80 @@ def _cleanup_expired_idempotency_keys():
         mto_logger.error(f"Idempotency keys cleanup error: {e}")
 
 
+def _check_scheduled_backup():
+    """
+    Submits a backup job if the configured schedule is due and no backup
+    has already run in the current window.
+
+    Schedule logic:
+      disabled — never runs automatically
+      daily    — runs once per day at BACKUP_SCHEDULE_HOUR:BACKUP_SCHEDULE_MINUTE
+      weekly   — runs once per week on BACKUP_SCHEDULE_DAY_OF_WEEK at the
+                 configured hour:minute
+
+    Idempotency: checks BackupHistory for a completed backup within the
+    current window before submitting. Safe to call every 5 minutes.
+    """
+    from utils.config import config as _cfg
+
+    schedule = _cfg.BACKUP_SCHEDULE.strip().lower()
+    if schedule == "disabled":
+        return
+
+    now = datetime.now()
+    scheduled_hour   = _cfg.BACKUP_SCHEDULE_HOUR
+    scheduled_minute = _cfg.BACKUP_SCHEDULE_MINUTE
+
+    # Is it within the 5-minute window starting at the scheduled time?
+    # The maintenance thread runs every 5 minutes, so we check whether
+    # now falls in [scheduled_time, scheduled_time + 5 min).
+    from datetime import timedelta
+    window_start = now.replace(
+        hour=scheduled_hour, minute=scheduled_minute,
+        second=0, microsecond=0,
+    )
+    window_end = window_start + timedelta(minutes=5)
+
+    if not (window_start <= now < window_end):
+        return
+
+    # For weekly: is it the right day?
+    if schedule == "weekly":
+        if now.weekday() != _cfg.BACKUP_SCHEDULE_DAY_OF_WEEK:
+            return
+
+    # Has a backup already completed in this window?
+    try:
+        from backend.models import BackupHistory, Job
+        with SessionLocal() as db:
+            recent = db.query(BackupHistory).filter(
+                BackupHistory.status.in_(["LOCAL_ONLY", "SYNCED", "COMPLETED"]),
+                BackupHistory.timestamp >= window_start,
+                BackupHistory.filename != "__lock__",
+            ).first()
+
+            if recent:
+                return  # Already ran this window
+
+            # Is a backup job already queued or running?
+            pending = db.query(Job).filter(
+                Job.job_type == "backup",
+                Job.status.in_(["PENDING", "RUNNING"]),
+            ).first()
+
+            if pending:
+                return  # Already in the queue
+
+        job_id = submit_job(job_type="backup", submitted_by="system:scheduler")
+        mto_logger.info(
+            "Scheduled backup submitted (schedule=%s, time=%02d:%02d): job %s",
+            schedule, scheduled_hour, scheduled_minute, job_id[:8],
+        )
+
+    except Exception as e:
+        mto_logger.error("Scheduled backup check failed: %s", e)
+
+
 def _recover_stale_jobs():
     """
     Resets jobs stuck in RUNNING back to PENDING.
@@ -427,6 +574,128 @@ def _recover_stale_jobs():
 
 
 # ---------------------------------------------------------------------------
+# Worker heartbeat registry
+# ---------------------------------------------------------------------------
+# Each worker thread writes its worker_id → timestamp here on every loop
+# iteration (idle or busy). The health check reads this dict to detect
+# threads that have stopped updating — indicating a dead or hung thread.
+#
+# Structure:
+#   _worker_heartbeats = {
+#       "fast-0-abc123": {
+#           "last_beat":  datetime,   # last time the thread updated
+#           "pool":       "fast",     # "fast" | "slow"
+#           "status":     "idle",     # "idle" | "running" | "db_backoff"
+#           "current_job": None,      # job_id[:8] or None
+#           "thread_alive": True,     # threading.Thread.is_alive()
+#       },
+#       ...
+#   }
+#
+# A thread is considered DEAD when:
+#   - thread_alive is False (Python confirmed the thread exited), OR
+#   - last_beat is older than HEARTBEAT_DEAD_THRESHOLD_SECONDS
+#     (thread is alive but stuck — e.g. deadlock inside a job handler)
+#
+# A thread is considered STALE (warning, not dead) when:
+#   - last_beat is older than HEARTBEAT_STALE_THRESHOLD_SECONDS
+#     (thread is processing a long job — backup, bulk import)
+
+HEARTBEAT_STALE_THRESHOLD_SECONDS = 60   # warn after 60s without a beat
+HEARTBEAT_DEAD_THRESHOLD_SECONDS  = 300  # dead after 5 min without a beat
+
+_worker_heartbeats: dict[str, dict] = {}
+_heartbeat_lock = threading.Lock()
+# Keep a reference to each Thread object so we can call .is_alive()
+_worker_threads: dict[str, threading.Thread] = {}
+
+
+def _beat(worker_id: str, pool: str, status: str, current_job: str | None = None):
+    """
+    Records a heartbeat for the given worker.
+    Called from inside the worker loop — must be fast and never raise.
+    """
+    with _heartbeat_lock:
+        _worker_heartbeats[worker_id] = {
+            "last_beat": datetime.now(),
+            "pool": pool,
+            "status": status,
+            "current_job": current_job,
+        }
+
+
+def get_worker_health() -> dict:
+    """
+    Returns the health status of all worker threads.
+
+    Called by the /healthz endpoint and the /system/workers endpoint.
+    Returns a dict with:
+        overall:  "healthy" | "degraded" | "dead"
+        workers:  list of per-thread status dicts
+        summary:  human-readable summary string
+    """
+    now = datetime.now()
+    workers = []
+    dead_count = 0
+    stale_count = 0
+
+    with _heartbeat_lock:
+        heartbeats = dict(_worker_heartbeats)
+        threads = dict(_worker_threads)
+
+    for worker_id, info in heartbeats.items():
+        thread = threads.get(worker_id)
+        thread_alive = thread.is_alive() if thread else False
+        last_beat = info["last_beat"]
+        age_seconds = (now - last_beat).total_seconds()
+
+        if not thread_alive or age_seconds > HEARTBEAT_DEAD_THRESHOLD_SECONDS:
+            state = "dead"
+            dead_count += 1
+        elif age_seconds > HEARTBEAT_STALE_THRESHOLD_SECONDS:
+            state = "stale"
+            stale_count += 1
+        else:
+            state = "healthy"
+
+        workers.append({
+            "worker_id": worker_id,
+            "pool": info["pool"],
+            "status": info["status"],
+            "state": state,
+            "current_job": info["current_job"],
+            "last_beat_seconds_ago": round(age_seconds, 1),
+            "thread_alive": thread_alive,
+        })
+
+    # Sort for consistent output: fast pool first, then slow
+    workers.sort(key=lambda w: (w["pool"] != "fast", w["worker_id"]))
+
+    if dead_count > 0:
+        overall = "dead"
+    elif stale_count > 0:
+        overall = "stale"
+    else:
+        overall = "healthy"
+
+    total = len(workers)
+    summary = (
+        f"{total} worker(s) registered — "
+        f"{sum(1 for w in workers if w['state'] == 'healthy')} healthy, "
+        f"{stale_count} stale, "
+        f"{dead_count} dead"
+    )
+
+    return {
+        "overall": overall,
+        "workers": workers,
+        "summary": summary,
+        "fast_pool_size": FAST_POOL_SIZE,
+        "slow_pool_size": SLOW_POOL_SIZE,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Worker pool
 # ---------------------------------------------------------------------------
 
@@ -453,6 +722,11 @@ def start_worker():
 
         def loop():
             mto_logger.info(f"Job worker started: {worker_id} ({pool_name} pool)")
+            # Register initial heartbeat so the thread appears immediately
+            _beat(worker_id, pool_name, "idle")
+            # Current DB backoff delay. Resets to base after a successful DB op.
+            db_backoff = _DB_BACKOFF_BASE
+
             while True:
                 try:
                     job = _try_claim_job(worker_id, job_types)
@@ -460,23 +734,46 @@ def start_worker():
                         mto_logger.info(
                             f"[{worker_id}] Claimed: {job.job_type} [{job.id[:8]}]"
                         )
+                        _beat(worker_id, pool_name, "running", job.id[:8])
                         _run_job(job)
+                        _beat(worker_id, pool_name, "idle")
                     else:
-                        # Clear event, double check, and block on event wake signal
+                        # Clear event, double-check, then block until woken
                         _job_submitted_event.clear()
                         job = _try_claim_job(worker_id, job_types)
                         if job:
                             mto_logger.info(
                                 f"[{worker_id}] Claimed: {job.job_type} [{job.id[:8]}]"
                             )
+                            _beat(worker_id, pool_name, "running", job.id[:8])
                             _run_job(job)
+                            _beat(worker_id, pool_name, "idle")
                         else:
+                            _beat(worker_id, pool_name, "idle")
                             _job_submitted_event.wait(timeout=10.0)
+
+                    # Successful DB interaction — reset backoff
+                    db_backoff = _DB_BACKOFF_BASE
+
+                except _DB_ERROR_TYPES as e:
+                    _beat(worker_id, pool_name, "db_backoff")
+                    mto_logger.warning(
+                        f"[{worker_id}] DB unavailable (backoff {db_backoff:.0f}s): {e}"
+                    )
+                    dispose_and_reconnect()
+                    time.sleep(db_backoff)
+                    db_backoff = min(db_backoff * _DB_BACKOFF_FACTOR, _DB_BACKOFF_MAX)
+
                 except Exception as e:
+                    _beat(worker_id, pool_name, "idle")
                     mto_logger.error(f"[{worker_id}] Unhandled error: {e}")
                     time.sleep(5)
+                    db_backoff = _DB_BACKOFF_BASE
 
         t = threading.Thread(target=loop, daemon=True, name=worker_id)
+        # Register thread reference before starting so health check can call .is_alive()
+        with _heartbeat_lock:
+            _worker_threads[worker_id] = t
         t.start()
 
     # Start fast pool
@@ -488,10 +785,12 @@ def start_worker():
         make_worker("slow", SLOW_JOB_TYPES, i)
 
     # Maintenance thread — recovers stale jobs every 5 minutes
+    # and checks whether a scheduled backup is due.
     def maintenance_loop():
         while True:
             time.sleep(300)
             _recover_stale_jobs()
+            _check_scheduled_backup()
 
     threading.Thread(target=maintenance_loop, daemon=True, name="JobMaintenance").start()
 

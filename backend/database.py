@@ -40,6 +40,31 @@ def get_db():
         db.close()
 
 
+def dispose_and_reconnect() -> bool:
+    """
+    Invalidates all pooled connections and verifies the DB is reachable.
+
+    Called by the job worker after detecting an OperationalError (DB outage,
+    network blip, MariaDB restart). pool_pre_ping=True catches stale
+    connections on checkout, but under certain failure modes (mid-query
+    disconnect) the pool can still hold broken connections that pre_ping
+    misses. Calling engine.dispose() forces every thread to open a fresh
+    connection on its next request.
+
+    Returns True if the DB is reachable after disposal, False otherwise.
+    """
+    try:
+        engine.dispose()
+        # Verify the DB is actually back before returning True
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        mto_logger.info("DB pool disposed and reconnected successfully.")
+        return True
+    except Exception as e:
+        mto_logger.warning(f"DB pool dispose/reconnect failed: {e}")
+        return False
+
+
 def wait_for_db(max_attempts: int = 10, base_delay: float = 2.0) -> bool:
     """
     Waits for the database to become available using exponential backoff.

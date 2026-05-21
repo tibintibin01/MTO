@@ -76,8 +76,62 @@ MIGRATIONS = [
         )
     },
     {
-        "id": "week3_architecture_optimizations",
+        "id": "week4_data_retention_policy",
         "sql": (
+            # retention_policies table
+            "CREATE TABLE IF NOT EXISTS retention_policies ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  data_type VARCHAR(100) UNIQUE NOT NULL,"
+            "  description VARCHAR(500) NOT NULL,"
+            "  retention_years INT NOT NULL,"
+            "  action VARCHAR(20) NOT NULL DEFAULT 'ARCHIVE',"
+            "  legal_basis VARCHAR(255),"
+            "  is_active BOOLEAN NOT NULL DEFAULT TRUE,"
+            "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+            "  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+            "  INDEX(data_type)"
+            ");"
+
+            # retention_logs table — immutable audit trail
+            "CREATE TABLE IF NOT EXISTS retention_logs ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  policy_id INT NOT NULL,"
+            "  data_type VARCHAR(100) NOT NULL,"
+            "  action VARCHAR(20) NOT NULL,"
+            "  records_affected INT NOT NULL DEFAULT 0,"
+            "  cutoff_date DATETIME NOT NULL,"
+            "  executed_by VARCHAR(150) NOT NULL,"
+            "  notes TEXT,"
+            "  executed_at DATETIME NOT NULL,"
+            "  INDEX(policy_id),"
+            "  INDEX(data_type),"
+            "  INDEX(executed_at),"
+            "  FOREIGN KEY (policy_id) REFERENCES retention_policies(id) ON DELETE RESTRICT"
+            ");"
+
+            # Seed default policies (INSERT IGNORE = safe to re-run)
+            "INSERT IGNORE INTO retention_policies "
+            "  (data_type, description, retention_years, action, legal_basis) VALUES "
+            "  ('payments', 'Official Receipt payment records. COA requires 10-year minimum retention.', 10, 'ARCHIVE', 'COA Circular 2009-006; RA 10173 Sec. 11'),"
+            "  ('property_billings', 'Annual tax billing records per property. COA requires 10-year minimum retention.', 10, 'ARCHIVE', 'COA Circular 2009-006; RA 10173 Sec. 11'),"
+            "  ('receipt_history', 'Generated PDF receipt audit trail. Retained alongside payment records.', 10, 'ARCHIVE', 'COA Circular 2009-006'),"
+            "  ('audit_logs', 'System audit trail. Immutable by design; archived after 10 years for DB performance.', 10, 'ARCHIVE', 'COA Circular 2009-006; DICT MC 2022-002'),"
+            "  ('deleted_users', 'Soft-deleted staff accounts. Purged after 5 years per NPC guidelines.', 5, 'PURGE', 'RA 10173 Sec. 11(e)'),"
+            "  ('expired_tokens', 'Expired and revoked refresh tokens. Purged after 30 days for DB hygiene.', 0, 'PURGE', 'RA 10173 Sec. 11(e)');"
+        )
+    },
+    {
+        "id": "session_invalidation_on_password_change",
+        "sql": (
+            # Add password_changed_at to users table.
+            # NULL means the password has never been explicitly reset — tokens
+            # issued before this feature was deployed are not affected.
+            "ALTER TABLE users "
+            "  ADD COLUMN IF NOT EXISTS password_changed_at DATETIME NULL DEFAULT NULL;"
+        )
+    },
+    {
+        "id": "week3_architecture_optimizations",        "sql": (
             # tax_policies table
             "CREATE TABLE IF NOT EXISTS tax_policies ("
             "  id INT AUTO_INCREMENT PRIMARY KEY,"
@@ -89,16 +143,16 @@ MIGRATIONS = [
             "  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
             "  INDEX(tax_year)"
             ");"
-            
+
             # seed default values
             "INSERT IGNORE INTO tax_policies (tax_year, basic_rate, sef_rate, penalty_rate) VALUES "
             "(2020, 0.0100, 0.0100, 0.0200), (2021, 0.0100, 0.0100, 0.0200), (2022, 0.0100, 0.0100, 0.0200), "
             "(2023, 0.0100, 0.0100, 0.0200), (2024, 0.0100, 0.0100, 0.0200), (2025, 0.0100, 0.0100, 0.0200), "
             "(2026, 0.0100, 0.0100, 0.0200), (2027, 0.0100, 0.0100, 0.0200), (2028, 0.0100, 0.0100, 0.0200), "
             "(2029, 0.0100, 0.0100, 0.0200), (2030, 0.0100, 0.0100, 0.0200);"
-            
-            # modify jobs payload
-            "ALTER TABLE jobs MODIFY COLUMN payload MEDIUMTEXT;"
+
+            # expand jobs.payload to MEDIUMTEXT for large import payloads
+            "ALTER TABLE jobs MODIFY COLUMN IF EXISTS payload MEDIUMTEXT;"
         )
     }
 

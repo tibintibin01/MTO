@@ -10,6 +10,7 @@ import backend.services.auth_service as auth_svc
 from backend.deps import (
     get_current_user,
     limiter,
+    user_limiter,
     get_db,
     Session
 )
@@ -30,6 +31,7 @@ class Token(BaseModel):
 
 @router.post("/token", response_model=Token)
 @limiter.limit("10/minute")
+@user_limiter.limit("10/minute")
 async def login_for_access_token(
     request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db_session: Session = Depends(get_db)
 ):

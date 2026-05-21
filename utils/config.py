@@ -44,6 +44,17 @@ class MTOSettings(BaseSettings):
     ENABLE_CLOUD_BACKUP: bool = False
     ENABLE_SENTRY_TELEMETRY: bool = True
     MAINTENANCE_MODE: bool = False
+
+    # --- SCHEDULED BACKUP ---
+    # BACKUP_SCHEDULE controls automatic backup frequency.
+    # Values: disabled | daily | weekly
+    # BACKUP_SCHEDULE_HOUR: 0–23, hour of day (local server time) to run.
+    # BACKUP_SCHEDULE_MINUTE: 0–59, minute within the hour (default 30).
+    # BACKUP_SCHEDULE_DAY_OF_WEEK: 0=Monday … 6=Sunday (only used for weekly).
+    BACKUP_SCHEDULE: str = Field(default="disabled")
+    BACKUP_SCHEDULE_HOUR: int = Field(default=16, ge=0, le=23)
+    BACKUP_SCHEDULE_MINUTE: int = Field(default=30, ge=0, le=59)
+    BACKUP_SCHEDULE_DAY_OF_WEEK: int = Field(default=0, ge=0, le=6)
     
     # --- MUNICIPAL CUSTOMIZATION ---
     MUNICIPALITY_NAME: str = "Revenue System"
