@@ -468,6 +468,32 @@ def _cleanup_expired_idempotency_keys():
         mto_logger.error(f"Idempotency keys cleanup error: {e}")
 
 
+def _cleanup_expired_refresh_tokens():
+    """
+    Deletes expired and revoked refresh tokens from the database.
+
+    Refresh tokens expire after 7 days and are marked is_revoked=True on
+    logout or password reset. Without cleanup the table grows unbounded —
+    one row per login session per user, forever.
+
+    Runs every 5 minutes alongside stale job recovery. Deletes tokens that
+    are BOTH expired AND revoked (safe) or expired regardless of revocation
+    status (expired tokens are useless whether revoked or not).
+    """
+    try:
+        from backend.models import RefreshToken
+        now = datetime.now(timezone.utc)
+        with SessionLocal() as db:
+            deleted = db.query(RefreshToken).filter(
+                RefreshToken.expires_at < now
+            ).delete(synchronize_session=False)
+            db.commit()
+            if deleted > 0:
+                mto_logger.info(f"Pruned {deleted} expired refresh token(s).")
+    except Exception as e:
+        mto_logger.error(f"Refresh token cleanup error: {e}")
+
+
 def _check_scheduled_backup():
     """
     Submits a backup job if the configured schedule is due and no backup
@@ -546,10 +572,11 @@ def _recover_stale_jobs():
     """
     Resets jobs stuck in RUNNING back to PENDING.
     Called on startup and every 5 minutes by the maintenance thread.
-    Also prunes expired idempotency keys and validation caches.
+    Also prunes expired idempotency keys, refresh tokens, and import caches.
     """
     _cleanup_expired_idempotency_keys()
-    
+    _cleanup_expired_refresh_tokens()
+
     try:
         from backend.services.import_service import prune_old_import_cache
         prune_old_import_cache()
