@@ -469,6 +469,195 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
     }
 
 
+def get_compliant_accounts(
+    barangay: str = None,
+    limit: int = 50,
+    cursor: int = None,
+    db_session: Session = None,
+):
+    """
+    Fetches properties that are fully paid — zero outstanding balance
+    across ALL their billing years.
+
+    Definition of compliant:
+        SUM(amount_paid) >= SUM(assessed_value * TOTAL_RATE + penalty - discount)
+        across all PropertyBilling rows for that property.
+
+    Only properties that HAVE at least one billing record are included.
+    Properties with no billing records at all are excluded — they have
+    not been billed yet and cannot be considered compliant.
+
+    Supports:
+      - Optional barangay filter for per-barangay reporting
+      - Cursor-based pagination (cursor = last seen Property.id)
+    """
+    safe_limit = min(max(1, int(limit)), 200)
+    TOTAL_RATE = 0.02
+
+    total_due_expr = func.sum(
+        (PropertyBilling.assessed_value * TOTAL_RATE)
+        + PropertyBilling.penalty
+        - PropertyBilling.discount
+    )
+    total_paid_expr = func.sum(PropertyBilling.amount_paid)
+
+    # Last payment date for this property — used for "last paid" display column
+    last_payment_subq = (
+        db_session.query(
+            Payment.property_id,
+            func.max(Payment.date_paid).label("last_paid"),
+            func.max(Payment.or_number).label("last_or"),
+        )
+        .group_by(Payment.property_id)
+        .subquery()
+    )
+
+    query = (
+        db_session.query(
+            Property.id,
+            Property.td_number,
+            Property.owner_name,
+            Property.location,
+            func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
+            Property.kind_of_property,
+            total_due_expr.label("total_due"),
+            total_paid_expr.label("total_paid"),
+            last_payment_subq.c.last_paid,
+            last_payment_subq.c.last_or,
+            func.count(PropertyBilling.id).label("years_covered"),
+        )
+        .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+        .outerjoin(last_payment_subq, last_payment_subq.c.property_id == Property.id)
+        .filter(Property.deleted_at == None)
+        .group_by(
+            Property.id,
+            Property.td_number,
+            Property.owner_name,
+            Property.location,
+            Property.barangay,
+            Property.kind_of_property,
+            last_payment_subq.c.last_paid,
+            last_payment_subq.c.last_or,
+        )
+        # Compliant = total paid >= total due (zero or positive overpayment)
+        .having(total_paid_expr >= total_due_expr)
+    )
+
+    if barangay and barangay.upper() != "ALL":
+        query = query.filter(
+            func.coalesce(Property.barangay, "UNSPECIFIED") == barangay
+        )
+
+    if cursor:
+        query = query.filter(Property.id > int(cursor))
+
+    rows = query.order_by(Property.id.asc()).limit(safe_limit + 1).all()
+
+    has_more = len(rows) > safe_limit
+    items = rows[:safe_limit]
+    next_cursor = items[-1][0] if has_more and items else None
+
+    return {
+        "items": [
+            {
+                "id": r[0],
+                "td_number": r[1],
+                "owner_name": r[2],
+                "location": r[3],
+                "barangay": r[4],
+                "kind_of_property": r[5] or "—",
+                "total_due": float(r[6] or 0),
+                "total_paid": float(r[7] or 0),
+                "last_paid": r[8].strftime("%Y-%m-%d") if r[8] else None,
+                "last_or": r[9],
+                "years_covered": int(r[10] or 0),
+            }
+            for r in items
+        ],
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "count": len(items),
+    }
+
+
+def get_compliant_summary_by_barangay(db_session: Session = None):
+    """
+    Returns a per-barangay summary of compliant vs total properties.
+
+    Used for the summary cards at the top of the Compliant Properties dashboard.
+    Each row contains:
+      - barangay name
+      - total properties in that barangay (with billing records)
+      - compliant count (fully paid)
+      - delinquent count
+      - compliance rate (%)
+      - total amount collected from compliant properties
+    """
+    TOTAL_RATE = 0.02
+
+    total_due_expr = func.sum(
+        (PropertyBilling.assessed_value * TOTAL_RATE)
+        + PropertyBilling.penalty
+        - PropertyBilling.discount
+    )
+    total_paid_expr = func.sum(PropertyBilling.amount_paid)
+
+    # All properties with billing records, grouped by property + barangay
+    # to determine per-property compliance status
+    per_property = (
+        db_session.query(
+            Property.id,
+            func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
+            total_due_expr.label("total_due"),
+            total_paid_expr.label("total_paid"),
+        )
+        .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+        .filter(Property.deleted_at == None)
+        .group_by(Property.id, Property.barangay)
+        .subquery()
+    )
+
+    # Aggregate per barangay
+    rows = (
+        db_session.query(
+            per_property.c.barangay,
+            func.count(per_property.c.id).label("total"),
+            func.sum(
+                case((per_property.c.total_paid >= per_property.c.total_due, 1), else_=0)
+            ).label("compliant"),
+            func.sum(
+                case((per_property.c.total_paid < per_property.c.total_due, 1), else_=0)
+            ).label("delinquent"),
+            func.sum(
+                case(
+                    (per_property.c.total_paid >= per_property.c.total_due,
+                     per_property.c.total_paid),
+                    else_=0,
+                )
+            ).label("collected_from_compliant"),
+        )
+        .group_by(per_property.c.barangay)
+        .order_by(per_property.c.barangay.asc())
+        .all()
+    )
+
+    result = []
+    for r in rows:
+        total = int(r[1] or 0)
+        compliant = int(r[2] or 0)
+        rate = round((compliant / total * 100), 1) if total > 0 else 0.0
+        result.append({
+            "barangay": r[0],
+            "total_properties": total,
+            "compliant_count": compliant,
+            "delinquent_count": int(r[3] or 0),
+            "compliance_rate": rate,
+            "collected_from_compliant": float(r[4] or 0),
+        })
+
+    return result
+
+
 def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
     """
     Fetches properties with outstanding balances using cursor-based pagination.

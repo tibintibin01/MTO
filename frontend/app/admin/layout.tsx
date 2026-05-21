@@ -12,7 +12,8 @@ import {
   ShieldAlert,
   User as UserIcon,
   Menu,
-  X
+  X,
+  CheckCircle2,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -93,6 +94,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { name: "Dashboard", path: "/admin/dashboard", icon: LayoutDashboard },
     { name: "Property Registry", path: "/admin/properties", icon: Building2 },
     { name: "Cashier Ledger", path: "/admin/cashier", icon: CreditCard },
+    { name: "Compliant Properties", path: "/admin/compliant", icon: CheckCircle2 },
     { name: "DB & Maintenance", path: "/admin/system", icon: Database },
   ];
 

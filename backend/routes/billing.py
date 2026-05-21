@@ -62,6 +62,36 @@ async def get_delinquent_list(
 ):
     return bill_svc.get_delinquent_accounts(limit=limit, cursor=cursor, db_session=db_session)
 
+
+@router.get("/billing/compliant")
+async def get_compliant_list(
+    barangay: Optional[str] = None,
+    limit: int = 50,
+    cursor: Optional[int] = None,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Returns properties with zero outstanding balance (fully paid across all years).
+    Optionally filtered by barangay. Cursor-paginated.
+    """
+    return bill_svc.get_compliant_accounts(
+        barangay=barangay, limit=limit, cursor=cursor, db_session=db_session
+    )
+
+
+@router.get("/billing/compliant/summary")
+async def get_compliant_summary(
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Returns per-barangay compliance summary:
+    total properties, compliant count, delinquent count, compliance rate %.
+    Used for the summary cards at the top of the Compliant Properties dashboard.
+    """
+    return bill_svc.get_compliant_summary_by_barangay(db_session=db_session)
+
 @router.get("/reports/receivables-by-barangay")
 async def get_receivables_by_barangay(
     year: Optional[int] = None,
