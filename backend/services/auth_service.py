@@ -155,12 +155,15 @@ def verify_user_login(username, password, db_session: Session):
     if not user.is_active:
         raise ValueError("DISABLED:Account is disabled. Please contact the administrator.")
 
-    # 2. Check for active security lockout
-    # lockout_until is stored as a naive datetime in MariaDB (DATETIME has no
-    # timezone). Compare against naive datetime.now() to avoid TypeError and
-    # the silent time-offset bug that .replace(tzinfo=...) introduces.
-    if user.lockout_until and user.lockout_until > datetime.now():
-        diff = user.lockout_until - datetime.now()
+    # 2. Check for active security lockout.
+    # lockout_until is written as a naive UTC datetime (datetime.utcnow() /
+    # datetime.now(timezone.utc).replace(tzinfo=None)) so we compare against
+    # datetime.utcnow() here — both sides are naive UTC, no offset error.
+    # Using datetime.now() (local time) would be wrong on any server not in UTC,
+    # including Docker containers which default to UTC while the OS may be UTC+8.
+    _now_utc_naive = datetime.utcnow()
+    if user.lockout_until and user.lockout_until > _now_utc_naive:
+        diff = user.lockout_until - _now_utc_naive
         minutes = int(diff.total_seconds() // 60) + 1
         raise ValueError(f"LOCKED:{minutes}")
 
@@ -169,7 +172,9 @@ def verify_user_login(username, password, db_session: Session):
     if not match:
         user.failed_attempts = (user.failed_attempts or 0) + 1
         if user.failed_attempts >= 5:
-            user.lockout_until = datetime.now(timezone.utc) + timedelta(minutes=5)
+            # Write naive UTC so the comparison in the lockout check above
+            # (datetime.utcnow()) stays on the same naive-UTC basis.
+            user.lockout_until = datetime.utcnow() + timedelta(minutes=5)
             db_session.commit()
             raise ValueError("LOCKED:5")
         else:
@@ -396,8 +401,19 @@ def reset_user_password(user_id, new_password, admin_user, db_session: Session):
         return False
 
     user.password = hash_password(new_password)
+    # Use UTC naive to match datetime.utcfromtimestamp(iat) in get_current_user.
+    # datetime.now() would give local time (UTC+8 in Philippines), causing the
+    # iat comparison to incorrectly reject fresh tokens after a password reset.
+    user.password_changed_at = datetime.utcnow()
+
+    # Revoke all existing refresh tokens — the user must log in again
+    # with the new password to get a fresh token pair.
+    db_session.query(RefreshToken).filter(
+        RefreshToken.user_id == user_id
+    ).update({RefreshToken.is_revoked: True}, synchronize_session=False)
+
     db_session.commit()
-    
+
     from backend.services.history_service import log_data_change
     log_data_change(
         user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,

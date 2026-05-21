@@ -253,6 +253,9 @@ def get_unified_payment_history(term, db_session: Session = None):
         Payment.date_paid,
         Payment.or_number,
         Payment.tax_year,
+        # Basic and SEF are derived from assessed_value at the default 1% each.
+        # These are display-only columns on the ledger — the authoritative
+        # amounts are in PropertyBilling. Using 0.01 matches the TaxPolicy default.
         (Property.assessed_value * 0.01).label('basic'),
         (Property.assessed_value * 0.01).label('sef'),
         Payment.penalty,
@@ -285,6 +288,8 @@ def get_payment_ledger(td_number, db_session: Session = None):
         Payment.date_paid,
         Payment.or_number,
         Payment.tax_year,
+        # Display-only basic/SEF split at default 1% each.
+        # Authoritative amounts are in PropertyBilling.
         (Property.assessed_value * 0.01).label('basic'),
         (Property.assessed_value * 0.01).label('sef'),
         Payment.penalty,

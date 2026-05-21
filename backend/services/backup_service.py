@@ -349,7 +349,7 @@ def _rotate_backups(directory, keep=7):
         to_delete = files.pop(0)
         try:
             os.remove(to_delete)
-        except:
+        except OSError:
             pass
 
 
@@ -367,11 +367,32 @@ def _find_usb_drive():
 
 
 def _sync_to_cloud(file_path):
-    """Placeholder for cloud upload."""
-    print(f"Simulating cloud upload for {file_path}...")
-    import time
-    time.sleep(2)  # Simulate network lag
-    return True
+    """
+    Uploads the backup file to S3-compatible object storage.
+    Returns True on success, False on failure or when cloud backup is disabled.
+    """
+    from utils.config import config as _cfg
+    if not _cfg.ENABLE_CLOUD_BACKUP:
+        return False
+
+    try:
+        from backend.services.storage_service import storage_service
+        if not storage_service.enabled:
+            mto_logger.warning("Cloud backup requested but S3 storage is not configured.")
+            return False
+
+        import os
+        file_name = os.path.basename(file_path)
+        s3_key = f"backups/{file_name}"
+        result = storage_service.upload_file(file_path, s3_key)
+        if result:
+            mto_logger.info(f"Cloud backup uploaded: {s3_key}")
+            return True
+        mto_logger.warning(f"Cloud backup upload returned no key for {file_path}")
+        return False
+    except Exception as e:
+        mto_logger.error(f"Cloud backup upload failed: {e}")
+        return False
 
 
 def _generate_checksum(file_path):

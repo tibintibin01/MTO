@@ -124,4 +124,5 @@ async def delete_payment(
     try:
         return pay_svc.delete_payment_record(payment_id, current_user, db_session=db_session)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        mto_logger.error(f"Payment deletion failed for id={payment_id}: {e}")
+        raise HTTPException(status_code=400, detail="Payment could not be deleted. It may be linked to other records.")

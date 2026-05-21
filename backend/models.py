@@ -17,6 +17,9 @@ class User(Base):
     failed_attempts = Column(Integer, default=0)
     lockout_until = Column(DateTime, nullable=True)
     last_login = Column(DateTime, nullable=True)
+    # Tracks when the password was last changed so tokens issued before this
+    # timestamp can be immediately invalidated — even within their 1-hour window.
+    password_changed_at = Column(DateTime, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
 class Property(Base):
@@ -185,7 +188,10 @@ class IdempotencyKey(Base):
     __tablename__ = "idempotency_keys"
 
     id = Column(Integer, primary_key=True, index=True)
-    key = Column(String(128), unique=True, nullable=False, index=True)
+    # Composite key format: "{uuid}:{user_id}:{sha256_hex}"
+    # Max length: 36 (uuid) + 1 + 20 (user_id) + 1 + 64 (sha256) = 122 chars.
+    # Using 200 to give headroom without wasting space.
+    key = Column(String(200), unique=True, nullable=False, index=True)
     method = Column(String(10), nullable=False)
     path = Column(String(255), nullable=False)
     status_code = Column(Integer, nullable=False, default=200)
@@ -278,6 +284,61 @@ class ORSequence(Base):
     prefix = Column(String(50), unique=True, nullable=False, index=True)
     next_value = Column(Integer, nullable=False, default=1)
     digits = Column(Integer, nullable=False, default=6)
+
+
+class RetentionPolicy(Base):
+    """
+    Configurable data retention schedule per data type.
+
+    Implements RA 10173 (Data Privacy Act) and DICT MC 2022-002 compliance.
+
+    Retention rules:
+      - Financial records (payments, receipts): 10 years minimum (COA)
+      - Property assessments: permanent (land records, never purge)
+      - Audit logs: 10 years (COA)
+      - Deleted user accounts: 5 years
+      - Refresh tokens: 7 days (already auto-expired)
+
+    action values:
+      ARCHIVE  — mark records as archived (read-only, stays in DB)
+      PURGE    — hard delete (only for non-financial, non-audit data)
+
+    is_active = False disables the policy without deleting it, so the
+    schedule is preserved for audit trail purposes.
+    """
+    __tablename__ = "retention_policies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    data_type = Column(String(100), unique=True, nullable=False, index=True)
+    description = Column(String(500), nullable=False)
+    retention_years = Column(Integer, nullable=False)
+    action = Column(String(20), nullable=False, default="ARCHIVE")  # ARCHIVE | PURGE
+    legal_basis = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(),
+                        onupdate=func.current_timestamp())
+
+
+class RetentionLog(Base):
+    """
+    Immutable audit trail for every retention action taken.
+
+    Records what was archived/purged, when, by whom (system or admin),
+    and how many records were affected. Required for COA and NPC audits.
+    """
+    __tablename__ = "retention_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    policy_id = Column(Integer, ForeignKey("retention_policies.id", ondelete="RESTRICT"),
+                       nullable=False, index=True)
+    data_type = Column(String(100), nullable=False)
+    action = Column(String(20), nullable=False)          # ARCHIVE | PURGE | DRY_RUN
+    records_affected = Column(Integer, nullable=False, default=0)
+    cutoff_date = Column(DateTime, nullable=False)       # Records older than this were processed
+    executed_by = Column(String(150), nullable=False)    # username or "system"
+    notes = Column(Text, nullable=True)
+    executed_at = Column(DateTime, nullable=False)
 
 # --- SECURE GOVERNMENT COMPLIANCE: AUDIT LOG IMMUTABILITY ---
 from sqlalchemy import event

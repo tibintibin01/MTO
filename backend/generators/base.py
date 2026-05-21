@@ -11,15 +11,19 @@ BRANDING_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.
 try:
     with open(BRANDING_FILE, "r") as f:
         BRANDING = json.load(f)
-except:
-    # Fallback to defaults if file missing
+except (OSError, json.JSONDecodeError) as _branding_err:
+    # Fallback to defaults if file missing or malformed.
+    # Log to stderr so it's visible in Docker logs without requiring the
+    # full logger stack (which may not be initialised at import time).
+    import sys
+    print(f"WARNING: Could not load branding.json ({_branding_err}), using defaults.", file=sys.stderr)
     BRANDING = {
         "office_name": "MUNICIPAL REVENUE OFFICE",
         "branding_colors": {
-            "primary": "#1f538d", 
-            "secondary": "#7f8c8d", 
-            "accent": "#d9e2f3", 
-            "danger": "#c0392b", 
+            "primary": "#1f538d",
+            "secondary": "#7f8c8d",
+            "accent": "#d9e2f3",
+            "danger": "#c0392b",
             "success": "#27ae60"
         },
         "fonts": {"header": "Helvetica-Bold", "body": "Helvetica"},
@@ -74,8 +78,9 @@ def draw_header(c, title, width, height, margin_x, color=None):
         try:
             c.drawImage(logo_path, margin_x, height - 35 * mm, width=25 * mm, height=25 * mm, mask='auto')
             logo_drawn = True
-        except:
-            pass
+        except Exception as _logo_err:
+            import sys
+            print(f"WARNING: Could not draw logo ({logo_path}): {_logo_err}", file=sys.stderr)
 
     text_offset = 30 * mm if logo_drawn else 0
     
@@ -99,5 +104,6 @@ def draw_seal(c, width, height):
             c.setFillAlpha(0.05) # Very subtle watermark
             c.drawImage(seal_path, (width - 120 * mm) / 2, (height - 120 * mm) / 2, width=120 * mm, height=120 * mm, mask='auto')
             c.restoreState()
-        except:
-            pass
+        except Exception as _seal_err:
+            import sys
+            print(f"WARNING: Could not draw seal ({seal_path}): {_seal_err}", file=sys.stderr)

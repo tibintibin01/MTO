@@ -7,7 +7,7 @@ from jose import JWTError, jwt
 from pydantic import BaseModel
 import backend.services.system_service as sys_svc
 import backend.services.search_service as search_svc
-from backend.deps import get_current_user, admin_only, write_access, read_only, limiter, manager, get_db, Session, SECRET_KEY, ALGORITHM
+from backend.deps import get_current_user, admin_only, write_access, read_only, limiter, user_limiter, manager, get_db, Session, SECRET_KEY, ALGORITHM
 from backend.schemas import PropertySaveSchema, LogActionSchema
 from utils.logger import mto_logger
 
@@ -35,7 +35,8 @@ async def health_check(db_session: Session = Depends(get_db)):
         "database": "unknown",
         "cache": "unknown",
         "storage": "unknown",
-        "vault": "unknown"
+        "vault": "unknown",
+        "job_workers": "unknown",
     }
     
     # 1. Database Connection Check
@@ -85,6 +86,21 @@ async def health_check(db_session: Session = Depends(get_db)):
         health["vault"] = f"error: {str(e)}"
         health["status"] = "unhealthy"
 
+    # 5. Job Worker Health Check
+    try:
+        from backend.services.job_service import get_worker_health
+        worker_health = get_worker_health()
+        health["job_workers"] = {
+            "overall": worker_health["overall"],
+            "summary": worker_health["summary"],
+        }
+        # Dead workers degrade the health status — jobs will queue but not process.
+        # Stale workers are only a warning (long-running job in progress).
+        if worker_health["overall"] == "dead":
+            health["status"] = "degraded"
+    except Exception as e:
+        health["job_workers"] = f"error: {str(e)}"
+
     if health["status"] == "unhealthy":
         raise HTTPException(status_code=503, detail=health)
     return health
@@ -127,6 +143,7 @@ async def get_system_stats(request: Request, current_user: dict = Depends(admin_
 
 @router.post("/system/backup/trigger")
 @limiter.limit("3/minute")
+@user_limiter.limit("3/minute")
 async def trigger_backup(
     request: Request,
     current_user: dict = Depends(admin_only)
@@ -143,6 +160,68 @@ async def trigger_backup(
 async def get_backup_health(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     from backend.services.backup_service import get_backup_status
     return get_backup_status(db_session=db_session)
+
+
+@router.get("/system/backup/schedule", dependencies=[Depends(read_only)])
+async def get_backup_schedule(current_user: dict = Depends(get_current_user)):
+    """
+    Returns the configured automatic backup schedule and when the next
+    backup is expected to run. Read-only — all roles can view this.
+    """
+    from utils.config import config as _cfg
+    from datetime import datetime
+
+    schedule    = _cfg.BACKUP_SCHEDULE.strip().lower()
+    hour        = _cfg.BACKUP_SCHEDULE_HOUR
+    minute      = _cfg.BACKUP_SCHEDULE_MINUTE
+    day_of_week = _cfg.BACKUP_SCHEDULE_DAY_OF_WEEK
+
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday",
+                 "Friday", "Saturday", "Sunday"]
+
+    if schedule == "disabled":
+        return {
+            "schedule": "disabled",
+            "description": "Automatic backups are disabled. Trigger manually via the backup button.",
+            "next_run": None,
+        }
+
+    now = datetime.now()
+
+    if schedule == "daily":
+        candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= now:
+            from datetime import timedelta
+            candidate += timedelta(days=1)
+        description = f"Daily at {hour:02d}:{minute:02d} (local server time)"
+
+    elif schedule == "weekly":
+        from datetime import timedelta
+        days_ahead = (day_of_week - now.weekday()) % 7
+        candidate = (now + timedelta(days=days_ahead)).replace(
+            hour=hour, minute=minute, second=0, microsecond=0
+        )
+        if candidate <= now:
+            candidate += timedelta(weeks=1)
+        description = (
+            f"Weekly on {day_names[day_of_week]} at {hour:02d}:{minute:02d} (local server time)"
+        )
+    else:
+        return {
+            "schedule": schedule,
+            "description": f"Unknown schedule value: {schedule!r}",
+            "next_run": None,
+        }
+
+    return {
+        "schedule": schedule,
+        "description": description,
+        "next_run": candidate.strftime("%Y-%m-%d %H:%M:%S"),
+        "next_run_in_hours": round((candidate - now).total_seconds() / 3600, 1),
+        "scheduled_hour": hour,
+        "scheduled_minute": minute,
+        "scheduled_day_of_week": day_names[day_of_week] if schedule == "weekly" else None,
+    }
 
 @router.post("/system/import/validate", dependencies=[Depends(write_access)])
 async def validate_bulk_import(
@@ -274,8 +353,9 @@ async def restore_system_backup(
         try:
             with open("logs/restore_debug.log", "a") as f:
                 f.write(f"\n[{datetime.now(timezone.utc)}] RESTORE FAILURE\nFile: {request.file_path}\nError: {str(e)}\nTraceback:\n{error_detail}\n" + "-" * 40 + "\n")
-        except: pass
-        raise HTTPException(status_code=500, detail=str(e))
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail="Restore operation failed. Check server logs for details.")
 
 @router.websocket("/ws/notifications")
 async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = None):
@@ -378,6 +458,105 @@ async def sync_billing_years(
         "status": "queued",
         "message": "Billing year sync queued. Poll /jobs/{job_id} for progress.",
     }
+
+
+# ---------------------------------------------------------------------------
+# Data Retention Policy — RA 10173 (NPC) & DICT MC 2022-002 Compliance
+# ---------------------------------------------------------------------------
+
+@router.get("/system/retention/policies", dependencies=[Depends(admin_only)])
+async def list_retention_policies(
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Returns all configured retention policies with their last execution info.
+    Admin only.
+    """
+    from backend.services.retention_service import get_all_policies
+    return get_all_policies(db_session=db_session)
+
+
+@router.get("/system/retention/logs", dependencies=[Depends(admin_only)])
+async def list_retention_logs(
+    limit: int = 100,
+    cursor: Optional[int] = None,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Returns paginated retention execution history for COA/NPC audit trail.
+    Admin only.
+    """
+    from backend.services.retention_service import get_retention_logs
+    return get_retention_logs(limit=limit, cursor=cursor, db_session=db_session)
+
+
+@router.post("/system/retention/run", dependencies=[Depends(admin_only)])
+async def run_retention_policy(
+    dry_run: bool = False,
+    data_type: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Triggers the data retention policy as a background job.
+
+    - dry_run=true  → preview what would be affected, no changes written
+    - dry_run=false → execute archival/purge per the configured schedule
+    - data_type     → run only for this data type (e.g. "deleted_users")
+                      omit to run all active policies
+
+    Returns a job_id to poll for progress.
+    Admin only.
+    """
+    from backend.services.job_service import submit_job
+
+    mto_logger.info(
+        "Retention policy run requested by %s (dry_run=%s, data_type=%s)",
+        current_user.get("username"), dry_run, data_type,
+    )
+
+    job_id = submit_job(
+        job_type="retention_run",
+        submitted_by=current_user["username"],
+        payload={"dry_run": dry_run, "data_type": data_type},
+        db_session=db_session,
+    )
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "dry_run": dry_run,
+        "message": (
+            f"{'DRY RUN — ' if dry_run else ''}"
+            "Retention policy queued. Poll /jobs/{job_id} for progress."
+        ),
+    }
+
+
+@router.get("/system/workers")
+async def get_worker_health(current_user: dict = Depends(admin_only)):
+    """
+    Returns the live health status of all background job worker threads.
+
+    Use this to detect dead or hung workers without waiting for the full
+    /healthz probe. Useful for the admin dashboard and monitoring tools.
+
+    Worker states:
+      healthy  — thread is alive and beat within the last 60 seconds
+      stale    — thread is alive but hasn't beat in 60–300 seconds
+                 (normal during long-running jobs like backup or bulk import)
+      dead     — thread has exited or hasn't beat in over 5 minutes
+
+    Overall status:
+      healthy  — all workers healthy
+      stale    — at least one worker is stale (long job in progress)
+      dead     — at least one worker has died (jobs will queue but not process)
+
+    Admin only.
+    """
+    from backend.services.job_service import get_worker_health as _get_health
+    return _get_health()
 
 
 @router.post("/system/restart", dependencies=[Depends(admin_only)])

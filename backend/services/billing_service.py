@@ -485,9 +485,13 @@ def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
     """
     safe_limit = min(max(1, int(limit)), 200)  # hard cap at 200
 
-    # 2% total rate (1% basic + 1% SEF) — matches the default in TaxPolicy.
-    # Properties with custom rates already have the correct assessed_value stored
-    # in PropertyBilling from when sync_property_billing ran.
+    # NOTE: PropertyBilling.assessed_value already has the tax rate applied
+    # (it stores the raw assessed value from the property record, not the
+    # computed tax amount). The TOTAL_RATE multiplier here computes the annual
+    # tax due from the stored assessed value.
+    # Default 2% (1% basic + 1% SEF) matches TaxPolicy defaults.
+    # TODO: Join TaxPolicy per billing year for multi-rate accuracy once
+    # ONLY_FULL_GROUP_BY compatibility is confirmed on the target MariaDB version.
     TOTAL_RATE = 0.02
 
     balance_expr = func.sum(
@@ -544,9 +548,29 @@ def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
     }
 
 
-def calculate_penalty(principal, months_late):
-    """Calculates penalty at 2% per month of delay."""
-    return float(principal) * 0.02 * int(months_late)
+def calculate_penalty(principal, months_late, tax_year=None, db_session=None):
+    """
+    Calculates penalty at the configured rate per month of delay.
+
+    Uses the penalty_rate from TaxPolicy for the given tax_year if available.
+    Falls back to 2% per month (0.02) — the default in TaxPolicy — if no
+    policy is configured for that year or no db_session is provided.
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+    DEFAULT_PENALTY_RATE = Decimal("0.02")
+
+    rate = DEFAULT_PENALTY_RATE
+    if db_session and tax_year:
+        try:
+            policy = db_session.query(TaxPolicy).filter(
+                TaxPolicy.tax_year == int(tax_year)
+            ).first()
+            if policy:
+                rate = Decimal(str(policy.penalty_rate))
+        except Exception:
+            pass  # Fall back to default on any DB error
+
+    return float(Decimal(str(principal)) * rate * int(months_late))
 
 
 def get_total_due(property_id, db_session: Session = None):

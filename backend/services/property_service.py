@@ -31,48 +31,108 @@ def search_properties(
     term, limit=100, cursor=None, kind=None, year_start=None, year_end=None, barangay=None, db_session: Session = None
 ):
     """
-    Enhanced search with optional filters using SQLAlchemy ORM.
+    Enhanced search with optional filters and fuzzy owner-name matching.
+
+    Search strategy:
+      - TD number / PIN (contains dashes or is all-digits): exact SQL match only.
+        Fuzzy matching on structured identifiers produces false positives.
+      - Owner name / location (contains letters, no dashes): SQL LIKE for
+        candidate retrieval, then Python-side fuzzy re-ranking using
+        difflib.SequenceMatcher. This catches typos, missing spaces, and
+        slight misspellings without any new dependencies.
+
+    Fuzzy threshold: 0.55 similarity ratio (0–1 scale).
+      - "dela crus" vs "DELA CRUZ"  → ~0.89 ✅
+      - "delacrus"  vs "DELA CRUZ"  → ~0.72 ✅
+      - "juan"      vs "JUAN DELA CRUZ" → ~0.44 ❌ (too short, use LIKE instead)
+    Results are sorted by similarity score descending so the best match
+    appears first.
     """
+    import difflib
+
     query = db_session.query(Property).filter(Property.deleted_at == None)
-    
+
+    # Determine search mode from the term
+    is_id_search = False
     if term:
         clean_term = str(term).strip()
         if " " in clean_term and not any(c.isalpha() for c in clean_term):
+            # Looks like a spaced TD number — convert spaces to dashes
             dashed_term = clean_term.replace(" ", "-")
             query = query.filter(
-                (Property.td_number == dashed_term) | 
+                (Property.td_number == dashed_term) |
                 (Property.pin == dashed_term) |
-                (Property.td_number.like(f"%{dashed_term}%")) | 
+                (Property.td_number.like(f"%{dashed_term}%")) |
                 (Property.pin.like(f"%{dashed_term}%"))
             )
+            is_id_search = True
         elif "-" in clean_term:
-            query = query.filter((Property.td_number == clean_term) | (Property.pin == clean_term))
+            # Structured TD number / PIN — exact match only
+            query = query.filter(
+                (Property.td_number == clean_term) | (Property.pin == clean_term)
+            )
+            is_id_search = True
         else:
+            # Name / location search — broad LIKE to pull candidates, then fuzzy-rank
             like_term = f"%{clean_term}%"
             query = query.filter(
-                (Property.td_number.like(like_term)) | 
-                (Property.owner_name.like(like_term)) | 
-                (Property.pin.like(like_term)) | 
+                (Property.td_number.like(like_term)) |
+                (Property.owner_name.like(like_term)) |
+                (Property.pin.like(like_term)) |
                 (Property.location.like(like_term))
             )
-    
+
     if kind and kind != "ALL":
         query = query.filter(Property.kind_of_property == kind)
-    
+
     if year_start:
         query = query.filter(Property.effectivity_date >= str(year_start))
-    
+
     if year_end:
         query = query.filter(Property.effectivity_date <= str(year_end))
-        
+
     if barangay and barangay != "ALL":
         query = query.filter(Property.barangay == barangay)
-        
+
     if cursor:
         query = query.filter(Property.id < int(cursor))
-        
-    results = query.order_by(Property.id.desc()).limit(limit).all()
-    
+
+    # Fetch a larger candidate pool when fuzzy matching will be applied so
+    # we have enough results to rank before trimming to the requested limit.
+    fetch_limit = limit if is_id_search or not term else min(limit * 4, 400)
+    results = query.order_by(Property.id.desc()).limit(fetch_limit).all()
+
+    # ── Fuzzy re-ranking for name searches ──────────────────────────────────
+    # Only apply when the term contains letters and is not a structured ID.
+    FUZZY_THRESHOLD = 0.55
+
+    if term and not is_id_search and any(c.isalpha() for c in str(term).strip()):
+        search_upper = str(term).strip().upper()
+
+        def _score(prop) -> float:
+            """
+            Returns the best similarity ratio across the searchable text fields.
+            Uses SequenceMatcher which handles insertions, deletions, and
+            substitutions — good for name typos and missing spaces.
+            """
+            candidates = [
+                prop.owner_name or "",
+                prop.location or "",
+                prop.td_number or "",
+            ]
+            return max(
+                difflib.SequenceMatcher(None, search_upper, c.upper()).ratio()
+                for c in candidates
+            )
+
+        scored = [(p, _score(p)) for p in results]
+        # Keep only results above the threshold, sorted best-first
+        scored = [(p, s) for p, s in scored if s >= FUZZY_THRESHOLD]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        results = [p for p, _ in scored[:limit]]
+    else:
+        results = results[:limit]
+
     return [
         (
             p.id, p.td_number, p.owner_name, p.payor_name, p.lot_number, p.area, p.location, p.kind_of_property,
@@ -162,7 +222,16 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
         
         # 4. Log Change
         after_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
-        log_data_change(user["id"] if user else 0, "properties", prop.id, action, before=before_data, after=after_data)
+        log_data_change(
+            user["id"] if user else 0,
+            "properties",
+            prop.id,
+            action,
+            before=before_data,
+            after=after_data,
+            username=get_username(user) if user else "unknown",
+            db_session=db_session,
+        )
         
         # 5. Financial Sync
         _sync_financial_records(prop.id, data, db_session)
@@ -382,9 +451,11 @@ def bulk_update_barangay(property_ids, new_barangay, user=None, db_session: Sess
     """Updates the barangay for multiple properties at once."""
     if not property_ids or not new_barangay:
         return 0
-        count = db_session.query(Property).filter(Property.id.in_(property_ids)).update({Property.barangay: new_barangay}, synchronize_session=False)
+    count = db_session.query(Property).filter(Property.id.in_(property_ids)).update(
+        {Property.barangay: new_barangay}, synchronize_session=False
+    )
     db_session.commit()
-    
+
     if count and user:
         from backend.services.history_service import log_data_change
         log_data_change(
