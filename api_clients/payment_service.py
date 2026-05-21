@@ -8,7 +8,10 @@ def get_recent_payments(limit=8):
 
 
 def get_payment_receipt_records(term):
-    return api_request("GET", "/payments/records", params={"term": term})
+    result = api_request("GET", "/payments/records", params={"term": term})
+    if isinstance(result, dict) and "items" in result:
+        return result["items"]
+    return result if isinstance(result, list) else []
 
 
 def get_payment_receipt_details(payment_id):
@@ -64,3 +67,12 @@ def update_receipt_history(history_id, file_path, user_name):
 
 def delete_payment(payment_id):
     return api_request("DELETE", f"/payments/{payment_id}")
+
+
+def generate_receipt_pdf(payment_id) -> str:
+    """
+    Calls the backend to generate a receipt PDF and saves it to a temp file.
+    Returns the local path to the downloaded PDF.
+    """
+    from api_clients.api_helper import api_download_file
+    return api_download_file("POST", f"/payments/{payment_id}/receipt-pdf")

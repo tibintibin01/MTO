@@ -34,6 +34,72 @@ MIGRATIONS = [
     {
         "id": "add_refresh_tokens_table",
         "sql": "CREATE TABLE IF NOT EXISTS refresh_tokens (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, token VARCHAR(512) UNIQUE NOT NULL, expires_at DATETIME NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, is_revoked BOOLEAN DEFAULT FALSE, INDEX(user_id), INDEX(token))"
+    },
+    {
+        "id": "week2_data_integrity_and_reliability",
+        "sql": (
+            # or_sequences table — idempotent
+            "CREATE TABLE IF NOT EXISTS or_sequences ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  prefix VARCHAR(50) UNIQUE NOT NULL,"
+            "  next_value INT NOT NULL DEFAULT 1,"
+            "  digits INT NOT NULL DEFAULT 6,"
+            "  INDEX(prefix)"
+            ");"
+
+            # payments — DECIMAL(14,2) precision upgrade
+            # IF EXISTS guards make each statement safe to re-run if a prior
+            # run failed partway through (MariaDB DDL is auto-committed, so a
+            # partial migration cannot be rolled back — idempotency is the only
+            # safe option).
+            "ALTER TABLE payments"
+            "  MODIFY COLUMN IF EXISTS amount   DECIMAL(14,2) NOT NULL DEFAULT 0.00,"
+            "  MODIFY COLUMN IF EXISTS penalty  DECIMAL(14,2)          DEFAULT 0.00,"
+            "  MODIFY COLUMN IF EXISTS discount DECIMAL(14,2)          DEFAULT 0.00;"
+
+            # property_billings — DECIMAL(14,2) + tax_year → SMALLINT
+            "ALTER TABLE property_billings"
+            "  MODIFY COLUMN IF EXISTS assessed_value DECIMAL(14,2) NOT NULL DEFAULT 0.00,"
+            "  MODIFY COLUMN IF EXISTS penalty        DECIMAL(14,2) NOT NULL DEFAULT 0.00,"
+            "  MODIFY COLUMN IF EXISTS discount       DECIMAL(14,2) NOT NULL DEFAULT 0.00,"
+            "  MODIFY COLUMN IF EXISTS amount_paid    DECIMAL(14,2) NOT NULL DEFAULT 0.00,"
+            "  MODIFY COLUMN IF EXISTS tax_year       SMALLINT      NOT NULL;"
+
+            # payment_billings — DECIMAL(14,2) + tax_year → SMALLINT
+            "ALTER TABLE payment_billings"
+            "  MODIFY COLUMN IF EXISTS amount_paid DECIMAL(14,2) NOT NULL DEFAULT 0.00,"
+            "  MODIFY COLUMN IF EXISTS tax_year    SMALLINT      NOT NULL;"
+
+            # receipt_history — DECIMAL(14,2) precision upgrade
+            "ALTER TABLE receipt_history"
+            "  MODIFY COLUMN IF EXISTS amount DECIMAL(14,2) NOT NULL DEFAULT 0.00;"
+        )
+    },
+    {
+        "id": "week3_architecture_optimizations",
+        "sql": (
+            # tax_policies table
+            "CREATE TABLE IF NOT EXISTS tax_policies ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  tax_year SMALLINT UNIQUE NOT NULL,"
+            "  basic_rate DECIMAL(6, 4) NOT NULL DEFAULT 0.0100,"
+            "  sef_rate DECIMAL(6, 4) NOT NULL DEFAULT 0.0100,"
+            "  penalty_rate DECIMAL(6, 4) NOT NULL DEFAULT 0.0200,"
+            "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+            "  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,"
+            "  INDEX(tax_year)"
+            ");"
+            
+            # seed default values
+            "INSERT IGNORE INTO tax_policies (tax_year, basic_rate, sef_rate, penalty_rate) VALUES "
+            "(2020, 0.0100, 0.0100, 0.0200), (2021, 0.0100, 0.0100, 0.0200), (2022, 0.0100, 0.0100, 0.0200), "
+            "(2023, 0.0100, 0.0100, 0.0200), (2024, 0.0100, 0.0100, 0.0200), (2025, 0.0100, 0.0100, 0.0200), "
+            "(2026, 0.0100, 0.0100, 0.0200), (2027, 0.0100, 0.0100, 0.0200), (2028, 0.0100, 0.0100, 0.0200), "
+            "(2029, 0.0100, 0.0100, 0.0200), (2030, 0.0100, 0.0100, 0.0200);"
+            
+            # modify jobs payload
+            "ALTER TABLE jobs MODIFY COLUMN payload MEDIUMTEXT;"
+        )
     }
 
 ]

@@ -1,12 +1,11 @@
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, status
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 
-# import db_manager as db # Unused in route
 import backend.services.property_service as prop_svc
 import backend.services.billing_service as bill_svc
 import backend.services.payment_service as pay_svc
@@ -80,15 +79,20 @@ async def list_barangays(current_user: dict = Depends(get_current_user), db_sess
 @router.get("/delinquent")
 async def get_delinquent_accounts(
     limit: int = 50,
-    offset: int = 0,
+    cursor: Optional[int] = None,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    return bill_svc.get_delinquent_accounts(limit=limit, cursor=cursor, db_session=db_session)
+
+@router.get("/deleted", dependencies=[Depends(admin_only)])
+async def list_deleted_properties(
+    limit: int = 50,
+    cursor: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db)
 ):
-    return bill_svc.get_delinquent_accounts(limit=limit, offset=offset, db_session=db_session)
-
-@router.get("/deleted", dependencies=[Depends(admin_only)])
-async def list_deleted_properties(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
-    return prop_svc.get_deleted_properties(db_session=db_session)
+    return prop_svc.get_deleted_properties(limit=limit, cursor=cursor, db_session=db_session)
 
 @router.post("/{property_id}/restore", dependencies=[Depends(admin_only)])
 async def restore_property(
@@ -96,30 +100,6 @@ async def restore_property(
 ):
     prop_svc.restore_property(property_id, current_user, db_session=db_session)
     return {"status": "restored"}
-
-@router.post("/import-assessment")
-@limiter.limit("5/minute")
-async def import_assessment_roll(
-    request: Request,
-    file: UploadFile = File(...),
-    current_user: dict = Depends(write_access),
-):
-    import shutil
-    temp_path = f"temp_import_{datetime.now().timestamp()}.xlsx"
-    with open(temp_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    try:
-        import backend.services.import_service as import_svc
-        summary = import_svc.import_assessment_roll_from_excel(temp_path, current_user)
-        return summary
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Import Error: {str(e)}")
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
 
 @router.delete("/{property_id}/purge", dependencies=[Depends(admin_only)])
 async def purge_property(
@@ -155,9 +135,9 @@ async def create_property(
         if len(str(eff_date)) >= 4:
             payload["Tax Year"] = str(eff_date)[:4]
         else:
-            payload["Tax Year"] = str(datetime.now().year)
+            payload["Tax Year"] = str(datetime.now(timezone.utc).year)
     elif not payload.get("Tax Year"):
-        payload["Tax Year"] = str(datetime.now().year)
+        payload["Tax Year"] = str(datetime.now(timezone.utc).year)
 
     res = prop_svc.save_property(payload, user=current_user, db_session=db_session)
     if not res:

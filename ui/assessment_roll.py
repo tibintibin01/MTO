@@ -123,21 +123,7 @@ class AssessmentRollPage:
             width=120,
         ).pack(side="right", padx=5)
 
-        ctk.CTkButton(
-            filters_fr,
-            text="📄 BULK PRINT SOA",
-            command=lambda: self.start_bulk_print("SOA"),
-            fg_color="#e67e22",
-            width=130,
-        ).pack(side="right", padx=5)
 
-        ctk.CTkButton(
-            filters_fr,
-            text="⚠️ BULK NOTICES",
-            command=lambda: self.start_bulk_print("NOTICE"),
-            fg_color="#c0392b",
-            width=130,
-        ).pack(side="right", padx=5)
         ctk.CTkButton(
             header,
             text="+ ADD RECORD",
@@ -427,76 +413,7 @@ class AssessmentRollPage:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def start_bulk_print(self, mode="SOA"):
-        """Orchestrates the bulk generation process with a progress overlay."""
-        sel_count = len(self.tree.get_children())
-        if sel_count == 0:
-            messagebox.showwarning("Bulk Print", "No records found in the current view. Please search or refresh first.")
-            return
 
-        if not messagebox.askyesno("Bulk Print", f"Are you sure you want to generate {mode}s for all {sel_count} properties in the current view? This may take a moment."):
-            return
-
-        # 1. Loading Overlay
-        overlay = ctk.CTkToplevel(self.parent)
-        overlay.overrideredirect(True)
-        overlay.geometry("400x150")
-        overlay.attributes("-topmost", True)
-        
-        sw, sh = overlay.winfo_screenwidth(), overlay.winfo_screenheight()
-        overlay.geometry(f"+{(sw-400)//2}+{(sh-150)//2}")
-
-        ctk.CTkLabel(overlay, text=f"⚡ GENERATING BULK {mode}s...", font=("Segoe UI", 14, "bold"), text_color="#d35400").pack(pady=(20, 5))
-        prog = ctk.CTkProgressBar(overlay, width=300)
-        prog.pack(pady=10)
-        prog.set(0)
-        status_lbl = ctk.CTkLabel(overlay, text="Initializing engine...", font=("Segoe UI", 10))
-        status_lbl.pack()
-
-        def worker():
-            try:
-                # 1. Collect IDs for properties in the current view
-                property_ids = []
-                for child in self.tree.get_children():
-                    property_ids.append(int(self.tree.item(child)["values"][0]))
-                
-                if not property_ids:
-                    raise Exception("No property IDs found for generation.")
-
-                self.container.after(0, lambda: [prog.set(0.3), status_lbl.configure(text="Requesting server-side generation...")])
-                
-                # 2. Call the new API endpoint
-                payload = {
-                    "property_ids": property_ids,
-                    "filename_prefix": "BULK_SOA" if mode == "SOA" else "BULK_NOTICES"
-                }
-                
-                # Request raw response to get bytes
-                response = api.api_request("POST", "/billing/bulk-soa", data=payload, raw_response=True)
-                
-                self.container.after(0, lambda: [prog.set(0.8), status_lbl.configure(text="Downloading document...")])
-                
-                # 3. Save the received file locally
-                import os
-                if not os.path.exists("receipts"):
-                    os.makedirs("receipts")
-                
-                filename = response.headers.get("Content-Disposition", f"attachment; filename=bulk_{mode.lower()}.pdf").split("filename=")[-1]
-                output_path = os.path.join("receipts", filename)
-                
-                with open(output_path, "wb") as f:
-                    f.write(response.content)
-                
-                self.container.after(0, lambda: [
-                    overlay.destroy(), 
-                    os.startfile(os.path.abspath(output_path)), 
-                    messagebox.showinfo("Success", f"Bulk {mode} generation complete!\n\nFile saved to: {output_path}")
-                ])
-                
-            except Exception as e:
-                self.container.after(0, lambda err=e: [overlay.destroy(), messagebox.showerror("Bulk Print Error", str(err))])
-
-        threading.Thread(target=worker, daemon=True).start()
 
 
 class AssessmentModal(ctk.CTkToplevel):

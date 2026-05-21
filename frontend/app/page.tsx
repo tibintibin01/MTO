@@ -1,19 +1,53 @@
 "use client";
 
 import { useState } from "react";
-import { Search, ShieldCheck, MapPin, History } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Search, Lock, MapPin, History } from "lucide-react";
+
+// TD numbers follow patterns like: 06-0012-01379, TD-2023-001, or plain PIN digits
+const QUERY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9\-./# ]{1,49}$/;
 
 export default function Home() {
+  const router = useRouter();
   const [query, setQuery] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError("");
+
+    const trimmed = query.trim();
+
+    if (!trimmed) {
+      setError("Please enter a Tax Declaration Number or PIN.");
+      return;
+    }
+
+    if (!QUERY_PATTERN.test(trimmed)) {
+      setError("Invalid format. Use your TDN (e.g. 06-0012-01379) or PIN.");
+      return;
+    }
+
     setLoading(true);
-    // Simulate search
-    setTimeout(() => {
-        window.location.href = `/property/${query}`;
-    }, 800);
+    try {
+      // Verify the property exists before navigating so the user gets
+      // immediate feedback rather than landing on a 404 detail page.
+      const res = await fetch(`/api/v1/public/property/${encodeURIComponent(trimmed)}`);
+      if (res.status === 404) {
+        setError("No property found for that TDN or PIN. Please check and try again.");
+        return;
+      }
+      if (!res.ok) {
+        setError("Unable to reach the server. Please try again shortly.");
+        return;
+      }
+      router.push(`/property/${encodeURIComponent(trimmed)}`);
+    } catch {
+      setError("Network error. Please check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -36,10 +70,13 @@ export default function Home() {
             <input
               type="text"
               className="block w-full pl-11 pr-4 py-4 border-none bg-slate-50 focus:ring-2 focus:ring-[#1f4e78] rounded-xl text-lg"
-              placeholder="e.g. TD-2023-001"
+              placeholder="e.g. 06-0012-01379"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              required
+              onChange={(e) => { setQuery(e.target.value); setError(""); }}
+              aria-label="Tax Declaration Number or PIN"
+              aria-describedby={error ? "search-error" : undefined}
+              autoComplete="off"
+              spellCheck={false}
             />
           </div>
           <button
@@ -50,29 +87,34 @@ export default function Home() {
             {loading ? "SEARCHING..." : "SEARCH PROPERTY"}
           </button>
         </form>
+        {error && (
+          <p id="search-error" role="alert" className="px-4 pb-3 text-sm text-red-600 font-medium">
+            {error}
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mt-16">
         <div className="p-6 bg-white rounded-xl shadow-sm border border-slate-100 text-center">
           <div className="w-12 h-12 bg-blue-50 text-[#1f4e78] rounded-full flex items-center justify-center mx-auto mb-4">
-            <ShieldCheck className="w-6 h-6" />
+            <Lock className="w-6 h-6" />
           </div>
           <h3 className="font-bold text-slate-900 mb-2">Secure Access</h3>
-          <p className="text-sm text-slate-500">End-to-end encrypted property data retrieval.</p>
+          <p className="text-sm text-slate-500">Data is transmitted over an encrypted HTTPS connection.</p>
         </div>
         <div className="p-6 bg-white rounded-xl shadow-sm border border-slate-100 text-center">
           <div className="w-12 h-12 bg-orange-50 text-orange-600 rounded-full flex items-center justify-center mx-auto mb-4">
             <History className="w-6 h-6" />
           </div>
           <h3 className="font-bold text-slate-900 mb-2">Payment History</h3>
-          <p className="text-sm text-slate-500">Instantly view and download digital receipts.</p>
+          <p className="text-sm text-slate-500">View your official payment records and tax periods.</p>
         </div>
         <div className="p-6 bg-white rounded-xl shadow-sm border border-slate-100 text-center">
           <div className="w-12 h-12 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
             <MapPin className="w-6 h-6" />
           </div>
           <h3 className="font-bold text-slate-900 mb-2">Assessment Data</h3>
-          <p className="text-sm text-slate-500">Real-time property classification and values.</p>
+          <p className="text-sm text-slate-500">Real-time property classification and assessed values.</p>
         </div>
       </div>
     </div>

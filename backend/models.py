@@ -1,5 +1,5 @@
-from datetime import datetime
-from sqlalchemy import Column, Integer, String, DECIMAL, Boolean, DateTime, ForeignKey, Text, TIMESTAMP, func
+from datetime import datetime, timezone
+from sqlalchemy import Column, Integer, String, DECIMAL, Boolean, DateTime, ForeignKey, Text, TIMESTAMP, Index, func, SmallInteger
 
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -55,12 +55,12 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True, index=True)
-    property_id = Column(Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False)
-    amount = Column(DECIMAL(12, 2), nullable=False, default=0.00)
-    penalty = Column(DECIMAL(12, 2), default=0.00)
-    discount = Column(DECIMAL(12, 2), default=0.00)
-    or_number = Column(String(255), nullable=True)
-    date_paid = Column(DateTime, nullable=True)
+    property_id = Column(Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False, index=True)
+    amount = Column(DECIMAL(14, 2), nullable=False, default=0.00)
+    penalty = Column(DECIMAL(14, 2), default=0.00)
+    discount = Column(DECIMAL(14, 2), default=0.00)
+    or_number = Column(String(255), nullable=True, index=True)
+    date_paid = Column(DateTime, nullable=True, index=True)
     tax_year = Column(String(20), nullable=True)
     posted_by = Column(String(255), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
@@ -73,14 +73,19 @@ class PropertyBilling(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     property_id = Column(Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False)
-    tax_year = Column(String(20), nullable=False)
-    assessed_value = Column(DECIMAL(12, 2), nullable=False, default=0.00)
-    penalty = Column(DECIMAL(12, 2), nullable=False, default=0.00)
+    tax_year = Column(SmallInteger, nullable=False)
+    assessed_value = Column(DECIMAL(14, 2), nullable=False, default=0.00)
+    penalty = Column(DECIMAL(14, 2), nullable=False, default=0.00)
     discount = Column(DECIMAL(14, 2), nullable=False, default=0.00)
-    amount_paid = Column(DECIMAL(12, 2), nullable=False, default=0.00)
+    amount_paid = Column(DECIMAL(14, 2), nullable=False, default=0.00)
     is_archived = Column(Boolean, nullable=False, default=False)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # Composite index: billing reconciliation always filters by (property_id, tax_year)
+    __table_args__ = (
+        Index("ix_property_billings_property_id_tax_year", "property_id", "tax_year"),
+    )
 
     property = relationship("Property", back_populates="billings")
 
@@ -90,8 +95,8 @@ class PaymentBilling(Base):
     id = Column(Integer, primary_key=True, index=True)
     payment_id = Column(Integer, ForeignKey("payments.id", ondelete="CASCADE"), nullable=False)
     billing_id = Column(Integer, ForeignKey("property_billings.id", ondelete="RESTRICT"), nullable=False)
-    tax_year = Column(String(20), nullable=False)
-    amount_paid = Column(DECIMAL(12, 2), nullable=False, default=0.00)
+    tax_year = Column(SmallInteger, nullable=False)
+    amount_paid = Column(DECIMAL(14, 2), nullable=False, default=0.00)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     payment = relationship("Payment", back_populates="billings")
@@ -132,12 +137,12 @@ class ReceiptHistory(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     property_id = Column(Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False)
-    payment_id = Column(Integer, nullable=True)
+    payment_id = Column(Integer, nullable=True, index=True)
     td_number = Column(String(255))
     owner_name = Column(String(255))
     or_number = Column(String(255))
     tax_year = Column(String(20))
-    amount = Column(DECIMAL(12, 2), nullable=False, default=0.00)
+    amount = Column(DECIMAL(14, 2), nullable=False, default=0.00)
     file_path = Column(Text, nullable=False)
     generated_by = Column(String(255))
     generated_at = Column(DateTime, nullable=False)
@@ -164,6 +169,30 @@ class RefreshToken(Base):
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     is_revoked = Column(Boolean, default=False)
 
+
+class IdempotencyKey(Base):
+    """
+    Stores idempotency keys for payment and property-save operations.
+
+    When a POST/PUT request arrives with an X-Idempotency-Key header, the
+    server checks this table. If the key exists and hasn't expired, the
+    cached response is returned immediately without re-executing the handler.
+    This prevents duplicate payments from double-clicks or network retries.
+
+    Keys expire after 24 hours — long enough to cover any realistic retry
+    window, short enough to not grow the table indefinitely.
+    """
+    __tablename__ = "idempotency_keys"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(128), unique=True, nullable=False, index=True)
+    method = Column(String(10), nullable=False)
+    path = Column(String(255), nullable=False)
+    status_code = Column(Integer, nullable=False, default=200)
+    response_body = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    expires_at = Column(DateTime, nullable=False)
+
 class BackupHistory(Base):
     __tablename__ = "backup_history"
 
@@ -174,7 +203,81 @@ class BackupHistory(Base):
     status = Column(String(50), default="PENDING")
     health = Column(String(100), default="UNKNOWN")
     user_name = Column(String(255), nullable=True)
-    timestamp = Column(DateTime, nullable=False, default=datetime.now)
+    timestamp = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class Job(Base):
+    """
+    Persistent background job queue.
+
+    Long-running operations (PDF generation, backup, bulk import) submit a
+    Job record and return the job_id immediately. A background worker thread
+    picks up PENDING jobs and executes them. Clients poll GET /jobs/{id} for
+    status and results.
+
+    This gives async execution + persistence across server restarts without
+    requiring Celery, Redis, or any additional infrastructure.
+
+    Job types:
+        backup          — hybrid backup (mysqldump + USB + cloud)
+        import_commit   — bulk property/payment import
+        pdf_receipt     — single receipt PDF
+        pdf_soa         — statement of account PDF
+        pdf_computation — delinquency computation PDF
+        pdf_notice      — delinquency notice PDF
+        pdf_bulk_soa    — bulk SOA for multiple properties
+
+    Status flow:
+        PENDING → RUNNING → COMPLETED
+                          → FAILED
+    """
+    __tablename__ = "jobs"
+
+    id = Column(String(36), primary_key=True)          # UUID
+    job_type = Column(String(50), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="PENDING", index=True)
+    submitted_by = Column(String(150), nullable=False)
+    payload = Column(Text(length=16777215), nullable=True)              # JSON input params
+    result = Column(Text, nullable=True)               # JSON output / file path
+    error = Column(Text, nullable=True)                # Error message on failure
+    progress = Column(Integer, default=0)              # 0–100
+    progress_message = Column(String(255), nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class TaxPolicy(Base):
+    """
+    Stores configurable municipal tax rates per tax year.
+    If no entry is configured for a tax year, calculations default to:
+    basic_rate = 1.0% (0.0100)
+    sef_rate   = 1.0% (0.0100)
+    penalty_rate = 2.0% per month of delay (0.0200)
+    """
+    __tablename__ = "tax_policies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tax_year = Column(SmallInteger, unique=True, nullable=False, index=True)
+    basic_rate = Column(DECIMAL(6, 4), nullable=False, default=0.0100)
+    sef_rate = Column(DECIMAL(6, 4), nullable=False, default=0.0100)
+    penalty_rate = Column(DECIMAL(6, 4), nullable=False, default=0.0200)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.now())
+
+
+class ORSequence(Base):
+    """
+    Stores sequential counters for Official Receipt (OR) numbers.
+    Used with row-level locks (SELECT ... FOR UPDATE) to guarantee atomic
+    serial generation of receipt numbers across concurrent cashier sessions.
+    """
+    __tablename__ = "or_sequences"
+
+    id = Column(Integer, primary_key=True, index=True)
+    prefix = Column(String(50), unique=True, nullable=False, index=True)
+    next_value = Column(Integer, nullable=False, default=1)
+    digits = Column(Integer, nullable=False, default=6)
 
 # --- SECURE GOVERNMENT COMPLIANCE: AUDIT LOG IMMUTABILITY ---
 from sqlalchemy import event

@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -111,7 +111,7 @@ def generate_statement_of_account(statement_data, base_dir):
     statements_dir = os.path.join(base_dir, "statements")
     os.makedirs(statements_dir, exist_ok=True)
     td_number = safe_text(statement_data.get("td_number")) or "NO_TD"
-    date_part = datetime.now().strftime("%Y%m%d_%H%M%S")
+    date_part = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     file_name = f"SOA_{safe_filename(td_number)}_{date_part}.pdf"
     output_path = os.path.join(statements_dir, file_name)
     c = canvas.Canvas(output_path, pagesize=A4)
@@ -122,7 +122,7 @@ def generate_statement_of_account(statement_data, base_dir):
 def bulk_generate_soa(data_list, base_dir, filename_prefix="BULK_SOA"):
     statements_dir = os.path.join(base_dir, "statements")
     os.makedirs(statements_dir, exist_ok=True)
-    date_part = datetime.now().strftime("%Y%m%d_%H%M%S")
+    date_part = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     file_name = f"{filename_prefix}_{date_part}.pdf"
     output_path = os.path.join(statements_dir, file_name)
     c = canvas.Canvas(output_path, pagesize=A4)

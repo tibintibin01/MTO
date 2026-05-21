@@ -87,9 +87,14 @@ def get_assessment_roll():
 
 
 def get_report_details(month="All", year="All"):
-    return api_request(
+    result = api_request(
         "GET", "/billing/report-details", params={"month": month, "year": year}
     )
+    # Backend now returns {"items": [...], "next_cursor": ..., "has_more": ..., "count": ...}
+    if isinstance(result, dict) and "items" in result:
+        return result["items"]
+    # Fallback for any legacy response shape
+    return result if isinstance(result, list) else []
 
 
 def get_rpt_receivables_summary(year):
@@ -97,9 +102,28 @@ def get_rpt_receivables_summary(year):
 
 
 def get_delinquent_accounts(limit=100, offset=0):
-    return api_request(
-        "GET", "/billing/delinquents", params={"limit": limit, "offset": offset}
+    """Returns the items list from the cursor-paginated delinquent accounts endpoint."""
+    result = api_request(
+        "GET", "/billing/delinquents", params={"limit": limit}
     )
+    # Backend returns {"items": [...], "next_cursor": ..., "has_more": ..., "count": ...}
+    # The UI expects a flat list of tuples: (id, td, owner, loc, total_due, total_paid, balance)
+    if isinstance(result, dict) and "items" in result:
+        items = result["items"]
+        return [
+            (
+                item.get("id"),
+                item.get("td_number"),
+                item.get("owner_name"),
+                item.get("location"),
+                item.get("total_due", 0),
+                item.get("total_paid", 0),
+                item.get("balance", 0),
+            )
+            for item in items
+        ]
+    # Fallback if already a list (shouldn't happen but safe)
+    return result if isinstance(result, list) else []
 
 
 def download_computation_pdf(property_id):

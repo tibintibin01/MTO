@@ -19,7 +19,7 @@ Else
     ' Docker is not active. Fallback to native python.exe running in a HIDDEN window (style 0).
     ' We use python.exe (not pythonw.exe) here because uvicorn expects standard output streams
     ' to write logging information; window style 0 ensures it is 100% invisible with zero terminal windows.
-    WshShell.Run "VENV\Scripts\python.exe -m uvicorn backend.main:app --port 8001", 0, False
+    WshShell.Run "VENV\Scripts\python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8001", 0, False
 End If
 
 ' 2. Start Next.js Web Portal completely silently in a hidden window

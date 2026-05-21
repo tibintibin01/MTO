@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from typing import Optional
 from backend.deps import get_current_user, admin_only, get_db, Session
 from backend.schemas import UserCreateSchema, UserUpdateSchema, PasswordResetSchema
 import backend.services.auth_service as auth_svc
@@ -8,11 +9,11 @@ router = APIRouter(prefix="/users", tags=["Admin"], dependencies=[Depends(admin_
 @router.get("")
 async def list_users(
     limit: int = 50,
-    offset: int = 0,
+    cursor: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db)
 ):
-    return auth_svc.get_all_users(limit=limit, offset=offset, db_session=db_session)
+    return auth_svc.get_all_users(limit=limit, cursor=cursor, db_session=db_session)
 
 @router.post("")
 async def create_user(

@@ -69,23 +69,59 @@ def has_permission(user, permission):
 def verify_user_login(username, password):
     try:
         payload = {"username": username, "password": password}
-        
-        # Use our standard api_request helper to hit the dedicated login endpoint
         user_info = api_request(
             "POST", "/api/auth/login", data=payload, queue_offline=False
         )
-        print(f"DEBUG: Login Response: {user_info}")
-        
         if user_info and "access_token" in user_info:
-
             set_token(user_info["access_token"])
+            # Store refresh token for silent re-authentication when access token expires
+            from api_clients.api_helper import set_refresh_token
+            if user_info.get("refresh_token"):
+                set_refresh_token(user_info["refresh_token"])
             return user_info
         else:
             raise Exception("Login response missing access token.")
-            
+
     except Exception as e:
-        print(f"Login failed: {e}")
-        raise e
+        raw = str(e)
+        # Extract structured error code from the API response if present.
+        # The server now returns {"code": "AUTH_ACCOUNT_LOCKED", "detail": "..."}
+        # api_request raises Exception(error_msg) where error_msg may contain
+        # the detail string. We also check for the code in the raw exception.
+        code = None
+        detail = raw
+
+        # Try to parse the JSON body from the exception message
+        try:
+            import re, json
+            # api_request wraps the response detail in "Error: <detail>"
+            match = re.search(r'\{.*\}', raw, re.DOTALL)
+            if match:
+                body = json.loads(match.group())
+                code = body.get("code")
+                detail = body.get("detail", raw)
+        except Exception:
+            pass
+
+        # Raise user-friendly exceptions the login UI can catch by type
+        if code == "AUTH_ACCOUNT_LOCKED" or "locked" in detail.lower():
+            raise AccountLockedError(detail)
+        elif code == "AUTH_ACCOUNT_DISABLED" or "disabled" in detail.lower():
+            raise AccountDisabledError(detail)
+        elif code in ("AUTH_INVALID_CREDENTIALS", "AUTH_TOKEN_INVALID") or "invalid" in detail.lower():
+            raise InvalidCredentialsError(detail)
+        else:
+            raise Exception(detail)
+
+
+class InvalidCredentialsError(Exception):
+    """Raised when username or password is wrong."""
+
+class AccountLockedError(Exception):
+    """Raised when the account is temporarily locked after failed attempts."""
+
+class AccountDisabledError(Exception):
+    """Raised when an admin has disabled the account."""
 
 
 
@@ -95,7 +131,10 @@ def logout():
 
 
 def get_all_users():
-    return api_request("GET", "/users")
+    result = api_request("GET", "/users")
+    if isinstance(result, dict) and "items" in result:
+        return result["items"]
+    return result if isinstance(result, list) else []
 
 
 def update_user(user_id, role=None, is_active=None):
@@ -137,43 +176,3 @@ def get_current_user():
         return api_request("GET", "/me")
     except:
         return None
-
-
-# --- Legacy Compatibility for UI modules not yet migrated to pure API ---
-import hashlib
-import base64
-import secrets
-
-PASSWORD_SCHEME = "pbkdf2_sha256"
-PASSWORD_ITERATIONS = 200000
-
-
-def hash_password(password):
-    if password is None:
-        return ""
-    password_text = str(password)
-    salt = secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256", password_text.encode("utf-8"), salt, PASSWORD_ITERATIONS
-    )
-    salt_b64 = base64.b64encode(salt).decode("ascii")
-    digest_b64 = base64.b64encode(digest).decode("ascii")
-    return f"{PASSWORD_SCHEME}${PASSWORD_ITERATIONS}${salt_b64}${digest_b64}"
-
-
-def verify_password(password, stored_value):
-    if not stored_value:
-        return False
-    stored_text = str(stored_value)
-    if not stored_text.startswith(f"{PASSWORD_SCHEME}$"):
-        return str(password) == stored_text
-    try:
-        scheme, iteration_text, salt_b64, digest_b64 = stored_text.split("$", 3)
-        salt = base64.b64decode(salt_b64.encode("ascii"))
-        expected_digest = base64.b64decode(digest_b64.encode("ascii"))
-        actual_digest = hashlib.pbkdf2_hmac(
-            "sha256", str(password).encode("utf-8"), salt, int(iteration_text)
-        )
-        return secrets.compare_digest(actual_digest, expected_digest)
-    except:
-        return False

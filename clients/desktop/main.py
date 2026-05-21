@@ -72,8 +72,16 @@ class LoginApp(ctk.CTk):
         auth.logout()
 
         self.title(f"Treasury Management System | {tr('common.error') if not auth else 'Secure Access'}")
-        self.geometry("1100x700")
         self.minsize(900, 600)
+
+        # Centre the window on the screen
+        win_w, win_h = 1100, 700
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        x = (screen_w - win_w) // 2
+        y = (screen_h - win_h) // 2
+        self.geometry(f"{win_w}x{win_h}+{x}+{y}")
         
         # Step 2: Bind resize for responsiveness
         self.bind("<Configure>", self._on_resize)
@@ -218,17 +226,110 @@ class LoginApp(ctk.CTk):
         threading.Thread(target=self.do_login, args=(u, p), daemon=True).start()
 
     def _show_overlay(self):
-        self.overlay = ctk.CTkFrame(self, fg_color=("white", "black"), corner_radius=0)
+        # Full-screen overlay with a dark gradient feel
+        self.overlay = ctk.CTkFrame(
+            self,
+            fg_color=("#0d1117", "#0d1117"),
+            corner_radius=0,
+        )
         self.overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
-        self.overlay.configure(background_corner_colors=(None, None, None, None))
-        
-        inner = ctk.CTkFrame(self.overlay, fg_color="transparent")
+
+        # ── Centered card ────────────────────────────────────────────────────
+        card = ctk.CTkFrame(
+            self.overlay,
+            fg_color=("#161b22", "#161b22"),
+            corner_radius=20,
+            border_width=1,
+            border_color=("#21262d", "#21262d"),
+            width=420,
+            height=260,
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center")
+        card.pack_propagate(False)
+
+        inner = ctk.CTkFrame(card, fg_color="transparent")
         inner.place(relx=0.5, rely=0.5, anchor="center")
-        
-        ctk.CTkLabel(inner, text=tr("login.authenticating"), font=ModernTheme.H2).pack(pady=10)
-        self.progress = ctk.CTkProgressBar(inner, mode="indeterminate", width=250)
-        self.progress.pack(pady=10)
+
+        # Seal / icon circle
+        icon_fr = ctk.CTkFrame(
+            inner, width=68, height=68, corner_radius=34,
+            fg_color="#1f4e78",
+            border_width=2,
+            border_color="#2c6ea1",
+        )
+        icon_fr.pack(pady=(0, 18))
+        icon_fr.pack_propagate(False)
+
+        # Use a fixed-width label with center justify to avoid emoji offset
+        icon_lbl = ctk.CTkLabel(
+            icon_fr,
+            text="🏛",
+            font=("Segoe UI Emoji", 28),
+            text_color="white",
+            width=68,
+            height=68,
+            justify="center",
+            anchor="center",
+        )
+        icon_lbl.place(relx=0.5, rely=0.5, anchor="center")
+
+        # System name
+        ctk.CTkLabel(
+            inner,
+            text="MUNICIPAL TREASURY SYSTEM",
+            font=("Segoe UI", 13, "bold"),
+            text_color="#3498db",
+        ).pack()
+
+        # Status message — updated during login steps
+        self._status_lbl = ctk.CTkLabel(
+            inner,
+            text="Verifying credentials...",
+            font=("Segoe UI", 11),
+            text_color="#8b949e",
+        )
+        self._status_lbl.pack(pady=(6, 14))
+
+        # Progress bar — wider, thicker, rounded
+        self.progress = ctk.CTkProgressBar(
+            inner,
+            mode="indeterminate",
+            width=300,
+            height=6,
+            corner_radius=3,
+            progress_color="#3498db",
+            fg_color="#21262d",
+        )
+        self.progress.pack()
         self.progress.start()
+
+        # Subtle footer
+        ctk.CTkLabel(
+            self.overlay,
+            text="Secure · Encrypted · Audited",
+            font=("Segoe UI", 9),
+            text_color="#30363d",
+        ).place(relx=0.5, rely=0.95, anchor="center")
+
+        # Cycle status messages to give feedback during the wait
+        self._status_messages = [
+            "Verifying credentials...",
+            "Checking account status...",
+            "Loading permissions...",
+            "Preparing dashboard...",
+        ]
+        self._status_index = 0
+        self._cycle_status()
+
+    def _cycle_status(self):
+        """Rotates the status message every 800ms while the overlay is visible."""
+        if not hasattr(self, "overlay") or not self.overlay.winfo_exists():
+            return
+        if not hasattr(self, "_status_lbl") or not self._status_lbl.winfo_exists():
+            return
+        self._status_index = (self._status_index + 1) % len(self._status_messages)
+        self._status_lbl.configure(text=self._status_messages[self._status_index])
+        self.after(800, self._cycle_status)
 
     def do_login(self, u, p) -> None:
         try:

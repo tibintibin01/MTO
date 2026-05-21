@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -14,7 +14,7 @@ def generate_property_dossier(dossier_data, base_dir):
 
     m = dossier_data.get("master", {})
     td_number = safe_text(m.get("td_number")) or "NO_TD"
-    date_part = datetime.now().strftime("%Y%m%d_%H%M%S")
+    date_part = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     file_name = f"DOSSIER_{safe_filename(td_number)}_{date_part}.pdf"
     output_path = os.path.join(dossiers_dir, file_name)
 

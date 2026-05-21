@@ -1,59 +1,83 @@
 import os
 import sys
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import create_engine, pool
 from alembic import context
 
-# Add project root to sys.path for db_manager import
+# Add project root to sys.path so backend package imports resolve correctly
 sys.path.append(os.getcwd())
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.database import SQLALCHEMY_DATABASE_URL, Base
-import backend.models
+import backend.models  # noqa: F401 — ensures all models are registered on Base.metadata
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
+# ---------------------------------------------------------------------------
+# Alembic config object
+# ---------------------------------------------------------------------------
 config = context.config
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
+# Set up Python logging from alembic.ini
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# --- MTO DATABASE BRIDGE ---
-# We dynamically construct the URL from our modern SQLAlchemy setup
+# Inject the database URL from utils.config + secrets_manager.
+# We do NOT put the URL in alembic.ini because that would commit credentials.
+# config.set_main_option makes it available to both offline and online modes.
 config.set_main_option("sqlalchemy.url", SQLALCHEMY_DATABASE_URL)
 
 target_metadata = Base.metadata
 
+
+# ---------------------------------------------------------------------------
+# Migration runners
+# ---------------------------------------------------------------------------
+
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode."""
+    """
+    Run migrations in 'offline' mode (generates SQL without a live connection).
+    Useful for generating migration scripts to review before applying.
+    """
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "pyformat"},
+        # Render AS NULL for server defaults so autogenerate diffs are clean
+        render_as_batch=False,
     )
-
     with context.begin_transaction():
         context.run_migrations()
 
+
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+    """
+    Run migrations against a live database connection.
+
+    We create the engine directly from SQLALCHEMY_DATABASE_URL rather than
+    using engine_from_config() — the latter reads from the [alembic] INI
+    section which intentionally has no sqlalchemy.url (credentials must not
+    be committed). Using create_engine() directly avoids that fragility.
+
+    NullPool is used so Alembic doesn't hold connections open after the
+    migration completes — important in the Docker entrypoint where the
+    migration process exits immediately after.
+    """
+    connectable = create_engine(
+        SQLALCHEMY_DATABASE_URL,
         poolclass=pool.NullPool,
     )
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            # Compare server defaults so autogenerate catches DEFAULT changes
+            compare_server_default=True,
         )
-
         with context.begin_transaction():
             context.run_migrations()
+
 
 if context.is_offline_mode():
     run_migrations_offline()

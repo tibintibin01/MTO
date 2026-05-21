@@ -103,7 +103,7 @@ class DashboardApp(ctk.CTk):
         self.progress_overlays = {}
 
         # 1. Initialize Specialized Coordinators
-        self.watchdog = SessionWatchdog(self, 15, self.logout_automatic)
+        self.watchdog = SessionWatchdog(self, 60, self.logout_automatic)
         self.notifier = NotificationListener({
             "on_open": lambda: self.status_bar.set_ws_status(True),
             "on_close": lambda: self.status_bar.set_ws_status(False),
@@ -135,8 +135,17 @@ class DashboardApp(ctk.CTk):
 
     def setup_main_window(self):
         self.title(f"Municipal Revenue System | {self.username.upper()}")
-        self.geometry("1400x900")
         self.minsize(1200, 800)
+
+        # Centre the dashboard on the screen
+        win_w, win_h = 1400, 900
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        x = (screen_w - win_w) // 2
+        y = (screen_h - win_h) // 2
+        self.geometry(f"{win_w}x{win_h}+{x}+{y}")
+
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
@@ -240,30 +249,146 @@ class DashboardApp(ctk.CTk):
     def toggle_theme(self):
         current = ctk.get_appearance_mode()
         new_mode = "light" if current == "Dark" else "dark"
-        setup_theme(new_mode)
-        from utils import ConfigManager
-        ConfigManager.set("appearance_mode", new_mode)
-        self.after(100, self.refresh_sidebar) # Re-draw sidebar for theme alignment
 
-    def refresh_sidebar(self):
-        self.sidebar.destroy()
-        callbacks = {"load_page": self.load_page, "toggle_theme": self.toggle_theme, "toggle_language": self.toggle_language, "logout": self.logout}
-        self.sidebar = NavigationSidebar(self, self.user_data, self.username, callbacks)
-        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        # Save window state so withdraw/deiconify doesn't exit fullscreen/zoomed.
+        win_state = self.state()
+        self.withdraw()
+        try:
+            setup_theme(new_mode)
+            from utils import ConfigManager
+            ConfigManager.set("appearance_mode", new_mode)
+            self.update_idletasks()
+        finally:
+            self.deiconify()
+            if win_state == "zoomed":
+                self.state("zoomed")
 
     def toggle_language(self):
         from utils import LocalizationManager
         mgr = LocalizationManager()
         mgr.set_locale("tl" if mgr._current_locale == "en" else "en")
-        self.refresh_sidebar()
-        self.load_page(DashboardHomePage)
+
+        # Save window state so withdraw/deiconify doesn't exit fullscreen/zoomed.
+        win_state = self.state()
+        self.withdraw()
+        try:
+            self.sidebar.destroy()
+            callbacks = {"load_page": self.load_page, "toggle_theme": self.toggle_theme, "toggle_language": self.toggle_language, "logout": self.logout}
+            self.sidebar = NavigationSidebar(self, self.user_data, self.username, callbacks)
+            self.sidebar.grid(row=0, column=0, sticky="nsew")
+            self.load_page(DashboardHomePage)
+            self.update_idletasks()
+        finally:
+            self.deiconify()
+            if win_state == "zoomed":
+                self.state("zoomed")
 
     def logout(self):
-        from tkinter import messagebox
-        if messagebox.askyesno(tr("common.logout_confirm"), tr("common.logout_msg")):
+        """Shows a premium custom logout confirmation dialog instead of the OS native dialog."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("")
+        dialog.resizable(False, False)
+        dialog.attributes("-topmost", True)
+        dialog.grab_set()
+        dialog.overrideredirect(True)  # Borderless for premium feel
+
+        # Size and center over the main window
+        dw, dh = 420, 200
+        px = self.winfo_rootx() + (self.winfo_width() // 2) - (dw // 2)
+        py = self.winfo_rooty() + (self.winfo_height() // 2) - (dh // 2)
+        dialog.geometry(f"{dw}x{dh}+{px}+{py}")
+
+        # Outer frame with border
+        outer = ctk.CTkFrame(
+            dialog,
+            fg_color=("#1e2530", "#1e2530"),
+            corner_radius=16,
+            border_width=1,
+            border_color=("#2c3e50", "#2c3e50"),
+        )
+        outer.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Icon + message row
+        msg_fr = ctk.CTkFrame(outer, fg_color="transparent")
+        msg_fr.pack(fill="x", padx=28, pady=(28, 16))
+
+        # Red logout icon circle
+        icon_fr = ctk.CTkFrame(
+            msg_fr, width=48, height=48, corner_radius=24,
+            fg_color="#e74c3c",
+        )
+        icon_fr.pack(side="left", padx=(0, 16))
+        icon_fr.pack_propagate(False)
+        ctk.CTkLabel(
+            icon_fr, text="⏻", font=("Segoe UI", 20, "bold"), text_color="white"
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        text_fr = ctk.CTkFrame(msg_fr, fg_color="transparent")
+        text_fr.pack(side="left", fill="both", expand=True)
+        ctk.CTkLabel(
+            text_fr,
+            text=tr("common.logout_confirm"),
+            font=("Segoe UI", 15, "bold"),
+            text_color="white",
+            anchor="w",
+        ).pack(fill="x")
+        ctk.CTkLabel(
+            text_fr,
+            text=tr("common.logout_msg"),
+            font=("Segoe UI", 11),
+            text_color="gray60",
+            anchor="w",
+            wraplength=260,
+        ).pack(fill="x", pady=(4, 0))
+
+        # Divider
+        ctk.CTkFrame(outer, height=1, fg_color="#2c3e50").pack(fill="x", padx=0)
+
+        # Button row
+        btn_fr = ctk.CTkFrame(outer, fg_color="transparent")
+        btn_fr.pack(fill="x", padx=20, pady=16)
+
+        def confirm():
+            dialog.destroy()
             auth.logout()
             self.logged_out = True
             self.destroy()
+
+        def cancel():
+            dialog.destroy()
+
+        ctk.CTkButton(
+            btn_fr,
+            text="Cancel",
+            command=cancel,
+            fg_color=("#2c3e50", "#2c3e50"),
+            hover_color=("#34495e", "#34495e"),
+            text_color="white",
+            font=("Segoe UI", 12, "bold"),
+            height=38,
+            corner_radius=8,
+            width=120,
+        ).pack(side="right", padx=(8, 0))
+
+        ctk.CTkButton(
+            btn_fr,
+            text="  ⏻  Log Out",
+            command=confirm,
+            fg_color="#e74c3c",
+            hover_color="#c0392b",
+            text_color="white",
+            font=("Segoe UI", 12, "bold"),
+            height=38,
+            corner_radius=8,
+            width=140,
+        ).pack(side="right")
+
+        # Allow Escape to cancel, Enter/Space to confirm
+        dialog.bind("<Escape>", lambda e: cancel())
+        dialog.bind("<Return>", lambda e: confirm())
+        dialog.bind("<space>", lambda e: confirm())
+        # Force keyboard focus to the dialog so bindings fire immediately
+        dialog.focus_set()
 
     def logout_automatic(self):
         auth.logout()

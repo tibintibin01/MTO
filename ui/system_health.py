@@ -124,11 +124,16 @@ class SystemHealthPage:
         ))
 
         c = stats.get("cache", {})
+        namespaces_val = c.get('namespaces', 0)
+        # namespaces may be an int (count) or a list — handle both
+        namespace_count = namespaces_val if isinstance(namespaces_val, int) else len(namespaces_val)
+        hit_rate = c.get('hit_rate', 0)
+        hit_rate_str = "N/A" if hit_rate == -1 else (f"{hit_rate:.1f}%" if isinstance(hit_rate, (int, float)) else str(hit_rate))
         self.cache_stats.configure(text=(
-            f"Items:     {c.get('items', 0)}\n"
-            f"Hit Rate:  {c.get('hit_rate', 0):.1f}%\n"
-            f"Provider:  {c.get('provider', 'Local')}\n"
-            f"Namespaces: {len(c.get('namespaces', []))}"
+            f"Items:      {c.get('items', 0)}\n"
+            f"Hit Rate:   {hit_rate_str}\n"
+            f"Provider:   {c.get('provider', 'Local')}\n"
+            f"Namespaces: {namespace_count}"
         ))
 
         s = stats.get("security", {})

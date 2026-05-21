@@ -57,7 +57,7 @@ class CircuitBreaker:
                 self.state = CircuitState.OPEN
             
             # Re-raise so the caller can handle the specific error (or use fallback)
-            raise e
+            raise
 
     def get_state_numeric(self) -> int:
         """Returns numeric state for Prometheus telemetry."""

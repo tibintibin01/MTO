@@ -65,10 +65,10 @@ class StorageService:
                         )
                 except Exception as create_err:
                     logger.error(f"StorageService: Failed to create bucket '{self.bucket_name}': {create_err}")
-                    raise create_err
+                    raise
             else:
                 logger.error(f"StorageService: Unexpected head_bucket error: {e}")
-                raise e
+                raise
 
         # Enable versioning on the bucket
         try:

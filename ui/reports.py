@@ -158,9 +158,9 @@ class ReportsPage:
         brgy_fr = ctk.CTkFrame(self.barangay_tab, fg_color="transparent")
         brgy_fr.pack(fill="both", expand=True, padx=20, pady=20)
 
-        # Header Area
+        # ── Header with year filter ──────────────────────────────────────────
         top_fr = ctk.CTkFrame(brgy_fr, fg_color="transparent")
-        top_fr.pack(fill="x", pady=(0, 15))
+        top_fr.pack(fill="x", pady=(0, 8))
 
         ctk.CTkLabel(
             top_fr,
@@ -168,17 +168,50 @@ class ReportsPage:
             font=ModernTheme.H3,
             text_color=ModernTheme.PRIMARY,
         ).pack(side="left")
+
+        # Year filter — right side
+        filter_fr = ctk.CTkFrame(top_fr, fg_color="transparent")
+        filter_fr.pack(side="right")
+
+        ctk.CTkLabel(
+            filter_fr, text="As of Year:", font=ModernTheme.BODY, text_color="gray"
+        ).pack(side="left", padx=(0, 8))
+
+        curr_y = datetime.now().year
+        self.brgy_year_cb = ctk.CTkComboBox(
+            filter_fr,
+            values=["All Years"] + [str(y) for y in range(curr_y - 10, curr_y + 1)],
+            width=130,
+            command=lambda _: self.generate_barangay_receivables(),
+        )
+        self.brgy_year_cb.set(str(curr_y))
+        self.brgy_year_cb.pack(side="left", padx=(0, 8))
+
         ctk.CTkButton(
-            top_fr,
+            filter_fr,
             text=f"🔄 {tr('reports.barangay.btn_refresh')}",
             command=self.generate_barangay_receivables,
-            width=200,
+            width=160,
             height=35,
             font=ModernTheme.BUTTON,
             fg_color=ModernTheme.SECONDARY,
-        ).pack(side="right")
+        ).pack(side="left")
 
-        # Table Container
+        # Info banner explaining cumulative logic
+        info_fr = ctk.CTkFrame(brgy_fr, fg_color=("#1a2634", "#1a2634"), corner_radius=8)
+        info_fr.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(
+            info_fr,
+            text=(
+                "ℹ️  Cumulative receivables: includes all unpaid balances from prior years "
+                "carried forward into the selected year."
+            ),
+            font=("Segoe UI", 10),
+            text_color="#8b949e",
+            anchor="w",
+        ).pack(padx=14, pady=8, anchor="w")
+
+        # ── Table ────────────────────────────────────────────────────────────
         t_container = ctk.CTkFrame(brgy_fr)
         t_container.pack(fill="both", expand=True)
 
@@ -199,26 +232,25 @@ class ReportsPage:
         self.brgy_tree.column("Barangay", width=180, anchor="w")
         self.brgy_tree.column("Total Receivable", width=150)
 
-        # Scrollbar
-        scrolly = ttk.Scrollbar(
-            t_container, orient="vertical", command=self.brgy_tree.yview
-        )
+        scrolly = ttk.Scrollbar(t_container, orient="vertical", command=self.brgy_tree.yview)
         self.brgy_tree.configure(yscrollcommand=scrolly.set)
-
         self.brgy_tree.pack(side="left", fill="both", expand=True)
         scrolly.pack(side="right", fill="y")
 
-        # Zebra Tags
         self.brgy_tree.tag_configure("oddrow", background="#2b2b2b", foreground="white")
-        self.brgy_tree.tag_configure(
-            "evenrow", background="#333333", foreground="white"
-        )
+        self.brgy_tree.tag_configure("evenrow", background="#333333", foreground="white")
 
-        # --- SUMMARY FOOTER ---
-        self.brgy_summary = ctk.CTkFrame(
-            brgy_fr, height=50, fg_color="#2c3e50", corner_radius=8
-        )
+        # ── Summary footer ───────────────────────────────────────────────────
+        self.brgy_summary = ctk.CTkFrame(brgy_fr, height=50, fg_color="#2c3e50", corner_radius=8)
         self.brgy_summary.pack(fill="x", pady=(15, 0))
+
+        self.brgy_year_lbl = ctk.CTkLabel(
+            self.brgy_summary,
+            text="",
+            font=("Segoe UI", 10),
+            text_color="#8b949e",
+        )
+        self.brgy_year_lbl.pack(side="left", padx=20, pady=10)
 
         self.brgy_total_lbl = ctk.CTkLabel(
             self.brgy_summary,
@@ -375,11 +407,13 @@ class ReportsPage:
 
     def generate_barangay_receivables(self):
         self._show_loading()
+        selected = self.brgy_year_cb.get()
+        year = None if selected == "All Years" else int(selected)
 
         def worker():
             try:
-                data = prop.get_receivables_by_barangay()
-                self.container.after(0, lambda: self._update_brgy_table(data))
+                data = prop.get_receivables_by_barangay(year=year)
+                self.container.after(0, lambda: self._update_brgy_table(data, year))
             except Exception as e:
                 self.container.after(
                     0, lambda err=e: messagebox.showerror("Error", str(err))
@@ -389,27 +423,27 @@ class ReportsPage:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _update_brgy_table(self, data):
+    def _update_brgy_table(self, data, year=None):
         for item in self.brgy_tree.get_children():
             self.brgy_tree.delete(item)
 
+        year_label = f"Cumulative as of {year}" if year else "All-time totals"
+        self.brgy_year_lbl.configure(text=year_label)
+
         if not data:
-            ErrorDialog(self.parent.winfo_toplevel(), tr("reports.tabs.barangay"), tr("reports.errors.no_barangay"))
             self.brgy_total_lbl.configure(text=tr("reports.barangay.total").replace("{value}", "P 0.00"))
             return
 
         grand_total = 0.0
         for i, row in enumerate(data):
-            # row: 0:brgy, 1:assessed, 2:due, 3:pen, 4:disc, 5:coll, 6:receiv
             f_row = list(row)
             try:
                 receiv_val = float(row[6] or 0)
                 grand_total += receiv_val
-            except:
+            except Exception:
                 pass
 
             if len(f_row) >= 7:
-                # Format all currency columns (1 through 6)
                 for idx in range(1, 7):
                     f_row[idx] = format_curr(f_row[idx])
 

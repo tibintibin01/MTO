@@ -16,7 +16,7 @@ dependencies = [
     "pymysql==1.1.0",
     "python-dotenv==1.0.0",
     "python-jose[cryptography]==3.3.0",
-    "passlib[bcrypt]==1.7.4",
+    "bcrypt==4.2.1",
     "slowapi==0.1.8",
     "sentry-sdk[fastapi]==1.35.0",
     "python-multipart==0.0.6",
@@ -31,3 +31,12 @@ dependencies = [
 [tool.setuptools]
 py-modules = ["db_manager", "migration_manager", "receipt_generator", "theme_manager", "ui_components", "database_hardening_tool"]
 packages = ["backend", "ui", "utils"]
+
+[tool.pytest.ini_options]
+# Force test environment so production-only validators (non-root DB user,
+# non-empty DB password) don't fire during the test suite.
+# These same vars are set explicitly in .github/workflows/ci.yml.
+env = [
+    "MTO_ENVIRONMENT=test",
+    "ENVIRONMENT=test",
+]

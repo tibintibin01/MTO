@@ -52,11 +52,31 @@ def release_all_property_locks(user_name):
     pass
 
 
-def save_property(data, editing_id=None, **kwargs):
+def save_property(data, editing_id=None, idempotency_key=None, **kwargs):
+    """
+    Saves or updates a property record.
+
+    Pass idempotency_key (a UUID string) when the save includes payment data
+    (OR Number is set). This prevents duplicate payments from double-clicks
+    or network retries — the server returns the cached response if the same
+    key arrives again within 24 hours.
+
+    Generate the key when the payment form is OPENED, not when Submit is
+    clicked. This way every submission attempt uses the same key until the
+    form is closed and reopened.
+    """
     if editing_id:
-        return api_request("PUT", f"/properties/{editing_id}", data=data)
+        return api_request(
+            "PUT", f"/properties/{editing_id}",
+            data=data,
+            idempotency_key=idempotency_key,
+        )
     else:
-        return api_request("POST", "/properties", data=data)
+        return api_request(
+            "POST", "/properties",
+            data=data,
+            idempotency_key=idempotency_key,
+        )
 
 
 def get_assessment_roll():
@@ -67,12 +87,18 @@ def get_delinquent_accounts():
     return api_request_with_cache("GET", "/properties/delinquent")
 
 
-def get_receivables_by_barangay():
-    return api_request_with_cache("GET", "/reports/receivables-by-barangay")
+def get_receivables_by_barangay(year=None):
+    params = {}
+    if year:
+        params["year"] = year
+    return api_request_with_cache("GET", "/reports/receivables-by-barangay", params=params if params else None)
 
 
 def get_deleted_properties():
-    return api_request_with_cache("GET", "/properties/deleted")
+    result = api_request_with_cache("GET", "/properties/deleted")
+    if isinstance(result, dict) and "items" in result:
+        return result["items"]
+    return result if isinstance(result, list) else []
 
 
 def restore_property(property_id, **kwargs):

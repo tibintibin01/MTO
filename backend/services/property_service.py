@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import text, func
 from sqlalchemy.orm import Session
 from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment, AuditLog
@@ -262,7 +262,7 @@ def soft_delete_property(property_id, user=None, ip_address=None, db_session: Se
         return 0
     
     old_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
-    prop.deleted_at = datetime.now()
+    prop.deleted_at = datetime.now(timezone.utc)
     
     if user:
         audit = AuditLog(
@@ -274,7 +274,7 @@ def soft_delete_property(property_id, user=None, ip_address=None, db_session: Se
             old_values=json.dumps(old_data, default=str),
             new_values=json.dumps({"deleted_at": prop.deleted_at.isoformat() if hasattr(prop.deleted_at, "isoformat") else str(prop.deleted_at)}),
             ip_address=ip_address,
-            timestamp=datetime.now()
+            timestamp=datetime.now(timezone.utc)
         )
         db_session.add(audit)
         
@@ -282,28 +282,29 @@ def soft_delete_property(property_id, user=None, ip_address=None, db_session: Se
     return 1
 
 
-def get_deleted_properties(limit=50, offset=0, db_session: Session = None):
-    """Fetches all properties marked as deleted with pagination support."""
-    safe_limit = max(1, int(limit))
-    safe_offset = max(0, int(offset))
-    rows = (
-        db_session.query(Property)
-        .filter(Property.deleted_at != None)
-        .order_by(Property.id.desc())
-        .limit(safe_limit)
-        .offset(safe_offset)
-        .all()
-    )
-    return [
-        (
-            prop.id,
-            prop.td_number,
-            prop.owner_name,
-            prop.location,
-            prop.assessed_value,
-        )
-        for prop in rows
-    ]
+def get_deleted_properties(limit=50, cursor=None, db_session: Session = None):
+    """Fetches soft-deleted properties using cursor-based pagination."""
+    safe_limit = min(max(1, int(limit)), 200)
+
+    query = db_session.query(Property).filter(Property.deleted_at != None)
+    if cursor:
+        query = query.filter(Property.id < int(cursor))
+
+    rows = query.order_by(Property.id.desc()).limit(safe_limit + 1).all()
+
+    has_more = len(rows) > safe_limit
+    items = rows[:safe_limit]
+    next_cursor = items[-1].id if has_more and items else None
+
+    return {
+        "items": [
+            (prop.id, prop.td_number, prop.owner_name, prop.location, prop.assessed_value)
+            for prop in items
+        ],
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "count": len(items),
+    }
 
 
 @require_permission("property_edit")
@@ -316,7 +317,7 @@ def restore_property(property_id, user=None, db_session: Session = None):
     prop.deleted_at = None
     
     if user:
-        from datetime import datetime
+        from datetime import datetime, timezone
         audit = AuditLog(
             user_id=user.get("id"),
             username=user.get("username", "unknown"),
@@ -325,7 +326,7 @@ def restore_property(property_id, user=None, db_session: Session = None):
             record_id=property_id,
             old_values=str({"deleted_at": "deleted"}),
             new_values=str({"deleted_at": None}),
-            timestamp=datetime.now()
+            timestamp=datetime.now(timezone.utc)
         )
         db_session.add(audit)
         
@@ -406,37 +407,180 @@ def get_property_by_td(td_number, db_session: Session = None):
     return {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
 
 
-def get_assessment_roll(limit=100, offset=0, db_session: Session = None):
-    safe_limit = max(1, int(limit))
-    safe_offset = max(0, int(offset))
-    results = db_session.query(Property).filter(Property.deleted_at == None).order_by(Property.owner_name.asc()).limit(safe_limit).offset(safe_offset).all()
-    return [(p.td_number, p.owner_name, p.location, p.kind_of_property, float(p.assessed_value or 0)) for p in results]
+def get_assessment_roll(limit=100, cursor=None, db_session: Session = None):
+    """
+    Returns a paginated assessment roll using cursor-based pagination.
+    Cursor is the last seen Property.id — avoids OFFSET degradation on large tables.
+    """
+    safe_limit = min(max(1, int(limit)), 200)  # hard cap at 200
+
+    query = db_session.query(
+        Property.id,
+        Property.td_number,
+        Property.owner_name,
+        Property.location,
+        Property.kind_of_property,
+        Property.assessed_value,
+    ).filter(Property.deleted_at == None)
+
+    if cursor:
+        query = query.filter(Property.id > int(cursor))
+
+    # Fetch one extra row to determine if there are more pages
+    rows = query.order_by(Property.id.asc()).limit(safe_limit + 1).all()
+
+    has_more = len(rows) > safe_limit
+    items = rows[:safe_limit]
+    next_cursor = items[-1][0] if has_more and items else None
+
+    return {
+        "items": [
+            {
+                "id": r[0],
+                "td_number": r[1],
+                "owner_name": r[2],
+                "location": r[3],
+                "kind_of_property": r[4],
+                "assessed_value": float(r[5] or 0),
+            }
+            for r in items
+        ],
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "count": len(items),
+    }
 
 
-def get_receivables_by_barangay(db_session: Session = None):
+def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 2023, db_session: Session = None):
+    """
+    Returns receivables breakdown by barangay.
+
+    Parameters
+    ----------
+    report_year : int, optional
+        Show cumulative receivables up to and including this year.
+        If None, shows all-time totals.
+    data_start_year : int
+        The earliest year to include in the report. Defaults to 2023.
+        Billing records before this year (created by the sync from old
+        effectivity_date values) are excluded.
+    """
     close_session = False
     if not db_session:
+        from backend.database import SessionLocal
         db_session = SessionLocal()
         close_session = True
 
     try:
-        results = (
+        from backend.models import Payment, PaymentBilling
+        from utils.db_compat import year_of
+
+        year_filter = str(report_year) if report_year else None
+
+        # 1. Total Due per barangay — sum all billing records up to report_year
+        due_query = (
             db_session.query(
                 func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
                 func.sum(PropertyBilling.assessed_value).label("total_assessed"),
-                func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount).label("total_due"),
+                func.sum(
+                    (PropertyBilling.assessed_value * 0.02)
+                    + PropertyBilling.penalty
+                    - PropertyBilling.discount
+                ).label("total_due"),
                 func.sum(PropertyBilling.penalty).label("total_penalty"),
                 func.sum(PropertyBilling.discount).label("total_discount"),
-                func.sum(PropertyBilling.amount_paid).label("total_collected"),
-                func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount - PropertyBilling.amount_paid).label("total_receivable")
             )
             .join(PropertyBilling, PropertyBilling.property_id == Property.id)
             .filter(Property.deleted_at == None)
-            .group_by(Property.barangay)
-            .order_by(text("total_receivable DESC"))
-            .all()
         )
-        return [tuple(r) for r in results]
+        if year_filter:
+            due_query = due_query.filter(PropertyBilling.tax_year <= year_filter)
+        # Always apply the data start year floor to exclude pre-data billing records
+        due_query = due_query.filter(PropertyBilling.tax_year >= str(data_start_year))
+
+        due_results = due_query.group_by(Property.barangay).all()
+
+        # 2. Total Collected per barangay — sum payments where date_paid falls
+        # within the selected year range. Uses cast to Date for reliable comparison
+        # and explicitly excludes NULL date_paid rows.
+        from sqlalchemy import cast, Integer as SAInteger
+        from datetime import date as pydate
+
+        coll_query = (
+            db_session.query(
+                func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
+                func.sum(Payment.amount).label("total_collected"),
+            )
+            .join(Property, Property.id == Payment.property_id)
+            .filter(
+                Property.deleted_at == None,
+                Payment.date_paid != None,  # exclude null dates
+            )
+        )
+        if year_filter:
+            # Use a direct date boundary comparison — more reliable than
+            # extract(year) which can behave inconsistently across DB drivers.
+            # "Payments made on or before Dec 31 of the selected year"
+            year_end = pydate(int(year_filter), 12, 31)
+            coll_query = coll_query.filter(Payment.date_paid <= year_end)
+        # Also apply data_start_year floor to collections
+        year_start = pydate(data_start_year, 1, 1)
+        coll_query = coll_query.filter(Payment.date_paid >= year_start)
+
+        coll_results = coll_query.group_by(Property.barangay).all()
+
+        # Merge into a single dict keyed by barangay
+        data = {}
+        for r in due_results:
+            brgy = r[0] or "UNSPECIFIED"
+            data[brgy] = {
+                "barangay": brgy,
+                "total_assessed": float(r[1] or 0),
+                "total_due": float(r[2] or 0),
+                "total_penalty": float(r[3] or 0),
+                "total_discount": float(r[4] or 0),
+                "total_collected": 0.0,
+            }
+
+        for r in coll_results:
+            brgy = r[0] or "UNSPECIFIED"
+            if brgy not in data:
+                data[brgy] = {
+                    "barangay": brgy,
+                    "total_assessed": 0.0,
+                    "total_due": 0.0,
+                    "total_penalty": 0.0,
+                    "total_discount": 0.0,
+                    "total_collected": 0.0,
+                }
+            data[brgy]["total_collected"] = float(r[1] or 0)
+
+        # Build result tuples: (brgy, assessed, due, penalty, discount, collected, receivable)
+        results = []
+        for brgy, d in sorted(
+            data.items(),
+            key=lambda x: x[1]["total_due"] - x[1]["total_discount"] - x[1]["total_collected"],
+            reverse=True
+        ):
+            # Correct formula: Total Due already has discount subtracted in the SQL
+            # (assessed*0.02 + penalty - discount), so receivable = total_due - collected
+            # BUT total_due in the query is: (assessed*0.02) + penalty - discount
+            # so discount is already baked in. The displayed "Total Discount" column
+            # is informational. Receivable = total_due - total_collected is correct.
+            # However the sort should use the same formula for consistency.
+            receivable = d["total_due"] - d["total_collected"]
+            results.append((
+                brgy,
+                d["total_assessed"],
+                d["total_due"],
+                d["total_penalty"],
+                d["total_discount"],
+                d["total_collected"],
+                receivable,
+            ))
+
+        return results
+
     finally:
         if close_session:
             db_session.close()

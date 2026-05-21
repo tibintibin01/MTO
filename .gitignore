@@ -45,3 +45,16 @@ logs/*.json
 mto_local.db
 coverage.xml
 .coverage
+
+# Generated PDF documents — never commit receipts or computation PDFs
+*.pdf
+backend/receipts/
+backend/computations/
+receipts/
+statements/
+
+# Import validation cache — contains taxpayer data, must never be committed
+import_cache/
+
+# Local frontend environment — contains server IP, varies per deployment
+frontend/.env.local

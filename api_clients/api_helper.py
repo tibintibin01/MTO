@@ -12,7 +12,7 @@ from pathlib import Path
 
 # --- NETWORK CONFIGURATION ---
 # Default to localhost for development
-DEFAULT_SERVER_URL = "https://localhost:8000"
+DEFAULT_SERVER_URL = "http://localhost:8001"
 
 BASE_URL = DEFAULT_SERVER_URL
 
@@ -71,14 +71,55 @@ def is_token_expired(token):
         return True  # Default to expired if malformed
 
 
+_SESSION_TOKEN = None
+_REFRESH_TOKEN = None
+
+
 def set_token(token):
     """Sets the global bearer token for all subsequent API requests."""
     global _SESSION_TOKEN
     _SESSION_TOKEN = token
 
+
+def set_refresh_token(token):
+    """Stores the refresh token for silent re-authentication."""
+    global _REFRESH_TOKEN
+    _REFRESH_TOKEN = token
+
+
 def get_token():
     """Returns the current session token."""
     return _SESSION_TOKEN
+
+
+def _try_refresh() -> bool:
+    """
+    Attempts to get a new access token using the stored refresh token.
+    Returns True if successful, False if the refresh token is also expired/missing.
+    Called automatically when the access token expires.
+    """
+    global _SESSION_TOKEN, _REFRESH_TOKEN
+    if not _REFRESH_TOKEN:
+        return False
+    try:
+        import requests as _requests
+        import json as _json
+        resp = _requests.post(
+            f"{BASE_URL}/api/auth/refresh",
+            json={"refresh_token": _REFRESH_TOKEN},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+            timeout=10,
+            verify=str(CERT_PATH) if CERT_PATH.exists() else False,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            new_token = data.get("access_token")
+            if new_token:
+                _SESSION_TOKEN = new_token
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def api_request(
@@ -89,6 +130,7 @@ def api_request(
     files=None,
     raw_response=False,
     queue_offline=True,
+    idempotency_key=None,
 ):
     """
     Centralized helper for all UI-to-Backend communication.
@@ -100,14 +142,20 @@ def api_request(
     if _SESSION_TOKEN:
         # Verify expiration locally before sending
         if is_token_expired(_SESSION_TOKEN):
-            print("SESSION EXPIRED: Token check failed locally.")
-            # We raise a custom exception that the UI can catch to show a login prompt
-            raise Exception("Your session has expired. Please log in again.")
+            # Try silent refresh first — if the refresh token is still valid,
+            # the user never sees an error and the request continues normally.
+            if not _try_refresh():
+                raise Exception("Your session has expired. Please log in again.")
 
         headers["Authorization"] = f"Bearer {_SESSION_TOKEN}"
     
     # CSRF Protection: Include custom header for all state-changing requests
     headers["X-Requested-With"] = "XMLHttpRequest"
+
+    # Idempotency: attach key for POST/PUT so the server can detect duplicate
+    # submissions from double-clicks or network retries.
+    if method in ("POST", "PUT", "PATCH") and idempotency_key:
+        headers["X-Idempotency-Key"] = idempotency_key
 
     mto_logger.info(f"API Request: {method} {endpoint}", method=method, url=url)
 
@@ -117,7 +165,8 @@ def api_request(
         # verify=False is used because we are using a self-signed certificate for local dev
         import urllib3
         import time
-        from utils import set_request_id, MetricsManager
+        from utils import set_request_id
+        from utils.metrics import MetricsManager
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         
@@ -147,11 +196,16 @@ def api_request(
         mto_logger.info(f"API Response: {response.status_code}", status=response.status_code)
 
         # 2. Telemetry: Measure Latency
-        latency = (time.perf_counter() - start_time) * 1000
-        MetricsManager.record_request(latency, is_error=not response.ok)
-        
+        latency = (time.perf_counter() - start_time)
+        MetricsManager.record_request(
+            method=method,
+            endpoint=endpoint,
+            status=response.status_code,
+            duration=latency,
+        )
+
         # 3. Log structured telemetry
-        mto_logger.info(f"API {method} {endpoint} completed", latency_ms=round(latency, 2), status=response.status_code)
+        mto_logger.info(f"API {method} {endpoint} completed", latency_ms=round(latency * 1000, 2), status=response.status_code)
 
         if raw_response:
             return response
@@ -217,7 +271,8 @@ def api_download_file(method, endpoint, params=None):
     headers = {}
     if _SESSION_TOKEN:
         if is_token_expired(_SESSION_TOKEN):
-            raise Exception("Your session has expired. Please log in again.")
+            if not _try_refresh():
+                raise Exception("Your session has expired. Please log in again.")
         headers["Authorization"] = f"Bearer {_SESSION_TOKEN}"
     
     headers["X-Requested-With"] = "XMLHttpRequest"

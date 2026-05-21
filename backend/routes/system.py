@@ -1,13 +1,13 @@
 import os
-from typing import List, Optional
-from datetime import datetime
+from typing import List, Optional, Union
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
+from jose import JWTError, jwt
 from pydantic import BaseModel
-# import db_manager as db # Unused in route
 import backend.services.system_service as sys_svc
 import backend.services.search_service as search_svc
-from backend.deps import get_current_user, admin_only, write_access, read_only, limiter, manager, get_db, Session
+from backend.deps import get_current_user, admin_only, write_access, read_only, limiter, manager, get_db, Session, SECRET_KEY, ALGORITHM
 from backend.schemas import PropertySaveSchema, LogActionSchema
 from utils.logger import mto_logger
 
@@ -17,7 +17,7 @@ class RestoreRequest(BaseModel):
     file_path: str
 
 # SECURITY: The unauthenticated /metrics endpoint was removed.
-# Use GET /api/v2/metrics (admin_only) for Prometheus scraping instead.
+# Use GET /api/v1/metrics (admin_only) for Prometheus scraping instead.
 # Configure infra/prometheus.yml to include an Authorization header.
 
 @router.get("/healthz")
@@ -31,7 +31,7 @@ async def health_check(db_session: Session = Depends(get_db)):
 
     health = {
         "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "database": "unknown",
         "cache": "unknown",
         "storage": "unknown",
@@ -98,7 +98,7 @@ async def global_search(q: str = "", current_user: dict = Depends(get_current_us
     results = search_svc.global_search(q, db_session=db_session)
     return {"results": results}
 
-@router.post("/api/v2/system/undo")
+@router.post("/api/v1/system/undo")
 async def undo_last_system_action(current_user: dict = Depends(get_current_user)):
     """Reverses the last critical action (UPDATE/DELETE) performed by the current user."""
     from backend.services.history_service import undo_last_action
@@ -113,7 +113,7 @@ async def undo_last_system_action(current_user: dict = Depends(get_current_user)
     })
     return {"status": "success", "message": message}
 
-@router.get("/api/v2/metrics")
+@router.get("/api/v1/metrics")
 async def get_metrics(current_user: dict = Depends(admin_only)):
     from utils.metrics import MetricsManager
     content, content_type = MetricsManager.get_latest_metrics()
@@ -129,22 +129,15 @@ async def get_system_stats(request: Request, current_user: dict = Depends(admin_
 @limiter.limit("3/minute")
 async def trigger_backup(
     request: Request,
-    background_tasks: BackgroundTasks, 
     current_user: dict = Depends(admin_only)
 ):
-    from backend.services.backup_service import run_hybrid_backup
-    async def backup_wrapper():
-        from backend.database import SessionLocal
-        with SessionLocal() as db:
-            await run_hybrid_backup(user=current_user, db_session=db)
-        await manager.broadcast({
-            "type": "NOTIFICATION",
-            "title": "Backup Complete",
-            "message": "The Hybrid Backup process has finished successfully.",
-            "level": "success"
-        })
-    background_tasks.add_task(backup_wrapper)
-    return {"status": "backup_started", "message": "Hybrid backup is running in the background."}
+    from backend.services.job_service import submit_job
+    job_id = submit_job(job_type="backup", submitted_by=current_user["username"])
+    return {
+        "status": "backup_started",
+        "job_id": job_id,
+        "message": "Backup queued. Poll /jobs/{job_id} for progress.",
+    }
 
 @router.get("/system/backup/status", dependencies=[Depends(read_only)])
 async def get_backup_health(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
@@ -153,45 +146,68 @@ async def get_backup_health(current_user: dict = Depends(get_current_user), db_s
 
 @router.post("/system/import/validate", dependencies=[Depends(write_access)])
 async def validate_bulk_import(
-    request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_current_user)
+    request: Request, file: UploadFile = File(...), current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db)
 ):
     from utils import is_feature_enabled
     if not is_feature_enabled("BULK_IMPORT"):
         raise HTTPException(status_code=403, detail="Bulk Import feature is currently disabled.")
-    from backend.services.import_service import validate_property_import
     content = await file.read()
     ext = os.path.splitext(file.filename)[1]
     mode = request.query_params.get("mode", "property")
     if mode == "assessment":
         from backend.services.import_service import validate_assessment_import
-        return validate_assessment_import(content, ext)
-    if mode == "payments":
+        res = validate_assessment_import(content, ext, db_session=db_session)
+    elif mode == "payments":
         from backend.services.import_service import validate_payment_import
-        return validate_payment_import(content, ext)
-    return validate_property_import(content, ext)
+        res = validate_payment_import(content, ext, db_session=db_session)
+    else:
+        from backend.services.import_service import validate_property_import
+        res = validate_property_import(content, ext, db_session=db_session)
+
+    if isinstance(res, dict) and res.get("success") and "data" in res:
+        from backend.services.import_service import save_import_cache
+        token = save_import_cache(res["data"])
+        if token:
+            res["validation_token"] = token
+            res["cache_token"] = token
+
+    return res
 
 @router.post("/system/import/commit", dependencies=[Depends(write_access)])
 async def commit_bulk_import(
-    request: Request, data: List[dict], current_user: dict = Depends(get_current_user)
+    request: Request, data: Union[List[dict], dict], current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db)
 ):
     from utils import is_feature_enabled
     if not is_feature_enabled("BULK_IMPORT"):
         raise HTTPException(status_code=403, detail="Bulk Import feature is currently disabled.")
     mode = request.query_params.get("mode", "property")
-    if data and hasattr(data[0], "model_dump"):
-        payload = [d.model_dump(exclude_unset=True) for d in data]
+
+    if isinstance(data, dict):
+        token = data.get("validation_token") or data.get("cache_token")
+        if not token:
+            raise HTTPException(status_code=400, detail="Missing validation_token or cache_token in request body.")
+        from backend.services.import_service import load_import_cache
+        payload = load_import_cache(token)
+        if payload is None:
+            raise HTTPException(status_code=400, detail="Invalid, expired, or missing import validation token.")
     else:
-        payload = data
+        if data and hasattr(data[0], "model_dump"):
+            payload = [d.model_dump(exclude_unset=True) for d in data]
+        else:
+            payload = data
+
     if mode == "assessment":
         from backend.services.import_service import commit_assessment_import
-        res = commit_assessment_import(payload, current_user)
+        res = commit_assessment_import(payload, current_user, db_session=db_session)
         return {"status": "success", "imported": res["inserted"] + res["updated"], "details": res}
     if mode == "payments":
         from backend.services.import_service import commit_payment_import
-        res = commit_payment_import(payload, current_user)
+        res = commit_payment_import(payload, current_user, db_session=db_session)
         return {"status": "success", "imported": res["inserted"]}
     from backend.services.import_service import commit_property_import
-    count = commit_property_import(payload, current_user)
+    count = commit_property_import(payload, current_user, db_session=db_session)
     return {"status": "success", "imported": count}
 
 @router.post("/system/logs")
@@ -199,6 +215,7 @@ async def log_system_action(
     log: LogActionSchema, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
 ):
     sys_svc.log_action(current_user, log.action, db_session=db_session)
+    db_session.commit()
     return {"status": "logged"}
 
 @router.get("/system/audit-stats", dependencies=[Depends(admin_only)])
@@ -256,15 +273,143 @@ async def restore_system_backup(
         error_detail = traceback.format_exc()
         try:
             with open("logs/restore_debug.log", "a") as f:
-                f.write(f"\n[{datetime.now()}] RESTORE FAILURE\nFile: {request.file_path}\nError: {str(e)}\nTraceback:\n{error_detail}\n" + "-" * 40 + "\n")
+                f.write(f"\n[{datetime.now(timezone.utc)}] RESTORE FAILURE\nFile: {request.file_path}\nError: {str(e)}\nTraceback:\n{error_detail}\n" + "-" * 40 + "\n")
         except: pass
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.websocket("/ws/notifications")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = None):
+    """
+    Authenticated WebSocket endpoint for real-time notifications.
+
+    Clients must supply a valid JWT via query parameter on connect:
+        wss://host/ws/notifications?token=<access_token>
+
+    The cookie-based token is not available during the WebSocket handshake
+    in most browser/client implementations, so the query parameter is the
+    supported transport here. The token is validated before the connection
+    is accepted — unauthenticated clients are rejected with close code 1008
+    (policy violation) before any data is exchanged.
+    """
+    # Extract token from query string if not passed as a parameter
+    if not token:
+        token = websocket.query_params.get("token")
+
+    if not token:
+        await websocket.close(code=1008, reason="Missing authentication token")
+        mto_logger.security(
+            "WebSocket connection rejected: no token provided",
+            ip=websocket.client.host if websocket.client else "unknown",
+        )
+        return
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        role: str = payload.get("role")
+        user_id: int = payload.get("id")
+        if not username or not role or not user_id:
+            raise JWTError("Incomplete token payload")
+    except JWTError as e:
+        await websocket.close(code=1008, reason="Invalid or expired token")
+        mto_logger.security(
+            f"WebSocket connection rejected: invalid token — {e}",
+            ip=websocket.client.host if websocket.client else "unknown",
+        )
+        return
+
+    # Token is valid — accept the connection
     await manager.connect(websocket)
+    mto_logger.info(
+        "WebSocket connection established",
+        user=username,
+        role=role,
+        ip=websocket.client.host if websocket.client else "unknown",
+    )
+
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+        mto_logger.info("WebSocket connection closed", user=username)
+
+@router.post("/system/sync-billing-years", dependencies=[Depends(admin_only)])
+async def sync_billing_years(
+    background_tasks: BackgroundTasks,
+    dry_run: bool = False,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Creates missing PropertyBilling records for all active properties.
+
+    For each property, determines the start year from effectivity_date or
+    tax_year, then creates billing rows for every year from start_year to
+    the current year that doesn't already have one.
+
+    This fixes the Delinquency Dashboard showing only one year's balance
+    for properties that have been unpaid for multiple years.
+
+    Set dry_run=true to preview what would be created without writing to DB.
+    """
+    from backend.services.billing_sync_service import sync_billing_years as _sync
+
+    mto_logger.info(
+        f"Billing year sync requested by {current_user.get('username')} "
+        f"(dry_run={dry_run})"
+    )
+
+    if dry_run:
+        # Dry run is fast — run synchronously and return the preview
+        result = _sync(db_session=db_session, dry_run=True)
+        return result
+
+    # Live run — submit as a background job so the UI doesn't time out
+    from backend.services.job_service import submit_job
+    job_id = submit_job(
+        job_type="sync_billing_years",
+        submitted_by=current_user["username"],
+        payload={},
+        db_session=db_session,
+    )
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "message": "Billing year sync queued. Poll /jobs/{job_id} for progress.",
+    }
+
+
+@router.post("/system/restart", dependencies=[Depends(admin_only)])
+async def restart_server(
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Gracefully restarts the backend server process.
+    Admin only. Used for applying software updates without physical access
+    to the server PC.
+
+    The response is sent first, then the process exits after a 2-second
+    delay so the client receives the confirmation before the connection drops.
+    The OS / startup script (run_silently.vbs or a process manager) is
+    responsible for restarting the process automatically.
+    """
+    mto_logger.info(
+        "Server restart requested",
+        user=current_user.get("username"),
+    )
+
+    async def _do_restart():
+        import asyncio
+        import sys
+        await asyncio.sleep(2)  # Give the response time to reach the client
+        mto_logger.info("Server process exiting for restart...")
+        os._exit(0)  # Hard exit — process manager / VBS script will relaunch
+
+    background_tasks.add_task(_do_restart)
+    return {
+        "status": "restarting",
+        "message": "Server will restart in ~2 seconds. Reconnect after 5–10 seconds.",
+        "requested_by": current_user.get("username"),
+    }

@@ -1,4 +1,6 @@
 import os
+import asyncio
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from backend.deps import get_current_user, write_access, get_db, Session
@@ -6,6 +8,7 @@ from backend.schemas import ReceiptRecordSchema
 import backend.services.payment_service as pay_svc
 from backend.generators import receipt_gen
 from backend.services.storage_service import storage_service
+from utils.logger import mto_logger
 
 router = APIRouter(prefix="/payments", tags=["Financial"])
 
@@ -17,9 +20,13 @@ async def get_recent_payments(
 
 @router.get("/records")
 async def get_payment_records(
-    term: str, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    term: str,
+    limit: int = 50,
+    cursor: Optional[int] = None,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db)
 ):
-    return pay_svc.get_payment_receipt_records(term, db_session=db_session)
+    return pay_svc.get_payment_receipt_records(term, limit=limit, cursor=cursor, db_session=db_session)
 
 @router.get("/{payment_id}/details")
 async def get_payment_details(
@@ -67,25 +74,48 @@ async def generate_receipt_pdf(
         raise HTTPException(status_code=404, detail="Payment details not found")
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    pdf_path = receipt_gen.generate_or_receipt(details, base_dir)
+
+    # PDF generation is CPU/IO-bound — offload to a thread to avoid
+    # blocking the async event loop under concurrent requests.
+    pdf_path = await asyncio.to_thread(receipt_gen.generate_or_receipt, details, base_dir)
     file_name = os.path.basename(pdf_path)
+
+    # Determine the final stored path (local or S3 key) before persisting
+    stored_path = pdf_path
 
     if storage_service.enabled:
         s3_key = f"receipts/{file_name}"
-        uploaded_key = storage_service.upload_file(pdf_path, s3_key)
+        uploaded_key = await asyncio.to_thread(storage_service.upload_file, pdf_path, s3_key)
         if uploaded_key:
-            presigned_url = storage_service.generate_presigned_url(s3_key)
+            presigned_url = await asyncio.to_thread(storage_service.generate_presigned_url, s3_key)
+            stored_path = s3_key  # Store the S3 key so it can be re-signed later
             if presigned_url:
                 try:
                     os.remove(pdf_path)
                 except Exception as cleanup_err:
-                    import logging
-                    logging.getLogger("MTO_SYSTEM").warning(f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}")
+                    mto_logger.warning(f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}")
+                # Update receipt_history with the new S3 path before redirecting
+                try:
+                    pay_svc.save_receipt_record(
+                        details["property_id"], payment_id, details,
+                        stored_path, current_user.get("username", "system"),
+                        current_user=current_user, db_session=db_session,
+                    )
+                except Exception as save_err:
+                    mto_logger.warning(f"Failed to update receipt_history after S3 upload: {save_err}")
                 return RedirectResponse(presigned_url, status_code=307)
 
-    return FileResponse(
-        pdf_path, media_type="application/pdf", filename=file_name
-    )
+    # Update receipt_history so the ledger "View Receipt" always opens the latest file
+    try:
+        pay_svc.save_receipt_record(
+            details["property_id"], payment_id, details,
+            stored_path, current_user.get("username", "system"),
+            current_user=current_user, db_session=db_session,
+        )
+    except Exception as save_err:
+        mto_logger.warning(f"Failed to update receipt_history: {save_err}")
+
+    return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
 
 @router.delete("/{payment_id}")
 async def delete_payment(

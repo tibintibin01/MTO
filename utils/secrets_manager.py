@@ -37,15 +37,26 @@ class SecretsManager:
         # 2. Load .env file as a local developer-friendly fallback
         load_dotenv()
         self._initialized = True
-        
-        env_mode = os.getenv("MTO_ENV", "development")
+
+        # Resolve environment mode — check both MTO_ENV and ENVIRONMENT so
+        # secrets_manager and config.py always agree on the current mode.
+        env_mode = (
+            os.getenv("MTO_ENV")
+            or os.getenv("ENVIRONMENT")
+            or "development"
+        ).lower()
+
         if env_mode == "production":
             # Hardening: Emit warnings if cleartext .env is found in production and vault is missing
             if os.path.exists(".env") and not self._vault_secrets:
-                mto_logger.security("WARNING: Clear-text .env file detected in production workspace! Migrate secrets to system environment or ~/.mto/secrets.json secure vault.", key="MTO_ENV")
+                mto_logger.security(
+                    "WARNING: Clear-text .env file detected in production workspace! "
+                    "Migrate secrets to system environment or ~/.mto/secrets.json secure vault.",
+                    key="MTO_ENV"
+                )
             mto_logger.info("SecretsManager initialized in SECURE PRODUCTION mode.")
         else:
-            mto_logger.info("SecretsManager initialized in developer-friendly mode.")
+            mto_logger.info(f"SecretsManager initialized in {env_mode} mode.")
 
     def get(self, key: str, default: Optional[str] = None, required: bool = False) -> Optional[str]:
         """Retrieves a secret with prioritized resolution: Vault -> System Environment -> .env/Fallback."""
@@ -68,14 +79,38 @@ class SecretsManager:
 
     @property
     def jwt_secret(self) -> str:
-        env_mode = os.getenv("MTO_ENV", "development").lower()
-        if env_mode == "production":
-            return self.get("MTO_JWT_SECRET", required=True)
-        return self.get("MTO_JWT_SECRET", default="TEMPORARY_DEV_SECRET_DO_NOT_USE_IN_PROD", required=True)
+        """
+        Returns the JWT signing secret. Always required — no fallback.
+        Fails fast at startup if missing or too short, regardless of environment.
+        A known static default would allow any attacker to forge admin tokens.
+        """
+        value = self.get("MTO_JWT_SECRET", required=True)
+        if len(value) < 32:
+            raise EnvironmentError(
+                "MTO_JWT_SECRET is too short (minimum 32 characters). "
+                "Generate one with: python -c \"import secrets; print(secrets.token_hex(64))\""
+            )
+        return value
 
     @property
     def db_password(self) -> str:
-        return self.get("MTO_DB_PASSWORD", default="", required=False)
+        """
+        Returns the database password. Required in production — a blank
+        password means the application is connecting as root or with no
+        authentication, which is a critical security misconfiguration.
+        """
+        env_mode = (
+            os.getenv("MTO_ENV")
+            or os.getenv("ENVIRONMENT")
+            or "development"
+        ).lower()
+        value = self.get("MTO_DB_PASSWORD", default="", required=False)
+        if env_mode == "production" and not value:
+            raise EnvironmentError(
+                "MTO_DB_PASSWORD cannot be empty in production. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_hex(24))\""
+            )
+        return value or ""
 
     @property
     def ssl_passphrase(self) -> str:

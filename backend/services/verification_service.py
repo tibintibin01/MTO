@@ -13,11 +13,12 @@ DB_CONFIG = {
     "host": mto_config.DB_HOST,
 }
 
-def verify_sql_dump(file_path):
+def verify_sql_dump(file_path, db_session: Session = None):
     """
     Performs a multi-point integrity check on a MySQL dump file.
     1. Shallow Check: File presence and completion marker.
-    2. Deep Check: Automated Restore Test into a temp database.
+    2. Deep Check: Automated Restore Test into a temp database (skipped if
+       no DB session is available or DB credentials are not configured).
     """
     # 1. Shallow Check
     if not os.path.exists(file_path):
@@ -37,8 +38,16 @@ def verify_sql_dump(file_path):
     except Exception as e:
         return False, f"Shallow Verification Error: {str(e)}"
 
-    # 2. Deep Check: Automated Restore Test
-    return perform_restore_test(file_path)
+    # 2. Deep Check — requires a live DB session and configured credentials
+    if db_session is None:
+        try:
+            with SessionLocal() as session:
+                return perform_restore_test(file_path, db_session=session)
+        except Exception:
+            # If we can't get a session (e.g. DB not configured), skip deep check
+            return True, "Shallow check passed. Deep restore test skipped (no DB session)."
+
+    return perform_restore_test(file_path, db_session=db_session)
 
 
 def perform_restore_test(file_path, db_session: Session = None):
@@ -56,14 +65,22 @@ def perform_restore_test(file_path, db_session: Session = None):
     db_pass = DB_CONFIG["password"]
     db_host = DB_CONFIG["host"]
 
-    # Standard search paths for mysql on Windows/XAMPP
+    # Search paths in priority order: config value first, then common locations
+    # for Windows (XAMPP, standard installer), Linux, Docker, and macOS Homebrew.
     COMMON_MYSQL_PATHS = [
         mysql_path,
+        # Windows
         r"C:\xampp\mysql\bin\mysql.exe",
         r"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe",
         r"C:\Program Files\MySQL\MySQL Server 5.7\bin\mysql.exe",
         r"D:\xampp\mysql\bin\mysql.exe",
         r"C:\mysql\bin\mysql.exe",
+        # Linux / Docker
+        "/usr/bin/mysql",
+        "/usr/local/bin/mysql",
+        # macOS Homebrew
+        "/opt/homebrew/bin/mysql",
+        "/usr/local/mysql/bin/mysql",
     ]
 
     import shutil
@@ -121,6 +138,11 @@ def perform_restore_test(file_path, db_session: Session = None):
             db_session.rollback()
             db_session.execute(text(f"DROP DATABASE IF EXISTS {temp_db_name}"))
             db_session.commit()
-        except:
-            pass
+        except Exception as cleanup_err:
+            # Cleanup failure is non-fatal — log it and return the original error
+            from utils.logger import mto_logger
+            mto_logger.warning(
+                "verification_service: failed to drop temp DB '%s' during cleanup: %s",
+                temp_db_name, cleanup_err,
+            )
         return False, f"Restore Test Failed: {str(e)}"

@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MTO Treasury Insights</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    :root {
+      --bg-color: #f8fafc;
+      --card-bg: #ffffff;
+      --text-primary: #1e293b;
+      --text-secondary: #64748b;
+      --accent: #38bdf8;
+      --emerald: #10b981;
+      --border: #e2e8f0;
+    }
+
+    [data-theme="dark"] {
+      --bg-color: #0f172a;
+      --card-bg: #1e293b;
+      --text-primary: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --accent: #38bdf8;
+      --border: #334155;
+    }
+
+    body {
+      margin: 0;
+      padding: 20px;
+      background: var(--bg-color);
+      color: var(--text-primary);
+      font-family: "Inter", sans-serif;
+      transition: background 0.3s, color 0.3s;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      border: 1px solid var(--border);
+      transition: transform 0.2s;
+      animation: fadeInUp 0.6s ease-out forwards;
+      opacity: 0;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+    }
+
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 30px;
+    }
+
+    .stat-card {
+      background: var(--card-bg);
+      padding: 20px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+    }
+
+    .stat-val {
+      font-size: 1.8rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin-top: 5px;
+    }
+
+    .stat-label {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .chart-container {
+      height: 350px;
+      width: 100%;
+      margin-top: 10px;
+    }
+
+    h2 {
+      margin: 0;
+      font-weight: 600;
+      font-size: 1.1rem;
+      color: var(--text-primary);
+    }
+
+    #error-state {
+      display: none;
+      height: 100vh;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      text-align: center;
+      padding: 20px;
+    }
+
+    #error-state h1 {
+      font-size: 1.2rem;
+      color: var(--text-primary);
+    }
+
+    #error-state p {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <!-- Unauthorised / error fallback -->
+  <div id="error-state">
+    <h1>🚫 Access Denied</h1>
+    <p id="error-message">Please launch this dashboard from the Treasury Desktop App.</p>
+  </div>
+
+  <!-- Main dashboard (hidden until data loads) -->
+  <div id="dashboard" style="display: none">
+    <div class="header">
+      <h1>🏛️ Treasury Insights Portal</h1>
+      <div id="last-update" style="opacity: 0.5; font-size: 0.9rem"></div>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-label">Today's Collection</div>
+        <div id="stat-today" class="stat-val">₱0.00</div>
+      </div>
+      <div class="stat-card" style="border-left-color: var(--emerald)">
+        <div class="stat-label">Transactions Today</div>
+        <div id="stat-count" class="stat-val">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Monthly Velocity</div>
+        <div id="stat-month" class="stat-val">₱0.00</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Annual Revenue</div>
+        <div id="stat-year" class="stat-val">₱0.00</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Revenue Velocity (Last 12 Months)</h2>
+        <div id="trend-chart" class="chart-container"></div>
+      </div>
+      <div class="card">
+        <h2>Top Barangay Collections</h2>
+        <div id="barangay-chart" class="chart-container"></div>
+      </div>
+      <div class="card">
+        <h2>Tax Year Distribution</h2>
+        <div id="year-chart" class="chart-container"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ---------------------------------------------------------------------------
+    // Auth: The desktop WebView injects window.__MTO_TOKEN__ before page load.
+    // When opened via webbrowser.open(), the token is passed as ?t= in the URL.
+    // Both methods are supported — see fetchData() below.
+    // ---------------------------------------------------------------------------
+
+    function showError(message) {
+      document.getElementById("error-message").textContent = message;
+      document.getElementById("error-state").style.display = "flex";
+      document.getElementById("dashboard").style.display = "none";
+    }
+
+    function showDashboard() {
+      document.getElementById("error-state").style.display = "none";
+      document.getElementById("dashboard").style.display = "block";
+    }
+
+    async function fetchData() {
+      // Token resolution order:
+      // 1. window.__MTO_TOKEN__ — injected by the desktop WebView before page load
+      // 2. ?t= URL query parameter — used when opened via webbrowser.open()
+      const token =
+        window.__MTO_TOKEN__ ||
+        new URLSearchParams(window.location.search).get("t") ||
+        null;
+      const theme =
+        new URLSearchParams(window.location.search).get("theme") || "dark";
+
+      document.documentElement.setAttribute("data-theme", theme);
+
+      const headers = { "X-Requested-With": "XMLHttpRequest" };
+      if (token) {
+        headers["Authorization"] = "Bearer " + token;
+      }
+
+      let res;
+      try {
+        res = await fetch("/api/analytics/dashboard", { headers });
+      } catch {
+        showError("Network error. Please check your connection.");
+        return;
+      }
+
+      if (res.status === 401) {
+        showError("Session expired or not authenticated. Please log in again.");
+        return;
+      }
+
+      if (!res.ok) {
+        showError("Failed to load analytics data (HTTP " + res.status + ").");
+        return;
+      }
+
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        showError("Received an invalid response from the server.");
+        return;
+      }
+
+      showDashboard();
+
+      document.getElementById("last-update").textContent =
+        "System Pulse: " + new Date().toLocaleTimeString();
+      document.getElementById("stat-today").textContent =
+        "₱" + (data.summary.today || 0).toLocaleString();
+      document.getElementById("stat-count").textContent =
+        data.summary.count || 0;
+      document.getElementById("stat-month").textContent =
+        "₱" + (data.summary.month || 0).toLocaleString();
+      document.getElementById("stat-year").textContent =
+        "₱" + (data.summary.year || 0).toLocaleString();
+
+      renderTrendChart(data.trend || []);
+      renderBarangayChart(data.barangays || []);
+      renderYearChart(data.years || []);
+    }
+
+    function renderTrendChart(trend) {
+      const theme = document.documentElement.getAttribute("data-theme");
+      const chart = echarts.init(
+        document.getElementById("trend-chart"),
+        theme === "dark" ? "dark" : null
+      );
+      chart.setOption({
+        backgroundColor: "transparent",
+        tooltip: { trigger: "axis" },
+        xAxis: {
+          type: "category",
+          data: trend.map((d) => d.month),
+          axisLine: { show: false },
+        },
+        yAxis: {
+          type: "value",
+          splitLine: { lineStyle: { color: "rgba(255,255,255,0.05)" } },
+        },
+        series: [
+          {
+            data: trend.map((d) => d.total),
+            type: "line",
+            smooth: true,
+            lineStyle: { width: 4, color: "#38bdf8" },
+            areaStyle: {
+              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                { offset: 0, color: "rgba(56, 189, 248, 0.4)" },
+                { offset: 1, color: "rgba(56, 189, 248, 0)" },
+              ]),
+            },
+            symbol: "none",
+          },
+        ],
+      });
+    }
+
+    function renderBarangayChart(data) {
+      const theme = document.documentElement.getAttribute("data-theme");
+      const chart = echarts.init(
+        document.getElementById("barangay-chart"),
+        theme === "dark" ? "dark" : null
+      );
+      chart.setOption({
+        backgroundColor: "transparent",
+        tooltip: { trigger: "item" },
+        series: [
+          {
+            type: "pie",
+            radius: ["40%", "70%"],
+            avoidLabelOverlap: false,
+            itemStyle: {
+              borderRadius: 10,
+              borderColor: "#1e293b",
+              borderWidth: 2,
+            },
+            label: { show: false },
+            emphasis: {
+              label: { show: true, fontSize: 14, fontWeight: "bold" },
+            },
+            data: data,
+          },
+        ],
+      });
+    }
+
+    function renderYearChart(data) {
+      const theme = document.documentElement.getAttribute("data-theme");
+      const chart = echarts.init(
+        document.getElementById("year-chart"),
+        theme === "dark" ? "dark" : null
+      );
+      chart.setOption({
+        backgroundColor: "transparent",
+        tooltip: { trigger: "axis" },
+        xAxis: { type: "value", splitLine: { show: false } },
+        yAxis: { type: "category", data: data.map((d) => d.year) },
+        series: [
+          {
+            type: "bar",
+            data: data.map((d) => d.total),
+            itemStyle: {
+              color: new echarts.graphic.LinearGradient(1, 0, 0, 0, [
+                { offset: 0, color: "#10b981" },
+                { offset: 1, color: "#38bdf8" },
+              ]),
+              borderRadius: [0, 5, 5, 0],
+            },
+          },
+        ],
+      });
+    }
+
+    // Initial load then refresh every 60 seconds
+    fetchData();
+    setInterval(fetchData, 60000);
+
+    // Resize charts when the window resizes (e.g. desktop app panel resize)
+    window.addEventListener("resize", () => {
+      ["trend-chart", "barangay-chart", "year-chart"].forEach((id) => {
+        const instance = echarts.getInstanceByDom(document.getElementById(id));
+        if (instance) instance.resize();
+      });
+    });
+  </script>
+</body>
+</html>

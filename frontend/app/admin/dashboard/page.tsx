@@ -21,12 +21,21 @@ export default function AdminDashboard() {
   const fetchDashboard = async () => {
     try {
       setError("");
-      const token = localStorage.getItem("mto_token");
+      // The access_token is stored as an httpOnly cookie set by /api/auth/login.
+      // Browsers send it automatically — do NOT read it from localStorage
+      // (httpOnly cookies are intentionally inaccessible to JavaScript).
       const res = await fetch("/api/v1/api/analytics/dashboard", {
+        credentials: "include",
         headers: {
-          "Authorization": `Bearer ${token}`
-        }
+          "X-Requested-With": "XMLHttpRequest",
+        },
       });
+
+      if (res.status === 401) {
+        // Session expired or not logged in — redirect to login
+        window.location.href = "/admin/login";
+        return;
+      }
 
       if (!res.ok) {
         throw new Error("Failed to load treasury analytics data.");
@@ -96,12 +105,12 @@ export default function AdminDashboard() {
             <div className="w-10 h-10 bg-blue-500/10 text-blue-400 rounded-xl flex items-center justify-center border border-blue-500/20">
               <DollarSign className="w-5 h-5" />
             </div>
-            <span className="text-[10px] font-extrabold text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-              <TrendingUp className="w-3 h-3" /> +12.3%
+            <span className="text-[10px] font-extrabold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full">
+              ALL YEARS
             </span>
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Collection Receivables</p>
-          <h3 className="text-2xl font-black text-white mt-1">P {(summary.total_receivables || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+          <h3 className="text-2xl font-black text-white mt-1">₱ {(summary.total_receivables || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
         </div>
 
         <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
@@ -109,12 +118,12 @@ export default function AdminDashboard() {
             <div className="w-10 h-10 bg-green-500/10 text-green-400 rounded-xl flex items-center justify-center border border-green-500/20">
               <DollarSign className="w-5 h-5" />
             </div>
-            <span className="text-[10px] font-extrabold text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-              <TrendingUp className="w-3 h-3" /> +18.4%
+            <span className="text-[10px] font-extrabold text-green-400 bg-green-500/10 border border-green-500/20 px-2 py-0.5 rounded-full">
+              POSTED
             </span>
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Actual Collected Revenue</p>
-          <h3 className="text-2xl font-black text-green-400 mt-1">P {(summary.total_collected || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
+          <h3 className="text-2xl font-black text-green-400 mt-1">₱ {(summary.total_collected || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
         </div>
 
         <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
@@ -127,7 +136,12 @@ export default function AdminDashboard() {
             </span>
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Treasury Collection Efficiency</p>
-          <h3 className="text-2xl font-black text-white mt-1">{summary.collection_rate || (((summary.total_collected || 0) / (summary.total_receivables || 1)) * 100).toFixed(1)} %</h3>
+          <h3 className="text-2xl font-black text-white mt-1">
+            {(summary.total_receivables > 0
+              ? ((summary.total_collected / summary.total_receivables) * 100)
+              : 0
+            ).toFixed(2)} %
+          </h3>
         </div>
 
         <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
@@ -141,7 +155,6 @@ export default function AdminDashboard() {
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Assessed Tax Properties</p>
           <h3 className="text-2xl font-black text-white mt-1">{(summary.total_properties || 0).toLocaleString()} Properties</h3>
-
         </div>
       </div>
 
@@ -197,18 +210,24 @@ export default function AdminDashboard() {
 
           <div className="flex-1 flex flex-col justify-between space-y-4">
             <div className="space-y-3">
-              {(data?.trend || []).map((t: any, i: number) => (
-                <div key={i} className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-500 uppercase tracking-widest w-12">{t.month}</span>
-                  <div className="flex-1 mx-4 h-6 bg-slate-800/50 border border-slate-800 rounded-lg overflow-hidden flex items-center px-1">
-                    <div 
-                      className="h-4 bg-gradient-to-r from-emerald-500 to-teal-600 rounded"
-                      style={{ width: `${(t.revenue / 800000) * 100}%` }}
-                    ></div>
+              {(() => {
+                const trend = data?.trend || [];
+                const maxRevenue = Math.max(...trend.map((t: any) => t.total || 0), 1);
+                return trend.map((t: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-widest w-12">{t.month}</span>
+                    <div className="flex-1 mx-4 h-6 bg-slate-800/50 border border-slate-800 rounded-lg overflow-hidden flex items-center px-1">
+                      <div
+                        className="h-4 bg-gradient-to-r from-emerald-500 to-teal-600 rounded"
+                        style={{ width: `${Math.min(((t.total || 0) / maxRevenue) * 100, 100)}%` }}
+                      ></div>
+                    </div>
+                    <span className="text-xs font-black text-slate-400">
+                      ₱{((t.total || 0) / 1000).toFixed(0)}k
+                    </span>
                   </div>
-                  <span className="text-xs font-black text-slate-350">P {(t.revenue / 1000).toFixed(0)}k</span>
-                </div>
-              ))}
+                ));
+              })()}
             </div>
 
             <div className="bg-slate-950 rounded-xl p-4 border border-slate-800/80">
