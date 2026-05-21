@@ -16,6 +16,77 @@ router = APIRouter(tags=["System"])
 class RestoreRequest(BaseModel):
     file_path: str
 
+# ---------------------------------------------------------------------------
+# Tax Policy — configure RPT rates per tax year
+# ---------------------------------------------------------------------------
+
+class TaxPolicyUpdateSchema(BaseModel):
+    basic_rate: float
+    sef_rate: float
+    penalty_rate: float
+
+
+@router.get("/system/tax-policy")
+async def list_tax_policies(
+    current_user: dict = Depends(read_only),
+    db_session: Session = Depends(get_db),
+):
+    """Returns all configured tax policies ordered by tax year descending."""
+    from backend.models import TaxPolicy
+    rows = db_session.query(TaxPolicy).order_by(TaxPolicy.tax_year.desc()).all()
+    return [
+        {
+            "id": r.id,
+            "tax_year": r.tax_year,
+            "basic_rate": float(r.basic_rate),
+            "sef_rate": float(r.sef_rate),
+            "penalty_rate": float(r.penalty_rate),
+        }
+        for r in rows
+    ]
+
+
+@router.put("/system/tax-policy/{tax_year}")
+async def update_tax_policy(
+    tax_year: int,
+    data: TaxPolicyUpdateSchema,
+    current_user: dict = Depends(admin_only),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Creates or updates the tax policy for a given tax year.
+    Admin only — rate changes must be authorised by Sangguniang Bayan resolution.
+    """
+    from backend.models import TaxPolicy
+    from decimal import Decimal
+
+    # Validate rates are reasonable (0% to 10%)
+    for field, val in [("basic_rate", data.basic_rate), ("sef_rate", data.sef_rate), ("penalty_rate", data.penalty_rate)]:
+        if not (0 <= val <= 0.10):
+            raise HTTPException(status_code=400, detail=f"{field} must be between 0 and 10% (0.0000–0.1000).")
+
+    policy = db_session.query(TaxPolicy).filter(TaxPolicy.tax_year == tax_year).first()
+    if policy:
+        policy.basic_rate = Decimal(str(data.basic_rate))
+        policy.sef_rate = Decimal(str(data.sef_rate))
+        policy.penalty_rate = Decimal(str(data.penalty_rate))
+    else:
+        policy = TaxPolicy(
+            tax_year=tax_year,
+            basic_rate=Decimal(str(data.basic_rate)),
+            sef_rate=Decimal(str(data.sef_rate)),
+            penalty_rate=Decimal(str(data.penalty_rate)),
+        )
+        db_session.add(policy)
+
+    db_session.commit()
+    mto_logger.info(
+        f"Tax policy updated for {tax_year}: basic={data.basic_rate}, "
+        f"sef={data.sef_rate}, penalty={data.penalty_rate}",
+        user=current_user.get("username"),
+    )
+    return {"status": "ok", "tax_year": tax_year}
+
 # SECURITY: The unauthenticated /metrics endpoint was removed.
 # Use GET /api/v1/metrics (admin_only) for Prometheus scraping instead.
 # Configure infra/prometheus.yml to include an Authorization header.

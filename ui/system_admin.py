@@ -165,6 +165,11 @@ class SystemAdminPage:
             tab = self.tabview.add(tr("admin.tabs.db"))
             self.setup_db_tab(tab)
 
+        # Tax Policy Tab — Admin only
+        if auth.has_permission(self.user, "manage_users"):
+            tab = self.tabview.add("Tax Policy")
+            self.setup_tax_policy_tab(tab)
+
     def setup_db_tab(self, parent):
         container = ctk.CTkFrame(parent, fg_color="transparent")
         container.pack(fill="both", expand=True, padx=40, pady=20)
@@ -626,6 +631,248 @@ class SystemAdminPage:
                     pass
 
         threading.Thread(target=preview, daemon=True).start()
+
+    def setup_tax_policy_tab(self, parent):
+        """
+        Tax Policy configuration tab.
+        Allows Admin to view and update RPT rates (Basic, SEF, Penalty) per tax year.
+        Changes take effect immediately for all new computations.
+        """
+        import tkinter as tk
+        from tkinter import ttk
+        import threading
+        import api_clients.system_service as system_svc
+
+        container = ctk.CTkFrame(parent, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=20, pady=16)
+
+        # ── Header ────────────────────────────────────────────────────────────
+        hdr = ctk.CTkFrame(container, fg_color="transparent")
+        hdr.pack(fill="x", pady=(0, 12))
+
+        ctk.CTkLabel(
+            hdr,
+            text="⚙️  TAX POLICY CONFIGURATION",
+            font=ModernTheme.H3,
+            text_color=ModernTheme.PRIMARY,
+            anchor="w",
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            hdr,
+            text="🔄  REFRESH",
+            command=lambda: threading.Thread(target=load_policies, daemon=True).start(),
+            width=110,
+            height=34,
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SECONDARY,
+            hover_color=ModernTheme.SECONDARY_HOVER,
+        ).pack(side="right")
+
+        # ── Info banner ───────────────────────────────────────────────────────
+        info = ctk.CTkFrame(
+            container,
+            fg_color=("#dbeafe", "#1e293b"),
+            corner_radius=8,
+            border_width=1,
+            border_color=("#93c5fd", "#334155"),
+        )
+        info.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(
+            info,
+            text=(
+                "Configure Basic Rate, SEF Rate, and Penalty Rate per tax year.  "
+                "Default: 1% Basic + 1% SEF = 2% total annual tax, 2% monthly penalty.  "
+                "Changes take effect immediately for all new computations."
+            ),
+            font=ModernTheme.BODY,
+            text_color=ModernTheme.TEXT_GRAY,
+            wraplength=700,
+            justify="left",
+        ).pack(side="left", padx=14, pady=8)
+
+        # ── Policy table ──────────────────────────────────────────────────────
+        style = ttk.Style()
+        style.configure(
+            "TaxPolicy.Treeview",
+            rowheight=34,
+            font=("Inter", 12),
+            background="#1e293b",
+            fieldbackground="#1e293b",
+            foreground="#cbd5e1",
+        )
+        style.configure(
+            "TaxPolicy.Treeview.Heading",
+            font=("Inter", 11, "bold"),
+            background="#0f172a",
+            foreground="#64748b",
+        )
+        style.map("TaxPolicy.Treeview", background=[("selected", "#1d4ed8")])
+
+        tree_fr = tk.Frame(container, bg="#1e293b")
+        tree_fr.pack(fill="both", expand=True, pady=(0, 12))
+
+        cols = ("TAX YEAR", "BASIC RATE", "SEF RATE", "PENALTY RATE/MO", "TOTAL ANNUAL")
+        self._tax_tree = ttk.Treeview(
+            tree_fr, columns=cols, show="headings", style="TaxPolicy.Treeview"
+        )
+        for col in cols:
+            self._tax_tree.heading(col, text=col)
+        self._tax_tree.column("TAX YEAR",        width=100, anchor="center")
+        self._tax_tree.column("BASIC RATE",       width=120, anchor="center")
+        self._tax_tree.column("SEF RATE",         width=120, anchor="center")
+        self._tax_tree.column("PENALTY RATE/MO",  width=150, anchor="center")
+        self._tax_tree.column("TOTAL ANNUAL",     width=130, anchor="center")
+
+        scrolly = ttk.Scrollbar(tree_fr, orient="vertical", command=self._tax_tree.yview)
+        self._tax_tree.configure(yscrollcommand=scrolly.set)
+        self._tax_tree.pack(side="left", fill="both", expand=True)
+        scrolly.pack(side="right", fill="y")
+
+        self._tax_tree.tag_configure("oddrow",  background="#1e293b", foreground="#cbd5e1")
+        self._tax_tree.tag_configure("evenrow", background="#162032", foreground="#cbd5e1")
+        self._tax_tree.bind("<<TreeviewSelect>>", self._on_tax_row_select)
+
+        # ── Edit panel ────────────────────────────────────────────────────────
+        edit_card = ctk.CTkFrame(
+            container,
+            fg_color=("#f8fafc", "#1e293b"),
+            corner_radius=10,
+            border_width=1,
+            border_color=("#cbd5e1", "#334155"),
+        )
+        edit_card.pack(fill="x")
+
+        ctk.CTkLabel(
+            edit_card,
+            text="EDIT SELECTED YEAR",
+            font=("Inter", 10, "bold"),
+            text_color=ModernTheme.TEXT_GRAY,
+            anchor="w",
+        ).pack(anchor="w", padx=16, pady=(12, 6))
+
+        fields_fr = ctk.CTkFrame(edit_card, fg_color="transparent")
+        fields_fr.pack(fill="x", padx=16, pady=(0, 12))
+
+        # Year label
+        ctk.CTkLabel(fields_fr, text="Tax Year:", font=ModernTheme.BODY_BOLD,
+                     text_color=ModernTheme.TEXT_GRAY).grid(row=0, column=0, padx=(0, 8), pady=4, sticky="e")
+        self._tax_year_lbl = ctk.CTkLabel(fields_fr, text="—", font=("Inter", 14, "bold"),
+                                           text_color=ModernTheme.PRIMARY)
+        self._tax_year_lbl.grid(row=0, column=1, padx=(0, 24), pady=4, sticky="w")
+
+        # Basic rate
+        ctk.CTkLabel(fields_fr, text="Basic Rate (%):", font=ModernTheme.BODY_BOLD,
+                     text_color=ModernTheme.TEXT_GRAY).grid(row=0, column=2, padx=(0, 8), pady=4, sticky="e")
+        self._basic_var = tk.StringVar(value="1.00")
+        ctk.CTkEntry(fields_fr, textvariable=self._basic_var, width=90, height=32,
+                     font=ModernTheme.BODY).grid(row=0, column=3, padx=(0, 24), pady=4)
+
+        # SEF rate
+        ctk.CTkLabel(fields_fr, text="SEF Rate (%):", font=ModernTheme.BODY_BOLD,
+                     text_color=ModernTheme.TEXT_GRAY).grid(row=0, column=4, padx=(0, 8), pady=4, sticky="e")
+        self._sef_var = tk.StringVar(value="1.00")
+        ctk.CTkEntry(fields_fr, textvariable=self._sef_var, width=90, height=32,
+                     font=ModernTheme.BODY).grid(row=0, column=5, padx=(0, 24), pady=4)
+
+        # Penalty rate
+        ctk.CTkLabel(fields_fr, text="Penalty Rate/mo (%):", font=ModernTheme.BODY_BOLD,
+                     text_color=ModernTheme.TEXT_GRAY).grid(row=0, column=6, padx=(0, 8), pady=4, sticky="e")
+        self._penalty_var = tk.StringVar(value="2.00")
+        ctk.CTkEntry(fields_fr, textvariable=self._penalty_var, width=90, height=32,
+                     font=ModernTheme.BODY).grid(row=0, column=7, padx=(0, 24), pady=4)
+
+        # Save button
+        self._tax_save_btn = ctk.CTkButton(
+            fields_fr,
+            text="💾  SAVE",
+            command=lambda: threading.Thread(target=save_policy, daemon=True).start(),
+            width=100,
+            height=34,
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color="#059669",
+            hover_color="#047857",
+            state="disabled",
+        )
+        self._tax_save_btn.grid(row=0, column=8, padx=(0, 8), pady=4)
+
+        self._tax_selected_year: int | None = None
+
+        # ── Data functions ────────────────────────────────────────────────────
+
+        def load_policies():
+            try:
+                policies = system_svc.get_tax_policies()
+                container.after(0, lambda: render_policies(policies))
+            except Exception as e:
+                container.after(0, lambda err=e: messagebox.showerror("Load Error", str(err)))
+
+        def render_policies(policies):
+            for item in self._tax_tree.get_children():
+                self._tax_tree.delete(item)
+            for i, p in enumerate(policies):
+                tag = "evenrow" if i % 2 == 0 else "oddrow"
+                basic = p["basic_rate"] * 100
+                sef = p["sef_rate"] * 100
+                penalty = p["penalty_rate"] * 100
+                total = (basic + sef)
+                self._tax_tree.insert(
+                    "", "end",
+                    values=(
+                        p["tax_year"],
+                        f"{basic:.2f}%",
+                        f"{sef:.2f}%",
+                        f"{penalty:.2f}%",
+                        f"{total:.2f}%",
+                    ),
+                    tags=(tag,),
+                    iid=str(p["tax_year"]),
+                )
+
+        def save_policy():
+            if self._tax_selected_year is None:
+                return
+            try:
+                basic = float(self._basic_var.get()) / 100
+                sef = float(self._sef_var.get()) / 100
+                penalty = float(self._penalty_var.get()) / 100
+            except ValueError:
+                container.after(0, lambda: messagebox.showerror(
+                    "Invalid Input", "Rates must be numbers (e.g. 1.00 for 1%)."
+                ))
+                return
+
+            try:
+                system_svc.update_tax_policy(self._tax_selected_year, basic, sef, penalty)
+                container.after(0, lambda: messagebox.showinfo(
+                    "Saved",
+                    f"Tax policy for {self._tax_selected_year} updated successfully.\n\n"
+                    f"Basic: {basic*100:.2f}%  SEF: {sef*100:.2f}%  Penalty: {penalty*100:.2f}%/mo"
+                ))
+                threading.Thread(target=load_policies, daemon=True).start()
+            except Exception as e:
+                container.after(0, lambda err=e: messagebox.showerror("Save Error", str(err)))
+
+        # Load on open
+        threading.Thread(target=load_policies, daemon=True).start()
+
+    def _on_tax_row_select(self, event=None):
+        """Populate the edit fields when a tax year row is selected."""
+        sel = self._tax_tree.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        try:
+            self._tax_selected_year = int(iid)
+            vals = self._tax_tree.item(iid)["values"]
+            # vals: (year, basic%, sef%, penalty%, total%)
+            self._tax_year_lbl.configure(text=str(vals[0]))
+            self._basic_var.set(str(float(vals[1].replace("%", ""))))
+            self._sef_var.set(str(float(vals[2].replace("%", ""))))
+            self._penalty_var.set(str(float(vals[3].replace("%", ""))))
+            self._tax_save_btn.configure(state="normal")
+        except Exception:
+            pass
 
     def _resume_sync_monitoring(self, job_id: str):
         """

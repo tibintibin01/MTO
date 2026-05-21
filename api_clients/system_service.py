@@ -134,3 +134,35 @@ def get_job_status(job_id: str):
         return api_request("GET", f"/jobs/{job_id}")
     except Exception:
         return None
+
+
+def get_tax_policies():
+    """Returns all configured tax policies ordered by tax year descending."""
+    result = api_request("GET", "/system/tax-policy")
+    return result if isinstance(result, list) else []
+
+
+def update_tax_policy(tax_year: int, basic_rate: float, sef_rate: float, penalty_rate: float):
+    """Creates or updates the tax policy for a given tax year. Admin only."""
+    return api_request(
+        "PUT",
+        f"/system/tax-policy/{tax_year}",
+        data={
+            "basic_rate": basic_rate,
+            "sef_rate": sef_rate,
+            "penalty_rate": penalty_rate,
+        },
+    )
+
+
+def sync_billing_years(dry_run=False):
+    """Syncs missing billing year records. dry_run=True for preview."""
+    return api_request(
+        "POST",
+        f"/system/sync-billing-years?dry_run={'true' if dry_run else 'false'}"
+    )
+
+
+def get_job_status(job_id: str):
+    """Polls a background job for its current status and result."""
+    return api_request("GET", f"/jobs/{job_id}")
