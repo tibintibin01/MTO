@@ -19,7 +19,7 @@ Covers:
 
 import pytest
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -515,7 +515,7 @@ class TestDelinquencyDetermination:
             None, prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
-        prop.deleted_at = datetime.now()
+        prop.deleted_at = datetime.now(timezone.utc)
         db.commit()
 
         result = get_delinquent_accounts(limit=50, db_session=db)
@@ -542,7 +542,7 @@ class TestReceiptAmountMatching:
             discount=Decimal("0.00"),
             or_number="OR-RECEIPT-001",
             tax_year="2024",
-            date_paid=datetime.now(),
+            date_paid=datetime.now(timezone.utc),
             posted_by="cashier1",
         )
         db.add(pay)
@@ -555,7 +555,7 @@ class TestReceiptAmountMatching:
             amount=Decimal("2500.00"),
             file_path="/receipts/OR-RECEIPT-001.pdf",
             generated_by="cashier1",
-            generated_at=datetime.now(),
+            generated_at=datetime.now(timezone.utc),
             status="PDF READY",
         )
         db.add(rh)
@@ -577,7 +577,7 @@ class TestReceiptAmountMatching:
             discount=Decimal("0.00"),
             or_number="OR-PEN-001",
             tax_year="2024",
-            date_paid=datetime.now(),
+            date_paid=datetime.now(timezone.utc),
             posted_by="cashier1",
         )
         db.add(pay)
@@ -598,7 +598,7 @@ class TestReceiptAmountMatching:
             discount=Decimal("200.00"),
             or_number="OR-DISC-001",
             tax_year="2024",
-            date_paid=datetime.now(),
+            date_paid=datetime.now(timezone.utc),
             posted_by="cashier1",
         )
         db.add(pay)
@@ -709,7 +709,7 @@ class TestFullPaymentLifecycle:
             discount=Decimal("0.00"),
             or_number="OR-LIFECYCLE-001",
             tax_year="2024",
-            date_paid=datetime.now(),
+            date_paid=datetime.now(timezone.utc),
             posted_by="cashier1",
         )
         db.add(pay)

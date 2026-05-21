@@ -14,7 +14,7 @@ def get_quick_actions():
     # or better, fetch it from a system-config endpoint.
     try:
         return api_request("GET", "/search/quick-actions")
-    except:
+    except Exception:
         # Fallback for the UI if server doesn't support this yet
         return [
             {

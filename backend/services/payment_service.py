@@ -113,16 +113,64 @@ def release_all_payment_post_locks(user_name):
 
 
 def get_next_or_number(default_prefix="OR-", db_session: Session = None):
-    rows = db_session.query(Payment.or_number).filter(Payment.or_number != None, Payment.or_number != '').order_by(Payment.id.desc()).limit(20).all()
-    for row in rows:
-        current = str(row[0]).strip()
-        match = re.search(r"^(.*?)(\d+)$", current)
-        if not match:
-            continue
-        prefix, digits = match.groups()
-        next_value = int(digits) + 1
-        return f"{prefix}{next_value:0{len(digits)}d}"
-    return f"{default_prefix}000001"
+    from backend.models import ORSequence
+
+    # Query with exclusive row-level lock
+    seq = db_session.query(ORSequence).filter(ORSequence.prefix == default_prefix).with_for_update().first()
+
+    if not seq:
+        # No sequence row yet — seed from the latest payments so existing OR
+        # numbers are not re-issued, then insert the row.
+        #
+        # Use a SEPARATE session for the insert so the seed commit is isolated
+        # from the caller's transaction. Two concurrent cashiers may both reach
+        # this branch simultaneously; the unique constraint on `prefix` ensures
+        # only one insert wins. The loser's IntegrityError is swallowed and both
+        # threads then re-fetch the winning row on the caller's session below.
+        next_val = 1
+        digits_len = 6
+        prefix_str = default_prefix
+
+        rows = db_session.query(Payment.or_number).filter(
+            Payment.or_number != None,
+            Payment.or_number != ""
+        ).order_by(Payment.id.desc()).limit(20).all()
+
+        for row in rows:
+            current = str(row[0]).strip()
+            match = re.search(r"^(.*?)(\d+)$", current)
+            if match:
+                prefix_str, digits = match.groups()
+                next_val = int(digits) + 1
+                digits_len = len(digits)
+                break
+
+        try:
+            with SessionLocal() as seed_db:
+                seed_db.add(ORSequence(
+                    prefix=default_prefix,
+                    next_value=next_val,
+                    digits=digits_len,
+                ))
+                seed_db.commit()
+        except Exception:
+            # Another concurrent request already inserted the row — that's fine.
+            pass
+
+        # Re-fetch on the caller's session with the exclusive lock now that the
+        # row definitely exists (either we just created it or a peer did).
+        seq = db_session.query(ORSequence).filter(
+            ORSequence.prefix == default_prefix
+        ).with_for_update().first()
+
+    or_num = f"{seq.prefix}{seq.next_value:0{seq.digits}d}"
+
+    # Increment and persist within the caller's transaction
+    seq.next_value += 1
+    db_session.add(seq)
+    db_session.commit()
+
+    return or_num
 
 
 def get_recent_payments(limit=8, db_session: Session = None):
@@ -139,8 +187,8 @@ def get_recent_payments(limit=8, db_session: Session = None):
 
 def get_monthly_collection_trend(months=6, db_session: Session = None):
     safe_months = max(1, int(months))
-    from datetime import datetime, timedelta
-    start_date = datetime.now() - timedelta(days=30 * safe_months)
+    from datetime import datetime, timedelta, timezone
+    start_date = datetime.now(timezone.utc) - timedelta(days=30 * safe_months)
 
     effective_date = func.coalesce(Payment.date_paid, cast(Payment.created_at, Date))
     yr = year_of(effective_date).label('yr')
@@ -170,8 +218,8 @@ def get_revenue_by_barangay(db_session: Session = None):
 
 
 def get_collection_kpis(db_session: Session = None):
-    from datetime import datetime
-    now = datetime.now()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
     today_date = now.date()
     month_start = today_date.replace(day=1)
 
@@ -351,7 +399,7 @@ def get_payment_receipt_details(payment_id, db_session: Session = None):
 def save_receipt_record(
     property_id, payment_id, details, file_path, user_name, db_session: Session = None, **kwargs
 ):
-    from datetime import datetime
+    from datetime import datetime, timezone
     import os
 
     # Check if a receipt already exists for this payment
@@ -369,7 +417,7 @@ def save_receipt_record(
 
         rh.file_path = file_path
         rh.generated_by = get_username(user_name)
-        rh.generated_at = datetime.now()
+        rh.generated_at = datetime.now(timezone.utc)
         rh.status = 'PDF READY'
     else:
         rh = ReceiptHistory(
@@ -378,7 +426,7 @@ def save_receipt_record(
             or_number=details.get("or_number"),
             file_path=file_path,
             generated_by=get_username(user_name),
-            generated_at=datetime.now(),
+            generated_at=datetime.now(timezone.utc),
             status='PDF READY'
         )
         db_session.add(rh)

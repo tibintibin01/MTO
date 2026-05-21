@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import text, func
 from sqlalchemy.orm import Session
 from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment, AuditLog
@@ -262,7 +262,7 @@ def soft_delete_property(property_id, user=None, ip_address=None, db_session: Se
         return 0
     
     old_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
-    prop.deleted_at = datetime.now()
+    prop.deleted_at = datetime.now(timezone.utc)
     
     if user:
         audit = AuditLog(
@@ -274,7 +274,7 @@ def soft_delete_property(property_id, user=None, ip_address=None, db_session: Se
             old_values=json.dumps(old_data, default=str),
             new_values=json.dumps({"deleted_at": prop.deleted_at.isoformat() if hasattr(prop.deleted_at, "isoformat") else str(prop.deleted_at)}),
             ip_address=ip_address,
-            timestamp=datetime.now()
+            timestamp=datetime.now(timezone.utc)
         )
         db_session.add(audit)
         
@@ -317,7 +317,7 @@ def restore_property(property_id, user=None, db_session: Session = None):
     prop.deleted_at = None
     
     if user:
-        from datetime import datetime
+        from datetime import datetime, timezone
         audit = AuditLog(
             user_id=user.get("id"),
             username=user.get("username", "unknown"),
@@ -326,7 +326,7 @@ def restore_property(property_id, user=None, db_session: Session = None):
             record_id=property_id,
             old_values=str({"deleted_at": "deleted"}),
             new_values=str({"deleted_at": None}),
-            timestamp=datetime.now()
+            timestamp=datetime.now(timezone.utc)
         )
         db_session.add(audit)
         

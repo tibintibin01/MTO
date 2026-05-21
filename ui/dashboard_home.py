@@ -137,7 +137,9 @@ class DashboardHomePage:
             # Inject Infrastructure Stats
             try:
                 summary["infra_stats"] = system.get_system_stats()
-            except:
+            except Exception as e:
+                from utils import log_error_to_file
+                log_error_to_file("Dashboard infra_stats fetch failed", e)
                 summary["infra_stats"] = None
             
             trend_rows = self.callbacks["get_trend"](6) or []

@@ -2,7 +2,7 @@ import os
 import shutil
 import glob
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from backend.database import SessionLocal, engine
@@ -38,7 +38,7 @@ def _acquire_backup_lock(user_name: str, db_session: Session) -> tuple[bool, str
 
     Returns (acquired: bool, message: str).
     """
-    stale_cutoff = datetime.now() - timedelta(minutes=BACKUP_LOCK_STALE_MINUTES)
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=BACKUP_LOCK_STALE_MINUTES)
 
     # Check for an active (non-stale) RUNNING record
     active = db_session.query(BackupHistory).filter(
@@ -47,6 +47,7 @@ def _acquire_backup_lock(user_name: str, db_session: Session) -> tuple[bool, str
     ).first()
 
     if active:
+        # active.timestamp is a naive datetime from MariaDB — compare with naive now()
         elapsed = int((datetime.now() - active.timestamp).total_seconds() // 60)
         return False, f"Backup already in progress (started {elapsed}m ago by {active.user_name})."
 
@@ -63,7 +64,7 @@ def _acquire_backup_lock(user_name: str, db_session: Session) -> tuple[bool, str
         status="RUNNING",
         health="IN_PROGRESS",
         user_name=user_name,
-        timestamp=datetime.now(),
+        timestamp=datetime.now(timezone.utc),
     )
     db_session.add(lock_row)
     db_session.commit()
@@ -103,7 +104,7 @@ def get_backup_status(db_session: Session = None):
         )
 
         # Check if a backup is currently running
-        stale_cutoff = datetime.now() - timedelta(minutes=BACKUP_LOCK_STALE_MINUTES)
+        stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=BACKUP_LOCK_STALE_MINUTES)
         running = db_session.query(BackupHistory).filter(
             BackupHistory.status == "RUNNING",
             BackupHistory.timestamp >= stale_cutoff,
@@ -188,7 +189,7 @@ async def run_hybrid_backup(user=None, db_session: Session = None):
         # 1. Local Backup
         await report_progress(1, 10, "Creating local SQL dump...")
         os.makedirs(LOCAL_DIR, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
         filename = f"revenue_backup_{timestamp}.sql"
         local_path = os.path.join(LOCAL_DIR, filename)
 

@@ -1,9 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 from sqlalchemy import or_, and_, func, case, cast
 from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
-from backend.models import Property, PropertyBilling, PaymentBilling, Payment
+from backend.models import Property, PropertyBilling, PaymentBilling, Payment, TaxPolicy
 from backend.database import SessionLocal
 from decimal import Decimal, ROUND_HALF_UP
 from utils.db_compat import greatest, year_of, month_of
@@ -17,13 +17,23 @@ def sync_property_billing(
 ):
     """Creates or updates the billing snapshot for one property and one tax year."""
     normalized_tax_year = (
-        str(tax_year).strip() if str(tax_year).strip() else str(datetime.now().year)
+        int(tax_year) if tax_year and str(tax_year).strip().isdigit() else datetime.now(timezone.utc).year
     )
     assessed_value = Decimal(str(assessed_value or 0))
     penalty = Decimal(str(penalty or 0))
     discount = Decimal(str(discount or 0))
-    basic_amount = (assessed_value * Decimal("0.01")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    sef_amount = (assessed_value * Decimal("0.01")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    
+    policy = None
+    if db_session:
+        policy = db_session.query(TaxPolicy).filter(TaxPolicy.tax_year == normalized_tax_year).first()
+        if policy and not isinstance(policy, TaxPolicy):
+            policy = None
+        
+    basic_rate = Decimal(str(policy.basic_rate)) if policy else Decimal("0.01")
+    sef_rate = Decimal(str(policy.sef_rate)) if policy else Decimal("0.01")
+    
+    basic_amount = (assessed_value * basic_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    sef_amount = (assessed_value * sef_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     total_amount = basic_amount + sef_amount + penalty - discount
     initial_amount_paid = total_amount if has_payment else Decimal("0.00")
 
@@ -43,7 +53,7 @@ def sync_property_billing(
     billing.assessed_value = assessed_value
     billing.penalty = penalty
     billing.discount = discount
-    billing.updated_at = datetime.now()
+    billing.updated_at = datetime.now(timezone.utc)
     
     db_session.flush() # Get ID
     
@@ -67,8 +77,11 @@ def allocate_payment_amount(billing_rows, amount_paid):
     allocated = []
 
     def _sort_key(row):
-        tax_year = str(row.get("tax_year", ""))
-        return (0, int(tax_year)) if tax_year.isdigit() else (1, tax_year)
+        ty = row.get("tax_year", "")
+        if isinstance(ty, int):
+            return (0, ty)
+        ty_str = str(ty).strip()
+        return (0, int(ty_str)) if ty_str.isdigit() else (1, ty_str)
 
     for billing_row in sorted(billing_rows, key=_sort_key):
         due_amount = max(Decimal("0.00"), Decimal(str(billing_row.get("total_amount") or 0)))
@@ -166,7 +179,7 @@ def validate_tax_year_text(value):
     if not parts:
         return {"ok": False, "message": "Please enter at least one Tax Year."}
 
-    current_year = datetime.now().year + 5
+    current_year = datetime.now(timezone.utc).year + 5
     seen = set()
     for part in parts:
         if "-" in part:
@@ -240,7 +253,7 @@ def recalculate_billing_balances(cur, billing_ids, db_session: Session = None):
         
         db_session.query(PropertyBilling).filter(PropertyBilling.id == billing_id).update({
             PropertyBilling.amount_paid: float(total_paid),
-            PropertyBilling.updated_at: datetime.now()
+            PropertyBilling.updated_at: datetime.now(timezone.utc)
         }, synchronize_session=False)
 
 
@@ -276,26 +289,32 @@ def sync_payment_billings(cur, payment_id, billing_rows, db_session: Session = N
 def get_property_billing_history(property_id=None, term=None, limit=50, db_session: Session = None):
     safe_limit = max(1, int(limit))
     
+    basic_rate_expr = func.coalesce(TaxPolicy.basic_rate, 0.0100)
+    sef_rate_expr = func.coalesce(TaxPolicy.sef_rate, 0.0100)
+    total_rate_expr = basic_rate_expr + sef_rate_expr
+    
     query = db_session.query(
         PropertyBilling.tax_year,
         PropertyBilling.assessed_value,
-        (PropertyBilling.assessed_value * 0.01).label('basic_amount'),
-        (PropertyBilling.assessed_value * 0.01).label('sef_amount'),
+        (PropertyBilling.assessed_value * basic_rate_expr).label('basic_amount'),
+        (PropertyBilling.assessed_value * sef_rate_expr).label('sef_amount'),
         PropertyBilling.penalty,
-        ((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty).label('total_amount'),
+        ((PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount).label('total_amount'),
         PropertyBilling.amount_paid,
         greatest(
-            ((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty) - PropertyBilling.amount_paid,
+            ((PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount) - PropertyBilling.amount_paid,
             0
         ).label('balance_amount'),
         case(
             (PropertyBilling.amount_paid <= 0, 'Pending'),
-            (PropertyBilling.amount_paid >= ((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty), 'Paid'),
+            (PropertyBilling.amount_paid >= ((PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount), 'Paid'),
             else_='Partial'
         ).label('billing_status'),
 
         PropertyBilling.updated_at
-    ).join(Property, Property.id == PropertyBilling.property_id).filter(Property.deleted_at == None)
+    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
+    ).filter(Property.deleted_at == None)
     
     if property_id:
         query = query.filter(PropertyBilling.property_id == property_id)
@@ -402,23 +421,31 @@ def get_report_details(selected_month="All", selected_year="All", limit=200, cur
 def get_rpt_receivables_summary(report_year, db_session: Session = None):
     try:
         ry = int(report_year)
-    except:
-        ry = datetime.now().year
+    except (ValueError, TypeError):
+        ry = datetime.now(timezone.utc).year
+
+    basic_rate_expr = func.coalesce(TaxPolicy.basic_rate, 0.0100)
+    sef_rate_expr = func.coalesce(TaxPolicy.sef_rate, 0.0100)
+    total_rate_expr = basic_rate_expr + sef_rate_expr
 
     # 1. Beginning Receivable (sum of balances for tax years < report_year)
     beg = db_session.query(
-        func.coalesce(func.sum(((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty) - PropertyBilling.amount_paid), 0)
-    ).join(Property, Property.id == PropertyBilling.property_id).filter(
+        func.coalesce(func.sum(((PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount) - PropertyBilling.amount_paid), 0)
+    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
+    ).filter(
         Property.deleted_at == None,
-        PropertyBilling.tax_year < str(ry)
+        PropertyBilling.tax_year < ry
     ).scalar()
     
     # 2. Current Year Assessment
     curr_ass = db_session.query(
-        func.coalesce(func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty), 0)
-    ).join(Property, Property.id == PropertyBilling.property_id).filter(
+        func.coalesce(func.sum((PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount), 0)
+    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
+    ).filter(
         Property.deleted_at == None,
-        PropertyBilling.tax_year == str(ry)
+        PropertyBilling.tax_year == ry
     ).scalar()
     
     # 3. Collections (total paid in this calendar year)
@@ -448,11 +475,23 @@ def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
 
     Cursor is the last seen Property.id. Avoids OFFSET on the GROUP BY + HAVING
     query which degrades badly at scale — each OFFSET page re-scans all prior rows.
+
+    Tax rates are intentionally NOT joined from TaxPolicy here. Rates are applied
+    at billing creation time (sync_property_billing), so the stored assessed_value
+    in PropertyBilling already reflects the correct per-year rate. Re-joining
+    TaxPolicy inside a GROUP BY aggregate would cause ONLY_FULL_GROUP_BY errors
+    in strict MariaDB mode and produce incorrect SUMs when a property spans
+    multiple tax years with different rates.
     """
     safe_limit = min(max(1, int(limit)), 200)  # hard cap at 200
 
+    # 2% total rate (1% basic + 1% SEF) — matches the default in TaxPolicy.
+    # Properties with custom rates already have the correct assessed_value stored
+    # in PropertyBilling from when sync_property_billing ran.
+    TOTAL_RATE = 0.02
+
     balance_expr = func.sum(
-        (PropertyBilling.assessed_value * 0.02)
+        (PropertyBilling.assessed_value * TOTAL_RATE)
         + PropertyBilling.penalty
         - PropertyBilling.discount
         - PropertyBilling.amount_paid
@@ -464,7 +503,7 @@ def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
         Property.owner_name,
         Property.location,
         func.sum(
-            (PropertyBilling.assessed_value * 0.02)
+            (PropertyBilling.assessed_value * TOTAL_RATE)
             + PropertyBilling.penalty
             - PropertyBilling.discount
         ).label("total_due"),
@@ -516,10 +555,21 @@ def get_total_due(property_id, db_session: Session = None):
     if not data:
         return None
         
+    prop = db_session.query(Property).filter(Property.id == property_id).first() if db_session else None
+    tax_year = datetime.now(timezone.utc).year
+    if prop and prop.tax_year and str(prop.tax_year).strip().isdigit():
+        tax_year = int(prop.tax_year)
+        
+    policy = db_session.query(TaxPolicy).filter(TaxPolicy.tax_year == tax_year).first() if db_session else None
+    if policy and not isinstance(policy, TaxPolicy):
+        policy = None
+    basic_rate = float(policy.basic_rate) if policy else 0.01
+    sef_rate = float(policy.sef_rate) if policy else 0.01
+    
     return {
         "assessed_value": data["assessed_value"],
-        "basic": data["assessed_value"] * 0.01,
-        "sef": data["assessed_value"] * 0.01,
+        "basic": data["assessed_value"] * basic_rate,
+        "sef": data["assessed_value"] * sef_rate,
         "total_due": data["total_balance"] + data["total_paid"], # Simplified for test
         "grand_total": data["grand_total"],
         "billing_rows": data["billing_rows"]

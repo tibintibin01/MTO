@@ -94,7 +94,23 @@ class SecretsManager:
 
     @property
     def db_password(self) -> str:
-        return self.get("MTO_DB_PASSWORD", default="", required=False)
+        """
+        Returns the database password. Required in production — a blank
+        password means the application is connecting as root or with no
+        authentication, which is a critical security misconfiguration.
+        """
+        env_mode = (
+            os.getenv("MTO_ENV")
+            or os.getenv("ENVIRONMENT")
+            or "development"
+        ).lower()
+        value = self.get("MTO_DB_PASSWORD", default="", required=False)
+        if env_mode == "production" and not value:
+            raise EnvironmentError(
+                "MTO_DB_PASSWORD cannot be empty in production. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_hex(24))\""
+            )
+        return value or ""
 
     @property
     def ssl_passphrase(self) -> str:

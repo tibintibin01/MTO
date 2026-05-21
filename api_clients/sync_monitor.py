@@ -40,7 +40,10 @@ class SyncMonitor:
                         api.CONNECTION_STATUS = "ONLINE"
                 else:
                     api.CONNECTION_STATUS = "OFFLINE"
-            except:
+            except Exception as e:
+                # Network or unexpected error — mark offline but never swallow
+                # KeyboardInterrupt or SystemExit which would mask a shutdown.
+                mto_logger.warning("SyncMonitor loop error: %s", e)
                 api.CONNECTION_STATUS = "OFFLINE"
                 
             time.sleep(self.interval)

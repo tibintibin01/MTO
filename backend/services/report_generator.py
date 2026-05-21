@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any
 
 try:
@@ -29,7 +29,7 @@ class TreasuryReport(FPDF):
     def footer(self):
         self.set_y(-15)
         self.set_font('Helvetica', 'I', 8)
-        self.cell(0, 10, f'Page {self.page_no()} | Generated on {datetime.now().strftime("%Y-%m-%d %H:%M")}', 0, 0, 'C')
+        self.cell(0, 10, f'Page {self.page_no()} | Generated on {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")}', 0, 0, 'C')
 
 def generate_tax_declaration_pdf(data: Dict[str, Any], output_path: str):
     """

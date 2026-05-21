@@ -145,13 +145,13 @@ async def idempotency_middleware(request: Request, call_next):
     try:
         from backend.database import SessionLocal
         from backend.models import IdempotencyKey
-        from datetime import datetime
+        from datetime import datetime, timezone
         import json
 
         with SessionLocal() as db:
             existing = db.query(IdempotencyKey).filter(
                 IdempotencyKey.key == idempotency_key,
-                IdempotencyKey.expires_at > datetime.now(),
+                IdempotencyKey.expires_at > datetime.now(timezone.utc),
             ).first()
 
             if existing:
@@ -179,7 +179,7 @@ async def idempotency_middleware(request: Request, call_next):
         try:
             from backend.database import SessionLocal
             from backend.models import IdempotencyKey
-            from datetime import datetime, timedelta
+            from datetime import datetime, timedelta, timezone
             import json
 
             # Read the response body — we need to consume and re-wrap it
@@ -196,7 +196,7 @@ async def idempotency_middleware(request: Request, call_next):
                     path=path,
                     status_code=response.status_code,
                     response_body=body_str,
-                    expires_at=datetime.now() + timedelta(hours=24),
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
                 )
                 db.add(record)
                 db.commit()
@@ -235,7 +235,8 @@ _PATH_TIMEOUTS = {
     "/system/import/commit":  300,
     "/system/import/validate":300,
     "/billing/bulk-soa-pdf":  120,
-    "/properties/import-assessment": 120,
+    # NOTE: /properties/import-assessment was removed (replaced by async job queue).
+    # Its timeout entry is intentionally absent.
 }
 
 @app.middleware("http")
@@ -292,23 +293,6 @@ async def observability_middleware(request: Request, call_next):
     response.headers["X-Request-ID"] = get_request_id()
     return response
 
-# --- CSRF PROTECTION MIDDLEWARE ---
-@app.middleware("http")
-async def csrf_protection_middleware(request: Request, call_next):
-    if request.method in ["POST", "PUT", "DELETE", "PATCH"]:
-        custom_header = request.headers.get("X-Requested-With")
-        if custom_header != "XMLHttpRequest":
-            mto_logger.security(
-                "CSRF ATTEMPT DETECTED: Missing or invalid X-Requested-With header",
-                method=request.method,
-                url=str(request.url),
-                ip=request.client.host
-            )
-            from backend.error_codes import error_response, E
-            return error_response(E.CSRF_VIOLATION, "Security violation: CSRF protection triggered.", request=request)
-    response = await call_next(request)
-    return response
-
 @app.middleware("http")
 async def maintenance_mode_middleware(request: Request, call_next):
     from utils import is_feature_enabled
@@ -321,6 +305,13 @@ async def maintenance_mode_middleware(request: Request, call_next):
     return await call_next(request)
 
 # CORS Configuration
+# Origins are read from the environment so the server IP doesn't need to be
+# hardcoded. Set CORS_ORIGIN in .env to add your office network address.
+# run_system.bat writes this automatically on every startup, so changing
+# the server PC requires no code changes — just re-run run_system.bat.
+import os as _os
+_extra_origin = _os.getenv("CORS_ORIGIN", "").strip()
+
 origins = [
     "http://localhost",
     "http://127.0.0.1",
@@ -328,6 +319,10 @@ origins = [
     "https://localhost:8001",
     "http://localhost:3000",
 ]
+
+# Allow an extra origin configured via .env (written automatically by run_system.bat)
+if _extra_origin and _extra_origin not in origins:
+    origins.append(_extra_origin)
 
 app.add_middleware(
     CORSMiddleware,

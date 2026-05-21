@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from backend.models import Property, Payment, AuditLog
@@ -8,7 +8,7 @@ from backend.database import SessionLocal
 
 def get_retention_summary(db_session: Session = None):
     """Calculates how much data is eligible for archival based on a 10-year policy."""
-    ten_years_ago = datetime.now() - timedelta(days=3650)
+    ten_years_ago = datetime.now(timezone.utc) - timedelta(days=3650)
     
     prop_count = db_session.query(func.count(Property.id)).filter(
         Property.created_at < ten_years_ago,
@@ -30,7 +30,7 @@ def run_archival_policy(user="SYSTEM", db_session: Session = None):
     """
     Moves data older than 10 years to archive tables to maintain performance.
     """
-    cutoff_date = datetime.now() - timedelta(days=3650)
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=3650)
     
     try:
         # 1. Ensure Archive Tables Exist
@@ -65,7 +65,7 @@ def run_archival_policy(user="SYSTEM", db_session: Session = None):
         log = AuditLog(
             username=user,
             action=f"RETENTION_POLICY_ENFORCED",
-            timestamp=datetime.now()
+            timestamp=datetime.now(timezone.utc)
         )
         db_session.add(log)
         db_session.commit()

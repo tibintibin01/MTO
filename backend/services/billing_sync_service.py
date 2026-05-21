@@ -138,7 +138,7 @@ def sync_billing_years(
 
             # Fetch existing billing years for this property in one query
             existing_years = set(
-                row[0]
+                int(row[0])
                 for row in db_session.query(PropertyBilling.tax_year)
                 .filter(PropertyBilling.property_id == prop.id)
                 .all()
@@ -152,16 +152,14 @@ def sync_billing_years(
             total_due = basic + sef  # 2% total, no penalty for new records
 
             for year in range(start_year, current_year + 1):
-                year_str = str(year)
-
-                if year_str in existing_years:
+                if year in existing_years:
                     skipped += 1
                     continue
 
                 if not dry_run:
                     billing = PropertyBilling(
                         property_id=prop.id,
-                        tax_year=year_str,
+                        tax_year=year,
                         assessed_value=assessed,
                         penalty=Decimal("0.00"),
                         # Discount is intentionally 0 for new billing records.

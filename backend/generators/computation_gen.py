@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 import calendar
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -18,7 +18,7 @@ def generate_delinquency_computation(statement_data, base_dir):
     os.makedirs(output_dir, exist_ok=True)
 
     td_number = safe_text(statement_data.get("td_number")) or "NO_TD"
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     file_name = f"COMP_{safe_filename(td_number)}_{timestamp}.pdf"
     output_path = os.path.join(output_dir, file_name)
 
@@ -158,7 +158,7 @@ def generate_delinquency_computation(statement_data, base_dir):
 
     # 5. Validity & Signatures
     current_y -= 25 * mm
-    today = date.today()
+    today = datetime.now(timezone.utc).date()
     last_day = calendar.monthrange(today.year, today.month)[1]
     valid_until = date(today.year, today.month, last_day).strftime("%B %d, %Y")
     

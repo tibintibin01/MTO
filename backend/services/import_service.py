@@ -2,12 +2,13 @@
 import pandas as pd
 import io
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 from backend.models import Property, PropertyAssessmentHistory, Payment, PropertyBilling
 from backend.database import SessionLocal
+from utils.logger import mto_logger
 
 
 class DataCleanser:
@@ -24,7 +25,7 @@ class DataCleanser:
         # Remove everything except digits, dots, and minus signs
         clean = re.sub(r'[^\d.-]', '', s)
         try: return float(clean)
-        except: return 0.0
+        except Exception: return 0.0
 
     @staticmethod
     def to_str(val):
@@ -97,7 +98,8 @@ def validate_property_import(file_content, file_extension, db_session: Session =
                 raw_val = row_data.get(found_cols["assessed_value"], 0)
                 val = float(raw_val) if not pd.isna(raw_val) else 0.0
                 if val < 0: errors.append("Assessed Value cannot be negative")
-            except:
+            except Exception as e:
+                mto_logger.warning("Error parsing assessed value in validation: %s", e)
                 errors.append("Invalid numeric format for Assessed Value")
                 
             status = "❌ ERROR" if errors else "✅ VALID"
@@ -271,12 +273,14 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                 "percentage": percentage,
                 "message": msg
             })
-        except: pass
+        except Exception as e:
+            mto_logger.warning("Failed to broadcast import progress: %s", e)
 
     import asyncio
     try:
         loop = asyncio.get_event_loop()
-    except:
+    except Exception as e:
+        mto_logger.debug("No active event loop found, creating new loop: %s", e)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     
@@ -340,14 +344,16 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                         report_progress(percentage, f"Importing: {i+1} / {total} records"), 
                         loop
                     )
-                except: pass
+                except Exception as e:
+                    mto_logger.warning("Failed to submit progress update: %s", e)
         
         log_action(user, f"Wizard Assessment Import: {inserted} new, {updated} updated.", db_session=db_session)
         db_session.commit()
         return {"inserted": inserted, "updated": updated}
     except Exception as e:
         db_session.rollback()
-        raise e
+        mto_logger.error("commit_assessment_import failed: %s", e, exc_info=True)
+        raise
 
 def commit_property_import(data_list, user, db_session: Session = None):
     """
@@ -364,12 +370,14 @@ def commit_property_import(data_list, user, db_session: Session = None):
                 "percentage": percentage,
                 "message": msg
             })
-        except: pass
+        except Exception as e:
+            mto_logger.warning("Failed to broadcast import progress: %s", e)
 
     import asyncio
     try:
         loop = asyncio.get_event_loop()
-    except:
+    except Exception as e:
+        mto_logger.debug("No active event loop found, creating new loop: %s", e)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     
@@ -397,14 +405,16 @@ def commit_property_import(data_list, user, db_session: Session = None):
                         report_progress(percentage, f"Processing: {i+1} / {total} properties"), 
                         loop
                     )
-                except: pass
+                except Exception as e:
+                    mto_logger.warning("Failed to submit progress update: %s", e)
         
         log_action(user, f"Bulk imported {count} property records.", db_session=db_session)
         db_session.commit()
         return count
     except Exception as e:
         db_session.rollback()
-        raise e
+        mto_logger.error("commit_property_import failed: %s", e, exc_info=True)
+        raise
 
 def import_assessment_roll_from_excel(file_path, user, db_session: Session = None):
     """
@@ -468,7 +478,8 @@ def import_assessment_roll_from_excel(file_path, user, db_session: Session = Non
                     loc = str(row.get(found_cols["LOCATION"], "")).strip()
                     try:
                         val = float(row.get(found_cols["VALUE"], 0))
-                    except:
+                    except Exception as e:
+                        mto_logger.warning("Error parsing value for TD %s: %s", td, e)
                         val = 0.0
                     
                     lot_val = str(row.get(found_cols["LOT"], "")).strip() if found_cols["LOT"] else ""
@@ -650,10 +661,13 @@ def commit_payment_import(data_list, user, db_session: Session = None):
             try:
                 if raw_date:
                     date_obj = pd.to_datetime(raw_date).to_pydatetime()
+                    if date_obj.tzinfo is None:
+                        date_obj = date_obj.replace(tzinfo=timezone.utc)
                 else:
-                    date_obj = datetime.now()
-            except:
-                date_obj = datetime.now()
+                    date_obj = datetime.now(timezone.utc)
+            except Exception as e:
+                mto_logger.warning("Failed to parse date %s: %s", raw_date, e)
+                date_obj = datetime.now(timezone.utc)
 
             # 1. Save Payment Record
             payment = Payment(
@@ -670,7 +684,9 @@ def commit_payment_import(data_list, user, db_session: Session = None):
             db_session.flush() # Populate payment.id
             
             # 2. Update Property Billing (to reflect in Receivables)
-            year = row["tax_year"]
+            year_str = row["tax_year"]
+            year = int(year_str) if year_str and str(year_str).strip().isdigit() else datetime.now(timezone.utc).year
+            
             billing = db_session.query(PropertyBilling).filter(
                 PropertyBilling.property_id == pid,
                 PropertyBilling.tax_year == year
@@ -682,7 +698,7 @@ def commit_payment_import(data_list, user, db_session: Session = None):
                 av = float(prop.assessed_value or 0.0) if prop else 0.0
                 
                 # Determine penalty and discount
-                is_prop_year = (year == (prop.tax_year if prop else ""))
+                is_prop_year = (str(year) == (prop.tax_year if prop else ""))
                 billing_pen = float(row.get("penalty", 0.0))
                 billing_disc = float(row.get("discount", 0.0))
                 if is_prop_year and prop:
@@ -723,10 +739,81 @@ def commit_payment_import(data_list, user, db_session: Session = None):
         try:
             from backend.services.stats_service import refresh_system_stats
             refresh_system_stats(db_session=db_session)
-        except:
-            pass
+        except Exception as e:
+            mto_logger.warning("Failed to refresh system stats during payment import commit: %s", e)
 
         return {"inserted": inserted}
     except Exception as e:
         db_session.rollback()
-        raise e
+        mto_logger.error("commit_payment_import failed: %s", e, exc_info=True)
+        raise
+
+
+def save_import_cache(data: list) -> str | None:
+    """
+    Saves the validated dictionary array as a JSON file under
+    import_cache/import_{token}.json and returns a secure UUID token.
+
+    Returns None if the cache file cannot be written (disk full, permission
+    error, etc.). The caller should check for None and skip adding the token
+    to the response rather than letting an OSError propagate to the client.
+    """
+    import os
+    import json
+    import uuid
+    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "import_cache")
+    try:
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+        token = uuid.uuid4().hex
+        file_path = os.path.join(cache_dir, f"import_{token}.json")
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        return token
+    except OSError as e:
+        mto_logger.error("save_import_cache: failed to write cache file: %s", e)
+        return None
+
+def load_import_cache(token: str) -> Optional[list]:
+    """Reads the JSON array back from the cache file and immediately deletes it to conserve server space."""
+    import os
+    import json
+    if not token or not isinstance(token, str):
+        return None
+    # Sanitize token to prevent directory traversal
+    clean_token = re.sub(r'[^a-f0-9]', '', token.lower())
+    if not clean_token:
+        return None
+    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "import_cache")
+    file_path = os.path.join(cache_dir, f"import_{clean_token}.json")
+    if not os.path.exists(file_path):
+        return None
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            mto_logger.warning("Failed to delete import cache file %s: %s", file_path, e)
+        return data
+    except Exception as e:
+        mto_logger.error("Failed to load import cache for token %s: %s", token, e)
+        return None
+
+def prune_old_import_cache(max_age_seconds: int = 3600):
+    """Background file utility to delete any validation cache files older than 1 hour."""
+    import os
+    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "import_cache")
+    if not os.path.exists(cache_dir):
+        return
+    now = datetime.now(timezone.utc).timestamp()
+    for filename in os.listdir(cache_dir):
+        if filename.startswith("import_") and filename.endswith(".json"):
+            file_path = os.path.join(cache_dir, filename)
+            try:
+                mtime = os.path.getmtime(file_path)
+                if now - mtime > max_age_seconds:
+                    os.remove(file_path)
+                    mto_logger.info(f"Pruned old import cache file: {filename}")
+            except Exception as e:
+                mto_logger.warning(f"Failed to prune old cache file {file_path}: {e}")

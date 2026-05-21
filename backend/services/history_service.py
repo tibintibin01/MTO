@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
@@ -59,7 +59,7 @@ def log_data_change(user_id: int, table_name: str, record_id: int, action: str,
         prev_hash = getattr(latest_log, "current_hash", None) if latest_log else "INITIAL_SEED"
         
         # Combine all data for current hash
-        current_data = f"{user_id}{table_name}{record_id}{action}{before_json}{after_json}{datetime.now().isoformat()}"
+        current_data = f"{user_id}{table_name}{record_id}{action}{before_json}{after_json}{datetime.now(timezone.utc).isoformat()}"
         cur_hash = _calculate_audit_hash(prev_hash, current_data)
 
         log_data = dict(
@@ -71,7 +71,7 @@ def log_data_change(user_id: int, table_name: str, record_id: int, action: str,
             old_values=before_json,
             new_values=after_json,
             ip_address=ip_address,
-            timestamp=datetime.now()
+            timestamp=datetime.now(timezone.utc)
         )
         if hasattr(AuditLog, "previous_hash"):
             log_data["previous_hash"] = prev_hash
@@ -115,7 +115,7 @@ def undo_last_action(user_id: int, db_session: Session = None):
                 prop = db_session.query(Property).filter(Property.id == rec_id).first()
                 if prop:
                     prop.deleted_at = None
-                    prop.updated_at = datetime.now()
+                    prop.updated_at = datetime.now(timezone.utc)
             else:
                 return False, f"Undo not supported for deletion on table {table}"
         
@@ -129,7 +129,7 @@ def undo_last_action(user_id: int, db_session: Session = None):
                             if k in ('assessed_value', 'penalty', 'discount'):
                                 v = Decimal(str(v)) if v is not None else None
                             setattr(prop, db_col, v)
-                    prop.updated_at = datetime.now()
+                    prop.updated_at = datetime.now(timezone.utc)
             else:
                 return False, f"Undo update not yet supported for {table}"
         
@@ -139,7 +139,7 @@ def undo_last_action(user_id: int, db_session: Session = None):
             table_name=table,
             record_id=rec_id,
             action=f"UNDO_{action}",
-            timestamp=datetime.now()
+            timestamp=datetime.now(timezone.utc)
         )
         db_session.add(undo_log)
         

@@ -1,7 +1,7 @@
 import os
 import sys
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from utils.config import config as mto_config
 from utils.secrets_manager import secrets
@@ -15,12 +15,12 @@ from utils.db_compat import year_of, month_of, days_ago
 
 # Record the exact moment this module is first imported (i.e. server start).
 # Used to calculate real uptime in get_system_stats().
-_SERVER_START_TIME: datetime = datetime.now()
+_SERVER_START_TIME: datetime = datetime.now(timezone.utc)
 
 
 def _format_uptime(start: datetime) -> str:
     """Returns a human-readable uptime string like '2d 4h 17m'."""
-    delta = datetime.now() - start
+    delta = datetime.now(timezone.utc) - start
     total_seconds = int(delta.total_seconds())
     days, remainder = divmod(total_seconds, 86400)
     hours, remainder = divmod(remainder, 3600)
@@ -81,7 +81,7 @@ def restore_database(sql_file_path):
     backups_dir = os.path.join(os.path.dirname(sql_file_path), "pre_restore_backups")
     os.makedirs(backups_dir, exist_ok=True)
     safety_backup = os.path.join(
-        backups_dir, f"PRE_RESTORE_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.sql"
+        backups_dir, f"PRE_RESTORE_{datetime.now(timezone.utc).strftime('%Y-%m-%d_%H-%M-%S')}.sql"
     )
     if not backup_database(safety_backup):
         raise RuntimeError(
@@ -124,7 +124,7 @@ def log_action(user, action, db_session: Session = None):
     log = AuditLog(
         username=get_username(user),
         action=action,
-        timestamp=datetime.now()
+        timestamp=datetime.now(timezone.utc)
     )
     db_session.add(log)
     # Intentionally no commit here — callers own the transaction boundary.
@@ -151,7 +151,8 @@ def get_dashboard_summary(db_session: Session = None):
     try:
         from backend.services.backup_service import get_backup_status
         summary["backup"] = get_backup_status(db_session=db_session)
-    except:
+    except Exception as e:
+        mto_logger.warning("Could not fetch backup status for dashboard: %s", e)
         summary["backup"] = {}
 
     return summary
@@ -249,7 +250,7 @@ def get_distinct_log_users(db_session: Session = None):
 
 
 def archive_audit_logs(days=365, db_session: Session = None):
-    cutoff = datetime.now() - timedelta(days=int(days))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
     results = db_session.query(AuditLog.timestamp, AuditLog.username, AuditLog.action).filter(
         AuditLog.timestamp < cutoff
     ).order_by(AuditLog.timestamp.asc()).all()
@@ -257,7 +258,7 @@ def archive_audit_logs(days=365, db_session: Session = None):
 
 
 def delete_old_audit_logs(db_session: Session, days: int = 365):
-    cutoff = datetime.now() - timedelta(days=int(days))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
     count = db_session.query(AuditLog).filter(AuditLog.timestamp < cutoff).delete()
     db_session.commit()
     return count
@@ -327,7 +328,7 @@ def get_system_stats(db_session: Session = None):
     total_logs = db_session.query(func.count(AuditLog.id)).scalar()
     active_sessions = db_session.query(func.count(RefreshToken.id)).filter(
         RefreshToken.is_revoked == False,
-        RefreshToken.expires_at > datetime.now()
+        RefreshToken.expires_at > datetime.now(timezone.utc)
     ).scalar()
     
     integrity_ok = total_logs is not None
@@ -336,7 +337,7 @@ def get_system_stats(db_session: Session = None):
         "total_logs": total_logs,
         "integrity_ok": integrity_ok,
         "active_sessions": active_sessions,
-        "active_lockouts": db_session.query(func.count(User.id)).filter(User.lockout_until > datetime.now()).scalar()
+        "active_lockouts": db_session.query(func.count(User.id)).filter(User.lockout_until > datetime.now(timezone.utc)).scalar()
     }
 
     # 4. API Performance — read from the live Prometheus metrics that the
@@ -379,7 +380,7 @@ def get_system_stats(db_session: Session = None):
         avg_latency_ms = round((latency_sum / latency_count) * 1000, 2) if latency_count > 0 else 0.0
 
         # Requests per minute since server start
-        uptime_minutes = max(1, (datetime.now() - _SERVER_START_TIME).total_seconds() / 60)
+        uptime_minutes = max(1, (datetime.now(timezone.utc) - _SERVER_START_TIME).total_seconds() / 60)
         rpm = round(total_requests / uptime_minutes, 1)
 
     except Exception:

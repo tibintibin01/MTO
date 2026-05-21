@@ -1,16 +1,11 @@
 # -*- coding: utf-8 -*-
 from backend.models import User, RefreshToken, AuditLog
 from backend.database import SessionLocal, engine
-from utils import log_error_to_file, hash_password, is_password_hashed
-import secrets
-import hashlib
-import base64
-import binascii
-from datetime import datetime, timedelta
+from utils import log_error_to_file, hash_password, is_password_hashed, verify_password, needs_rehash
+from datetime import datetime, timedelta, timezone
 
 from functools import wraps
 from fastapi import HTTPException
-import asyncio
 
 
 def require_permission(permission: str):
@@ -128,31 +123,6 @@ def has_permission(user, permission):
 
 
 
-def verify_password(password, stored_value):
-
-    if stored_value is None:
-        return False
-    stored_text = str(stored_value)
-    try:
-        from utils import PASSWORD_SCHEME
-        scheme, iteration_text, salt_b64, digest_b64 = stored_text.split("$", 3)
-
-        if scheme != PASSWORD_SCHEME:
-            return False
-        salt = base64.b64decode(salt_b64.encode("ascii"))
-        expected_digest = base64.b64decode(digest_b64.encode("ascii"))
-        actual_digest = hashlib.pbkdf2_hmac(
-            "sha256",
-            str(password).encode("utf-8"),
-            salt,
-            int(iteration_text),
-        )
-        return secrets.compare_digest(actual_digest, expected_digest)
-    except (ValueError, binascii.Error, TypeError):
-        return False
-    except Exception as e:
-        log_error_to_file("Unexpected error during password verification", e)
-        return False
 
 
 def acquire_user_lock(user_id, user_name, stale_minutes=30):
@@ -176,7 +146,7 @@ def get_user_by_username(username, db_session: Session):
 
 
 def verify_user_login(username, password, db_session: Session):
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     user = db_session.query(User).filter(User.username == username, User.deleted_at == None).first()
     if not user:
         return None
@@ -186,6 +156,9 @@ def verify_user_login(username, password, db_session: Session):
         raise ValueError("DISABLED:Account is disabled. Please contact the administrator.")
 
     # 2. Check for active security lockout
+    # lockout_until is stored as a naive datetime in MariaDB (DATETIME has no
+    # timezone). Compare against naive datetime.now() to avoid TypeError and
+    # the silent time-offset bug that .replace(tzinfo=...) introduces.
     if user.lockout_until and user.lockout_until > datetime.now():
         diff = user.lockout_until - datetime.now()
         minutes = int(diff.total_seconds() // 60) + 1
@@ -196,7 +169,7 @@ def verify_user_login(username, password, db_session: Session):
     if not match:
         user.failed_attempts = (user.failed_attempts or 0) + 1
         if user.failed_attempts >= 5:
-            user.lockout_until = datetime.now() + timedelta(minutes=5)
+            user.lockout_until = datetime.now(timezone.utc) + timedelta(minutes=5)
             db_session.commit()
             raise ValueError("LOCKED:5")
         else:
@@ -205,12 +178,14 @@ def verify_user_login(username, password, db_session: Session):
             raise ValueError(f"INVALID:{remaining}")
 
     # 3. Successful login - Reset security counters
-    user.last_login = datetime.now()
+    user.last_login = datetime.now(timezone.utc)
     user.failed_attempts = 0
     user.lockout_until = None
     
-    # Auto-upgrade password hash if legacy
-    if user.password and not is_password_hashed(user.password):
+    # Auto-upgrade legacy PBKDF2 hash to bcrypt on successful login.
+    # needs_rehash() returns True only for PBKDF2 hashes — bcrypt hashes
+    # are already current and are left untouched.
+    if user.password and needs_rehash(user.password):
         user.password = hash_password(password)
         
     db_session.commit()
@@ -243,10 +218,10 @@ def verify_user_login(username, password, db_session: Session):
 def create_refresh_token(user_id: int, db_session: Session):
     """Generates a long-lived refresh token and stores it in the DB."""
     import secrets
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
     token = secrets.token_urlsafe(64)
-    expires_at = datetime.now() + timedelta(days=7)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
     
     new_token = RefreshToken(
         user_id=user_id,
@@ -260,12 +235,12 @@ def create_refresh_token(user_id: int, db_session: Session):
 def refresh_access_token(refresh_token_str: str, db_session: Session):
     """Validates a refresh token and generates a new access token."""
     from backend.deps import create_access_token
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
     token_record = db_session.query(RefreshToken).filter(
         RefreshToken.token == refresh_token_str,
         RefreshToken.is_revoked == False,
-        RefreshToken.expires_at > datetime.now()
+        RefreshToken.expires_at > datetime.now(timezone.utc)
     ).first()
     
     if not token_record:
@@ -317,7 +292,7 @@ def create_user(username, full_name, password, role, admin_user, db_session: Ses
             table_name="users",
             record_id=new_user.id,
             new_values=json.dumps({"username": username, "role": role}),
-            timestamp=datetime.now()
+            timestamp=datetime.now(timezone.utc)
         )
         db_session.add(audit_log)
         db_session.commit()
@@ -449,7 +424,7 @@ def delete_user(user_id, admin_user, db_session: Session):
     # Revoke all their refresh tokens immediately to end active sessions
     db_session.query(RefreshToken).filter(RefreshToken.user_id == user_id).update({RefreshToken.is_revoked: True}, synchronize_session=False)
     
-    user.deleted_at = datetime.now()
+    user.deleted_at = datetime.now(timezone.utc)
     user.is_active = False # Deactivate deleted users
     db_session.commit()
     

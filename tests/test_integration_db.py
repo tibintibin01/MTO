@@ -19,7 +19,7 @@ zero infrastructure.
 
 import pytest
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
@@ -120,7 +120,7 @@ def make_payment(db, property_id, amount=2_000.0, or_number="OR-000001", tax_yea
         discount=0.0,
         or_number=or_number,
         tax_year=tax_year,
-        date_paid=datetime.now(),
+        date_paid=datetime.now(timezone.utc),
         posted_by="cashier1",
     )
     db.add(p)
@@ -161,7 +161,7 @@ class TestSchemaConstraints:
                 discount=0.0,
                 or_number="OR-ORPHAN",
                 tax_year="2024",
-                date_paid=datetime.now(),
+                date_paid=datetime.now(timezone.utc),
             )
             db.add(p)
             db.commit()
@@ -201,7 +201,7 @@ class TestQueryCorrectness:
         """
         active = make_property(db, td="TD-ACTIVE-001")
         deleted = make_property(db, td="TD-DELETED-001")
-        deleted.deleted_at = datetime.now()
+        deleted.deleted_at = datetime.now(timezone.utc)
         db.commit()
 
         results = db.query(Property).filter(Property.deleted_at == None).all()
@@ -251,7 +251,7 @@ class TestQueryCorrectness:
         rt = RefreshToken(
             user_id=user.id,
             token=token_str,
-            expires_at=datetime.now() + timedelta(days=7),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=7),
             is_revoked=False,
         )
         db.add(rt)
@@ -260,7 +260,7 @@ class TestQueryCorrectness:
         found = db.query(RefreshToken).filter(
             RefreshToken.token == token_str,
             RefreshToken.is_revoked == False,
-            RefreshToken.expires_at > datetime.now(),
+            RefreshToken.expires_at > datetime.now(timezone.utc),
         ).first()
 
         assert found is not None
@@ -274,7 +274,7 @@ class TestQueryCorrectness:
         rt = RefreshToken(
             user_id=user.id,
             token="revoked_token_xyz",
-            expires_at=datetime.now() + timedelta(days=7),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=7),
             is_revoked=True,
         )
         db.add(rt)
@@ -422,7 +422,7 @@ class TestAuditLogImmutability:
             action="TEST_ACTION",
             table_name="properties",
             record_id=1,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
         )
         db.add(log)
         db.commit()
@@ -440,7 +440,7 @@ class TestAuditLogImmutability:
             action="ORIGINAL_ACTION",
             table_name="properties",
             record_id=1,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
         )
         db.add(log)
         db.commit()
@@ -459,7 +459,7 @@ class TestAuditLogImmutability:
             action="DELETE_ME",
             table_name="properties",
             record_id=1,
-            timestamp=datetime.now(),
+            timestamp=datetime.now(timezone.utc),
         )
         db.add(log)
         db.commit()
@@ -486,7 +486,7 @@ class TestUserLifecycle:
         rt = RefreshToken(
             user_id=user.id,
             token="token_to_revoke",
-            expires_at=datetime.now() + timedelta(days=7),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=7),
             is_revoked=False,
         )
         db.add(rt)
@@ -496,7 +496,7 @@ class TestUserLifecycle:
         db.query(RefreshToken).filter(RefreshToken.user_id == user.id).update(
             {RefreshToken.is_revoked: True}, synchronize_session=False
         )
-        user.deleted_at = datetime.now()
+        user.deleted_at = datetime.now(timezone.utc)
         user.is_active = False
         db.commit()
 
@@ -519,12 +519,12 @@ class TestUserLifecycle:
         lockout check query used in verify_user_login.
         """
         user = make_user(db, username="locked_user")
-        user.lockout_until = datetime.now() + timedelta(minutes=5)
+        user.lockout_until = datetime.now(timezone.utc) + timedelta(minutes=5)
         db.commit()
 
         locked = db.query(User).filter(
             User.username == "locked_user",
-            User.lockout_until > datetime.now(),
+            User.lockout_until > datetime.now(timezone.utc),
         ).first()
 
         assert locked is not None
@@ -534,12 +534,12 @@ class TestUserLifecycle:
         A user whose lockout_until is in the past must not be blocked.
         """
         user = make_user(db, username="unlocked_user")
-        user.lockout_until = datetime.now() - timedelta(minutes=1)
+        user.lockout_until = datetime.now(timezone.utc) - timedelta(minutes=1)
         db.commit()
 
         still_locked = db.query(User).filter(
             User.username == "unlocked_user",
-            User.lockout_until > datetime.now(),
+            User.lockout_until > datetime.now(timezone.utc),
         ).first()
 
         assert still_locked is None

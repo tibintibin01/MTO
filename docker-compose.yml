@@ -16,8 +16,10 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - PORT=8001
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     restart: always
 
   # Production-grade Database
@@ -36,6 +38,20 @@ services:
       MARIADB_PASSWORD: ${MTO_DB_PASSWORD:?MTO_DB_PASSWORD is required}
     volumes:
       - mto_data:/var/lib/mysql
+      # Mount the provisioning script so MariaDB runs it on first startup.
+      # This upgrades the mto_app user grants to the full least-privilege set
+      # (LOCK TABLES for mysqldump, CREATE/ALTER/DROP for Alembic migrations).
+      # The script is only executed once — when the data volume is first initialised.
+      - ./scripts/docker_init_db.sh:/docker-entrypoint-initdb.d/01_grant_app_user.sh:ro
+    healthcheck:
+      # Wait until MariaDB is accepting connections before the api container starts.
+      # Uses the app credentials (not root) so the check also validates that the
+      # mto_app account was provisioned correctly.
+      test: ["CMD", "mariadb", "--user=${MTO_DB_USER}", "--password=${MTO_DB_PASSWORD}", "--execute=SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     restart: always
 
   # Metrics & Observability

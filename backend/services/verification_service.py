@@ -138,6 +138,11 @@ def perform_restore_test(file_path, db_session: Session = None):
             db_session.rollback()
             db_session.execute(text(f"DROP DATABASE IF EXISTS {temp_db_name}"))
             db_session.commit()
-        except:
-            pass
+        except Exception as cleanup_err:
+            # Cleanup failure is non-fatal — log it and return the original error
+            from utils.logger import mto_logger
+            mto_logger.warning(
+                "verification_service: failed to drop temp DB '%s' during cleanup: %s",
+                temp_db_name, cleanup_err,
+            )
         return False, f"Restore Test Failed: {str(e)}"

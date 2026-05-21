@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -14,7 +14,7 @@ def generate_or_receipt(receipt_data, base_dir):
 
     or_number = safe_text(receipt_data.get("or_number")) or "NO_OR_NUMBER"
     td_number = safe_text(receipt_data.get("td_number")) or "NO_TD"
-    date_part = datetime.now().strftime("%Y%m%d_%H%M%S")
+    date_part = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     file_name = f"OR_{safe_filename(or_number)}_{safe_filename(td_number)}_{date_part}.pdf"
     output_path = os.path.join(receipts_dir, file_name)
 

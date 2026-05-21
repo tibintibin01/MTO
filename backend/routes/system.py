@@ -1,6 +1,6 @@
 import os
-from typing import List, Optional
-from datetime import datetime
+from typing import List, Optional, Union
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from jose import JWTError, jwt
@@ -31,7 +31,7 @@ async def health_check(db_session: Session = Depends(get_db)):
 
     health = {
         "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "database": "unknown",
         "cache": "unknown",
         "storage": "unknown",
@@ -129,22 +129,15 @@ async def get_system_stats(request: Request, current_user: dict = Depends(admin_
 @limiter.limit("3/minute")
 async def trigger_backup(
     request: Request,
-    background_tasks: BackgroundTasks, 
     current_user: dict = Depends(admin_only)
 ):
-    from backend.services.backup_service import run_hybrid_backup
-    async def backup_wrapper():
-        from backend.database import SessionLocal
-        with SessionLocal() as db:
-            await run_hybrid_backup(user=current_user, db_session=db)
-        await manager.broadcast({
-            "type": "NOTIFICATION",
-            "title": "Backup Complete",
-            "message": "The Hybrid Backup process has finished successfully.",
-            "level": "success"
-        })
-    background_tasks.add_task(backup_wrapper)
-    return {"status": "backup_started", "message": "Hybrid backup is running in the background."}
+    from backend.services.job_service import submit_job
+    job_id = submit_job(job_type="backup", submitted_by=current_user["username"])
+    return {
+        "status": "backup_started",
+        "job_id": job_id,
+        "message": "Backup queued. Poll /jobs/{job_id} for progress.",
+    }
 
 @router.get("/system/backup/status", dependencies=[Depends(read_only)])
 async def get_backup_health(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
@@ -164,26 +157,47 @@ async def validate_bulk_import(
     mode = request.query_params.get("mode", "property")
     if mode == "assessment":
         from backend.services.import_service import validate_assessment_import
-        return validate_assessment_import(content, ext, db_session=db_session)
-    if mode == "payments":
+        res = validate_assessment_import(content, ext, db_session=db_session)
+    elif mode == "payments":
         from backend.services.import_service import validate_payment_import
-        return validate_payment_import(content, ext, db_session=db_session)
-    from backend.services.import_service import validate_property_import
-    return validate_property_import(content, ext, db_session=db_session)
+        res = validate_payment_import(content, ext, db_session=db_session)
+    else:
+        from backend.services.import_service import validate_property_import
+        res = validate_property_import(content, ext, db_session=db_session)
+
+    if isinstance(res, dict) and res.get("success") and "data" in res:
+        from backend.services.import_service import save_import_cache
+        token = save_import_cache(res["data"])
+        if token:
+            res["validation_token"] = token
+            res["cache_token"] = token
+
+    return res
 
 @router.post("/system/import/commit", dependencies=[Depends(write_access)])
 async def commit_bulk_import(
-    request: Request, data: List[dict], current_user: dict = Depends(get_current_user),
+    request: Request, data: Union[List[dict], dict], current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db)
 ):
     from utils import is_feature_enabled
     if not is_feature_enabled("BULK_IMPORT"):
         raise HTTPException(status_code=403, detail="Bulk Import feature is currently disabled.")
     mode = request.query_params.get("mode", "property")
-    if data and hasattr(data[0], "model_dump"):
-        payload = [d.model_dump(exclude_unset=True) for d in data]
+
+    if isinstance(data, dict):
+        token = data.get("validation_token") or data.get("cache_token")
+        if not token:
+            raise HTTPException(status_code=400, detail="Missing validation_token or cache_token in request body.")
+        from backend.services.import_service import load_import_cache
+        payload = load_import_cache(token)
+        if payload is None:
+            raise HTTPException(status_code=400, detail="Invalid, expired, or missing import validation token.")
     else:
-        payload = data
+        if data and hasattr(data[0], "model_dump"):
+            payload = [d.model_dump(exclude_unset=True) for d in data]
+        else:
+            payload = data
+
     if mode == "assessment":
         from backend.services.import_service import commit_assessment_import
         res = commit_assessment_import(payload, current_user, db_session=db_session)
@@ -259,7 +273,7 @@ async def restore_system_backup(
         error_detail = traceback.format_exc()
         try:
             with open("logs/restore_debug.log", "a") as f:
-                f.write(f"\n[{datetime.now()}] RESTORE FAILURE\nFile: {request.file_path}\nError: {str(e)}\nTraceback:\n{error_detail}\n" + "-" * 40 + "\n")
+                f.write(f"\n[{datetime.now(timezone.utc)}] RESTORE FAILURE\nFile: {request.file_path}\nError: {str(e)}\nTraceback:\n{error_detail}\n" + "-" * 40 + "\n")
         except: pass
         raise HTTPException(status_code=500, detail=str(e))
 

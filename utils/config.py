@@ -66,6 +66,21 @@ class MTOSettings(BaseSettings):
                 raise ValueError("MTO_DB_USER cannot be empty in production mode.")
             if not self.DB_NAME:
                 raise ValueError("MTO_DB_NAME cannot be empty in production mode.")
+            # Reject root — the application must never run as the DB superuser.
+            if self.DB_USER.strip().lower() == "root":
+                raise ValueError(
+                    "MTO_DB_USER=root is not allowed in production. "
+                    "Create a least-privilege 'mto_app' account by running: "
+                    "python scripts/create_db_user.py"
+                )
+            # Reject a blank or placeholder password.
+            db_pass = os.getenv("MTO_DB_PASSWORD", "").strip()
+            if not db_pass or db_pass in ("CHANGE_ME", "your_secure_db_password",
+                                          "your_secure_db_password_min_16_chars"):
+                raise ValueError(
+                    "MTO_DB_PASSWORD cannot be empty or a placeholder in production. "
+                    "Generate one with: python -c \"import secrets; print(secrets.token_hex(24))\""
+                )
 
 # Global Settings Instance
 try:

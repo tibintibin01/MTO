@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import func, cast
 from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
@@ -52,7 +52,7 @@ def _update_stat(db_session: Session, key: str, value: float):
         db_session.add(stat)
     else:
         stat.stat_value = value
-        stat.last_updated = datetime.now()
+        stat.last_updated = datetime.now(timezone.utc)
 
 def get_cached_stat(key: str, default=0, db_session: Session = None):
     """Retrieves a pre-calculated stat from the database."""

@@ -1,5 +1,6 @@
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
+import os
 import secrets
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -15,6 +16,13 @@ from backend.deps import (
 from utils.logger import mto_logger
 
 router = APIRouter(tags=["Auth"])
+
+# Cookies must be Secure (HTTPS-only) in production.
+# On a local office network running plain HTTP, Secure=True causes the browser
+# to silently drop the cookie, making login appear to fail.
+# Setting Secure=False for non-production allows HTTP deployments to work.
+_IS_PRODUCTION = os.getenv("MTO_ENVIRONMENT", "development").lower() == "production"
+_COOKIE_SECURE = _IS_PRODUCTION
 
 class Token(BaseModel):
     access_token: str
@@ -93,7 +101,7 @@ async def login(credentials: Dict[str, str], request: Request, response: Respons
             key="access_token",
             value=user_data["access_token"],
             httponly=True,
-            secure=True,
+            secure=_COOKIE_SECURE,
             samesite="strict",
             max_age=60 * 60  # 1 hour — matches token expiry
         )
@@ -151,7 +159,7 @@ async def get_csrf_token(response: Response):
         key="csrf_token",
         value=token,
         httponly=False,   # Must be readable by JS to implement double-submit
-        secure=True,
+        secure=_COOKIE_SECURE,
         samesite="strict",
         max_age=3600,     # 1 hour
     )

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import re
 import json
@@ -86,9 +86,9 @@ def draw_header(c, title, width, height, margin_x, color=None):
     c.drawString(margin_x + text_offset, height - 24 * mm, BRANDING["office_name"])
     
     c.setFont(BRANDING["fonts"]["header"], 9)
-    c.drawRightString(width - margin_x, height - 18 * mm, datetime.now().strftime("%B %d, %Y"))
+    c.drawRightString(width - margin_x, height - 18 * mm, datetime.now(timezone.utc).strftime("%B %d, %Y"))
     c.setFont(BRANDING["fonts"]["body"], 9)
-    c.drawRightString(width - margin_x, height - 24 * mm, datetime.now().strftime("%I:%M %p"))
+    c.drawRightString(width - margin_x, height - 24 * mm, datetime.now(timezone.utc).strftime("%I:%M %p"))
 
 def draw_seal(c, width, height):
     """Draws a faded background seal if configured."""

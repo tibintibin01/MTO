@@ -17,6 +17,7 @@ import base64
 import binascii
 
 # --- SECURITY CONSTANTS ---
+# Legacy scheme kept for migration detection only — new hashes use bcrypt.
 PASSWORD_SCHEME = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 200000
 
@@ -285,21 +286,106 @@ def export_data_to_excel(data, columns, filename_prefix="Export"):
         return None
 
 # --- SECURITY UTILITIES ---
-def hash_password(password):
+# Single authoritative password hashing implementation for the entire project.
+# All new hashes are bcrypt. Legacy PBKDF2-SHA256 hashes are still verifiable
+# so existing accounts keep working; they are transparently re-hashed to bcrypt
+# on the next successful login.
+#
+# Implementation note: we call the `bcrypt` package directly rather than going
+# through passlib because passlib 1.7.4 is incompatible with bcrypt >= 4.0
+# (the __about__ attribute was removed). Using bcrypt directly avoids that
+# dependency entirely and is straightforward.
+
+
+def hash_password(password: str) -> str:
+    """
+    Hashes a plaintext password with bcrypt (cost factor 12).
+    Always use this for new hashes — never store plaintext.
+
+    bcrypt truncates at 72 bytes. Passwords longer than 72 bytes are
+    pre-hashed with SHA-256 (hex digest = 64 ASCII bytes, safely under the
+    limit) so the full password entropy is preserved.
+    """
     if password is None:
         raise ValueError("Password is required.")
-    password_text = str(password)
-    salt = secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256",
-        password_text.encode("utf-8"),
-        salt,
-        PASSWORD_ITERATIONS,
-    )
-    salt_b64 = base64.b64encode(salt).decode("ascii")
-    digest_b64 = base64.b64encode(digest).decode("ascii")
-    return f"{PASSWORD_SCHEME}${PASSWORD_ITERATIONS}${salt_b64}${digest_b64}"
+    import bcrypt as _bcrypt
+    secret = _prepare_bcrypt_secret(str(password))
+    return _bcrypt.hashpw(secret, _bcrypt.gensalt(rounds=12)).decode("utf-8")
 
-def is_password_hashed(password_value):
-    return str(password_value).startswith(f"{PASSWORD_SCHEME}$")
+
+def verify_password(password: str, stored_value: str) -> bool:
+    """
+    Verifies a plaintext password against a stored hash.
+
+    Handles both current (bcrypt) and legacy (pbkdf2_sha256) hashes so
+    existing accounts are not locked out during the migration period.
+    Returns True on a match, False otherwise.
+    """
+    if not stored_value:
+        return False
+    stored_text = str(stored_value)
+
+    # --- bcrypt path ---
+    if stored_text.startswith("$2b$") or stored_text.startswith("$2a$"):
+        try:
+            import bcrypt as _bcrypt
+            secret = _prepare_bcrypt_secret(str(password))
+            return _bcrypt.checkpw(secret, stored_text.encode("utf-8"))
+        except Exception:
+            return False
+
+    # --- Legacy PBKDF2-SHA256 path ---
+    if stored_text.startswith(f"{PASSWORD_SCHEME}$"):
+        try:
+            _, iteration_text, salt_b64, digest_b64 = stored_text.split("$", 3)
+            salt = base64.b64decode(salt_b64.encode("ascii"))
+            expected_digest = base64.b64decode(digest_b64.encode("ascii"))
+            actual_digest = hashlib.pbkdf2_hmac(
+                "sha256",
+                str(password).encode("utf-8"),
+                salt,
+                int(iteration_text),
+            )
+            return secrets.compare_digest(actual_digest, expected_digest)
+        except (ValueError, binascii.Error, TypeError):
+            return False
+        except Exception as e:
+            log_error_to_file("Unexpected error during legacy password verification", e)
+            return False
+
+    return False
+
+
+def _prepare_bcrypt_secret(password: str) -> bytes:
+    """
+    Returns the password as bytes ready for bcrypt.
+    Passwords longer than 72 bytes are pre-hashed with SHA-256 so the full
+    entropy is preserved (bcrypt silently truncates at 72 bytes otherwise).
+    The hex digest is 64 ASCII bytes — well within bcrypt's limit.
+    """
+    encoded = password.encode("utf-8")
+    if len(encoded) > 72:
+        encoded = hashlib.sha256(encoded).hexdigest().encode("ascii")
+    return encoded
+
+
+def is_password_hashed(password_value: str) -> bool:
+    """
+    Returns True if the stored value is any recognised hash format
+    (bcrypt or legacy PBKDF2). Used to detect plain-text passwords.
+    """
+    s = str(password_value)
+    return (
+        s.startswith("$2b$")
+        or s.startswith("$2a$")
+        or s.startswith(f"{PASSWORD_SCHEME}$")
+    )
+
+
+def needs_rehash(stored_value: str) -> bool:
+    """
+    Returns True when a stored hash is a legacy PBKDF2 hash that should be
+    upgraded to bcrypt on the next successful login.
+    """
+    return str(stored_value).startswith(f"{PASSWORD_SCHEME}$")
 

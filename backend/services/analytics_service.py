@@ -4,7 +4,7 @@ from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
 from backend.models import Payment, Property, PropertyBilling
 from backend.database import SessionLocal
-from datetime import datetime
+from datetime import datetime, timezone
 from utils.db_compat import year_of, month_of, today, this_month_start, this_year_start
 
 def get_collection_summary(db_session: Session = None):
@@ -83,7 +83,7 @@ def get_monthly_revenue_trend(db_session: Session = None):
             return get_monthly_revenue_trend(db_session=session)
 
     from datetime import timedelta
-    start_date = datetime.now() - timedelta(days=365)
+    start_date = datetime.now(timezone.utc) - timedelta(days=365)
 
     yr = year_of(Payment.date_paid).label('yr')
     mo = month_of(Payment.date_paid).label('mo')

@@ -304,11 +304,11 @@ class PropertyEditModal(ctk.CTkToplevel):
             key = self._idempotency_key if has_payment else None
 
             prop_svc.save_property(data, editing_id=self.property_id, user=self.user, idempotency_key=key)
-            messagebox.showinfo("Success", "Property record saved successfully.")
+            messagebox.showinfo("Success", "Property record saved successfully.", parent=self)
             self.callback()
             self.destroy()
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            messagebox.showerror("Error", str(e), parent=self)
 
 
 class BulkBarangayUpdateModal(ctk.CTkToplevel):

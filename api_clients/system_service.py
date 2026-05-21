@@ -11,7 +11,8 @@ def log_action(user, action):
     # API handles logging on the backend usually, but we can have an endpoint
     try:
         api_request("POST", "/system/logs", data={"action": action})
-    except:
+    except Exception:
+        # Fire-and-forget — a logging failure must never crash the caller.
         pass
 
 
