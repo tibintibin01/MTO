@@ -233,16 +233,49 @@ class PropertyEditModal(ctk.CTkToplevel):
 
         fields = [("TD Number", "td_number"), ("Owner Name", "owner_name"), ("Payor", "payor_name"), ("Lot Number", "lot_number"), ("Area", "area"), ("Location", "location"), ("Kind", "kind_of_property"), ("Tax Year", "tax_year"), ("OR Number", "or_number"), ("OR Date", "or_date"), ("Assessed Value", "assessed_value"), ("Penalty", "penalty"), ("Discount", "discount"), ("Amount Paid", "amount_paid")]
 
+        def _scroll_to_widget(widget):
+            """
+            Scrolls the CTkScrollableFrame so the focused widget is fully visible.
+            Called on FocusIn so tabbing to any field — especially Tax Year at
+            the bottom — automatically brings it into view without mouse scrolling.
+            """
+            try:
+                # CTkScrollableFrame wraps a tk.Canvas internally
+                canvas = self.scroll_form._parent_canvas
+                # Get widget position relative to the canvas
+                widget.update_idletasks()
+                wy = widget.winfo_y()
+                wh = widget.winfo_height()
+                ch = canvas.winfo_height()
+                # Total scrollable height
+                scroll_region = canvas.cget("scrollregion")
+                if not scroll_region:
+                    return
+                total_h = float(scroll_region.split()[3])
+                if total_h <= 0:
+                    return
+                # Target: centre the widget vertically in the visible area
+                target_top = wy - (ch // 2) + (wh // 2)
+                target_top = max(0, min(target_top, total_h - ch))
+                canvas.yview_moveto(target_top / total_h)
+            except Exception:
+                pass
+
         for label, key in fields:
             ctk.CTkLabel(self.scroll_form, text=label.upper(), font=("Segoe UI", 9, "bold"), text_color="gray").pack(anchor="w", padx=10, pady=(10, 0))
             self.vars[key] = tk.StringVar()
             if key == "location":
                 drop = ctk.CTkComboBox(self.scroll_form, values=self.barangays, variable=self.vars[key], height=40)
                 drop.pack(fill="x", padx=10, pady=(0, 5))
+                drop.bind("<FocusIn>", lambda e, w=drop: self.after_idle(_scroll_to_widget, w))
             else:
-                ctk.CTkEntry(self.scroll_form, height=40, textvariable=self.vars[key]).pack(fill="x", padx=10, pady=(0, 5))
-                if key in ["assessed_value", "penalty", "discount"]: self.vars[key].trace_add("write", lambda *a: self.recompute())
-                else: self.vars[key].trace_add("write", lambda *a: self.validate())
+                entry = ctk.CTkEntry(self.scroll_form, height=40, textvariable=self.vars[key])
+                entry.pack(fill="x", padx=10, pady=(0, 5))
+                entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
+                if key in ["assessed_value", "penalty", "discount"]:
+                    self.vars[key].trace_add("write", lambda *a: self.recompute())
+                else:
+                    self.vars[key].trace_add("write", lambda *a: self.validate())
 
         self.calc_box = ctk.CTkFrame(self.scroll_form, fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK), corner_radius=8)
         self.calc_box.pack(fill="x", padx=10, pady=15)
