@@ -177,6 +177,12 @@ async def td_number_fix(
     fixed_list = []
     unfixable_list = []
     already_valid = 0
+    td_to_prop_id = {
+        (prop.td_number or "").strip(): prop.id
+        for prop in rows
+        if (prop.td_number or "").strip()
+    }
+    planned_fixed_tds = set()
 
     for prop in rows:
         td_orig = (prop.td_number or "").strip()
@@ -187,6 +193,27 @@ async def td_number_fix(
         fixed_td, rule = try_fix(td_orig)
 
         if fixed_td and VALID.match(fixed_td):
+            existing_prop_id = td_to_prop_id.get(fixed_td)
+            if existing_prop_id is not None and existing_prop_id != prop.id:
+                unfixable_list.append({
+                    "id": prop.id,
+                    "td_number": td_orig,
+                    "owner_name": prop.owner_name or "",
+                    "reason": (
+                        f"Fixed TD number '{fixed_td}' already belongs to "
+                        f"property ID {existing_prop_id}"
+                    ),
+                })
+                continue
+            if fixed_td in planned_fixed_tds:
+                unfixable_list.append({
+                    "id": prop.id,
+                    "td_number": td_orig,
+                    "owner_name": prop.owner_name or "",
+                    "reason": f"Fixed TD number '{fixed_td}' is duplicated by another planned fix",
+                })
+                continue
+            planned_fixed_tds.add(fixed_td)
             fixed_list.append({
                 "id": prop.id,
                 "original": td_orig,
@@ -213,21 +240,43 @@ async def td_number_fix(
             "unfixable_list": unfixable_list,
         }
 
-    # Apply fixes
-    applied = 0
+    # ── Collision check before applying ──────────────────────────────────────
+    # Fetch all existing TD numbers so we can detect if a fix would create
+    # a duplicate (two malformed TDs that both resolve to the same correct TD).
+    existing_tds = {
+        r[0] for r in db_session.query(Property.td_number).filter(Property.deleted_at == None).all()
+    }
+
+    safe_fixes = []
+    collision_list = []
     for item in fixed_list:
+        # The original TD is being replaced — remove it from the set first
+        # so we don't flag it as colliding with itself
+        check_set = existing_tds - {item["original"]}
+        if item["fixed"] in check_set:
+            collision_list.append({
+                **item,
+                "reason": f"Collision: '{item['fixed']}' already exists in the database",
+            })
+        else:
+            safe_fixes.append(item)
+            # Add the fixed TD to the set so subsequent fixes in this batch
+            # can detect collisions against each other
+            existing_tds.add(item["fixed"])
+            existing_tds.discard(item["original"])
+
+    # Apply safe fixes
+    applied = 0
+    for item in safe_fixes:
         prop = db_session.query(Property).filter(Property.id == item["id"]).first()
         if not prop:
             continue
-        old_td = prop.td_number
         prop.td_number = item["fixed"]
         applied += 1
 
     if applied > 0:
         db_session.flush()
 
-        # Single audit log entry for the batch — avoids per-row overhead
-        # and the immutability event listener on AuditLog
         from backend.services.history_service import log_data_change
         log_data_change(
             user_id=current_user.get("id", 0),
@@ -238,6 +287,7 @@ async def td_number_fix(
             after={
                 "fixed": applied,
                 "unfixable": len(unfixable_list),
+                "collisions": len(collision_list),
                 "rules": "Rule1=6-digit-third-segment, Rule2=3-digit-second-segment, Rule3=merged-first-two-segments",
             },
             username=current_user.get("username", "system"),
@@ -246,7 +296,7 @@ async def td_number_fix(
 
     db_session.commit()
     mto_logger.info(
-        f"TD number auto-fix applied: {applied} fixed, {len(unfixable_list)} unfixable",
+        f"TD number auto-fix applied: {applied} fixed, {len(unfixable_list)} unfixable, {len(collision_list)} collisions skipped",
         user=current_user.get("username"),
     )
 
@@ -257,6 +307,8 @@ async def td_number_fix(
         "fixed": applied,
         "unfixable": len(unfixable_list),
         "unfixable_list": unfixable_list,
+        "collisions": len(collision_list),
+        "collision_list": collision_list,
     }
 
 # ---------------------------------------------------------------------------

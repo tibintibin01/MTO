@@ -858,13 +858,21 @@ class SystemAdminPage:
                 else:
                     fixed = res.get("fixed", 0)
                     unfixable = res.get("unfixable", 0)
-                    messagebox.showinfo(
-                        "Fix Complete",
+                    collisions = res.get("collisions", 0)
+                    msg = (
                         f"✅ TD Number Fix Complete\n\n"
                         f"Fixed:      {fixed:,} TD numbers\n"
-                        f"Unfixable:  {unfixable:,} (need manual correction)\n\n"
-                        f"All changes are logged in the Audit Trail."
+                        f"Unfixable:  {unfixable:,} (need manual correction)\n"
                     )
+                    if collisions:
+                        msg += (
+                            f"Skipped:    {collisions:,} (would create duplicates)\n\n"
+                            f"The skipped TDs already exist in the database.\n"
+                            f"Run the Audit again to see which ones remain."
+                        )
+                    else:
+                        msg += "\nAll changes are logged in the Audit Trail."
+                    messagebox.showinfo("Fix Complete", msg)
 
             ctk.CTkButton(
                 foot, text="⚙️  AUTO-FIX ALL",
