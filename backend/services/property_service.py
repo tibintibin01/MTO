@@ -2,6 +2,7 @@
 import json
 from datetime import datetime, timezone
 from sqlalchemy import text, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment, AuditLog
 from backend.services.auth_service import get_username, require_permission
@@ -191,8 +192,22 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
 
         # 3. Map Fields (Normalize)
         def _up(v): return str(v).strip().upper() if v else None
-        
-        prop.td_number = _up(data.get("TD Number", prop.td_number))
+
+        new_td_number = _up(data.get("TD Number", prop.td_number))
+        duplicate_query = db_session.query(Property).filter(Property.td_number == new_td_number)
+        if prop.id:
+            duplicate_query = duplicate_query.filter(Property.id != prop.id)
+        duplicate = duplicate_query.first()
+        if duplicate:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"TD Number {new_td_number} is already used by property "
+                    f"ID {duplicate.id}: {duplicate.owner_name}"
+                ),
+            )
+
+        prop.td_number = new_td_number
         prop.owner_name = _up(data.get("Owner Name", prop.owner_name))
         prop.payor_name = _up(data.get("Payor", prop.payor_name) or data.get("Owner Name", prop.owner_name))
         prop.lot_number = _up(data.get("Lot Number", prop.lot_number))
@@ -245,8 +260,13 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
 
     except Exception as e:
         db_session.rollback()
-        if isinstance(e, (ValidationError, SyncConflictError)):
+        if isinstance(e, (HTTPException, ValidationError, SyncConflictError)):
             raise
+        if isinstance(e, IntegrityError) and "uq_properties_td_number" in str(e):
+            raise HTTPException(
+                status_code=409,
+                detail="TD Number is already used by another property.",
+            )
         raise HTTPException(status_code=500, detail=f"Save failed: {str(e)}")
 
 
@@ -405,18 +425,82 @@ def restore_property(property_id, user=None, db_session: Session = None):
 
 @require_permission("property_delete")
 def purge_property(property_id, user=None, db_session: Session = None):
-    """Permanently deletes a property from the database."""
+    """
+    Permanently deletes a property and ALL its child records from the database.
+
+    Deletion order matters — FK constraints with RESTRICT must be satisfied:
+      1. payment_billings  (FK → payments.id CASCADE, but delete explicitly first)
+      2. receipt_history   (FK → properties.id RESTRICT)
+      3. property_assessment_history (FK → properties.id RESTRICT)
+      4. property_billings (FK → properties.id RESTRICT)
+      5. payments          (FK → properties.id RESTRICT)
+      6. property          (the record itself)
+    """
+    from backend.models import (
+        PaymentBilling, ReceiptHistory, PropertyAssessmentHistory
+    )
+
     prop = db_session.query(Property).filter(Property.id == property_id).first()
     if not prop:
         return 0
-        
+
     full_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
 
-    # Delete associated billings and payments first
-    db_session.query(PropertyBilling).filter(PropertyBilling.property_id == property_id).delete()
-    db_session.query(Payment).filter(Payment.property_id == property_id).delete()
-    db_session.delete(prop)
-    db_session.commit()
+    try:
+        # 1. payment_billings — must go before payments
+        payment_ids = [
+            r[0] for r in db_session.query(Payment.id)
+            .filter(Payment.property_id == property_id).all()
+        ]
+        if payment_ids:
+            db_session.query(PaymentBilling).filter(
+                PaymentBilling.payment_id.in_(payment_ids)
+            ).delete(synchronize_session=False)
+
+        # 2. receipt_history
+        db_session.query(ReceiptHistory).filter(
+            ReceiptHistory.property_id == property_id
+        ).delete(synchronize_session=False)
+
+        # 3. property_assessment_history
+        db_session.query(PropertyAssessmentHistory).filter(
+            PropertyAssessmentHistory.property_id == property_id
+        ).delete(synchronize_session=False)
+
+        # 4. property_billings
+        db_session.query(PropertyBilling).filter(
+            PropertyBilling.property_id == property_id
+        ).delete(synchronize_session=False)
+
+        # 5. payments
+        db_session.query(Payment).filter(
+            Payment.property_id == property_id
+        ).delete(synchronize_session=False)
+
+        # 6. the property itself
+        db_session.delete(prop)
+        db_session.flush()
+
+        # Audit log
+        if user:
+            from backend.services.history_service import log_data_change
+            log_data_change(
+                user_id=user.get("id") if isinstance(user, dict) else 0,
+                username=get_username(user),
+                table_name="properties",
+                record_id=property_id,
+                action="PURGE",
+                before=full_data,
+                after=None,
+                db_session=db_session,
+            )
+
+        db_session.commit()
+        return 1
+
+    except Exception:
+        db_session.rollback()
+        raise
 
     if user:
         from backend.services.history_service import log_data_change
