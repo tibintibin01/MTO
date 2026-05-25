@@ -395,174 +395,153 @@ class SyncBadge(ctk.CTkFrame):
             self.label.configure(text="● Synced", text_color="#2ecc71")
 
 
-class AutocompleteComboBox(ctk.CTkFrame):
+def attach_autocomplete(entry: ctk.CTkEntry, values: list, variable: tk.StringVar):
     """
-    A CTkEntry + dropdown that filters suggestions as the user types.
+    Attaches autocomplete behaviour to an EXISTING CTkEntry.
+    No wrapper frame — works safely inside CTkScrollableFrame.
 
     Usage:
-        combo = AutocompleteComboBox(parent, values=["BAYABAS", "BORLONGAN", ...],
-                                     height=40, variable=some_string_var)
-        combo.pack(fill="x", padx=10)
+        var = tk.StringVar()
+        entry = ctk.CTkEntry(parent, textvariable=var, height=40)
+        entry.pack(fill="x", padx=10)
+        attach_autocomplete(entry, values=BARANGAY_LIST, variable=var)
 
     Behaviour:
-        - Typing any letter instantly filters the list to matching items
-          (case-insensitive, prefix OR contains match)
-        - Arrow keys navigate the dropdown list
-        - Enter / Tab selects the highlighted item and closes the dropdown
-        - Escape closes the dropdown without selecting
-        - Clicking an item selects it
-        - If the typed text matches exactly one item, it is auto-selected
-          when the field loses focus
+        - Typing filters the list (prefix first, then contains, case-insensitive)
+        - ↓ arrow moves focus into the dropdown
+        - Enter / Tab selects the highlighted item
+        - Escape closes without selecting
+        - Click selects
+        - On blur: auto-completes if only one match remains
     """
+    _state = {"win": None, "lb": None}
 
-    def __init__(self, parent, values: list, variable: tk.StringVar = None,
-                 height: int = 40, placeholder: str = "Type to search...", **kwargs):
-        super().__init__(parent, fg_color="transparent", **kwargs)
+    def _close():
+        if _state["win"]:
+            try:
+                _state["win"].destroy()
+            except Exception:
+                pass
+        _state["win"] = None
+        _state["lb"] = None
 
-        self._all_values = list(values)
-        self._var = variable or tk.StringVar()
-        self._height = height
-        self._dropdown_open = False
-        self._listbox_win: tk.Toplevel | None = None
-        self._listbox: tk.Listbox | None = None
+    def _open(items):
+        _close()
+        entry.update_idletasks()
+        x = entry.winfo_rootx()
+        y = entry.winfo_rooty() + entry.winfo_height()
+        w = entry.winfo_width()
+        h = min(len(items), 8) * 28
 
-        # ── Entry ─────────────────────────────────────────────────────────────
-        self._entry = ctk.CTkEntry(
-            self,
-            textvariable=self._var,
-            height=height,
-            placeholder_text=placeholder,
-        )
-        self._entry.pack(fill="x", expand=True)
-
-        # Bind typing → filter
-        self._var.trace_add("write", self._on_type)
-        self._entry.bind("<Down>",    self._focus_list)
-        self._entry.bind("<Escape>",  lambda e: self._close_dropdown())
-        self._entry.bind("<FocusOut>", self._on_focus_out)
-        self._entry.bind("<Tab>",     self._on_tab)
-
-    # ── Public ────────────────────────────────────────────────────────────────
-
-    def get(self) -> str:
-        return self._var.get()
-
-    def set(self, value: str):
-        self._var.set(value)
-
-    def bind(self, sequence, func, add=None):
-        """Forward binds to the inner entry so FocusIn etc. work normally."""
-        self._entry.bind(sequence, func, add)
-
-    # ── Internal ──────────────────────────────────────────────────────────────
-
-    def _on_type(self, *_):
-        term = self._var.get().strip().upper()
-        if not term:
-            self._close_dropdown()
-            return
-        # Prefix matches first, then contains
-        prefix   = [v for v in self._all_values if v.upper().startswith(term)]
-        contains = [v for v in self._all_values if not v.upper().startswith(term) and term in v.upper()]
-        matches = prefix + contains
-        if matches:
-            self._open_dropdown(matches)
-        else:
-            self._close_dropdown()
-
-    def _open_dropdown(self, items: list):
-        self._close_dropdown()
-
-        # Position the popup directly below the entry
-        self._entry.update_idletasks()
-        x = self._entry.winfo_rootx()
-        y = self._entry.winfo_rooty() + self._entry.winfo_height()
-        w = self._entry.winfo_width()
-
-        win = tk.Toplevel(self._entry)
+        win = tk.Toplevel(entry)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
-        win.geometry(f"{w}x{min(len(items), 8) * 28}+{x}+{y}")
+        win.geometry(f"{w}x{h}+{x}+{y}")
         win.configure(bg="#1e293b")
 
         lb = tk.Listbox(
-            win,
-            font=("Inter", 11),
-            bg="#1e293b",
-            fg="#cbd5e1",
-            selectbackground="#1d4ed8",
-            selectforeground="#ffffff",
-            activestyle="none",
-            borderwidth=0,
-            highlightthickness=1,
-            highlightcolor="#334155",
-            relief="flat",
+            win, font=("Inter", 11),
+            bg="#1e293b", fg="#cbd5e1",
+            selectbackground="#1d4ed8", selectforeground="#ffffff",
+            activestyle="none", borderwidth=0,
+            highlightthickness=1, highlightcolor="#334155", relief="flat",
         )
         lb.pack(fill="both", expand=True)
-
         for item in items:
             lb.insert(tk.END, item)
 
-        lb.bind("<ButtonRelease-1>", self._on_select)
-        lb.bind("<Return>",          self._on_select)
-        lb.bind("<Escape>",          lambda e: self._close_dropdown())
-        lb.bind("<Tab>",             self._on_select)
-        lb.bind("<FocusOut>",        self._on_listbox_focus_out)
-        win.bind("<FocusOut>",       self._on_listbox_focus_out)
+        def on_select(e=None):
+            sel = lb.curselection()
+            if sel:
+                val = lb.get(sel[0])
+                traces = variable.trace_info()
+                if traces:
+                    variable.trace_remove("write", traces[0][1])
+                variable.set(val)
+                variable.trace_add("write", on_type)
+            _close()
+            entry.focus_set()
 
-        self._listbox_win = win
-        self._listbox = lb
-        self._dropdown_open = True
+        lb.bind("<ButtonRelease-1>", on_select)
+        lb.bind("<Return>",          on_select)
+        lb.bind("<Tab>",             on_select)
+        lb.bind("<Escape>",          lambda e: _close())
+        lb.bind("<FocusOut>",        lambda e: entry.after(150, _close))
+        win.bind("<FocusOut>",       lambda e: entry.after(150, _close))
 
-    def _close_dropdown(self):
-        if self._listbox_win:
-            try:
-                self._listbox_win.destroy()
-            except Exception:
-                pass
-        self._listbox_win = None
-        self._listbox = None
-        self._dropdown_open = False
+        _state["win"] = win
+        _state["lb"] = lb
 
-    def _on_select(self, event=None):
-        if not self._listbox:
+    def on_type(*_):
+        term = variable.get().strip().upper()
+        if not term:
+            _close()
             return
-        sel = self._listbox.curselection()
-        if sel:
-            value = self._listbox.get(sel[0])
-            traces = self._var.trace_info()
-            if traces:
-                self._var.trace_remove("write", traces[0][1])
-            self._var.set(value)
-            self._var.trace_add("write", self._on_type)
-        self._close_dropdown()
-        self._entry.focus_set()
+        prefix   = [v for v in values if v.upper().startswith(term)]
+        contains = [v for v in values if not v.upper().startswith(term) and term in v.upper()]
+        matches = prefix + contains
+        if matches:
+            _open(matches)
+        else:
+            _close()
 
-    def _focus_list(self, event=None):
-        if self._listbox:
-            self._listbox.focus_set()
-            if self._listbox.size() > 0:
-                self._listbox.selection_set(0)
-                self._listbox.activate(0)
+    def on_focus_out(e=None):
+        entry.after(150, auto_complete_blur)
 
-    def _on_tab(self, event=None):
-        if self._listbox and self._listbox.size() > 0:
-            self._listbox.selection_set(0)
-            self._on_select()
-
-    def _on_focus_out(self, event=None):
-        self._entry.after(150, self._auto_complete_on_blur)
-
-    def _on_listbox_focus_out(self, event=None):
-        self._entry.after(150, self._close_dropdown)
-
-    def _auto_complete_on_blur(self):
-        term = self._var.get().strip().upper()
-        matches = [v for v in self._all_values if v.upper().startswith(term)]
+    def auto_complete_blur():
+        term = variable.get().strip().upper()
+        matches = [v for v in values if v.upper().startswith(term)]
         if len(matches) == 1:
-            traces = self._var.trace_info()
+            traces = variable.trace_info()
             if traces:
-                self._var.trace_remove("write", traces[0][1])
-            self._var.set(matches[0])
-            self._var.trace_add("write", self._on_type)
-        self._close_dropdown()
+                variable.trace_remove("write", traces[0][1])
+            variable.set(matches[0])
+            variable.trace_add("write", on_type)
+        _close()
+
+    def on_down(e=None):
+        lb = _state["lb"]
+        if lb and lb.size() > 0:
+            lb.focus_set()
+            lb.selection_set(0)
+            lb.activate(0)
+
+    def on_tab(e=None):
+        lb = _state["lb"]
+        if lb and lb.size() > 0:
+            lb.selection_set(0)
+            sel = lb.curselection()
+            if sel:
+                val = lb.get(sel[0])
+                traces = variable.trace_info()
+                if traces:
+                    variable.trace_remove("write", traces[0][1])
+                variable.set(val)
+                variable.trace_add("write", on_type)
+            _close()
+            entry.focus_set()
+
+    variable.trace_add("write", on_type)
+    entry.bind("<Down>",     on_down)
+    entry.bind("<Escape>",   lambda e: _close())
+    entry.bind("<FocusOut>", on_focus_out)
+    entry.bind("<Tab>",      on_tab)
+
+
+# Keep the class name as an alias so existing imports don't break,
+# but it now just wraps a plain CTkEntry + attach_autocomplete.
+class AutocompleteComboBox(ctk.CTkFrame):
+    """Thin shim — use attach_autocomplete() directly for new code."""
+    def __init__(self, parent, values, variable=None, height=40,
+                 placeholder="Type to search...", **kwargs):
+        super().__init__(parent, fg_color="transparent", height=height, **kwargs)
+        self.pack_propagate(False)
+        self._var = variable or tk.StringVar()
+        self._entry = ctk.CTkEntry(self, textvariable=self._var,
+                                   height=height, placeholder_text=placeholder)
+        self._entry.place(relx=0, rely=0, relwidth=1, relheight=1)
+        attach_autocomplete(self._entry, values, self._var)
+
+    def get(self): return self._var.get()
+    def set(self, v): self._var.set(v)
+    def bind(self, seq, func, add=None): self._entry.bind(seq, func, add)

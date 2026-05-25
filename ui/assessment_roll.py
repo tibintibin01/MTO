@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from theme_manager import ModernTheme
 from utils import tr
-from ui_components import LoadingOverlay, AutocompleteComboBox
+from ui_components import LoadingOverlay, AutocompleteComboBox, attach_autocomplete
 import api_clients.property_service as prop_svc
 import api_clients.api_helper as api
 from ui.dossier import PropertyDossierModal
@@ -502,21 +502,21 @@ class AssessmentModal(ctk.CTkToplevel):
             text_color="gray",
         ).pack(anchor="w", padx=10, pady=(10, 0))
         self.brgy_var = ctk.StringVar(value="")
-        brgy_drop = AutocompleteComboBox(
+        brgy_entry = ctk.CTkEntry(
             self.scroll_form,
-            values=[
-                "NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN",
-                "BUENAVISTA", "CALAOCAN", "DIAMANEN", "DIANED", "DIARABASIN",
-                "DIBUTUNAN", "DIMABUNO", "DINADIAWAN", "DITALE", "GUPA",
-                "IPIL", "LABOY", "LIPIT", "LOBBOT", "MALIGAYA", "MIJARES",
-                "MUCDOL", "PUANGI", "SALAY", "SAPANGKAWAYAN", "TOYTOYAN",
-            ],
-            variable=self.brgy_var,
+            textvariable=self.brgy_var,
             height=40,
-            placeholder="Type barangay name...",
+            placeholder_text="Type barangay name...",
         )
-        brgy_drop.pack(fill="x", padx=10, pady=(0, 5))
-        brgy_drop.bind("<FocusIn>", lambda e, w=brgy_drop: self.after_idle(_scroll_to_widget, w))
+        brgy_entry.pack(fill="x", padx=10, pady=(0, 5))
+        brgy_entry.bind("<FocusIn>", lambda e, w=brgy_entry: self.after_idle(_scroll_to_widget, w))
+        attach_autocomplete(brgy_entry, [
+            "NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN",
+            "BUENAVISTA", "CALAOCAN", "DIAMANEN", "DIANED", "DIARABASIN",
+            "DIBUTUNAN", "DIMABUNO", "DINADIAWAN", "DITALE", "GUPA",
+            "IPIL", "LABOY", "LIPIT", "LOBBOT", "MALIGAYA", "MIJARES",
+            "MUCDOL", "PUANGI", "SALAY", "SAPANGKAWAYAN", "TOYTOYAN",
+        ], self.brgy_var)
 
         # ── Footer — same layout as PropertyEditModal ─────────────────────────
         footer = ctk.CTkFrame(self, fg_color="transparent")
