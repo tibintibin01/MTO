@@ -90,6 +90,27 @@ class ModernChartWidget:
                 spine.set_color(ModernTheme.BORDER_DARK if ctk.get_appearance_mode().lower() == "dark" else ModernTheme.BORDER_LIGHT)
             self.ax.grid(True, axis="y", alpha=0.05)
 
+            # ── Format Y-axis as peso values — no scientific notation ─────────
+            import matplotlib.ticker as mticker
+
+            max_val = max(y_data) if y_data else 0
+            if max_val >= 1_000_000:
+                # Show as "₱1.2M"
+                self.ax.yaxis.set_major_formatter(
+                    mticker.FuncFormatter(lambda x, _: f"₱{x/1_000_000:.1f}M")
+                )
+            elif max_val >= 1_000:
+                # Show as "₱12,500"
+                self.ax.yaxis.set_major_formatter(
+                    mticker.FuncFormatter(lambda x, _: f"₱{x:,.0f}")
+                )
+            else:
+                self.ax.yaxis.set_major_formatter(
+                    mticker.FuncFormatter(lambda x, _: f"₱{x:.0f}")
+                )
+            # Prevent matplotlib from using offset/scientific notation
+            self.ax.ticklabel_format(style="plain", axis="y")
+
         self.figure.tight_layout()
         self.canvas.draw()
 
