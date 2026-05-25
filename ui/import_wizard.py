@@ -310,20 +310,117 @@ class ImportWizardModal(ctk.CTkToplevel):
             return
         if self._closing or not exists:
             return
+
+        # ── Premium success dialog ────────────────────────────────────────────
         if isinstance(stats, dict):
-            msg = f"Import Complete!\n\n🆕 New Records: {stats.get('inserted', 0)}\n🔄 Updated Records: {stats.get('updated', 0)}"
+            inserted = stats.get("inserted", 0)
+            updated  = stats.get("updated", 0)
+            total    = inserted + updated
+            detail   = f"🆕  New records:      {inserted:,}\n🔄  Updated records:  {updated:,}"
         else:
-            msg = f"Successfully imported {stats} records!"
-            
+            total  = stats
+            detail = f"Records saved to the financial ledger."
+
         self._closing = True
         try:
             self.grab_release()
         except tk.TclError:
             pass
-        messagebox.showinfo("Success", msg, parent=self.master)
-        if self.winfo_exists():
-            self.withdraw()
-            self.after(300, self.destroy)
+
+        # Build the dialog
+        dlg = ctk.CTkToplevel(self.master)
+        dlg.title("")
+        dlg.resizable(False, False)
+        dlg.overrideredirect(True)
+        dlg.attributes("-topmost", True)
+        dlg.grab_set()
+
+        dlg.update_idletasks()
+        dw, dh = 420, 280
+        sw = dlg.winfo_screenwidth()
+        sh = dlg.winfo_screenheight()
+        dlg.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
+
+        # Outer frame — dark card
+        outer = ctk.CTkFrame(
+            dlg,
+            fg_color="#0f172a",
+            corner_radius=16,
+            border_width=1,
+            border_color="#1e3a5f",
+        )
+        outer.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Green accent bar at top
+        bar = ctk.CTkFrame(outer, height=5, fg_color="#10b981", corner_radius=0)
+        bar.pack(fill="x")
+
+        # Icon circle
+        icon_fr = ctk.CTkFrame(
+            outer, width=64, height=64, corner_radius=32,
+            fg_color="#064e3b",
+            border_width=2, border_color="#10b981",
+        )
+        icon_fr.pack(pady=(24, 0))
+        icon_fr.pack_propagate(False)
+        ctk.CTkLabel(
+            icon_fr, text="✓",
+            font=("Inter", 28, "bold"),
+            text_color="#10b981",
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        # Title
+        ctk.CTkLabel(
+            outer,
+            text=f"Import Complete",
+            font=("Inter", 16, "bold"),
+            text_color="#f1f5f9",
+        ).pack(pady=(12, 2))
+
+        # Count
+        ctk.CTkLabel(
+            outer,
+            text=f"{total:,} records imported successfully",
+            font=("Inter", 13),
+            text_color="#10b981",
+        ).pack()
+
+        # Detail
+        ctk.CTkLabel(
+            outer,
+            text=detail,
+            font=("Inter", 11),
+            text_color="#64748b",
+            justify="left",
+        ).pack(pady=(6, 0))
+
+        # Divider
+        ctk.CTkFrame(outer, height=1, fg_color="#1e293b").pack(fill="x", padx=20, pady=(16, 0))
+
+        # OK button
+        def close_all():
+            dlg.grab_release()
+            dlg.destroy()
+            if self.winfo_exists():
+                self.withdraw()
+                self.after(300, self.destroy)
+
+        ctk.CTkButton(
+            outer,
+            text="DONE",
+            command=close_all,
+            fg_color="#10b981",
+            hover_color="#059669",
+            text_color="white",
+            font=("Inter", 13, "bold"),
+            width=140,
+            height=38,
+            corner_radius=8,
+        ).pack(pady=14)
+
+        dlg.bind("<Return>", lambda e: close_all())
+        dlg.bind("<Escape>", lambda e: close_all())
+        dlg.focus_set()
 
     def clear_container(self):
         for widget in self.main_container.winfo_children():
