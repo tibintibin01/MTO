@@ -86,9 +86,12 @@ def get_assessment_roll():
     return api_request("GET", "/billing/assessment-roll")
 
 
-def get_report_details(month="All", year="All"):
+def get_report_details(month="All", year="All", limit=100, cursor=None):
+    params = {"month": month, "year": year, "limit": limit}
+    if cursor is not None:
+        params["cursor"] = cursor
     result = api_request(
-        "GET", "/billing/report-details", params={"month": month, "year": year}
+        "GET", "/billing/report-details", params=params
     )
     # Backend now returns {"items": [...], "next_cursor": ..., "has_more": ..., "count": ...}
     if isinstance(result, dict) and "items" in result:
