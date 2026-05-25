@@ -229,10 +229,23 @@ export default function PropertyDetail() {
       </div>
 
       <div className="mb-12">
-        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-6">
+        <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-4">
           <FileText className="w-5 h-5 text-[#1f4e78]" aria-hidden="true" />
           Recent Payment History
         </h2>
+
+        {/* Disclaimer */}
+        <div className="bg-blue-50 border border-blue-100 rounded-xl px-5 py-3 mb-5 flex items-start gap-3">
+          <span className="text-blue-400 mt-0.5 text-base leading-none">ℹ</span>
+          <p className="text-sm text-blue-700 leading-relaxed">
+            <strong>Note:</strong> Payment records displayed here cover transactions
+            recorded in the Municipal Treasury Office system starting from{" "}
+            <strong>January 2023</strong>. Payments made prior to 2023 may not appear
+            in this portal. For a complete payment history, please visit the Municipal
+            Treasury Office and present your Tax Declaration Number (TDN) and a valid
+            government-issued ID.
+          </p>
+        </div>
 
         {history.length > 0 ? (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -246,7 +259,14 @@ export default function PropertyDetail() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {history.map((p, i) => (
+                {/* Sort by period descending so most recent year appears first */}
+                {[...history]
+                  .sort((a, b) => {
+                    const pa = parseInt(String(a.period || "0"), 10);
+                    const pb = parseInt(String(b.period || "0"), 10);
+                    return pb - pa;
+                  })
+                  .map((p, i) => (
                   <tr key={i} className="hover:bg-slate-50 transition-colors">
                     <td className="px-6 py-4 font-bold text-[#1f4e78]">{p.period}</td>
                     <td className="px-6 py-4 text-slate-600">{p.or_number}</td>
@@ -263,6 +283,10 @@ export default function PropertyDetail() {
           <div className="bg-slate-50 rounded-xl p-12 text-center border-2 border-dashed border-slate-200">
             <FileText className="w-12 h-12 text-slate-300 mx-auto mb-4" aria-hidden="true" />
             <p className="text-slate-500">No payment records found for this property.</p>
+            <p className="text-slate-400 text-sm mt-2">
+              Records are available from January 2023 onwards. For earlier transactions,
+              please contact the Municipal Treasury Office.
+            </p>
           </div>
         )}
       </div>
