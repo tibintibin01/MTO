@@ -47,80 +47,121 @@ def validate_property_import(file_content, file_extension, db_session: Session =
     """
     Validates a CSV or Excel file for property bulk import.
     Returns a list of rows with validation status and error messages.
+
+    Required columns (case-insensitive, spaces/underscores interchangeable):
+      TD NUMBER (or TD No, Tax Declaration)
+      Assessed Value (or Value, Assessment)
+
+    Optional:
+      Owner Name, Location, Lot Number, Area, Kind of Property, etc.
     """
     try:
         if file_extension.lower() == '.csv':
             df = pd.read_csv(io.BytesIO(file_content))
         else:
             df = pd.read_excel(io.BytesIO(file_content))
-        
-        # Standardize column names (lowercase and underscores)
+
+        # Normalize headers: lowercase + underscores
         df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
-        
-        # Required fields mapping
-        required_fields = {
-            "td_number": ["td_no", "td_number", "tax_declaration"],
-            "owner_name": ["owner", "owner_name", "declared_owner"],
-            "assessed_value": ["value", "assessed_value", "assessment"]
+
+        # Field mapping — only td_number and assessed_value are truly required
+        # owner_name is optional: many import files don't include it
+        field_mapping = {
+            "td_number":      ["td_number", "td_no", "tax_declaration", "tdnumber", "td"],
+            "owner_name":     ["owner_name", "owner", "declared_owner", "property_owner"],
+            "assessed_value": ["assessed_value", "value", "assessment", "market_value"],
+            "location":       ["location", "address", "barangay", "brgy"],
+            "lot_number":     ["lot_number", "lot_no", "lot"],
+            "area":           ["area", "sqm", "sq_m"],
+            "kind_of_property": ["kind_of_property", "kind", "classification", "class"],
+            "tax_year":       ["tax_year", "year", "period"],
+            "or_number":      ["or_number", "or_no", "receipt_no"],
+            "or_date":        ["or_date", "date_paid", "date", "payment_date"],
+            "penalty":        ["penalty", "surcharge"],
+            "discount":       ["discount", "less"],
+            "amount_paid":    ["amount_paid", "amount", "total", "total_paid"],
         }
-        
-        # Check if basic columns exist
+
+        REQUIRED = {"td_number", "assessed_value"}
+
         found_cols = {}
-        for db_field, aliases in required_fields.items():
+        for field, aliases in field_mapping.items():
             match = next((c for c in df.columns if c in aliases), None)
-            if not match:
-                return {"success": False, "error": f"Missing required column for '{db_field}'. Please check your headers."}
-            found_cols[db_field] = match
+            if match is None and field in REQUIRED:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Missing required column for '{field}'. "
+                        f"Expected one of: {', '.join(aliases[:4])}. "
+                        f"Your headers: {', '.join(df.columns.tolist()[:10])}"
+                    )
+                }
+            found_cols[field] = match
         
         # Get existing TD numbers for duplicate check
         existing_tds = {r[0] for r in db_session.query(Property.td_number).all()}
-            
+
         results = []
         rows_to_import = []
-        
+
         for index, row in df.iterrows():
             errors = []
             row_data = row.to_dict()
-            
-            # 1. Check TD Number
-            td = DataCleanser.to_str(row_data.get(found_cols["td_number"], ""))
+
+            # TD Number — required
+            td_col = found_cols.get("td_number")
+            td = DataCleanser.to_str(row_data.get(td_col, "")) if td_col else ""
             if not td:
                 errors.append("Missing TD Number")
             elif td in existing_tds:
                 errors.append(f"Duplicate TD Number: {td} already exists")
-            
-            # 2. Check Owner
-            owner = DataCleanser.to_str(row_data.get(found_cols["owner_name"], ""))
-            if not owner:
-                errors.append("Missing Owner Name")
-                
-            try:
-                raw_val = row_data.get(found_cols["assessed_value"], 0)
-                val = float(raw_val) if not pd.isna(raw_val) else 0.0
-                if val < 0: errors.append("Assessed Value cannot be negative")
-            except Exception as e:
-                mto_logger.warning("Error parsing assessed value in validation: %s", e)
-                errors.append("Invalid numeric format for Assessed Value")
-                
+
+            # Owner Name — optional, no error if absent
+            owner_col = found_cols.get("owner_name")
+            owner = DataCleanser.to_str(row_data.get(owner_col, "")) if owner_col else ""
+
+            # Assessed Value — required
+            av_col = found_cols.get("assessed_value")
+            val = 0.0
+            if av_col:
+                try:
+                    raw_val = row_data.get(av_col, 0)
+                    val = float(raw_val) if not pd.isna(raw_val) else 0.0
+                    if val < 0:
+                        errors.append("Assessed Value cannot be negative")
+                except Exception as e:
+                    mto_logger.warning("Error parsing assessed value: %s", e)
+                    errors.append("Invalid numeric format for Assessed Value")
+
             status = "❌ ERROR" if errors else "✅ VALID"
-            
+
             results.append({
                 "row_index": index + 2,
                 "td_number": td,
                 "owner_name": owner,
                 "status": status,
-                "message": "; ".join(errors) if errors else "Ready to import"
+                "message": "; ".join(errors) if errors else "Ready to import",
             })
-            
+
             if not errors:
+                def _get(field):
+                    col = found_cols.get(field)
+                    return DataCleanser.to_str(row_data.get(col, "")) if col else ""
+
                 rows_to_import.append({
-                    "td_number": td,
-                    "owner_name": owner,
-                    "assessed_value": val,
-                    "location": DataCleanser.to_str(row_data.get("location")),
-                    "lot_number": DataCleanser.to_str(row_data.get("lot_number")),
-                    "area": DataCleanser.to_str(row_data.get("area")),
-                    "kind_of_property": DataCleanser.to_str(row_data.get("kind_of_property")),
+                    "td_number":        td,
+                    "owner_name":       owner,
+                    "assessed_value":   val,
+                    "location":         _get("location"),
+                    "lot_number":       _get("lot_number"),
+                    "area":             _get("area"),
+                    "kind_of_property": _get("kind_of_property"),
+                    "tax_year":         _get("tax_year"),
+                    "or_number":        _get("or_number"),
+                    "or_date":          _get("or_date"),
+                    "penalty":          DataCleanser.to_float(row_data.get(found_cols["penalty"])) if found_cols.get("penalty") else 0.0,
+                    "discount":         DataCleanser.to_float(row_data.get(found_cols["discount"])) if found_cols.get("discount") else 0.0,
+                    "amount_paid":      DataCleanser.to_float(row_data.get(found_cols["amount_paid"])) if found_cols.get("amount_paid") else 0.0,
                 })
 
         return {
