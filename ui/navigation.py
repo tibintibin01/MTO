@@ -8,7 +8,7 @@ from utils import tr, LocalizationManager
 # ---------------------------------------------------------------------------
 NAV_ICONS = {
     "dashboard":     "🏠",
-    "property":      "🏘️",
+    "property":      "🏢",
     "ledger":        "📋",
     "delinquencies": "⚠️",
     "compliant":     "✅",
