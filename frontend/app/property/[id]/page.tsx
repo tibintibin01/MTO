@@ -156,6 +156,14 @@ export default function PropertyDetail() {
   }
 
   const isDelinquent = data.status === "DELINQUENT";
+  const isPending = data.status === "PENDING";
+
+  // Status bar config
+  const statusConfig = isDelinquent
+    ? { bg: "bg-orange-50", icon: <AlertCircle className="text-orange-600 w-6 h-6" aria-hidden="true" />, label: "PAYMENT REQUIRED", labelColor: "text-orange-800" }
+    : isPending
+    ? { bg: "bg-slate-50", icon: <AlertCircle className="text-slate-400 w-6 h-6" aria-hidden="true" />, label: "NOT YET BILLED", labelColor: "text-slate-600" }
+    : { bg: "bg-green-50", icon: <CheckCircle2 className="text-green-600 w-6 h-6" aria-hidden="true" />, label: "ACCOUNT UPDATED", labelColor: "text-green-800" };
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -168,22 +176,12 @@ export default function PropertyDetail() {
 
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-8">
         <div
-          className={`px-6 py-4 flex items-center justify-between ${
-            isDelinquent ? "bg-orange-50" : "bg-green-50"
-          }`}
+          className={`px-6 py-4 flex items-center justify-between ${statusConfig.bg}`}
         >
           <div className="flex items-center gap-3">
-            {isDelinquent ? (
-              <AlertCircle className="text-orange-600 w-6 h-6" aria-hidden="true" />
-            ) : (
-              <CheckCircle2 className="text-green-600 w-6 h-6" aria-hidden="true" />
-            )}
-            <span
-              className={`font-bold text-sm uppercase tracking-wider ${
-                isDelinquent ? "text-orange-800" : "text-green-800"
-              }`}
-            >
-              {isDelinquent ? "PAYMENT REQUIRED" : "ACCOUNT UPDATED"}
+            {statusConfig.icon}
+            <span className={`font-bold text-sm uppercase tracking-wider ${statusConfig.labelColor}`}>
+              {statusConfig.label}
             </span>
           </div>
           <span className="text-xs text-slate-500 font-medium">

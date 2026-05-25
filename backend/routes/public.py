@@ -60,8 +60,36 @@ def search_property_public(query: str, request: Request, db_session: Session = D
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found.")
 
-    # Calculate status
-    has_unpaid = db_session.query(Payment).filter(Payment.property_id == prop.id).count() == 0
+    # Determine status using billing balance — same logic as the delinquency dashboard.
+    # A property is UPDATED only if total_paid >= total_due across ALL billing years.
+    # Checking payment count alone is wrong — a property with payments can still be
+    # delinquent if those payments don't cover all billing years.
+    from backend.models import PropertyBilling
+    from sqlalchemy import func
+
+    TOTAL_RATE = 0.02  # default 1% basic + 1% SEF
+
+    billing_summary = db_session.query(
+        func.coalesce(func.sum(
+            (PropertyBilling.assessed_value * TOTAL_RATE)
+            + PropertyBilling.penalty
+            - PropertyBilling.discount
+        ), 0).label("total_due"),
+        func.coalesce(func.sum(PropertyBilling.amount_paid), 0).label("total_paid"),
+    ).filter(PropertyBilling.property_id == prop.id).first()
+
+    total_due  = float(billing_summary.total_due  or 0)
+    total_paid = float(billing_summary.total_paid or 0)
+
+    # UPDATED = has billing records AND fully paid
+    # DELINQUENT = has unpaid balance OR no billing records at all
+    if total_due > 0 and total_paid >= total_due:
+        status = "UPDATED"
+    elif total_due == 0:
+        # No billing records yet — show as PENDING (not yet billed)
+        status = "PENDING"
+    else:
+        status = "DELINQUENT"
     
     # Securely mask PIN and Owner Name to protect citizen privacy
     masked_pin = prop.pin[:4] + "****" + prop.pin[-4:] if prop.pin and len(prop.pin) > 8 else "PIN-****"
@@ -74,7 +102,7 @@ def search_property_public(query: str, request: Request, db_session: Session = D
         "location": prop.location,
         "kind": prop.kind_of_property,
         "assessed_value": float(prop.assessed_value or 0),
-        "status": "DELINQUENT" if has_unpaid else "UPDATED",
+        "status": status,
         "last_payment": None
     }
 
