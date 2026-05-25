@@ -746,15 +746,23 @@ def validate_payment_import(file_content, file_extension, db_session: Session = 
 def commit_payment_import(data_list, user, db_session: Session = None):
     """
     Commits validated payment records to the financial ledger.
+    Per-row error handling: a single bad row (duplicate OR, bad date, etc.)
+    is skipped and logged rather than rolling back the entire batch.
     """
     from backend.services.system_service import log_action
     try:
         inserted = 0
+        skipped = 0
+        skip_reasons = []
+
         for row in data_list:
             pid = row.get("property_id")
-            if not pid: continue
-            
-            # Robust Date Parsing
+            if not pid:
+                skipped += 1
+                skip_reasons.append(f"OR {row.get('or_number', '?')}: no property_id")
+                continue
+
+            # Date parsing
             raw_date = row.get("date_paid")
             try:
                 if raw_date:
@@ -763,87 +771,98 @@ def commit_payment_import(data_list, user, db_session: Session = None):
                         date_obj = date_obj.replace(tzinfo=timezone.utc)
                 else:
                     date_obj = datetime.now(timezone.utc)
-            except Exception as e:
-                mto_logger.warning("Failed to parse date %s: %s", raw_date, e)
+            except Exception:
                 date_obj = datetime.now(timezone.utc)
 
-            # 1. Save Payment Record
-            payment = Payment(
-                property_id=pid,
-                amount=row["amount"],
-                penalty=row.get("penalty", 0.0),
-                discount=row.get("discount", 0.0),
-                or_number=row["or_number"],
-                tax_year=row["tax_year"],
-                date_paid=date_obj,
-                posted_by=row.get("posted_by", "NONE")
-            )
-            db_session.add(payment)
-            db_session.flush() # Populate payment.id
-            
-            # 2. Update Property Billing (to reflect in Receivables)
-            year_str = row["tax_year"]
-            year = int(year_str) if year_str and str(year_str).strip().isdigit() else datetime.now(timezone.utc).year
-            
-            billing = db_session.query(PropertyBilling).filter(
-                PropertyBilling.property_id == pid,
-                PropertyBilling.tax_year == year
-            ).first()
-            
-            if not billing:
-                # Find the property to get assessed value
-                prop = db_session.query(Property).filter(Property.id == pid).first()
-                av = float(prop.assessed_value or 0.0) if prop else 0.0
-                
-                # Determine penalty and discount
-                is_prop_year = (str(year) == (prop.tax_year if prop else ""))
-                billing_pen = float(row.get("penalty", 0.0))
-                billing_disc = float(row.get("discount", 0.0))
-                if is_prop_year and prop:
-                    billing_pen = max(billing_pen, float(prop.penalty or 0.0))
-                    billing_disc = max(billing_disc, float(prop.discount or 0.0))
-                
-                billing = PropertyBilling(
+            # Per-row try — one bad row skips, doesn't kill the batch
+            try:
+                payment = Payment(
                     property_id=pid,
-                    tax_year=year,
-                    assessed_value=av,
-                    penalty=billing_pen,
-                    discount=billing_disc,
-                    amount_paid=0.0
+                    amount=row["amount"],
+                    penalty=row.get("penalty", 0.0),
+                    discount=row.get("discount", 0.0),
+                    or_number=row["or_number"],
+                    tax_year=row["tax_year"],
+                    date_paid=date_obj,
+                    posted_by=row.get("posted_by", "NONE"),
                 )
-                db_session.add(billing)
-                db_session.flush() # Populate billing.id
-            else:
-                # Add penalty and discount
-                billing.penalty = float(billing.penalty or 0.0) + float(row.get("penalty", 0.0))
-                billing.discount = float(billing.discount or 0.0) + float(row.get("discount", 0.0))
-                
-            # 3. Create PaymentBilling Link and update amount_paid
-            from backend.services.billing_service import sync_payment_billings
-            sync_payment_billings(
-                None, 
-                payment.id, 
-                [{"billing_id": billing.id, "tax_year": year, "applied_amount": row["amount"]}], 
-                db_session=db_session
-            )
+                db_session.add(payment)
+                db_session.flush()  # get payment.id
 
-            inserted += 1
-            
-        # Stage audit log before commit so data + audit are atomic
-        log_action(user, f"Bulk Imported {inserted} Payment Records to Ledger.", db_session=db_session)
+                year_str = row["tax_year"]
+                year = (
+                    int(year_str)
+                    if year_str and str(year_str).strip().isdigit()
+                    else datetime.now(timezone.utc).year
+                )
+
+                billing = db_session.query(PropertyBilling).filter(
+                    PropertyBilling.property_id == pid,
+                    PropertyBilling.tax_year == year,
+                ).first()
+
+                if not billing:
+                    prop = db_session.query(Property).filter(Property.id == pid).first()
+                    av = float(prop.assessed_value or 0.0) if prop else 0.0
+                    is_prop_year = str(year) == (prop.tax_year if prop else "")
+                    billing_pen = float(row.get("penalty", 0.0))
+                    billing_disc = float(row.get("discount", 0.0))
+                    if is_prop_year and prop:
+                        billing_pen = max(billing_pen, float(prop.penalty or 0.0))
+                        billing_disc = max(billing_disc, float(prop.discount or 0.0))
+                    billing = PropertyBilling(
+                        property_id=pid,
+                        tax_year=year,
+                        assessed_value=av,
+                        penalty=billing_pen,
+                        discount=billing_disc,
+                        amount_paid=0.0,
+                    )
+                    db_session.add(billing)
+                    db_session.flush()
+                else:
+                    billing.penalty = float(billing.penalty or 0.0) + float(row.get("penalty", 0.0))
+                    billing.discount = float(billing.discount or 0.0) + float(row.get("discount", 0.0))
+
+                from backend.services.billing_service import sync_payment_billings
+                sync_payment_billings(
+                    None,
+                    payment.id,
+                    [{"billing_id": billing.id, "tax_year": year, "applied_amount": row["amount"]}],
+                    db_session=db_session,
+                )
+                inserted += 1
+
+            except Exception as row_err:
+                db_session.rollback()
+                skipped += 1
+                reason = f"OR {row.get('or_number', '?')}: {str(row_err)[:120]}"
+                skip_reasons.append(reason)
+                mto_logger.warning("Payment import skipped row: %s", reason)
+
+        log_action(
+            user,
+            f"Bulk Imported {inserted} Payment Records. Skipped: {skipped}.",
+            db_session=db_session,
+        )
         db_session.commit()
 
-        # Refresh system stats — non-fatal, runs after the transaction
         try:
             from backend.services.stats_service import refresh_system_stats
             refresh_system_stats(db_session=db_session)
         except Exception as e:
-            mto_logger.warning("Failed to refresh system stats during payment import commit: %s", e)
+            mto_logger.warning("Stats refresh failed after payment import: %s", e)
 
-        return {"inserted": inserted}
+        return {
+            "inserted": inserted,
+            "skipped": skipped,
+            "skip_reasons": skip_reasons[:20],
+        }
+
     except Exception as e:
         db_session.rollback()
         mto_logger.error("commit_payment_import failed: %s", e, exc_info=True)
+        raise
         raise
 
 
