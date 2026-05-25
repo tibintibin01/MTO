@@ -251,7 +251,7 @@ class LoginApp(ctk.CTk):
         # Version watermark at bottom of right panel
         ctk.CTkLabel(
             self.login_frame,
-            text="MTO Treasury System v2.1.0",
+            text="Municipal Treasury Office  ·  v2.1.0",
             font=("Inter", 8),
             text_color="#1e3a5f",
         ).place(relx=0.5, rely=0.97, anchor="center")
