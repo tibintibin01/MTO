@@ -237,6 +237,18 @@ class SystemAdminPage:
         )
         self.sync_btn.pack(side="left", padx=5)
 
+        self.td_audit_btn = ctk.CTkButton(
+            btn_fr,
+            text="🔍 AUDIT TD NUMBERS",
+            command=self.audit_td_numbers,
+            height=45,
+            width=190,
+            font=ModernTheme.BUTTON,
+            fg_color="#c0392b",
+            hover_color="#e74c3c",
+        )
+        self.td_audit_btn.pack(side="left", padx=5)
+
         # If a sync was running when the user navigated away, resume monitoring
         if _active_sync_job_id:
             self.sync_btn.configure(state="disabled", text="⏳ SYNCING...")
@@ -631,6 +643,176 @@ class SystemAdminPage:
                     pass
 
         threading.Thread(target=preview, daemon=True).start()
+
+    def audit_td_numbers(self):
+        """
+        Calls the backend TD number audit endpoint and shows results
+        in a scrollable dialog so the admin can see which properties
+        have malformed TD numbers.
+        """
+        import threading
+        import tkinter as tk
+        from tkinter import ttk
+        import api_clients.system_service as system_svc
+
+        self.td_audit_btn.configure(state="disabled", text="🔍 SCANNING...")
+
+        def run():
+            try:
+                result = system_svc.audit_td_numbers()
+                self.container.after(0, lambda: show_results(result))
+            except Exception as e:
+                self.container.after(
+                    0, lambda err=e: messagebox.showerror("Audit Error", str(err))
+                )
+            finally:
+                if self.container.winfo_exists():
+                    self.container.after(
+                        0, lambda: self.td_audit_btn.configure(
+                            state="normal", text="🔍 AUDIT TD NUMBERS"
+                        )
+                    )
+
+        def show_results(result):
+            total    = result.get("total_scanned", 0)
+            invalid  = result.get("invalid", [])
+            count    = result.get("invalid_count", 0)
+
+            # ── Result window ─────────────────────────────────────────────
+            win = ctk.CTkToplevel(self.container)
+            win.title(f"TD Number Audit — {count} issues found")
+            win.geometry("900x560")
+            win.attributes("-topmost", True)
+            win.grab_set()
+
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            win.geometry(f"+{(sw-900)//2}+{(sh-560)//2}")
+
+            # Header
+            hdr = ctk.CTkFrame(win, fg_color="transparent")
+            hdr.pack(fill="x", padx=20, pady=(16, 8))
+
+            ctk.CTkLabel(
+                hdr,
+                text=f"🔍  TD NUMBER FORMAT AUDIT",
+                font=ModernTheme.H3,
+                text_color=ModernTheme.PRIMARY,
+                anchor="w",
+            ).pack(side="left")
+
+            summary_color = "#2ecc71" if count == 0 else "#e74c3c"
+            ctk.CTkLabel(
+                hdr,
+                text=f"Scanned: {total:,}   |   Issues: {count:,}",
+                font=ModernTheme.BODY_BOLD,
+                text_color=summary_color,
+            ).pack(side="right")
+
+            # Info banner
+            info = ctk.CTkFrame(
+                win,
+                fg_color=("#dbeafe", "#1e293b"),
+                corner_radius=8,
+                border_width=1,
+                border_color=("#93c5fd", "#334155"),
+            )
+            info.pack(fill="x", padx=20, pady=(0, 10))
+            ctk.CTkLabel(
+                info,
+                text="Expected format: DD-DDDD-DDDDD  (e.g. 06-0014-00239)  —  2 digits, dash, 4 digits, dash, 5 digits",
+                font=ModernTheme.BODY,
+                text_color=ModernTheme.TEXT_GRAY,
+            ).pack(side="left", padx=14, pady=8)
+
+            if count == 0:
+                ctk.CTkLabel(
+                    win,
+                    text="✅  All TD numbers are correctly formatted.",
+                    font=("Inter", 16, "bold"),
+                    text_color="#2ecc71",
+                ).pack(expand=True)
+                ctk.CTkButton(win, text="CLOSE", command=win.destroy,
+                              fg_color=ModernTheme.SECONDARY, width=120).pack(pady=20)
+                return
+
+            # Treeview
+            style = ttk.Style()
+            style.configure(
+                "Audit.Treeview",
+                rowheight=32, font=("Inter", 11),
+                background="#1e293b", fieldbackground="#1e293b", foreground="#cbd5e1",
+            )
+            style.configure(
+                "Audit.Treeview.Heading",
+                font=("Inter", 11, "bold"), background="#0f172a", foreground="#64748b",
+            )
+            style.map("Audit.Treeview", background=[("selected", "#1d4ed8")])
+
+            tree_fr = tk.Frame(win, bg="#1e293b")
+            tree_fr.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+
+            cols = ("ID", "TD NUMBER", "OWNER NAME", "REASON")
+            tree = ttk.Treeview(tree_fr, columns=cols, show="headings",
+                                style="Audit.Treeview")
+            tree.column("ID",         width=60,  anchor="center")
+            tree.column("TD NUMBER",  width=160, anchor="w")
+            tree.column("OWNER NAME", width=260, anchor="w")
+            tree.column("REASON",     width=360, anchor="w")
+            for col in cols:
+                tree.heading(col, text=col)
+
+            scrolly = ttk.Scrollbar(tree_fr, orient="vertical", command=tree.yview)
+            tree.configure(yscrollcommand=scrolly.set)
+            tree.pack(side="left", fill="both", expand=True)
+            scrolly.pack(side="right", fill="y")
+
+            tree.tag_configure("oddrow",  background="#1e293b", foreground="#cbd5e1")
+            tree.tag_configure("evenrow", background="#162032", foreground="#cbd5e1")
+
+            for i, row in enumerate(invalid):
+                tag = "evenrow" if i % 2 == 0 else "oddrow"
+                tree.insert("", "end",
+                            values=(row["id"], row["td_number"],
+                                    row["owner_name"], row["reason"]),
+                            tags=(tag,))
+
+            # Footer
+            foot = ctk.CTkFrame(win, fg_color="transparent")
+            foot.pack(fill="x", padx=20, pady=(0, 16))
+
+            def export_csv():
+                from tkinter import filedialog
+                import csv
+                path = filedialog.asksaveasfilename(
+                    defaultextension=".csv",
+                    filetypes=[("CSV", "*.csv")],
+                    initialfile="td_number_issues.csv",
+                    title="Save TD Number Audit Report",
+                )
+                if not path:
+                    return
+                with open(path, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["ID", "TD Number", "Owner Name", "Reason"])
+                    for row in invalid:
+                        writer.writerow([row["id"], row["td_number"],
+                                         row["owner_name"], row["reason"]])
+                import os
+                os.startfile(path)
+
+            ctk.CTkButton(
+                foot, text="📥  EXPORT CSV", command=export_csv,
+                fg_color="#059669", hover_color="#047857",
+                width=140, height=36, font=ModernTheme.BUTTON_SMALL,
+            ).pack(side="left")
+
+            ctk.CTkButton(
+                foot, text="CLOSE", command=win.destroy,
+                fg_color=ModernTheme.SECONDARY, width=100, height=36,
+                font=ModernTheme.BUTTON_SMALL,
+            ).pack(side="right")
+
+        threading.Thread(target=run, daemon=True).start()
 
     def setup_tax_policy_tab(self, parent):
         """

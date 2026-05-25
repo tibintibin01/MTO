@@ -166,3 +166,11 @@ def sync_billing_years(dry_run=False):
 def get_job_status(job_id: str):
     """Polls a background job for its current status and result."""
     return api_request("GET", f"/jobs/{job_id}")
+
+
+def audit_td_numbers():
+    """
+    Scans all active properties and returns those whose TD number
+    does not match the format DD-DDDD-DDDDD (e.g. 06-0014-00239).
+    """
+    return api_request("GET", "/system/td-number-audit")

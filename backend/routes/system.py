@@ -17,6 +17,75 @@ class RestoreRequest(BaseModel):
     file_path: str
 
 # ---------------------------------------------------------------------------
+# TD Number Format Audit
+# ---------------------------------------------------------------------------
+
+@router.get("/system/td-number-audit")
+async def td_number_audit(
+    current_user: dict = Depends(read_only),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Scans all active properties and returns those whose TD number does NOT
+    match the expected format: 06-XXXX-XXXXX
+    (2 digits, dash, 4 digits, dash, 5 digits — total 14 characters)
+
+    Returns:
+      - invalid: list of {id, td_number, owner_name, reason}
+      - total_scanned: total active properties checked
+      - invalid_count: number of non-conforming TD numbers
+    """
+    import re
+    from backend.models import Property
+
+    # Pattern: exactly 2 digits, dash, 4 digits, dash, 5 digits
+    PATTERN = re.compile(r"^\d{2}-\d{4}-\d{5}$")
+
+    rows = (
+        db_session.query(Property.id, Property.td_number, Property.owner_name)
+        .filter(Property.deleted_at == None)
+        .order_by(Property.id.asc())
+        .all()
+    )
+
+    invalid = []
+    for prop_id, td, owner in rows:
+        td_str = (td or "").strip()
+        if not td_str:
+            reason = "Empty TD number"
+        elif not PATTERN.match(td_str):
+            # Give a specific reason
+            parts = td_str.split("-")
+            if len(parts) != 3:
+                reason = f"Wrong number of segments (expected 3, got {len(parts)})"
+            elif len(parts[0]) != 2:
+                reason = f"First segment should be 2 digits, got '{parts[0]}' ({len(parts[0])} chars)"
+            elif len(parts[1]) != 4:
+                reason = f"Second segment should be 4 digits, got '{parts[1]}' ({len(parts[1])} chars)"
+            elif len(parts[2]) != 5:
+                reason = f"Third segment should be 5 digits, got '{parts[2]}' ({len(parts[2])} chars)"
+            elif not parts[0].isdigit() or not parts[1].isdigit() or not parts[2].isdigit():
+                reason = "Contains non-numeric characters"
+            else:
+                reason = f"Does not match 06-XXXX-XXXXX format"
+        else:
+            continue  # valid — skip
+
+        invalid.append({
+            "id": prop_id,
+            "td_number": td_str or "(empty)",
+            "owner_name": owner or "",
+            "reason": reason,
+        })
+
+    return {
+        "total_scanned": len(rows),
+        "invalid_count": len(invalid),
+        "invalid": invalid,
+        "format": "DD-DDDD-DDDDD (e.g. 06-0014-00239)",
+    }
+
+# ---------------------------------------------------------------------------
 # Tax Policy — configure RPT rates per tax year
 # ---------------------------------------------------------------------------
 
