@@ -221,21 +221,28 @@ async def td_number_fix(
             continue
         old_td = prop.td_number
         prop.td_number = item["fixed"]
-
-        # Audit log
-        audit = AuditLog(
-            user_id=current_user.get("id"),
-            username=current_user.get("username", "system"),
-            action="TD_NUMBER_AUTO_FIX",
-            table_name="properties",
-            record_id=prop.id,
-            old_values=json.dumps({"td_number": old_td}),
-            new_values=json.dumps({"td_number": item["fixed"], "rule": item["rule"]}),
-            ip_address=None,
-            timestamp=datetime.now(timezone.utc),
-        )
-        db_session.add(audit)
         applied += 1
+
+    if applied > 0:
+        db_session.flush()
+
+        # Single audit log entry for the batch — avoids per-row overhead
+        # and the immutability event listener on AuditLog
+        from backend.services.history_service import log_data_change
+        log_data_change(
+            user_id=current_user.get("id", 0),
+            table_name="properties",
+            record_id=0,
+            action="TD_NUMBER_AUTO_FIX",
+            before={"count": applied, "note": "batch fix"},
+            after={
+                "fixed": applied,
+                "unfixable": len(unfixable_list),
+                "rules": "Rule1=6-digit-third-segment, Rule2=3-digit-second-segment, Rule3=merged-first-two-segments",
+            },
+            username=current_user.get("username", "system"),
+            db_session=db_session,
+        )
 
     db_session.commit()
     mto_logger.info(
