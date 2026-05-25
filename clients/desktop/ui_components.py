@@ -393,3 +393,183 @@ class SyncBadge(ctk.CTkFrame):
             self.label.configure(text=f"● {self.last_count} Pending", text_color="#f39c12")
         else:
             self.label.configure(text="● Synced", text_color="#2ecc71")
+
+
+class AutocompleteComboBox(ctk.CTkFrame):
+    """
+    A CTkEntry + dropdown that filters suggestions as the user types.
+
+    Usage:
+        combo = AutocompleteComboBox(parent, values=["BAYABAS", "BORLONGAN", ...],
+                                     height=40, variable=some_string_var)
+        combo.pack(fill="x", padx=10)
+
+    Behaviour:
+        - Typing any letter instantly filters the list to matching items
+          (case-insensitive, prefix OR contains match)
+        - Arrow keys navigate the dropdown list
+        - Enter / Tab selects the highlighted item and closes the dropdown
+        - Escape closes the dropdown without selecting
+        - Clicking an item selects it
+        - If the typed text matches exactly one item, it is auto-selected
+          when the field loses focus
+    """
+
+    def __init__(self, parent, values: list, variable: tk.StringVar = None,
+                 height: int = 40, placeholder: str = "Type to search...", **kwargs):
+        super().__init__(parent, fg_color="transparent", **kwargs)
+
+        self._all_values = list(values)
+        self._var = variable or tk.StringVar()
+        self._height = height
+        self._dropdown_open = False
+        self._listbox_win: tk.Toplevel | None = None
+        self._listbox: tk.Listbox | None = None
+
+        # ── Entry ─────────────────────────────────────────────────────────────
+        self._entry = ctk.CTkEntry(
+            self,
+            textvariable=self._var,
+            height=height,
+            placeholder_text=placeholder,
+        )
+        self._entry.pack(fill="x")
+
+        # Bind typing → filter
+        self._var.trace_add("write", self._on_type)
+        self._entry.bind("<Down>",    self._focus_list)
+        self._entry.bind("<Escape>",  lambda e: self._close_dropdown())
+        self._entry.bind("<FocusOut>", self._on_focus_out)
+        self._entry.bind("<Tab>",     self._on_tab)
+
+    # ── Public ────────────────────────────────────────────────────────────────
+
+    def get(self) -> str:
+        return self._var.get()
+
+    def set(self, value: str):
+        self._var.set(value)
+
+    def bind(self, sequence, func, add=None):
+        """Forward binds to the inner entry so FocusIn etc. work normally."""
+        self._entry.bind(sequence, func, add)
+
+    # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _on_type(self, *_):
+        term = self._var.get().strip().upper()
+        if not term:
+            self._close_dropdown()
+            return
+        # Prefix matches first, then contains
+        prefix  = [v for v in self._all_values if v.upper().startswith(term)]
+        contains = [v for v in self._all_values if not v.upper().startswith(term) and term in v.upper()]
+        matches = prefix + contains
+        if matches:
+            self._open_dropdown(matches)
+        else:
+            self._close_dropdown()
+
+    def _open_dropdown(self, items: list):
+        self._close_dropdown()
+
+        # Position the popup directly below the entry
+        self._entry.update_idletasks()
+        x = self._entry.winfo_rootx()
+        y = self._entry.winfo_rooty() + self._entry.winfo_height()
+        w = self._entry.winfo_width()
+
+        win = tk.Toplevel(self._entry)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.geometry(f"{w}x{min(len(items), 8) * 28}+{x}+{y}")
+
+        # Dark background matching the app theme
+        win.configure(bg="#1e293b")
+
+        lb = tk.Listbox(
+            win,
+            font=("Inter", 11),
+            bg="#1e293b",
+            fg="#cbd5e1",
+            selectbackground="#1d4ed8",
+            selectforeground="#ffffff",
+            activestyle="none",
+            borderwidth=0,
+            highlightthickness=1,
+            highlightcolor="#334155",
+            relief="flat",
+        )
+        lb.pack(fill="both", expand=True)
+
+        for item in items:
+            lb.insert(tk.END, item)
+
+        lb.bind("<ButtonRelease-1>", self._on_select)
+        lb.bind("<Return>",          self._on_select)
+        lb.bind("<Escape>",          lambda e: self._close_dropdown())
+        lb.bind("<Tab>",             self._on_select)
+        lb.bind("<FocusOut>",        self._on_listbox_focus_out)
+
+        # Close if user clicks anywhere outside
+        win.bind("<FocusOut>", self._on_listbox_focus_out)
+
+        self._listbox_win = win
+        self._listbox = lb
+        self._dropdown_open = True
+
+    def _close_dropdown(self):
+        if self._listbox_win:
+            try:
+                self._listbox_win.destroy()
+            except Exception:
+                pass
+        self._listbox_win = None
+        self._listbox = None
+        self._dropdown_open = False
+
+    def _on_select(self, event=None):
+        if not self._listbox:
+            return
+        sel = self._listbox.curselection()
+        if sel:
+            value = self._listbox.get(sel[0])
+            # Temporarily remove the trace to avoid re-triggering the dropdown
+            self._var.trace_remove("write", self._var.trace_info()[0][1])
+            self._var.set(value)
+            self._var.trace_add("write", self._on_type)
+        self._close_dropdown()
+        # Return focus to the entry so Tab continues normally
+        self._entry.focus_set()
+
+    def _focus_list(self, event=None):
+        """Move focus into the listbox when Down arrow is pressed."""
+        if self._listbox:
+            self._listbox.focus_set()
+            if self._listbox.size() > 0:
+                self._listbox.selection_set(0)
+                self._listbox.activate(0)
+
+    def _on_tab(self, event=None):
+        """On Tab: select the first match if the dropdown is open."""
+        if self._listbox and self._listbox.size() > 0:
+            self._listbox.selection_set(0)
+            self._on_select()
+        return  # Let Tab propagate normally for focus traversal
+
+    def _on_focus_out(self, event=None):
+        """Auto-complete to the only match when the entry loses focus."""
+        # Small delay so a listbox click registers before we close
+        self._entry.after(150, self._auto_complete_on_blur)
+
+    def _on_listbox_focus_out(self, event=None):
+        self._entry.after(150, self._close_dropdown)
+
+    def _auto_complete_on_blur(self):
+        term = self._var.get().strip().upper()
+        matches = [v for v in self._all_values if v.upper().startswith(term)]
+        if len(matches) == 1:
+            self._var.trace_remove("write", self._var.trace_info()[0][1])
+            self._var.set(matches[0])
+            self._var.trace_add("write", self._on_type)
+        self._close_dropdown()

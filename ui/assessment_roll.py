@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from theme_manager import ModernTheme
 from utils import tr
-from ui_components import LoadingOverlay
+from ui_components import LoadingOverlay, AutocompleteComboBox
 import api_clients.property_service as prop_svc
 import api_clients.api_helper as api
 from ui.dossier import PropertyDossierModal
@@ -494,15 +494,15 @@ class AssessmentModal(ctk.CTkToplevel):
             entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
             self.vars[key] = var
 
-        # Barangay dropdown
+        # Barangay autocomplete
         ctk.CTkLabel(
             self.scroll_form,
             text="BARANGAY *",
             font=("Segoe UI", 9, "bold"),
             text_color="gray",
         ).pack(anchor="w", padx=10, pady=(10, 0))
-        self.brgy_var = ctk.StringVar(value="SELECT BARANGAY")
-        brgy_drop = ctk.CTkComboBox(
+        self.brgy_var = ctk.StringVar(value="")
+        brgy_drop = AutocompleteComboBox(
             self.scroll_form,
             values=[
                 "NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN",
@@ -513,6 +513,7 @@ class AssessmentModal(ctk.CTkToplevel):
             ],
             variable=self.brgy_var,
             height=40,
+            placeholder="Type barangay name...",
         )
         brgy_drop.pack(fill="x", padx=10, pady=(0, 5))
         brgy_drop.bind("<FocusIn>", lambda e, w=brgy_drop: self.after_idle(_scroll_to_widget, w))
@@ -549,7 +550,7 @@ class AssessmentModal(ctk.CTkToplevel):
         if (
             not data["td_number"]
             or not data["owner_name"]
-            or data["barangay"] == "SELECT BARANGAY"
+            or not data["barangay"]
         ):
             messagebox.showerror(
                 "Validation Error",

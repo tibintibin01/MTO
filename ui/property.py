@@ -8,7 +8,7 @@ from ui.dossier import PropertyDossierModal
 from ui.import_wizard import ImportWizardModal
 from theme_manager import ModernTheme
 from utils import tr, format_curr
-from ui_components import LoadingOverlay, ErrorDialog
+from ui_components import LoadingOverlay, ErrorDialog, AutocompleteComboBox
 
 class PropertyPage:
     def __init__(self, parent, user=None):
@@ -265,7 +265,13 @@ class PropertyEditModal(ctk.CTkToplevel):
             ctk.CTkLabel(self.scroll_form, text=label.upper(), font=("Segoe UI", 9, "bold"), text_color="gray").pack(anchor="w", padx=10, pady=(10, 0))
             self.vars[key] = tk.StringVar()
             if key == "location":
-                drop = ctk.CTkComboBox(self.scroll_form, values=self.barangays, variable=self.vars[key], height=40)
+                drop = AutocompleteComboBox(
+                    self.scroll_form,
+                    values=self.barangays,
+                    variable=self.vars[key],
+                    height=40,
+                    placeholder="Type barangay name...",
+                )
                 drop.pack(fill="x", padx=10, pady=(0, 5))
                 drop.bind("<FocusIn>", lambda e, w=drop: self.after_idle(_scroll_to_widget, w))
             else:
