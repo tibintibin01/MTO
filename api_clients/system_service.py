@@ -174,3 +174,21 @@ def audit_td_numbers():
     does not match the format DD-DDDD-DDDDD (e.g. 06-0014-00239).
     """
     return api_request("GET", "/system/td-number-audit")
+
+
+def fix_td_numbers(dry_run: bool = True):
+    """
+    Auto-fixes malformed TD numbers using three rules:
+      1. Third segment has 6 digits → remove the first zero
+         e.g. 06-0014-000239 → 06-0014-00239
+      2. Second segment has 3 digits → add a leading zero
+         e.g. 06-014-00239 → 06-0014-00239
+      3. First two segments merged (no dash after position 2)
+         e.g. 060014-00239 → 06-0014-00239
+    dry_run=True returns a preview without saving.
+    dry_run=False applies the fixes.
+    """
+    return api_request(
+        "POST",
+        f"/system/td-number-fix?dry_run={'true' if dry_run else 'false'}"
+    )

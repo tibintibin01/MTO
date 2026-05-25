@@ -806,6 +806,73 @@ class SystemAdminPage:
                 width=140, height=36, font=ModernTheme.BUTTON_SMALL,
             ).pack(side="left")
 
+            def run_fix(dry: bool):
+                win.grab_release()
+                win.destroy()
+                self.td_audit_btn.configure(state="disabled", text="⚙️ FIXING...")
+
+                def do_fix():
+                    try:
+                        res = system_svc.fix_td_numbers(dry_run=dry)
+                        self.container.after(0, lambda r=res: show_fix_result(r, dry))
+                    except Exception as e:
+                        self.container.after(
+                            0, lambda err=e: messagebox.showerror("Fix Error", str(err))
+                        )
+                    finally:
+                        if self.container.winfo_exists():
+                            self.container.after(
+                                0, lambda: self.td_audit_btn.configure(
+                                    state="normal", text="🔍 AUDIT TD NUMBERS"
+                                )
+                            )
+
+                threading.Thread(target=do_fix, daemon=True).start()
+
+            def show_fix_result(res, was_dry):
+                if was_dry:
+                    will_fix = res.get("will_fix", 0)
+                    unfixable = res.get("unfixable", 0)
+                    fixes = res.get("fixes", [])
+                    msg = (
+                        f"DRY RUN PREVIEW\n\n"
+                        f"Will fix:   {will_fix:,} TD numbers\n"
+                        f"Unfixable:  {unfixable:,} TD numbers\n\n"
+                        f"First 5 fixes:\n"
+                    )
+                    for f in fixes[:5]:
+                        msg += f"  {f['original']}  →  {f['fixed']}  ({f['rule']})\n"
+                    msg += "\nClick OK to apply the fixes, or Cancel to abort."
+                    if messagebox.askokcancel("Preview — Apply Fixes?", msg):
+                        self.td_audit_btn.configure(state="disabled", text="⚙️ APPLYING...")
+                        def apply():
+                            try:
+                                r2 = system_svc.fix_td_numbers(dry_run=False)
+                                self.container.after(0, lambda: show_fix_result(r2, False))
+                            except Exception as e:
+                                self.container.after(0, lambda err=e: messagebox.showerror("Fix Error", str(err)))
+                            finally:
+                                if self.container.winfo_exists():
+                                    self.container.after(0, lambda: self.td_audit_btn.configure(state="normal", text="🔍 AUDIT TD NUMBERS"))
+                        threading.Thread(target=apply, daemon=True).start()
+                else:
+                    fixed = res.get("fixed", 0)
+                    unfixable = res.get("unfixable", 0)
+                    messagebox.showinfo(
+                        "Fix Complete",
+                        f"✅ TD Number Fix Complete\n\n"
+                        f"Fixed:      {fixed:,} TD numbers\n"
+                        f"Unfixable:  {unfixable:,} (need manual correction)\n\n"
+                        f"All changes are logged in the Audit Trail."
+                    )
+
+            ctk.CTkButton(
+                foot, text="⚙️  AUTO-FIX ALL",
+                command=lambda: run_fix(dry=True),
+                fg_color="#c0392b", hover_color="#e74c3c",
+                width=150, height=36, font=ModernTheme.BUTTON_SMALL,
+            ).pack(side="left", padx=(8, 0))
+
             ctk.CTkButton(
                 foot, text="CLOSE", command=win.destroy,
                 fg_color=ModernTheme.SECONDARY, width=100, height=36,

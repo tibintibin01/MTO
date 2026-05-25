@@ -85,6 +85,173 @@ async def td_number_audit(
         "format": "DD-DDDD-DDDDD (e.g. 06-0014-00239)",
     }
 
+
+@router.post("/system/td-number-fix")
+async def td_number_fix(
+    dry_run: bool = True,
+    current_user: dict = Depends(admin_only),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Auto-fixes malformed TD numbers using three rules:
+
+    Rule 1 — Third segment has 6+ digits: remove the FIRST zero.
+      06-0014-000239  →  06-0014-00239
+      06-0013-069400  →  06-0013-06940  (removes first zero of the 6-digit part)
+
+    Rule 2 — Second segment has 3 digits: add a leading zero.
+      06-014-00239    →  06-0014-00239
+
+    Rule 3 — First two segments merged (no dash after position 2):
+      060014-00239    →  06-0014-00239
+      060010-00409    →  06-0010-00409
+
+    Rules are applied in order: 3 → 2 → 1 (structural fix first).
+    dry_run=true  → returns preview, no DB changes.
+    dry_run=false → applies fixes and logs each change to the audit trail.
+    """
+    import re
+    from backend.models import Property, AuditLog
+    import json
+
+    VALID = re.compile(r"^\d{2}-\d{4}-\d{5}$")
+
+    def try_fix(td: str):
+        """
+        Attempts to fix a TD number using the three rules.
+        Returns (fixed_td, rule_applied) or (None, None) if unfixable.
+        """
+        td = td.strip()
+        if VALID.match(td):
+            return td, None  # already valid
+
+        # Rule 3: merged first two segments — e.g. "060014-00239"
+        # Pattern: 6 digits, dash, 5 digits  OR  6 digits, dash, anything
+        r3 = re.match(r"^(\d{2})(\d{4})-(\d{5})$", td)
+        if r3:
+            fixed = f"{r3.group(1)}-{r3.group(2)}-{r3.group(3)}"
+            if VALID.match(fixed):
+                return fixed, "Rule 3: inserted dash after first 2 digits"
+
+        # Also handle: 6 digits then dash then non-5-digit third segment
+        r3b = re.match(r"^(\d{2})(\d{4})-(\d+)$", td)
+        if r3b:
+            seg3 = r3b.group(3)
+            candidate = f"{r3b.group(1)}-{r3b.group(2)}-{seg3}"
+            # May still need rule 1 or 2 after this — fall through
+            td = candidate
+
+        parts = td.split("-")
+        if len(parts) != 3:
+            return None, f"Cannot fix: {len(parts)} segments (expected 3)"
+
+        seg1, seg2, seg3 = parts
+
+        # Rule 2: second segment has 3 digits → add leading zero
+        if len(seg2) == 3 and seg2.isdigit():
+            seg2 = "0" + seg2
+            td = f"{seg1}-{seg2}-{seg3}"
+
+        # Rule 1: third segment has 6+ digits → remove first zero
+        if len(seg3) == 6 and seg3.isdigit() and seg3[0] == "0":
+            seg3 = seg3[1:]  # remove first character (the leading zero)
+            td = f"{seg1}-{seg2}-{seg3}"
+
+        if VALID.match(td):
+            rules = []
+            if len(parts[1]) == 3:
+                rules.append("Rule 2: added leading zero to second segment")
+            if len(parts[2]) == 6:
+                rules.append("Rule 1: removed first zero from third segment")
+            return td, "; ".join(rules) if rules else "Fixed"
+
+        return None, f"Unfixable after rules: result '{td}'"
+
+    rows = (
+        db_session.query(Property)
+        .filter(Property.deleted_at == None)
+        .order_by(Property.id.asc())
+        .all()
+    )
+
+    fixed_list = []
+    unfixable_list = []
+    already_valid = 0
+
+    for prop in rows:
+        td_orig = (prop.td_number or "").strip()
+        if VALID.match(td_orig):
+            already_valid += 1
+            continue
+
+        fixed_td, rule = try_fix(td_orig)
+
+        if fixed_td and VALID.match(fixed_td):
+            fixed_list.append({
+                "id": prop.id,
+                "original": td_orig,
+                "fixed": fixed_td,
+                "owner_name": prop.owner_name or "",
+                "rule": rule,
+            })
+        else:
+            unfixable_list.append({
+                "id": prop.id,
+                "td_number": td_orig,
+                "owner_name": prop.owner_name or "",
+                "reason": rule or "No rule matched",
+            })
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "total_scanned": len(rows),
+            "already_valid": already_valid,
+            "will_fix": len(fixed_list),
+            "unfixable": len(unfixable_list),
+            "fixes": fixed_list,
+            "unfixable_list": unfixable_list,
+        }
+
+    # Apply fixes
+    applied = 0
+    for item in fixed_list:
+        prop = db_session.query(Property).filter(Property.id == item["id"]).first()
+        if not prop:
+            continue
+        old_td = prop.td_number
+        prop.td_number = item["fixed"]
+
+        # Audit log
+        audit = AuditLog(
+            user_id=current_user.get("id"),
+            username=current_user.get("username", "system"),
+            action="TD_NUMBER_AUTO_FIX",
+            table_name="properties",
+            record_id=prop.id,
+            old_values=json.dumps({"td_number": old_td}),
+            new_values=json.dumps({"td_number": item["fixed"], "rule": item["rule"]}),
+            ip_address=None,
+            timestamp=datetime.now(timezone.utc),
+        )
+        db_session.add(audit)
+        applied += 1
+
+    db_session.commit()
+    mto_logger.info(
+        f"TD number auto-fix applied: {applied} fixed, {len(unfixable_list)} unfixable",
+        user=current_user.get("username"),
+    )
+
+    return {
+        "dry_run": False,
+        "total_scanned": len(rows),
+        "already_valid": already_valid,
+        "fixed": applied,
+        "unfixable": len(unfixable_list),
+        "unfixable_list": unfixable_list,
+    }
+
 # ---------------------------------------------------------------------------
 # Tax Policy — configure RPT rates per tax year
 # ---------------------------------------------------------------------------
