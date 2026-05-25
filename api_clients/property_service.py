@@ -95,7 +95,9 @@ def get_receivables_by_barangay(year=None):
 
 
 def get_deleted_properties():
-    result = api_request_with_cache("GET", "/properties/deleted")
+    # Must NOT use cache — the list changes every time a property is deleted
+    # or restored. A stale cache would hide newly deleted properties.
+    result = api_request("GET", "/properties/deleted")
     if isinstance(result, dict) and "items" in result:
         return result["items"]
     return result if isinstance(result, list) else []
