@@ -433,7 +433,7 @@ class AutocompleteComboBox(ctk.CTkFrame):
             height=height,
             placeholder_text=placeholder,
         )
-        self._entry.pack(fill="x")
+        self._entry.pack(fill="x", expand=True)
 
         # Bind typing → filter
         self._var.trace_add("write", self._on_type)
@@ -462,7 +462,7 @@ class AutocompleteComboBox(ctk.CTkFrame):
             self._close_dropdown()
             return
         # Prefix matches first, then contains
-        prefix  = [v for v in self._all_values if v.upper().startswith(term)]
+        prefix   = [v for v in self._all_values if v.upper().startswith(term)]
         contains = [v for v in self._all_values if not v.upper().startswith(term) and term in v.upper()]
         matches = prefix + contains
         if matches:
@@ -483,8 +483,6 @@ class AutocompleteComboBox(ctk.CTkFrame):
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.geometry(f"{w}x{min(len(items), 8) * 28}+{x}+{y}")
-
-        # Dark background matching the app theme
         win.configure(bg="#1e293b")
 
         lb = tk.Listbox(
@@ -510,9 +508,7 @@ class AutocompleteComboBox(ctk.CTkFrame):
         lb.bind("<Escape>",          lambda e: self._close_dropdown())
         lb.bind("<Tab>",             self._on_select)
         lb.bind("<FocusOut>",        self._on_listbox_focus_out)
-
-        # Close if user clicks anywhere outside
-        win.bind("<FocusOut>", self._on_listbox_focus_out)
+        win.bind("<FocusOut>",       self._on_listbox_focus_out)
 
         self._listbox_win = win
         self._listbox = lb
@@ -534,16 +530,15 @@ class AutocompleteComboBox(ctk.CTkFrame):
         sel = self._listbox.curselection()
         if sel:
             value = self._listbox.get(sel[0])
-            # Temporarily remove the trace to avoid re-triggering the dropdown
-            self._var.trace_remove("write", self._var.trace_info()[0][1])
+            traces = self._var.trace_info()
+            if traces:
+                self._var.trace_remove("write", traces[0][1])
             self._var.set(value)
             self._var.trace_add("write", self._on_type)
         self._close_dropdown()
-        # Return focus to the entry so Tab continues normally
         self._entry.focus_set()
 
     def _focus_list(self, event=None):
-        """Move focus into the listbox when Down arrow is pressed."""
         if self._listbox:
             self._listbox.focus_set()
             if self._listbox.size() > 0:
@@ -551,15 +546,11 @@ class AutocompleteComboBox(ctk.CTkFrame):
                 self._listbox.activate(0)
 
     def _on_tab(self, event=None):
-        """On Tab: select the first match if the dropdown is open."""
         if self._listbox and self._listbox.size() > 0:
             self._listbox.selection_set(0)
             self._on_select()
-        return  # Let Tab propagate normally for focus traversal
 
     def _on_focus_out(self, event=None):
-        """Auto-complete to the only match when the entry loses focus."""
-        # Small delay so a listbox click registers before we close
         self._entry.after(150, self._auto_complete_on_blur)
 
     def _on_listbox_focus_out(self, event=None):
@@ -569,7 +560,9 @@ class AutocompleteComboBox(ctk.CTkFrame):
         term = self._var.get().strip().upper()
         matches = [v for v in self._all_values if v.upper().startswith(term)]
         if len(matches) == 1:
-            self._var.trace_remove("write", self._var.trace_info()[0][1])
+            traces = self._var.trace_info()
+            if traces:
+                self._var.trace_remove("write", traces[0][1])
             self._var.set(matches[0])
             self._var.trace_add("write", self._on_type)
         self._close_dropdown()
