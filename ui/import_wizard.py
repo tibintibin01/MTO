@@ -90,43 +90,76 @@ class ImportWizardModal(ctk.CTkToplevel):
             
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Import.Treeview", 
-                        rowheight=35, 
+        style.configure("Import.Treeview",
+                        rowheight=35,
                         font=ModernTheme.BODY,
                         background="#1e1e1e",
                         fieldbackground="#1e1e1e",
                         foreground="white")
-        style.configure("Import.Treeview.Heading", 
+        style.configure("Import.Treeview.Heading",
                         font=ModernTheme.BODY_BOLD,
                         background="#333333",
                         foreground="white")
-        
-        self.tree = ttk.Treeview(table_fr, columns=cols, show="headings", style="Import.Treeview")
 
+        # ── Layout: scrollbars packed BEFORE the treeview ────────────────────
+        # Pack order matters in tkinter: side="bottom" scrollbar must be packed
+        # before side="left" treeview, otherwise the treeview expands over it.
+        scrolly = ttk.Scrollbar(table_fr, orient="vertical")
+        scrollx = ttk.Scrollbar(table_fr, orient="horizontal")
+        scrolly.pack(side="right", fill="y")
+        scrollx.pack(side="bottom", fill="x")   # ← must come before tree.pack
+
+        self.tree = ttk.Treeview(
+            table_fr, columns=cols, show="headings",
+            style="Import.Treeview",
+            yscrollcommand=scrolly.set,
+            xscrollcommand=scrollx.set,
+        )
+        scrolly.configure(command=self.tree.yview)
+        scrollx.configure(command=self.tree.xview)
+
+        # Column widths — wide enough to show full content without truncation
+        if self.mode == "payments":
+            col_widths = {
+                "ROW":          55,
+                "TD NUMBER":    130,
+                "SYSTEM OWNER": 200,
+                "OR NUMBER":    100,
+                "YEAR":          70,
+                "TOTAL":         90,
+                "PENALTY":       80,
+                "DISCOUNT":      80,
+                "STATUS":        90,
+                "MESSAGE":      320,
+            }
+        else:
+            col_widths = {
+                "ROW":       55,
+                "TD NUMBER": 130,
+                "OWNER":     180,
+                "LOT":       100,
+                "ACTION":     80,
+                "STATUS":     90,
+                "MESSAGE":   280,
+            }
 
         for col in cols:
             self.tree.heading(col, text=col)
-            self.tree.column(col, anchor="center", width=80)
-        
-        if self.mode == "payments":
-            self.tree.column("SYSTEM OWNER", width=150, anchor="w")
-            self.tree.column("MESSAGE", width=250, anchor="w")
-        else:
-            self.tree.column("MESSAGE", width=250, anchor="w")
-            self.tree.column("OWNER", width=120, anchor="w")
-            self.tree.column("LOT", width=100, anchor="w")
+            self.tree.column(col, anchor="center",
+                             width=col_widths.get(col, 80),
+                             minwidth=50)
 
-        self.tree.tag_configure("ERROR", background="#ffdada", foreground="black")
-        self.tree.tag_configure("VALID", background="#eaffea", foreground="black")
+        # Left-align text-heavy columns
+        for col in ("SYSTEM OWNER", "OWNER", "MESSAGE"):
+            if col in cols:
+                self.tree.column(col, anchor="w")
+
+        self.tree.tag_configure("ERROR",    background="#ffdada", foreground="black")
+        self.tree.tag_configure("VALID",    background="#eaffea", foreground="black")
         self.tree.tag_configure("CONFLICT", background="#fff4d1", foreground="black")
-        
-        scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview)
-        scrollx = ttk.Scrollbar(table_fr, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=scrolly.set, xscrollcommand=scrollx.set)
-        
-        scrolly.pack(side="right", fill="y")
-        scrollx.pack(side="bottom", fill="x")
-        self.tree.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        self.tree.tag_configure("WARNING",  background="#fff4d1", foreground="black")
+
+        self.tree.pack(side="left", fill="both", expand=True, padx=(5, 0), pady=5)
 
         
         # Fill table
