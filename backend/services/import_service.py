@@ -640,10 +640,25 @@ def validate_payment_import(file_content, file_extension, db_session: Session = 
         
         results = []
         data_to_import = []
-        
+
         # Pre-fetch properties for speed
         td_list = [DataCleanser.to_str(r.get(found_cols["td_number"])) for _, r in df.iterrows()]
         props = {p.td_number: p for p in db_session.query(Property).filter(Property.td_number.in_(td_list)).all()}
+
+        # Pre-fetch existing OR numbers from the DB — keyed by (or_number, tax_year)
+        # so we can distinguish true duplicates from same-OR-different-year cases.
+        existing_or_keys = {
+            (r[0], str(r[1]) if r[1] else "")
+            for r in db_session.query(Payment.or_number, Payment.tax_year).filter(
+                Payment.or_number != None,
+                Payment.or_number != ""
+            ).all()
+        }
+        # Also keep a set of just OR numbers for the "different tax year" warning
+        existing_or_numbers = {k[0] for k in existing_or_keys}
+
+        # Track (or_number, tax_year) pairs seen within this file
+        seen_in_file: set = set()
 
         for index, row in df.iterrows():
             errors = []
@@ -664,9 +679,29 @@ def validate_payment_import(file_content, file_extension, db_session: Session = 
             
             if not td: errors.append("Missing TD Number")
             elif not prop: errors.append(f"TD {td} not found in system")
-            
+
             if not or_no: errors.append("Missing OR Number")
             if amt <= 0 and pnlty <= 0: errors.append("Invalid Amount")
+
+            # ── Duplicate detection ───────────────────────────────────────
+            tax_yr_str = DataCleanser.to_str(row.get(found_cols["tax_year"])) if found_cols.get("tax_year") else ""
+            or_key = (or_no, tax_yr_str)
+
+            if or_no:
+                if or_key in seen_in_file:
+                    # Exact duplicate within this file (same OR + same tax year)
+                    errors.append(f"Duplicate in file: OR {or_no} / {tax_yr_str} appears more than once")
+                elif or_key in existing_or_keys:
+                    # Exact duplicate in the DB (same OR + same tax year)
+                    errors.append(f"Duplicate: OR {or_no} for tax year {tax_yr_str} already posted in system")
+                elif or_no in existing_or_numbers:
+                    # Same OR number exists but with a different tax year — warn, don't block
+                    if status == "✅ VALID":
+                        status = "⚠️ WARNING"
+                        msg = f"OR {or_no} exists in system with a different tax year — verify before importing"
+
+                # Track this (OR, tax_year) pair for intra-file duplicate detection
+                seen_in_file.add(or_key)
             
             if errors:
                 status = "❌ ERROR"
