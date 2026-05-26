@@ -497,12 +497,12 @@ class BatchDeletePaymentsModal(ctk.CTkToplevel):
         dlg.resizable(False, False)
         dlg.overrideredirect(True)
         dlg.attributes("-topmost", True)
-        dlg.grab_set()
 
         dw, dh = 440, 270
         sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
         dlg.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
 
+        # Draw UI first, then grab so the window is visible before locking
         outer = ctk.CTkFrame(dlg, fg_color="#0f172a", corner_radius=16,
                              border_width=1, border_color="#1e293b")
         outer.pack(fill="both", expand=True, padx=2, pady=2)
@@ -548,7 +548,11 @@ class BatchDeletePaymentsModal(ctk.CTkToplevel):
 
         dlg.bind("<Return>", lambda e: on_confirm())
         dlg.bind("<Escape>", lambda e: on_cancel())
-        dlg.focus_set()
+
+        dlg.update_idletasks()
+        dlg.lift()
+        dlg.focus_force()
+        dlg.grab_set()
         dlg.wait_window()
 
         if not result.get():
@@ -561,7 +565,8 @@ class BatchDeletePaymentsModal(ctk.CTkToplevel):
                 res = pay_svc.batch_delete_commit(payment_ids)
                 self.after(0, lambda r=res: self._show_result(r))
             except Exception as e:
-                self.after(0, lambda err=e: messagebox.showerror("Delete Error", str(err)))
+                err_msg = str(e)
+                self.after(0, lambda m=err_msg: self._show_error(m))
             finally:
                 if self.winfo_exists():
                     self.after(0, lambda: self._delete_btn.configure(
@@ -569,6 +574,38 @@ class BatchDeletePaymentsModal(ctk.CTkToplevel):
                     ))
 
         threading.Thread(target=do_delete, daemon=True).start()
+
+    def _show_error(self, msg: str):
+        """Show error dialog guaranteed to be on top."""
+        err = ctk.CTkToplevel(self)
+        err.title("")
+        err.resizable(False, False)
+        err.overrideredirect(True)
+        err.attributes("-topmost", True)
+
+        dw, dh = 420, 200
+        sw, sh = err.winfo_screenwidth(), err.winfo_screenheight()
+        err.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
+
+        outer = ctk.CTkFrame(err, fg_color="#0f172a", corner_radius=16,
+                             border_width=1, border_color="#1e293b")
+        outer.pack(fill="both", expand=True, padx=2, pady=2)
+        ctk.CTkFrame(outer, height=5, fg_color="#dc2626", corner_radius=0).pack(fill="x")
+
+        ctk.CTkLabel(outer, text="Delete Error",
+                     font=("Inter", 14, "bold"), text_color="#ef4444").pack(pady=(16, 4))
+        ctk.CTkLabel(outer, text=msg, font=("Inter", 11), text_color="#94a3b8",
+                     wraplength=360, justify="center").pack(padx=20)
+        ctk.CTkFrame(outer, height=1, fg_color="#1e293b").pack(fill="x", padx=20, pady=(12, 0))
+        ctk.CTkButton(outer, text="OK", command=err.destroy,
+                      fg_color="#dc2626", hover_color="#b91c1c", text_color="white",
+                      font=("Inter", 12, "bold"), width=100, height=34,
+                      corner_radius=8).pack(pady=10)
+
+        err.update_idletasks()
+        err.lift()
+        err.focus_force()
+        err.grab_set()
 
     def _show_result(self, res: dict):
         deleted = res.get("deleted", 0)
@@ -579,7 +616,6 @@ class BatchDeletePaymentsModal(ctk.CTkToplevel):
         dlg.resizable(False, False)
         dlg.overrideredirect(True)
         dlg.attributes("-topmost", True)
-        dlg.grab_set()
 
         dw, dh = 380, 230
         sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
@@ -618,5 +654,8 @@ class BatchDeletePaymentsModal(ctk.CTkToplevel):
 
         dlg.bind("<Return>", lambda e: close())
         dlg.bind("<Escape>", lambda e: close())
-        dlg.focus_set()
+        dlg.update_idletasks()
+        dlg.lift()
+        dlg.focus_force()
+        dlg.grab_set()
         dlg.wait_window()

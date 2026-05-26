@@ -276,7 +276,7 @@ async def batch_delete_commit(
 
     for pid in payment_ids:
         try:
-            pay_svc.delete_payment_record(pid, current_user, db_session=db_session)
+            pay_svc.delete_payment_record(pid, current_user, db_session=db_session, current_user=current_user)
             deleted += 1
         except Exception as e:
             failed.append({"payment_id": pid, "reason": str(e)[:120]})
