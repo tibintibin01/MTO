@@ -136,10 +136,15 @@ async def td_number_audit(
     duplicate_payments = []
     for (or_no, tax_yr), entries in pay_groups.items():
         if len(entries) > 1:
-            for entry in entries:
+            # Sort by payment_id ascending — keep the lowest ID (earliest) as the original
+            sorted_entries = sorted(entries, key=lambda e: e["payment_id"])
+            original_id = sorted_entries[0]["payment_id"]
+            all_ids = ", ".join(str(e["payment_id"]) for e in sorted_entries)
+            # Only add the extras (skip index 0 — that's the one to keep)
+            for entry in sorted_entries[1:]:
                 duplicate_payments.append({
                     **entry,
-                    "reason": f"Duplicate — OR {or_no} / Year {tax_yr} appears {len(entries)}x (Payment IDs: {', '.join(str(e['payment_id']) for e in entries)})",
+                    "reason": f"Extra copy — keep ID {original_id}, delete this (all IDs: {all_ids})",
                 })
 
     return {
@@ -147,7 +152,7 @@ async def td_number_audit(
         "total_payments_scanned":  len(pay_rows),
         "invalid_count":           len(invalid),
         "duplicate_td_count":      len(duplicate_tds),
-        "duplicate_payment_count": len(duplicate_payments),
+        "duplicate_payment_count": len(duplicate_payments),  # extras only — safe to delete
         "invalid":                 invalid,
         "duplicate_tds":           duplicate_tds,
         "duplicate_payments":      duplicate_payments,
