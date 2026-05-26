@@ -28,12 +28,13 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
       <header className="bg-gradient-to-r from-[#1a3a6b] via-[#1f4e78] to-[#1a3a6b] text-white shadow-xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between gap-4">
           <a href="/" className="flex items-center gap-4 group">
-            <div className="relative w-20 h-20 flex-shrink-0">
+            {/* White circle badge — standard government seal presentation */}
+            <div className="relative w-14 h-14 flex-shrink-0 rounded-full bg-white shadow-lg ring-2 ring-white/30 overflow-hidden">
               <Image
                 src="/dipaculao-logo.png"
                 alt="Official Logo of Dipaculao, Aurora"
                 fill
-                className="object-contain drop-shadow-lg"
+                className="object-contain p-0.5"
                 priority
               />
             </div>
