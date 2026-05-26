@@ -154,9 +154,29 @@ class BatchDeletePaymentsModal(ctk.CTkToplevel):
         )
         self._summary_lbl.pack(side="right", padx=12)
 
+        # ── Footer (packed BEFORE treeview so it's always visible) ──────────
+        foot = ctk.CTkFrame(self, fg_color="transparent")
+        foot.pack(fill="x", padx=20, pady=(0, 16), side="bottom")
+
+        ctk.CTkButton(
+            foot, text="CANCEL", command=self.destroy,
+            fg_color=ModernTheme.SECONDARY, hover_color=ModernTheme.SECONDARY_HOVER,
+            width=120, height=40, font=ModernTheme.BUTTON_SMALL,
+        ).pack(side="left")
+
+        self._delete_btn = ctk.CTkButton(
+            foot,
+            text="🗑️  DELETE ALL PREVIEWED PAYMENTS",
+            command=self._confirm_and_delete,
+            fg_color="#dc2626", hover_color="#b91c1c",
+            text_color="white", width=280, height=40,
+            font=("Inter", 13, "bold"), state="disabled",
+        )
+        self._delete_btn.pack(side="right")
+
         # Treeview
         tree_fr = tk.Frame(self, bg=_ROW_ODD)
-        tree_fr.pack(fill="both", expand=True, padx=20, pady=(0, 8))
+        tree_fr.pack(fill="both", expand=True, padx=20, pady=(0, 4))
 
         style = ttk.Style()
         style.configure(
@@ -192,26 +212,6 @@ class BatchDeletePaymentsModal(ctk.CTkToplevel):
         self._tree.pack(side="left", fill="both", expand=True)
         self._tree.tag_configure("oddrow",  background=_ROW_ODD,  foreground=_ROW_FG)
         self._tree.tag_configure("evenrow", background=_ROW_EVEN, foreground=_ROW_FG)
-
-        # ── Footer ────────────────────────────────────────────────────────────
-        foot = ctk.CTkFrame(self, fg_color="transparent")
-        foot.pack(fill="x", padx=20, pady=(0, 16))
-
-        ctk.CTkButton(
-            foot, text="CANCEL", command=self.destroy,
-            fg_color=ModernTheme.SECONDARY, hover_color=ModernTheme.SECONDARY_HOVER,
-            width=120, height=40, font=ModernTheme.BUTTON_SMALL,
-        ).pack(side="left")
-
-        self._delete_btn = ctk.CTkButton(
-            foot,
-            text="🗑️  DELETE ALL PREVIEWED PAYMENTS",
-            command=self._confirm_and_delete,
-            fg_color="#dc2626", hover_color="#b91c1c",
-            text_color="white", width=280, height=40,
-            font=("Inter", 13, "bold"), state="disabled",
-        )
-        self._delete_btn.pack(side="right")
 
     # ── Mode switching ────────────────────────────────────────────────────────
 
