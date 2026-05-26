@@ -897,7 +897,7 @@ class SystemAdminPage:
                 dlg.overrideredirect(True)
                 dlg.attributes("-topmost", True)
 
-                dw, dh = 460, 300
+                dw, dh = 460, 340
                 sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
                 dlg.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
 
@@ -906,9 +906,12 @@ class SystemAdminPage:
                 outer.pack(fill="both", expand=True, padx=2, pady=2)
                 ctk.CTkFrame(outer, height=5, fg_color="#dc2626", corner_radius=0).pack(fill="x")
 
-                icon_fr = ctk.CTkFrame(outer, width=52, height=52, corner_radius=26,
+                # Centered icon
+                icon_row = ctk.CTkFrame(outer, fg_color="transparent")
+                icon_row.pack(pady=(18, 0))
+                icon_fr = ctk.CTkFrame(icon_row, width=52, height=52, corner_radius=26,
                                        fg_color="#1e293b", border_width=2, border_color="#ef4444")
-                icon_fr.pack(pady=(18, 0))
+                icon_fr.pack()
                 icon_fr.pack_propagate(False)
                 ctk.CTkLabel(icon_fr, text="🗑️", font=("Segoe UI Emoji", 20),
                              text_color="#ef4444").place(relx=0.5, rely=0.5, anchor="center")
