@@ -660,8 +660,10 @@ class SystemAdminPage:
     def audit_td_numbers(self):
         """
         Calls the backend TD number audit endpoint and shows results
-        in a scrollable dialog so the admin can see which properties
-        have malformed TD numbers.
+        in a tabbed dialog with three sections:
+          1. Malformed TD numbers
+          2. Duplicate TD numbers (two properties share the same TD)
+          3. Duplicate payments (same OR number + same tax year)
         """
         import threading
         import tkinter as tk
@@ -687,72 +689,72 @@ class SystemAdminPage:
                     )
 
         def show_results(result):
-            total    = result.get("total_scanned", 0)
-            invalid  = result.get("invalid", [])
-            count    = result.get("invalid_count", 0)
+            total         = result.get("total_scanned", 0)
+            total_pay     = result.get("total_payments_scanned", 0)
+            invalid       = result.get("invalid", [])
+            dup_tds       = result.get("duplicate_tds", [])
+            dup_pays      = result.get("duplicate_payments", [])
+            fmt_count     = result.get("invalid_count", 0)
+            dup_td_count  = result.get("duplicate_td_count", 0)
+            dup_pay_count = result.get("duplicate_payment_count", 0)
+            total_issues  = fmt_count + dup_td_count + dup_pay_count
 
             # ── Result window ─────────────────────────────────────────────
             win = ctk.CTkToplevel(self.container)
-            win.title(f"TD Number Audit — {count} issues found")
-            win.geometry("900x560")
+            win.title(f"Data Integrity Audit — {total_issues} issues found")
+            win.geometry("1020x640")
             win.attributes("-topmost", True)
             win.grab_set()
-
             sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-            win.geometry(f"+{(sw-900)//2}+{(sh-560)//2}")
+            win.geometry(f"+{(sw-1020)//2}+{(sh-640)//2}")
 
-            # Header
+            # ── Header ────────────────────────────────────────────────────
             hdr = ctk.CTkFrame(win, fg_color="transparent")
-            hdr.pack(fill="x", padx=20, pady=(16, 8))
-
+            hdr.pack(fill="x", padx=20, pady=(16, 6))
             ctk.CTkLabel(
-                hdr,
-                text=f"🔍  TD NUMBER FORMAT AUDIT",
-                font=ModernTheme.H3,
-                text_color=ModernTheme.PRIMARY,
-                anchor="w",
+                hdr, text="🔍  DATA INTEGRITY AUDIT",
+                font=ModernTheme.H3, text_color=ModernTheme.PRIMARY, anchor="w",
             ).pack(side="left")
-
-            summary_color = "#2ecc71" if count == 0 else "#e74c3c"
+            summary_color = "#2ecc71" if total_issues == 0 else "#e74c3c"
             ctk.CTkLabel(
                 hdr,
-                text=f"Scanned: {total:,}   |   Issues: {count:,}",
-                font=ModernTheme.BODY_BOLD,
-                text_color=summary_color,
+                text=(f"Properties: {total:,}   |   Payments: {total_pay:,}   |   "
+                      f"Issues: {total_issues:,}"),
+                font=ModernTheme.BODY_BOLD, text_color=summary_color,
             ).pack(side="right")
 
-            # Info banner
-            info = ctk.CTkFrame(
-                win,
-                fg_color=("#dbeafe", "#1e293b"),
-                corner_radius=8,
-                border_width=1,
-                border_color=("#93c5fd", "#334155"),
-            )
-            info.pack(fill="x", padx=20, pady=(0, 10))
-            ctk.CTkLabel(
-                info,
-                text="Expected format: DD-DDDD-DDDDD  (e.g. 06-0014-00239)  —  2 digits, dash, 4 digits, dash, 5 digits",
-                font=ModernTheme.BODY,
-                text_color=ModernTheme.TEXT_GRAY,
-            ).pack(side="left", padx=14, pady=8)
+            # ── Summary badges ────────────────────────────────────────────
+            badges = ctk.CTkFrame(win, fg_color="transparent")
+            badges.pack(fill="x", padx=20, pady=(0, 8))
 
-            if count == 0:
+            def badge(parent, label, count, color):
+                f = ctk.CTkFrame(parent, fg_color=color, corner_radius=8)
+                f.pack(side="left", padx=(0, 8))
+                ctk.CTkLabel(
+                    f,
+                    text=f"  {label}: {count:,}  ",
+                    font=("Inter", 11, "bold"), text_color="white",
+                ).pack(padx=6, pady=4)
+
+            badge(badges, "Format Issues",      fmt_count,     "#c0392b" if fmt_count     else "#27ae60")
+            badge(badges, "Duplicate TDs",      dup_td_count,  "#e67e22" if dup_td_count  else "#27ae60")
+            badge(badges, "Duplicate Payments", dup_pay_count, "#8e44ad" if dup_pay_count else "#27ae60")
+
+            if total_issues == 0:
                 ctk.CTkLabel(
                     win,
-                    text="✅  All TD numbers are correctly formatted.",
-                    font=("Inter", 16, "bold"),
-                    text_color="#2ecc71",
+                    text="✅  No issues found. All TD numbers and payments are clean.",
+                    font=("Inter", 16, "bold"), text_color="#2ecc71",
                 ).pack(expand=True)
                 ctk.CTkButton(win, text="CLOSE", command=win.destroy,
                               fg_color=ModernTheme.SECONDARY, width=120).pack(pady=20)
                 return
 
-            # Treeview
+            # ── Shared treeview style ─────────────────────────────────────
             style = ttk.Style()
             style.configure(
                 "Audit.Treeview",
-                rowheight=32, font=("Inter", 11),
+                rowheight=30, font=("Inter", 11),
                 background="#1e293b", fieldbackground="#1e293b", foreground="#cbd5e1",
             )
             style.configure(
@@ -761,37 +763,85 @@ class SystemAdminPage:
             )
             style.map("Audit.Treeview", background=[("selected", "#1d4ed8")])
 
-            tree_fr = tk.Frame(win, bg="#1e293b")
-            tree_fr.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+            # ── Tabview ───────────────────────────────────────────────────
+            tabview = ctk.CTkTabview(win)
+            tabview.pack(fill="both", expand=True, padx=20, pady=(0, 8))
 
-            cols = ("ID", "TD NUMBER", "OWNER NAME", "REASON")
-            tree = ttk.Treeview(tree_fr, columns=cols, show="headings",
-                                style="Audit.Treeview")
-            tree.column("ID",         width=60,  anchor="center")
-            tree.column("TD NUMBER",  width=160, anchor="w")
-            tree.column("OWNER NAME", width=260, anchor="w")
-            tree.column("REASON",     width=360, anchor="w")
-            for col in cols:
-                tree.heading(col, text=col)
+            def make_tree(parent, cols, col_widths):
+                """Helper: create a scrollable treeview inside a tab."""
+                fr = tk.Frame(parent, bg="#1e293b")
+                fr.pack(fill="both", expand=True, padx=4, pady=4)
+                tree = ttk.Treeview(fr, columns=cols, show="headings",
+                                    style="Audit.Treeview")
+                for col, w in zip(cols, col_widths):
+                    tree.heading(col, text=col)
+                    tree.column(col, width=w, anchor="w")
+                sy = ttk.Scrollbar(fr, orient="vertical",   command=tree.yview)
+                sx = ttk.Scrollbar(fr, orient="horizontal", command=tree.xview)
+                tree.configure(yscrollcommand=sy.set, xscrollcommand=sx.set)
+                sy.pack(side="right", fill="y")
+                sx.pack(side="bottom", fill="x")
+                tree.pack(side="left", fill="both", expand=True)
+                tree.tag_configure("oddrow",  background="#1e293b", foreground="#cbd5e1")
+                tree.tag_configure("evenrow", background="#162032", foreground="#cbd5e1")
+                tree.tag_configure("duprow",  background="#2d1b4e", foreground="#c4b5fd")
+                tree.tag_configure("paydup",  background="#1e1b4b", foreground="#a5b4fc")
+                return tree
 
-            scrolly = ttk.Scrollbar(tree_fr, orient="vertical", command=tree.yview)
-            tree.configure(yscrollcommand=scrolly.set)
-            tree.pack(side="left", fill="both", expand=True)
-            scrolly.pack(side="right", fill="y")
+            # ── Tab 1: Format Issues ──────────────────────────────────────
+            tab1 = tabview.add(f"⚠️ Format Issues ({fmt_count})")
+            if invalid:
+                t1 = make_tree(tab1,
+                    ("ID", "TD NUMBER", "OWNER NAME", "REASON"),
+                    (60, 160, 260, 400))
+                for i, row in enumerate(invalid):
+                    tag = "evenrow" if i % 2 == 0 else "oddrow"
+                    t1.insert("", "end", tags=(tag,),
+                              values=(row["id"], row["td_number"],
+                                      row["owner_name"], row["reason"]))
+            else:
+                ctk.CTkLabel(tab1, text="✅  No format issues found.",
+                             font=("Inter", 13, "bold"), text_color="#2ecc71").pack(expand=True)
 
-            tree.tag_configure("oddrow",  background="#1e293b", foreground="#cbd5e1")
-            tree.tag_configure("evenrow", background="#162032", foreground="#cbd5e1")
+            # ── Tab 2: Duplicate TDs ──────────────────────────────────────
+            tab2 = tabview.add(f"🔁 Duplicate TDs ({dup_td_count})")
+            if dup_tds:
+                t2 = make_tree(tab2,
+                    ("ID", "TD NUMBER", "OWNER NAME", "NOTE"),
+                    (60, 160, 260, 420))
+                for i, row in enumerate(dup_tds):
+                    t2.insert("", "end", tags=("duprow",),
+                              values=(row["id"], row["td_number"],
+                                      row["owner_name"], row["reason"]))
+            else:
+                ctk.CTkLabel(tab2, text="✅  No duplicate TD numbers found.",
+                             font=("Inter", 13, "bold"), text_color="#2ecc71").pack(expand=True)
 
-            for i, row in enumerate(invalid):
-                tag = "evenrow" if i % 2 == 0 else "oddrow"
-                tree.insert("", "end",
-                            values=(row["id"], row["td_number"],
-                                    row["owner_name"], row["reason"]),
-                            tags=(tag,))
+            # ── Tab 3: Duplicate Payments ─────────────────────────────────
+            tab3 = tabview.add(f"💳 Duplicate Payments ({dup_pay_count})")
+            if dup_pays:
+                t3 = make_tree(tab3,
+                    ("PAY ID", "OR NUMBER", "TAX YEAR", "TD NUMBER", "OWNER", "AMOUNT", "DATE", "NOTE"),
+                    (65, 110, 75, 140, 200, 90, 95, 200))
+                for i, row in enumerate(dup_pays):
+                    t3.insert("", "end", tags=("paydup",),
+                              values=(
+                                  row["payment_id"],
+                                  row["or_number"],
+                                  row["tax_year"],
+                                  row["td_number"],
+                                  row["owner_name"],
+                                  f"₱{row['amount']:,.2f}",
+                                  row["date_paid"],
+                                  row["reason"],
+                              ))
+            else:
+                ctk.CTkLabel(tab3, text="✅  No duplicate payments found.",
+                             font=("Inter", 13, "bold"), text_color="#2ecc71").pack(expand=True)
 
-            # Footer
+            # ── Footer ────────────────────────────────────────────────────
             foot = ctk.CTkFrame(win, fg_color="transparent")
-            foot.pack(fill="x", padx=20, pady=(0, 16))
+            foot.pack(fill="x", padx=20, pady=(0, 14))
 
             def export_csv():
                 from tkinter import filedialog
@@ -799,17 +849,37 @@ class SystemAdminPage:
                 path = filedialog.asksaveasfilename(
                     defaultextension=".csv",
                     filetypes=[("CSV", "*.csv")],
-                    initialfile="td_number_issues.csv",
-                    title="Save TD Number Audit Report",
+                    initialfile="data_integrity_audit.csv",
+                    title="Save Audit Report",
                 )
                 if not path:
                     return
                 with open(path, "w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
+                    # Section 1
+                    writer.writerow(["=== FORMAT ISSUES ==="])
                     writer.writerow(["ID", "TD Number", "Owner Name", "Reason"])
                     for row in invalid:
                         writer.writerow([row["id"], row["td_number"],
                                          row["owner_name"], row["reason"]])
+                    writer.writerow([])
+                    # Section 2
+                    writer.writerow(["=== DUPLICATE TD NUMBERS ==="])
+                    writer.writerow(["ID", "TD Number", "Owner Name", "Note"])
+                    for row in dup_tds:
+                        writer.writerow([row["id"], row["td_number"],
+                                         row["owner_name"], row["reason"]])
+                    writer.writerow([])
+                    # Section 3
+                    writer.writerow(["=== DUPLICATE PAYMENTS ==="])
+                    writer.writerow(["Payment ID", "OR Number", "Tax Year",
+                                     "TD Number", "Owner", "Amount", "Date", "Note"])
+                    for row in dup_pays:
+                        writer.writerow([
+                            row["payment_id"], row["or_number"], row["tax_year"],
+                            row["td_number"], row["owner_name"],
+                            row["amount"], row["date_paid"], row["reason"],
+                        ])
                 import os
                 os.startfile(path)
 
@@ -844,9 +914,9 @@ class SystemAdminPage:
 
             def show_fix_result(res, was_dry):
                 if was_dry:
-                    will_fix = res.get("will_fix", 0)
+                    will_fix  = res.get("will_fix", 0)
                     unfixable = res.get("unfixable", 0)
-                    fixes = res.get("fixes", [])
+                    fixes     = res.get("fixes", [])
                     msg = (
                         f"DRY RUN PREVIEW\n\n"
                         f"Will fix:   {will_fix:,} TD numbers\n"
@@ -866,11 +936,12 @@ class SystemAdminPage:
                                 self.container.after(0, lambda err=e: messagebox.showerror("Fix Error", str(err)))
                             finally:
                                 if self.container.winfo_exists():
-                                    self.container.after(0, lambda: self.td_audit_btn.configure(state="normal", text="🔍 AUDIT TD NUMBERS"))
+                                    self.container.after(0, lambda: self.td_audit_btn.configure(
+                                        state="normal", text="🔍 AUDIT TD NUMBERS"))
                         threading.Thread(target=apply, daemon=True).start()
                 else:
-                    fixed = res.get("fixed", 0)
-                    unfixable = res.get("unfixable", 0)
+                    fixed      = res.get("fixed", 0)
+                    unfixable  = res.get("unfixable", 0)
                     collisions = res.get("collisions", 0)
                     msg = (
                         f"✅ TD Number Fix Complete\n\n"
@@ -887,12 +958,14 @@ class SystemAdminPage:
                         msg += "\nAll changes are logged in the Audit Trail."
                     messagebox.showinfo("Fix Complete", msg)
 
-            ctk.CTkButton(
-                foot, text="⚙️  AUTO-FIX ALL",
-                command=lambda: run_fix(dry=True),
-                fg_color="#c0392b", hover_color="#e74c3c",
-                width=150, height=36, font=ModernTheme.BUTTON_SMALL,
-            ).pack(side="left", padx=(8, 0))
+            # Only show AUTO-FIX if there are format issues (fix only applies to format)
+            if fmt_count > 0:
+                ctk.CTkButton(
+                    foot, text="⚙️  AUTO-FIX FORMAT ISSUES",
+                    command=lambda: run_fix(dry=True),
+                    fg_color="#c0392b", hover_color="#e74c3c",
+                    width=200, height=36, font=ModernTheme.BUTTON_SMALL,
+                ).pack(side="left", padx=(8, 0))
 
             ctk.CTkButton(
                 foot, text="CLOSE", command=win.destroy,

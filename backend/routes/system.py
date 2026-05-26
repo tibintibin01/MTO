@@ -26,19 +26,24 @@ async def td_number_audit(
     db_session: Session = Depends(get_db),
 ):
     """
-    Scans all active properties and returns those whose TD number does NOT
-    match the expected format: 06-XXXX-XXXXX
-    (2 digits, dash, 4 digits, dash, 5 digits — total 14 characters)
+    Scans all active properties and payments for three categories of issues:
+
+    1. Malformed TD numbers — don't match DD-DDDD-DDDDD format
+    2. Duplicate TD numbers — two or more properties share the same TD number
+    3. Duplicate payments  — same OR number + same tax year appears more than once
 
     Returns:
-      - invalid: list of {id, td_number, owner_name, reason}
-      - total_scanned: total active properties checked
-      - invalid_count: number of non-conforming TD numbers
+      - invalid:            malformed TD number rows
+      - duplicate_tds:      properties sharing the same TD number
+      - duplicate_payments: payments sharing the same OR number + tax year
+      - total_scanned:      total active properties checked
+      - total_payments_scanned: total payments checked
     """
     import re
-    from backend.models import Property
+    from collections import defaultdict
+    from backend.models import Property, Payment
 
-    # Pattern: exactly 2 digits, dash, 4 digits, dash, 5 digits
+    # ── 1. Malformed TD numbers ───────────────────────────────────────────────
     PATTERN = re.compile(r"^\d{2}-\d{4}-\d{5}$")
 
     rows = (
@@ -54,7 +59,6 @@ async def td_number_audit(
         if not td_str:
             reason = "Empty TD number"
         elif not PATTERN.match(td_str):
-            # Give a specific reason
             parts = td_str.split("-")
             if len(parts) != 3:
                 reason = f"Wrong number of segments (expected 3, got {len(parts)})"
@@ -67,7 +71,7 @@ async def td_number_audit(
             elif not parts[0].isdigit() or not parts[1].isdigit() or not parts[2].isdigit():
                 reason = "Contains non-numeric characters"
             else:
-                reason = f"Does not match 06-XXXX-XXXXX format"
+                reason = "Does not match 06-XXXX-XXXXX format"
         else:
             continue  # valid — skip
 
@@ -78,10 +82,75 @@ async def td_number_audit(
             "reason": reason,
         })
 
+    # ── 2. Duplicate TD numbers ───────────────────────────────────────────────
+    td_groups: dict = defaultdict(list)
+    for prop_id, td, owner in rows:
+        td_str = (td or "").strip()
+        if td_str:
+            td_groups[td_str].append({"id": prop_id, "owner_name": owner or ""})
+
+    duplicate_tds = []
+    for td_str, entries in td_groups.items():
+        if len(entries) > 1:
+            for entry in entries:
+                duplicate_tds.append({
+                    "id":         entry["id"],
+                    "td_number":  td_str,
+                    "owner_name": entry["owner_name"],
+                    "reason":     f"Duplicate — shared by {len(entries)} properties (IDs: {', '.join(str(e['id']) for e in entries)})",
+                })
+
+    # ── 3. Duplicate payments (same OR number + same tax year) ────────────────
+    pay_rows = (
+        db_session.query(
+            Payment.id,
+            Payment.or_number,
+            Payment.tax_year,
+            Payment.amount,
+            Payment.date_paid,
+            Property.td_number,
+            Property.owner_name,
+        )
+        .join(Property, Property.id == Payment.property_id)
+        .filter(
+            Payment.or_number != None,
+            Payment.or_number != "",
+        )
+        .order_by(Payment.or_number.asc(), Payment.tax_year.asc())
+        .all()
+    )
+
+    pay_groups: dict = defaultdict(list)
+    for pay_id, or_no, tax_yr, amount, date_paid, td_no, owner in pay_rows:
+        key = (str(or_no).strip(), str(tax_yr).strip() if tax_yr else "")
+        pay_groups[key].append({
+            "payment_id": pay_id,
+            "or_number":  str(or_no).strip(),
+            "tax_year":   str(tax_yr) if tax_yr else "",
+            "amount":     float(amount or 0),
+            "date_paid":  date_paid.strftime("%Y-%m-%d") if date_paid else "",
+            "td_number":  td_no or "",
+            "owner_name": owner or "",
+        })
+
+    duplicate_payments = []
+    for (or_no, tax_yr), entries in pay_groups.items():
+        if len(entries) > 1:
+            for entry in entries:
+                duplicate_payments.append({
+                    **entry,
+                    "reason": f"Duplicate — OR {or_no} / Year {tax_yr} appears {len(entries)}x (Payment IDs: {', '.join(str(e['payment_id']) for e in entries)})",
+                })
+
     return {
-        "total_scanned": len(rows),
-        "invalid_count": len(invalid),
-        "invalid": invalid,
+        "total_scanned":           len(rows),
+        "total_payments_scanned":  len(pay_rows),
+        "invalid_count":           len(invalid),
+        "duplicate_td_count":      len(duplicate_tds),
+        "duplicate_payment_count": len(duplicate_payments),
+        "invalid":                 invalid,
+        "duplicate_tds":           duplicate_tds,
+        "duplicate_payments":      duplicate_payments,
         "format": "DD-DDDD-DDDDD (e.g. 06-0014-00239)",
     }
 
