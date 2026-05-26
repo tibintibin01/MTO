@@ -77,12 +77,12 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
         <div className="max-w-7xl mx-auto px-4 py-10 grid grid-cols-1 sm:grid-cols-3 gap-8">
           <div className="flex flex-col items-start gap-3">
             <div className="flex items-center gap-3">
-              <div className="relative w-12 h-12 flex-shrink-0">
+              <div className="relative w-12 h-12 flex-shrink-0 rounded-full bg-white shadow ring-2 ring-white/20 overflow-hidden">
                 <Image
                   src="/dipaculao-logo.png"
                   alt="Logo of Dipaculao"
                   fill
-                  className="object-contain opacity-90"
+                  className="object-contain p-0.5"
                 />
               </div>
               <div>
