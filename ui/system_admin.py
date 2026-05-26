@@ -847,12 +847,15 @@ class SystemAdminPage:
                 from tkinter import filedialog
                 import csv
                 path = filedialog.asksaveasfilename(
+                    parent=win,
                     defaultextension=".csv",
                     filetypes=[("CSV", "*.csv")],
                     initialfile="data_integrity_audit.csv",
                     title="Save Audit Report",
                 )
                 if not path:
+                    win.lift()
+                    win.focus_force()
                     return
                 with open(path, "w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
@@ -882,6 +885,10 @@ class SystemAdminPage:
                         ])
                 import os
                 os.startfile(path)
+                # Bring audit window back to front after file dialog closes
+                win.lift()
+                win.focus_force()
+                win.attributes("-topmost", True)
 
             ctk.CTkButton(
                 foot, text="📥  EXPORT CSV", command=export_csv,
