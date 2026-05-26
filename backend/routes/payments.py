@@ -256,6 +256,7 @@ async def batch_delete_preview_by_ids(
     }
 
 
+@router.post("/batch-delete/commit")
 async def batch_delete_commit(
     data: BatchDeleteCommitRequest,
     current_user: dict = Depends(write_access),
