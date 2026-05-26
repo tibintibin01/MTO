@@ -275,15 +275,75 @@ async def td_number_audit(
                     "reason": f"Extra copy — keep ID {original_id}, delete this (all IDs: {all_ids})",
                 })
 
+    # ── 4. Shadow duplicates ─────────────────────────────────────────────────
+    # A "shadow duplicate" is a malformed TD that, when fixed by the rules,
+    # collides with an already-existing correct TD.
+    # e.g. 06-011-00263 (malformed) → 06-0011-00263 (already exists)
+    # These cannot be auto-fixed — they need manual review to decide which
+    # property record to keep and which to delete/merge.
+    valid_td_set = {
+        (td or "").strip()
+        for _, td, _ in rows
+        if PATTERN.match((td or "").strip())
+    }
+
+    def apply_fix_rules(td: str):
+        """Apply the same rules as try_fix — returns corrected TD or None."""
+        parts = td.split("-")
+        if len(parts) != 3:
+            return None
+        s1, s2, s3 = parts
+        # Rule 3: merged segments
+        import re as _re
+        r3 = _re.match(r"^(\d{2})(\d{4})-(\d{5})$", td)
+        if r3:
+            candidate = f"{r3.group(1)}-{r3.group(2)}-{r3.group(3)}"
+            if PATTERN.match(candidate):
+                return candidate
+        # Rule 2: 3-digit second segment
+        if len(s2) == 3 and s2.isdigit():
+            s2 = "0" + s2
+        # Rule 1: 6-digit third segment
+        if len(s3) == 6 and s3.isdigit() and s3[0] == "0":
+            s3 = s3[1:]
+        candidate = f"{s1}-{s2}-{s3}"
+        return candidate if PATTERN.match(candidate) else None
+
+    # Build a lookup: td_number → (id, owner_name)
+    td_lookup = {
+        (td or "").strip(): (prop_id, owner or "")
+        for prop_id, td, owner in rows
+    }
+
+    shadow_duplicates = []
+    for prop_id, td, owner in rows:
+        td_str = (td or "").strip()
+        if not td_str or PATTERN.match(td_str):
+            continue  # skip valid ones
+        fixed = apply_fix_rules(td_str)
+        if fixed and fixed in valid_td_set:
+            correct_id, correct_owner = td_lookup.get(fixed, (None, ""))
+            shadow_duplicates.append({
+                "bad_id":          prop_id,
+                "bad_td":          td_str,
+                "bad_owner":       owner or "",
+                "correct_id":      correct_id,
+                "correct_td":      fixed,
+                "correct_owner":   correct_owner,
+                "action":          f"Delete property ID {prop_id} (bad TD) — keep ID {correct_id} (correct TD)",
+            })
+
     return {
-        "total_scanned":           len(rows),
-        "total_payments_scanned":  len(pay_rows),
-        "invalid_count":           len(invalid),
-        "duplicate_td_count":      len(duplicate_tds),
-        "duplicate_payment_count": len(duplicate_payments),  # extras only — safe to delete
-        "invalid":                 invalid,
-        "duplicate_tds":           duplicate_tds,
-        "duplicate_payments":      duplicate_payments,
+        "total_scanned":             len(rows),
+        "total_payments_scanned":    len(pay_rows),
+        "invalid_count":             len(invalid),
+        "duplicate_td_count":        len(duplicate_tds),
+        "duplicate_payment_count":   len(duplicate_payments),
+        "shadow_duplicate_count":    len(shadow_duplicates),
+        "invalid":                   invalid,
+        "duplicate_tds":             duplicate_tds,
+        "duplicate_payments":        duplicate_payments,
+        "shadow_duplicates":         shadow_duplicates,
         "format": "DD-DDDD-DDDDD (e.g. 06-0014-00239)",
     }
 

@@ -694,10 +694,12 @@ class SystemAdminPage:
             invalid       = result.get("invalid", [])
             dup_tds       = result.get("duplicate_tds", [])
             dup_pays      = result.get("duplicate_payments", [])
+            shadows       = result.get("shadow_duplicates", [])
             fmt_count     = result.get("invalid_count", 0)
             dup_td_count  = result.get("duplicate_td_count", 0)
             dup_pay_count = result.get("duplicate_payment_count", 0)
-            total_issues  = fmt_count + dup_td_count + dup_pay_count
+            shadow_count  = result.get("shadow_duplicate_count", 0)
+            total_issues  = fmt_count + dup_td_count + dup_pay_count + shadow_count
 
             # ── Result window ─────────────────────────────────────────────
             win = ctk.CTkToplevel(self.container)
@@ -739,6 +741,7 @@ class SystemAdminPage:
             badge(badges, "Format Issues",      fmt_count,     "#c0392b" if fmt_count     else "#27ae60")
             badge(badges, "Duplicate TDs",      dup_td_count,  "#e67e22" if dup_td_count  else "#27ae60")
             badge(badges, "Duplicate Payments", dup_pay_count, "#8e44ad" if dup_pay_count else "#27ae60")
+            badge(badges, "Shadow Duplicates",  shadow_count,  "#c0392b" if shadow_count  else "#27ae60")
 
             if total_issues == 0:
                 ctk.CTkLabel(
@@ -839,6 +842,43 @@ class SystemAdminPage:
                 ctk.CTkLabel(tab3, text="✅  No duplicate payments found.",
                              font=("Inter", 13, "bold"), text_color="#2ecc71").pack(expand=True)
 
+            # ── Tab 4: Shadow Duplicates ──────────────────────────────────
+            tab4 = tabview.add(f"👥 Shadow Duplicates ({shadow_count})")
+            if shadows:
+                info4 = ctk.CTkFrame(
+                    tab4, fg_color=("#fff3e0", "#2d1b00"),
+                    corner_radius=8, border_width=1, border_color=("#ffcc80", "#92400e"),
+                )
+                info4.pack(fill="x", padx=4, pady=(4, 0))
+                ctk.CTkLabel(
+                    info4,
+                    text=(
+                        "⚠️  These malformed TDs cannot be auto-fixed because a correct-format version already exists.\n"
+                        "Review each pair — verify which property has the correct payments, then delete the bad one via Recycle Bin."
+                    ),
+                    font=("Inter", 10), text_color=("#92400e", "#fbbf24"),
+                    wraplength=860, justify="left",
+                ).pack(padx=12, pady=6, anchor="w")
+
+                t4 = make_tree(tab4,
+                    ("BAD ID", "BAD TD", "BAD OWNER", "CORRECT ID", "CORRECT TD", "CORRECT OWNER", "ACTION"),
+                    (65, 140, 200, 80, 140, 200, 280))
+                t4.tag_configure("shadowrow", background="#2d1b00", foreground="#fbbf24")
+                for row in shadows:
+                    t4.insert("", "end", tags=("shadowrow",),
+                              values=(
+                                  row["bad_id"],
+                                  row["bad_td"],
+                                  row["bad_owner"],
+                                  row["correct_id"],
+                                  row["correct_td"],
+                                  row["correct_owner"],
+                                  row["action"],
+                              ))
+            else:
+                ctk.CTkLabel(tab4, text="✅  No shadow duplicates found.",
+                             font=("Inter", 13, "bold"), text_color="#2ecc71").pack(expand=True)
+
             # ── Footer ────────────────────────────────────────────────────
             foot = ctk.CTkFrame(win, fg_color="transparent")
             foot.pack(fill="x", padx=20, pady=(0, 14))
@@ -882,6 +922,17 @@ class SystemAdminPage:
                             row["payment_id"], row["or_number"], row["tax_year"],
                             row["td_number"], row["owner_name"],
                             row["amount"], row["date_paid"], row["reason"],
+                        ])
+                    writer.writerow([])
+                    # Section 4
+                    writer.writerow(["=== SHADOW DUPLICATES (malformed TD + correct TD both exist) ==="])
+                    writer.writerow(["Bad ID", "Bad TD", "Bad Owner",
+                                     "Correct ID", "Correct TD", "Correct Owner", "Action"])
+                    for row in shadows:
+                        writer.writerow([
+                            row["bad_id"], row["bad_td"], row["bad_owner"],
+                            row["correct_id"], row["correct_td"], row["correct_owner"],
+                            row["action"],
                         ])
                 import os
                 os.startfile(path)
