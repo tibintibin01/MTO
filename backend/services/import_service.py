@@ -327,70 +327,86 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
     
     inserted = 0
     updated = 0
+    failed = 0
+    failed_rows = []
     total = len(data_list)
     
     try:
         for i, row in enumerate(data_list):
-            td = row["td_number"]
-            prop = db_session.query(Property).filter(Property.td_number == td).first()
-            
-            if prop:
-                # 1. Capture current state for history before updating
-                history = PropertyAssessmentHistory(
-                    property_id=prop.id,
-                    td_number=prop.td_number,
-                    assessed_value=prop.assessed_value,
-                    kind_of_property=prop.kind_of_property,
-                    tax_year=prop.tax_year,
-                    changed_by=user.get("username", "system")
-                )
-                db_session.add(history)
-
-                # 2. Perform the update
-                prop.owner_name = row["owner_name"]
-                prop.assessed_value = row["assessed_value"]
-                prop.location = row["location"]
-                prop.kind_of_property = row["kind_of_property"]
-                prop.pin = row["pin"]
-
-                prop.tax_year = row["tax_year"]
-                prop.area = row["area"]
-                prop.lot_number = row.get("lot_number")
-                prop.block_number = row.get("block_number")
-
-                updated += 1
-
-            else:
-                new_prop = Property(
-                    td_number=td,
-                    owner_name=row["owner_name"],
-                    assessed_value=row["assessed_value"],
-                    location=row["location"],
-                    kind_of_property=row["kind_of_property"],
-                    pin=row["pin"],
-
-                    tax_year=row["tax_year"],
-                    area=row["area"],
-                    lot_number=row.get("lot_number"),
-                    block_number=row.get("block_number")
-                )
-                db_session.add(new_prop)
-                inserted += 1
-            
-            if i % 10 == 0 or i == total - 1:
-                db_session.flush()
-                percentage = int(((i + 1) / total) * 100)
-                try:
-                    asyncio.run_coroutine_threadsafe(
-                        report_progress(percentage, f"Importing: {i+1} / {total} records"), 
-                        loop
+            try:
+                td = row["td_number"]
+                prop = db_session.query(Property).filter(Property.td_number == td).first()
+                
+                if prop:
+                    # 1. Capture current state for history before updating
+                    history = PropertyAssessmentHistory(
+                        property_id=prop.id,
+                        td_number=prop.td_number,
+                        assessed_value=prop.assessed_value,
+                        kind_of_property=prop.kind_of_property,
+                        tax_year=prop.tax_year,
+                        changed_by=user.get("username", "system")
                     )
-                except Exception as e:
-                    mto_logger.warning("Failed to submit progress update: %s", e)
+                    db_session.add(history)
+
+                    # 2. Perform the update
+                    prop.owner_name = row["owner_name"]
+                    prop.assessed_value = row["assessed_value"]
+                    prop.location = row["location"]
+                    prop.kind_of_property = row["kind_of_property"]
+                    prop.pin = row["pin"]
+                    prop.tax_year = row["tax_year"]
+                    prop.area = row["area"]
+                    prop.lot_number = row.get("lot_number")
+                    prop.block_number = row.get("block_number")
+                    updated += 1
+
+                else:
+                    # New TD number — insert as new property
+                    new_prop = Property(
+                        td_number=td,
+                        owner_name=row["owner_name"],
+                        assessed_value=row["assessed_value"],
+                        location=row["location"],
+                        kind_of_property=row["kind_of_property"],
+                        pin=row["pin"],
+                        tax_year=row["tax_year"],
+                        area=row["area"],
+                        lot_number=row.get("lot_number"),
+                        block_number=row.get("block_number")
+                    )
+                    db_session.add(new_prop)
+                    inserted += 1
+
+                # Flush every 10 rows to catch constraint errors early
+                if i % 10 == 0 or i == total - 1:
+                    db_session.flush()
+                    percentage = int(((i + 1) / total) * 100)
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            report_progress(percentage, f"Importing: {i+1} / {total} records"),
+                            loop
+                        )
+                    except Exception as prog_err:
+                        mto_logger.warning("Failed to submit progress update: %s", prog_err)
+
+            except Exception as row_err:
+                # Roll back only the current flush group, not the whole batch
+                db_session.rollback()
+                failed += 1
+                failed_rows.append({
+                    "row": i + 2,
+                    "td_number": row.get("td_number", "?"),
+                    "reason": str(row_err)[:200],
+                })
+                mto_logger.warning(
+                    "Assessment import row %d failed (TD: %s): %s",
+                    i + 2, row.get("td_number", "?"), row_err
+                )
         
-        log_action(user, f"Wizard Assessment Import: {inserted} new, {updated} updated.", db_session=db_session)
+        log_action(user, f"Wizard Assessment Import: {inserted} new, {updated} updated, {failed} failed.", db_session=db_session)
         db_session.commit()
-        return {"inserted": inserted, "updated": updated}
+        return {"inserted": inserted, "updated": updated, "failed": failed, "failed_rows": failed_rows[:20]}
     except Exception as e:
         db_session.rollback()
         mto_logger.error("commit_assessment_import failed: %s", e, exc_info=True)

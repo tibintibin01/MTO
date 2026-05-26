@@ -848,7 +848,10 @@ async def commit_bulk_import(
     if mode == "assessment":
         from backend.services.import_service import commit_assessment_import
         res = commit_assessment_import(payload, current_user, db_session=db_session)
-        return {"status": "success", "imported": res["inserted"] + res["updated"], "details": res}
+        msg = f"{res['inserted']} inserted, {res['updated']} updated"
+        if res.get("failed", 0):
+            msg += f", {res['failed']} failed (see details)"
+        return {"status": "success", "imported": res["inserted"] + res["updated"], "message": msg, "details": res}
     if mode == "payments":
         from backend.services.import_service import commit_payment_import
         res = commit_payment_import(payload, current_user, db_session=db_session)
