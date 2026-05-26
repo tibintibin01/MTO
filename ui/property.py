@@ -191,13 +191,88 @@ class PropertyPage:
 
     def confirm_delete(self):
         sel = self.tree.selection()
-        if not sel: return
+        if not sel:
+            return
         vals = self.tree.item(sel[0])["values"]
-        if messagebox.askyesno("Confirm", f"Delete property owned by {vals[2]}?"):
-            try:
-                prop_svc.delete_property(vals[0], user=self.user)
-                self.refresh_table()
-            except Exception as e: messagebox.showerror("Error", str(e))
+        owner_name = vals[2] if len(vals) > 2 else "this property"
+        td_number  = vals[1] if len(vals) > 1 else ""
+
+        # Premium confirm dialog
+        result = tk.BooleanVar(value=False)
+        dlg = ctk.CTkToplevel(self.container)
+        dlg.title("")
+        dlg.resizable(False, False)
+        dlg.overrideredirect(True)
+        dlg.attributes("-topmost", True)
+
+        dw, dh = 420, 260
+        sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
+        dlg.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
+
+        outer = ctk.CTkFrame(dlg, fg_color="#0f172a", corner_radius=16,
+                             border_width=1, border_color="#1e293b")
+        outer.pack(fill="both", expand=True, padx=2, pady=2)
+        ctk.CTkFrame(outer, height=5, fg_color="#dc2626", corner_radius=0).pack(fill="x")
+
+        icon_row = ctk.CTkFrame(outer, fg_color="transparent")
+        icon_row.pack(pady=(16, 0))
+        icon_fr = ctk.CTkFrame(icon_row, width=50, height=50, corner_radius=25,
+                               fg_color="#1e293b", border_width=2, border_color="#ef4444")
+        icon_fr.pack()
+        icon_fr.pack_propagate(False)
+        ctk.CTkLabel(icon_fr, text="🗑️", font=("Segoe UI Emoji", 18),
+                     text_color="#ef4444").place(relx=0.5, rely=0.5, anchor="center")
+
+        ctk.CTkLabel(outer, text="Delete Property",
+                     font=("Inter", 14, "bold"), text_color="#f1f5f9").pack(pady=(8, 2))
+        ctk.CTkLabel(outer,
+                     text=f"{owner_name}\n{td_number}",
+                     font=("Inter", 11), text_color="#94a3b8", justify="center").pack()
+        ctk.CTkLabel(outer,
+                     text="This property will be moved to the Recycle Bin.",
+                     font=("Inter", 10), text_color="#64748b", justify="center").pack(pady=(4, 0))
+
+        ctk.CTkFrame(outer, height=1, fg_color="#1e293b").pack(fill="x", padx=20, pady=(10, 0))
+
+        btn_fr = ctk.CTkFrame(outer, fg_color="transparent")
+        btn_fr.pack(pady=12)
+
+        def on_cancel():
+            result.set(False)
+            dlg.grab_release()
+            dlg.destroy()
+
+        def on_confirm():
+            result.set(True)
+            dlg.grab_release()
+            dlg.destroy()
+
+        ctk.CTkButton(btn_fr, text="CANCEL", command=on_cancel,
+                      fg_color="#1e293b", hover_color="#334155", text_color="#94a3b8",
+                      border_width=1, border_color="#334155",
+                      font=("Inter", 12, "bold"), width=120, height=36, corner_radius=8,
+                      ).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(btn_fr, text="DELETE", command=on_confirm,
+                      fg_color="#dc2626", hover_color="#b91c1c", text_color="white",
+                      font=("Inter", 12, "bold"), width=120, height=36, corner_radius=8,
+                      ).pack(side="left")
+
+        dlg.bind("<Return>", lambda e: on_confirm())
+        dlg.bind("<Escape>", lambda e: on_cancel())
+        dlg.update_idletasks()
+        dlg.lift()
+        dlg.focus_force()
+        dlg.grab_set()
+        dlg.wait_window()
+
+        if not result.get():
+            return
+
+        try:
+            prop_svc.delete_property(vals[0], user=self.user)
+            self.refresh_table()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
 
 class PropertyEditModal(ctk.CTkToplevel):
     def __init__(self, parent, title, property_id, callback, user=None):
