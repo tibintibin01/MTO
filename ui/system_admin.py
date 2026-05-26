@@ -4,6 +4,7 @@ import api_clients.auth_service as auth
 from ui.users import UserAccessPage
 from ui.logs import AuditLogsPage
 from ui.recycle import RecycleBinPage
+from ui.batch_delete_payments import BatchDeletePaymentsModal
 from theme_manager import ModernTheme
 from utils import tr
 
@@ -248,6 +249,18 @@ class SystemAdminPage:
             hover_color="#e74c3c",
         )
         self.td_audit_btn.pack(side="left", padx=5)
+
+        self.batch_del_btn = ctk.CTkButton(
+            btn_fr,
+            text="🗑️ BATCH DELETE PAYMENTS",
+            command=lambda: BatchDeletePaymentsModal(self.container, self.user),
+            height=45,
+            width=220,
+            font=ModernTheme.BUTTON,
+            fg_color="#7c3aed",
+            hover_color="#6d28d9",
+        )
+        self.batch_del_btn.pack(side="left", padx=5)
 
         # If a sync was running when the user navigated away, resume monitoring
         if _active_sync_job_id:
