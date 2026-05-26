@@ -28,10 +28,10 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
       <header className="bg-gradient-to-r from-[#1a3a6b] via-[#1f4e78] to-[#1a3a6b] text-white shadow-xl">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between gap-4">
           <a href="/" className="flex items-center gap-4 group">
-            <div className="relative w-16 h-16 flex-shrink-0">
+            <div className="relative w-20 h-20 flex-shrink-0">
               <Image
-                src="/dipaculao-seal.png"
-                alt="Official Seal of Dipaculao, Aurora"
+                src="/dipaculao-logo.png"
+                alt="Official Logo of Dipaculao, Aurora"
                 fill
                 className="object-contain drop-shadow-lg"
                 priority
@@ -78,8 +78,8 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
             <div className="flex items-center gap-3">
               <div className="relative w-12 h-12 flex-shrink-0">
                 <Image
-                  src="/dipaculao-seal.png"
-                  alt="Seal of Dipaculao"
+                  src="/dipaculao-logo.png"
+                  alt="Logo of Dipaculao"
                   fill
                   className="object-contain opacity-90"
                 />
