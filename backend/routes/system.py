@@ -573,6 +573,108 @@ async def td_number_fix(
         "collision_list": collision_list,
     }
 
+
+# ---------------------------------------------------------------------------
+# Shadow Duplicate Cleanup — batch delete bad TD properties
+# ---------------------------------------------------------------------------
+
+class ShadowDeleteRequest(BaseModel):
+    bad_ids: list  # list of property IDs to soft-delete
+
+
+@router.post("/system/shadow-duplicate-cleanup")
+async def shadow_duplicate_cleanup(
+    data: ShadowDeleteRequest,
+    current_user: dict = Depends(admin_only),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Batch soft-deletes the 'bad' property records from shadow duplicate pairs.
+
+    For each bad_id:
+      - If the property has NO payments → soft-delete it (set deleted_at)
+      - If the property HAS payments → skip it, return in 'skipped' list
+
+    This is safe because:
+      - The correct-format property (correct_id) already exists and is kept
+      - Properties with payments are skipped so no payment history is lost
+      - All deletions are logged to the audit trail
+      - Soft-delete means records go to Recycle Bin, not permanently removed
+    """
+    from datetime import datetime, timezone
+    from backend.models import Property, Payment, PropertyBilling, PaymentBilling
+    from backend.services.system_service import log_action
+
+    if not data.bad_ids:
+        raise HTTPException(status_code=400, detail="bad_ids list is required.")
+
+    bad_ids = [int(i) for i in data.bad_ids][:1000]
+
+    # Pre-fetch all properties
+    props = {
+        p.id: p
+        for p in db_session.query(Property).filter(Property.id.in_(bad_ids)).all()
+    }
+
+    # Pre-fetch payment counts per property
+    pay_counts = {
+        r[0]: r[1]
+        for r in db_session.query(Payment.property_id, func.count(Payment.id))
+        .filter(Payment.property_id.in_(bad_ids))
+        .group_by(Payment.property_id)
+        .all()
+    }
+
+    deleted = []
+    skipped = []
+    now = datetime.now(timezone.utc)
+
+    for pid in bad_ids:
+        prop = props.get(pid)
+        if not prop:
+            skipped.append({"id": pid, "reason": "Property not found"})
+            continue
+
+        pay_count = pay_counts.get(pid, 0)
+        if pay_count > 0:
+            skipped.append({
+                "id": pid,
+                "td_number": prop.td_number,
+                "owner_name": prop.owner_name,
+                "reason": f"Has {pay_count} payment(s) — manual review required",
+            })
+            continue
+
+        # Safe to soft-delete — no payments attached
+        prop.deleted_at = now
+        deleted.append({
+            "id": pid,
+            "td_number": prop.td_number,
+            "owner_name": prop.owner_name,
+        })
+
+    if deleted:
+        log_action(
+            current_user,
+            f"Shadow duplicate cleanup: {len(deleted)} bad TD properties soft-deleted, "
+            f"{len(skipped)} skipped (have payments).",
+            db_session=db_session,
+        )
+        db_session.commit()
+
+    mto_logger.info(
+        f"Shadow cleanup: {len(deleted)} deleted, {len(skipped)} skipped",
+        user=current_user.get("username"),
+    )
+
+    return {
+        "deleted": len(deleted),
+        "skipped": len(skipped),
+        "deleted_list": deleted,
+        "skipped_list": skipped[:50],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Tax Policy — configure RPT rates per tax year
 # ---------------------------------------------------------------------------

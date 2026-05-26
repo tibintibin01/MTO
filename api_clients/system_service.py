@@ -226,3 +226,12 @@ def compute_payment(assessed_value: float, tax_year: int, date_paid: str,
         "payment_type":   payment_type,
         "quarter":        quarter,
     })
+
+
+def shadow_duplicate_cleanup(bad_ids: list):
+    """
+    Batch soft-deletes shadow duplicate properties (bad TD format) that have no payments.
+    Properties with payments are skipped and returned in the 'skipped' list.
+    """
+    return api_request("POST", "/system/shadow-duplicate-cleanup",
+                       data={"bad_ids": bad_ids})

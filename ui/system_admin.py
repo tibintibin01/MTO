@@ -883,6 +883,56 @@ class SystemAdminPage:
             foot = ctk.CTkFrame(win, fg_color="transparent")
             foot.pack(fill="x", padx=20, pady=(0, 14))
 
+            def run_shadow_cleanup():
+                if not shadows:
+                    return
+                bad_ids = [s["bad_id"] for s in shadows]
+                count = len(bad_ids)
+                if not messagebox.askyesno(
+                    "Batch Delete Shadow Duplicates",
+                    f"This will soft-delete up to {count:,} bad TD properties.\n\n"
+                    f"• Properties WITH payments will be SKIPPED (safe)\n"
+                    f"• Properties WITHOUT payments will be deleted\n"
+                    f"• Deleted records go to Recycle Bin (recoverable)\n"
+                    f"• All deletions are logged in the Audit Trail\n\n"
+                    f"Continue?",
+                    icon="warning", parent=win,
+                ):
+                    return
+
+                def do_cleanup():
+                    try:
+                        res = system_svc.shadow_duplicate_cleanup(bad_ids)
+                        deleted = res.get("deleted", 0)
+                        skipped = res.get("skipped", 0)
+                        skipped_list = res.get("skipped_list", [])
+                        msg = (
+                            f"Shadow Duplicate Cleanup Complete\n\n"
+                            f"Deleted:  {deleted:,} bad TD properties\n"
+                            f"Skipped:  {skipped:,} (have payments)\n\n"
+                        )
+                        if skipped_list:
+                            msg += "Properties with payments (review manually):\n"
+                            for s in skipped_list[:10]:
+                                msg += f"  ID {s['id']} — {s.get('td_number','')} — {s['reason']}\n"
+                            if skipped > 10:
+                                msg += f"  ... and {skipped - 10} more\n"
+                        msg += "\nRun the Audit again to verify."
+                        self.container.after(0, lambda m=msg: messagebox.showinfo("Done", m))
+                    except Exception as e:
+                        self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
+
+                threading.Thread(target=do_cleanup, daemon=True).start()
+
+            if shadow_count > 0:
+                ctk.CTkButton(
+                    foot,
+                    text=f"🗑️  BATCH DELETE {shadow_count:,} BAD TDs",
+                    command=run_shadow_cleanup,
+                    fg_color="#c0392b", hover_color="#e74c3c",
+                    width=240, height=36, font=ModernTheme.BUTTON_SMALL,
+                ).pack(side="left", padx=(0, 8))
+
             def export_csv():
                 from tkinter import filedialog
                 import csv
