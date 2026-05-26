@@ -492,10 +492,19 @@ def get_compliant_accounts(
       - Cursor-based pagination (cursor = last seen Property.id)
     """
     safe_limit = min(max(1, int(limit)), 200)
-    TOTAL_RATE = 0.02
+
+    # Use per-year rate from TaxPolicy via correlated subquery.
+    # Falls back to 0.02 (1% basic + 1% SEF) if no policy row exists for that year.
+    rate_expr = func.coalesce(
+        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
+        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .correlate(PropertyBilling)
+        .scalar_subquery(),
+        0.02
+    )
 
     total_due_expr = func.sum(
-        (PropertyBilling.assessed_value * TOTAL_RATE)
+        (PropertyBilling.assessed_value * rate_expr)
         + PropertyBilling.penalty
         - PropertyBilling.discount
     )
@@ -601,10 +610,17 @@ def get_compliant_summary_by_barangay(db_session: Session = None):
       - compliance rate (%)
       - total amount collected from compliant properties
     """
-    TOTAL_RATE = 0.02
+    # Use per-year rate from TaxPolicy via correlated subquery.
+    rate_expr = func.coalesce(
+        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
+        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .correlate(PropertyBilling)
+        .scalar_subquery(),
+        0.02
+    )
 
     total_due_expr = func.sum(
-        (PropertyBilling.assessed_value * TOTAL_RATE)
+        (PropertyBilling.assessed_value * rate_expr)
         + PropertyBilling.penalty
         - PropertyBilling.discount
     )
@@ -708,17 +724,18 @@ def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
     """
     safe_limit = min(max(1, int(limit)), 200)  # hard cap at 200
 
-    # NOTE: PropertyBilling.assessed_value already has the tax rate applied
-    # (it stores the raw assessed value from the property record, not the
-    # computed tax amount). The TOTAL_RATE multiplier here computes the annual
-    # tax due from the stored assessed value.
-    # Default 2% (1% basic + 1% SEF) matches TaxPolicy defaults.
-    # TODO: Join TaxPolicy per billing year for multi-rate accuracy once
-    # ONLY_FULL_GROUP_BY compatibility is confirmed on the target MariaDB version.
-    TOTAL_RATE = 0.02
+    # Use per-year rate from TaxPolicy via correlated subquery.
+    # Falls back to 0.02 if no policy row exists for that year.
+    rate_expr = func.coalesce(
+        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
+        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .correlate(PropertyBilling)
+        .scalar_subquery(),
+        0.02
+    )
 
     balance_expr = func.sum(
-        (PropertyBilling.assessed_value * TOTAL_RATE)
+        (PropertyBilling.assessed_value * rate_expr)
         + PropertyBilling.penalty
         - PropertyBilling.discount
         - PropertyBilling.amount_paid
@@ -730,7 +747,7 @@ def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
         Property.owner_name,
         Property.location,
         func.sum(
-            (PropertyBilling.assessed_value * TOTAL_RATE)
+            (PropertyBilling.assessed_value * rate_expr)
             + PropertyBilling.penalty
             - PropertyBilling.discount
         ).label("total_due"),

@@ -394,10 +394,14 @@ class PropertyEditModal(ctk.CTkToplevel):
             av = float(self.vars["assessed_value"].get().replace(",", "") or 0)
             pe = float(self.vars["penalty"].get().replace(",", "") or 0)
             ds = float(self.vars["discount"].get().replace(",", "") or 0)
+            # Use 2% as the display default (1% basic + 1% SEF per TaxPolicy default).
+            # The AUTO-COMPUTE button fetches the exact rate from TaxPolicy for the
+            # specific tax year — use that for accurate final amounts.
             total = (av * 0.02) + pe - ds
-            self.total_lbl.configure(text=f"TOTAL TAX DUE: {total:,.2f}")
+            self.total_lbl.configure(text=f"TOTAL TAX DUE: {total:,.2f}  (preview — use ⚡ AUTO-COMPUTE for exact amount)")
             if not self.property_id: self.vars["amount_paid"].set(f"{total:.2f}")
-        except: pass
+        except Exception:
+            pass
         self.validate()
 
     def validate(self, *args):

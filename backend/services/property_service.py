@@ -331,6 +331,8 @@ def _sync_financial_records(prop_id, data, db_session: Session):
         pay_obj.tax_year = tax_year_str
         pay_obj.posted_by = posted_by
         pay_obj.payor_name = payor_name
+        pay_obj.penalty = pen    # store penalty on Payment record
+        pay_obj.discount = disc  # store discount on Payment record
         
         db_session.flush() # Get payment_id
         billing.sync_payment_billings(None, pay_obj.id, allocated, db_session=db_session)
@@ -633,12 +635,24 @@ def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 
         year_filter = str(report_year) if report_year else None
 
         # 1. Total Due per barangay — sum all billing records up to report_year
+        # Join TaxPolicy per billing year so the rate reflects any policy changes.
+        # Uses COALESCE to fall back to 1%+1%=2% if no policy row exists for a year.
+        from backend.models import TaxPolicy as _TaxPolicy
+        tp_alias = db_session.query(_TaxPolicy).subquery()
+
         due_query = (
             db_session.query(
                 func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
                 func.sum(PropertyBilling.assessed_value).label("total_assessed"),
                 func.sum(
-                    (PropertyBilling.assessed_value * 0.02)
+                    (PropertyBilling.assessed_value *
+                     func.coalesce(
+                         db_session.query(_TaxPolicy.basic_rate + _TaxPolicy.sef_rate)
+                         .filter(_TaxPolicy.tax_year == PropertyBilling.tax_year)
+                         .correlate(PropertyBilling)
+                         .scalar_subquery(),
+                         0.02
+                     ))
                     + PropertyBilling.penalty
                     - PropertyBilling.discount
                 ).label("total_due"),
