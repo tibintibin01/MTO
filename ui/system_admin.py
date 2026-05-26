@@ -888,16 +888,81 @@ class SystemAdminPage:
                     return
                 bad_ids = [s["bad_id"] for s in shadows]
                 count = len(bad_ids)
-                if not messagebox.askyesno(
-                    "Batch Delete Shadow Duplicates",
-                    f"This will soft-delete up to {count:,} bad TD properties.\n\n"
-                    f"• Properties WITH payments will be SKIPPED (safe)\n"
-                    f"• Properties WITHOUT payments will be deleted\n"
-                    f"• Deleted records go to Recycle Bin (recoverable)\n"
-                    f"• All deletions are logged in the Audit Trail\n\n"
-                    f"Continue?",
-                    icon="warning", parent=win,
-                ):
+
+                # Premium confirm dialog
+                confirmed = tk.BooleanVar(value=False)
+                dlg = ctk.CTkToplevel(win)
+                dlg.title("")
+                dlg.resizable(False, False)
+                dlg.overrideredirect(True)
+                dlg.attributes("-topmost", True)
+
+                dw, dh = 460, 300
+                sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
+                dlg.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
+
+                outer = ctk.CTkFrame(dlg, fg_color="#0f172a", corner_radius=16,
+                                     border_width=1, border_color="#1e293b")
+                outer.pack(fill="both", expand=True, padx=2, pady=2)
+                ctk.CTkFrame(outer, height=5, fg_color="#dc2626", corner_radius=0).pack(fill="x")
+
+                icon_fr = ctk.CTkFrame(outer, width=52, height=52, corner_radius=26,
+                                       fg_color="#1e293b", border_width=2, border_color="#ef4444")
+                icon_fr.pack(pady=(18, 0))
+                icon_fr.pack_propagate(False)
+                ctk.CTkLabel(icon_fr, text="🗑️", font=("Segoe UI Emoji", 20),
+                             text_color="#ef4444").place(relx=0.5, rely=0.5, anchor="center")
+
+                ctk.CTkLabel(outer, text="Batch Delete Shadow Duplicates",
+                             font=("Inter", 14, "bold"), text_color="#f1f5f9").pack(pady=(10, 2))
+
+                body = ctk.CTkFrame(outer, fg_color="#161b22", corner_radius=8)
+                body.pack(fill="x", padx=20, pady=(6, 0))
+                lines = [
+                    (f"Up to {count:,} bad TD properties will be processed.", "#94a3b8"),
+                    ("✓  Properties WITH payments → SKIPPED (safe)", "#10b981"),
+                    ("✓  Deleted records go to Recycle Bin (recoverable)", "#10b981"),
+                    ("✓  All deletions logged in the Audit Trail", "#10b981"),
+                    ("✗  Properties WITHOUT payments → soft-deleted", "#f87171"),
+                ]
+                for text, color in lines:
+                    ctk.CTkLabel(body, text=text, font=("Inter", 10),
+                                 text_color=color, anchor="w").pack(anchor="w", padx=12, pady=2)
+
+                ctk.CTkFrame(outer, height=1, fg_color="#1e293b").pack(fill="x", padx=20, pady=(10, 0))
+
+                btn_fr = ctk.CTkFrame(outer, fg_color="transparent")
+                btn_fr.pack(pady=12)
+
+                def on_cancel():
+                    confirmed.set(False)
+                    dlg.grab_release()
+                    dlg.destroy()
+
+                def on_confirm():
+                    confirmed.set(True)
+                    dlg.grab_release()
+                    dlg.destroy()
+
+                ctk.CTkButton(btn_fr, text="CANCEL", command=on_cancel,
+                              fg_color="#1e293b", hover_color="#334155", text_color="#94a3b8",
+                              border_width=1, border_color="#334155",
+                              font=("Inter", 12, "bold"), width=130, height=36, corner_radius=8,
+                              ).pack(side="left", padx=(0, 10))
+                ctk.CTkButton(btn_fr, text=f"DELETE {count:,} BAD TDs", command=on_confirm,
+                              fg_color="#dc2626", hover_color="#b91c1c", text_color="white",
+                              font=("Inter", 12, "bold"), width=180, height=36, corner_radius=8,
+                              ).pack(side="left")
+
+                dlg.bind("<Return>", lambda e: on_confirm())
+                dlg.bind("<Escape>", lambda e: on_cancel())
+                dlg.update_idletasks()
+                dlg.lift()
+                dlg.focus_force()
+                dlg.grab_set()
+                dlg.wait_window()
+
+                if not confirmed.get():
                     return
 
                 def do_cleanup():
@@ -906,19 +971,55 @@ class SystemAdminPage:
                         deleted = res.get("deleted", 0)
                         skipped = res.get("skipped", 0)
                         skipped_list = res.get("skipped_list", [])
-                        msg = (
-                            f"Shadow Duplicate Cleanup Complete\n\n"
-                            f"Deleted:  {deleted:,} bad TD properties\n"
-                            f"Skipped:  {skipped:,} (have payments)\n\n"
-                        )
-                        if skipped_list:
-                            msg += "Properties with payments (review manually):\n"
-                            for s in skipped_list[:10]:
-                                msg += f"  ID {s['id']} — {s.get('td_number','')} — {s['reason']}\n"
-                            if skipped > 10:
-                                msg += f"  ... and {skipped - 10} more\n"
-                        msg += "\nRun the Audit again to verify."
-                        self.container.after(0, lambda m=msg: messagebox.showinfo("Done", m))
+
+                        # Premium result dialog
+                        def show_result():
+                            color = "#10b981" if skipped == 0 else "#f59e0b"
+                            rdlg = ctk.CTkToplevel(win)
+                            rdlg.title("")
+                            rdlg.resizable(False, False)
+                            rdlg.overrideredirect(True)
+                            rdlg.attributes("-topmost", True)
+                            dw2, dh2 = 400, 240
+                            sw2, sh2 = rdlg.winfo_screenwidth(), rdlg.winfo_screenheight()
+                            rdlg.geometry(f"{dw2}x{dh2}+{(sw2-dw2)//2}+{(sh2-dh2)//2}")
+
+                            ro = ctk.CTkFrame(rdlg, fg_color="#0f172a", corner_radius=16,
+                                             border_width=1, border_color="#1e293b")
+                            ro.pack(fill="both", expand=True, padx=2, pady=2)
+                            ctk.CTkFrame(ro, height=5, fg_color=color, corner_radius=0).pack(fill="x")
+
+                            icon2 = ctk.CTkFrame(ro, width=48, height=48, corner_radius=24,
+                                                 fg_color="#1e293b", border_width=2, border_color=color)
+                            icon2.pack(pady=(14, 0))
+                            icon2.pack_propagate(False)
+                            ctk.CTkLabel(icon2, text="✓", font=("Inter", 20, "bold"),
+                                         text_color=color).place(relx=0.5, rely=0.5, anchor="center")
+
+                            ctk.CTkLabel(ro, text="Cleanup Complete",
+                                         font=("Inter", 14, "bold"), text_color="#f1f5f9").pack(pady=(8, 2))
+                            ctk.CTkLabel(ro,
+                                         text=f"Deleted: {deleted:,} bad TD properties\n"
+                                              f"Skipped: {skipped:,} (have payments — review manually)",
+                                         font=("Inter", 11), text_color="#94a3b8", justify="center").pack()
+                            ctk.CTkFrame(ro, height=1, fg_color="#1e293b").pack(fill="x", padx=20, pady=(10, 0))
+
+                            def close_result():
+                                rdlg.grab_release()
+                                rdlg.destroy()
+
+                            ctk.CTkButton(ro, text="DONE", command=close_result,
+                                          fg_color=color,
+                                          hover_color="#047857" if skipped == 0 else "#d97706",
+                                          text_color="white", font=("Inter", 12, "bold"),
+                                          width=120, height=34, corner_radius=8).pack(pady=10)
+                            rdlg.bind("<Return>", lambda e: close_result())
+                            rdlg.update_idletasks()
+                            rdlg.lift()
+                            rdlg.focus_force()
+                            rdlg.grab_set()
+
+                        self.container.after(0, show_result)
                     except Exception as e:
                         self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
 
