@@ -2,9 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Lock, MapPin, History } from "lucide-react";
+import { Search, Shield, FileText, MapPin, Clock, Phone, AlertCircle } from "lucide-react";
 
-// TD numbers follow patterns like: 06-0012-01379, TD-2023-001, or plain PIN digits
 const QUERY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9\-./# ]{1,49}$/;
 
 export default function Home() {
@@ -16,23 +15,17 @@ export default function Home() {
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-
     const trimmed = query.trim();
-
     if (!trimmed) {
       setError("Please enter a Tax Declaration Number or PIN.");
       return;
     }
-
     if (!QUERY_PATTERN.test(trimmed)) {
       setError("Invalid format. Use your TDN (e.g. 06-0012-01379) or PIN.");
       return;
     }
-
     setLoading(true);
     try {
-      // Verify the property exists before navigating so the user gets
-      // immediate feedback rather than landing on a 404 detail page.
       const res = await fetch(`/api/v1/public/property/${encodeURIComponent(trimmed)}`);
       if (res.status === 404) {
         setError("No property found for that TDN or PIN. Please check and try again.");
@@ -51,72 +44,173 @@ export default function Home() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-12 sm:py-20">
-      <div className="text-center mb-12">
-        <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight mb-4">
-          Property Treasury Search
-        </h2>
-        <p className="text-lg text-slate-600 max-w-2xl mx-auto">
-          Enter your Tax Declaration Number (TDN) or PIN to view assessment status, payment history, and delinquency alerts.
-        </p>
-      </div>
+    <div className="flex flex-col">
 
-      <div className="bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden">
-        <form onSubmit={handleSearch} className="p-2 flex flex-col sm:flex-row gap-2">
-          <div className="relative flex-1">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <Search className="h-5 w-5 text-slate-400" />
-            </div>
-            <input
-              type="text"
-              className="block w-full pl-11 pr-4 py-4 border-none bg-slate-50 focus:ring-2 focus:ring-[#1f4e78] rounded-xl text-lg"
-              placeholder="e.g. 06-0012-01379"
-              value={query}
-              onChange={(e) => { setQuery(e.target.value); setError(""); }}
-              aria-label="Tax Declaration Number or PIN"
-              aria-describedby={error ? "search-error" : undefined}
-              autoComplete="off"
-              spellCheck={false}
-            />
+      {/* ── Hero section ── */}
+      <section className="bg-gradient-to-br from-[#1a3a6b] via-[#1f4e78] to-[#0f2a5e] text-white py-16 px-4">
+        <div className="max-w-3xl mx-auto text-center">
+          <div className="inline-flex items-center gap-2 bg-yellow-400 text-[#0f2a5e] text-xs font-bold px-4 py-1.5 rounded-full mb-6 tracking-widest uppercase">
+            Official Government Portal
           </div>
-          <button
-            type="submit"
-            disabled={loading}
-            className="bg-[#1f4e78] text-white px-8 py-4 rounded-xl font-bold text-lg hover:bg-[#2c6ea1] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            {loading ? "SEARCHING..." : "SEARCH PROPERTY"}
-          </button>
-        </form>
-        {error && (
-          <p id="search-error" role="alert" className="px-4 pb-3 text-sm text-red-600 font-medium">
-            {error}
+          <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-4 leading-tight">
+            Real Property Tax<br />
+            <span className="text-yellow-300">Inquiry Portal</span>
+          </h2>
+          <p className="text-blue-200 text-base sm:text-lg max-w-xl mx-auto mb-10">
+            Enter your Tax Declaration Number (TDN) or PIN to view your property&apos;s
+            assessment, payment history, and outstanding balance.
           </p>
-        )}
-      </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mt-16">
-        <div className="p-6 bg-white rounded-xl shadow-sm border border-slate-100 text-center">
-          <div className="w-12 h-12 bg-blue-50 text-[#1f4e78] rounded-full flex items-center justify-center mx-auto mb-4">
-            <Lock className="w-6 h-6" />
-          </div>
-          <h3 className="font-bold text-slate-900 mb-2">Secure Access</h3>
-          <p className="text-sm text-slate-500">Data is transmitted over an encrypted HTTPS connection.</p>
+          {/* Search box */}
+          <form onSubmit={handleSearch} className="max-w-2xl mx-auto">
+            <div className="flex flex-col sm:flex-row gap-3 bg-white rounded-2xl p-2 shadow-2xl">
+              <div className="relative flex-1">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <Search className="h-5 w-5 text-slate-400" />
+                </div>
+                <input
+                  type="text"
+                  className="block w-full pl-11 pr-4 py-3.5 border-none bg-transparent focus:ring-0 text-slate-800 text-base placeholder-slate-400 outline-none"
+                  placeholder="e.g. 06-0012-01379"
+                  value={query}
+                  onChange={(e) => { setQuery(e.target.value); setError(""); }}
+                  aria-label="Tax Declaration Number or PIN"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="bg-[#1a3a6b] text-white px-8 py-3.5 rounded-xl font-bold text-sm tracking-wide hover:bg-[#0f2a5e] transition-all flex items-center justify-center gap-2 disabled:opacity-50 whitespace-nowrap"
+              >
+                {loading ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                    </svg>
+                    SEARCHING...
+                  </span>
+                ) : (
+                  <>
+                    <Search className="w-4 h-4" />
+                    SEARCH PROPERTY
+                  </>
+                )}
+              </button>
+            </div>
+            {error && (
+              <div className="flex items-center gap-2 mt-3 bg-red-500/20 border border-red-400/40 rounded-xl px-4 py-2.5">
+                <AlertCircle className="w-4 h-4 text-red-300 flex-shrink-0" />
+                <p className="text-sm text-red-200 font-medium">{error}</p>
+              </div>
+            )}
+          </form>
+
+          <p className="text-blue-300 text-xs mt-5">
+            Don&apos;t know your TDN? Visit the Municipal Treasury Office or contact us below.
+          </p>
         </div>
-        <div className="p-6 bg-white rounded-xl shadow-sm border border-slate-100 text-center">
-          <div className="w-12 h-12 bg-orange-50 text-orange-600 rounded-full flex items-center justify-center mx-auto mb-4">
-            <History className="w-6 h-6" />
+      </section>
+
+      {/* ── Feature cards ── */}
+      <section className="max-w-5xl mx-auto px-4 py-12 w-full">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col items-start gap-3 hover:shadow-md transition-shadow">
+            <div className="w-11 h-11 bg-blue-50 rounded-xl flex items-center justify-center">
+              <Shield className="w-5 h-5 text-[#1a3a6b]" />
+            </div>
+            <h3 className="font-bold text-slate-800">Secure Access</h3>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              Data is transmitted over an encrypted connection. Your property information is protected under RA 10173.
+            </p>
           </div>
-          <h3 className="font-bold text-slate-900 mb-2">Payment History</h3>
-          <p className="text-sm text-slate-500">View your official payment records and tax periods.</p>
-        </div>
-        <div className="p-6 bg-white rounded-xl shadow-sm border border-slate-100 text-center">
-          <div className="w-12 h-12 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4">
-            <MapPin className="w-6 h-6" />
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col items-start gap-3 hover:shadow-md transition-shadow">
+            <div className="w-11 h-11 bg-yellow-50 rounded-xl flex items-center justify-center">
+              <FileText className="w-5 h-5 text-yellow-600" />
+            </div>
+            <h3 className="font-bold text-slate-800">Payment History</h3>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              View your official OR numbers, tax years covered, amounts paid, and outstanding balances. Data available from 2023.
+            </p>
           </div>
-          <h3 className="font-bold text-slate-900 mb-2">Assessment Data</h3>
-          <p className="text-sm text-slate-500">Real-time property classification and assessed values.</p>
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col items-start gap-3 hover:shadow-md transition-shadow">
+            <div className="w-11 h-11 bg-green-50 rounded-xl flex items-center justify-center">
+              <MapPin className="w-5 h-5 text-green-600" />
+            </div>
+            <h3 className="font-bold text-slate-800">Assessment Data</h3>
+            <p className="text-sm text-slate-500 leading-relaxed">
+              Check your property&apos;s assessed value, classification, lot number, and barangay location in real time.
+            </p>
+          </div>
         </div>
-      </div>
+      </section>
+
+      {/* ── Notice banner ── */}
+      <section className="max-w-5xl mx-auto px-4 pb-6 w-full">
+        <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+          <div className="w-10 h-10 bg-yellow-400 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Clock className="w-5 h-5 text-yellow-900" />
+          </div>
+          <div>
+            <p className="font-bold text-yellow-900 text-sm">Payment Deadline Reminder</p>
+            <p className="text-yellow-800 text-sm mt-0.5">
+              Annual RPT payments are due on <strong>January 31</strong> of each year.
+              Payments made by <strong>March 31</strong> qualify for a <strong>10% prompt payment discount</strong>.
+              Advance payments (prior year) qualify for a <strong>20% discount</strong>.
+              Late payments are subject to a <strong>2% monthly penalty</strong>.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* ── How to use ── */}
+      <section className="max-w-5xl mx-auto px-4 pb-12 w-full">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8">
+          <h3 className="font-extrabold text-slate-800 text-lg mb-6">How to Use This Portal</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+            {[
+              { step: "1", title: "Enter Your TDN", desc: "Type your Tax Declaration Number (e.g. 06-0012-01379) in the search box above. You can find this on your tax receipt or assessment notice." },
+              { step: "2", title: "View Your Record", desc: "See your property details, assessed value, payment history, and current balance — all in one place." },
+              { step: "3", title: "Visit the Office", desc: "To make payments or correct records, visit the Municipal Treasury Office. Bring your TDN and a valid ID." },
+            ].map(({ step, title, desc }) => (
+              <div key={step} className="flex gap-4">
+                <div className="w-9 h-9 rounded-full bg-[#1a3a6b] text-white font-bold text-sm flex items-center justify-center flex-shrink-0">
+                  {step}
+                </div>
+                <div>
+                  <p className="font-bold text-slate-800 text-sm mb-1">{title}</p>
+                  <p className="text-sm text-slate-500 leading-relaxed">{desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Contact ── */}
+      <section className="bg-[#1a3a6b] text-white py-10 px-4">
+        <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
+          <div>
+            <p className="font-bold text-lg">Need Help?</p>
+            <p className="text-blue-200 text-sm mt-1">
+              Visit the Municipal Treasury Office of Dipaculao, Aurora during office hours.
+            </p>
+            <p className="text-blue-300 text-xs mt-1">
+              Monday – Friday &nbsp;|&nbsp; 8:00 AM – 5:00 PM &nbsp;|&nbsp; Excluding Holidays
+            </p>
+          </div>
+          <div className="flex items-center gap-3 bg-white/10 border border-white/20 rounded-xl px-5 py-3">
+            <Phone className="w-5 h-5 text-yellow-300" />
+            <div>
+              <p className="text-xs text-blue-300">Municipal Treasury Office</p>
+              <p className="font-bold text-sm">Dipaculao, Aurora</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
     </div>
   );
 }
