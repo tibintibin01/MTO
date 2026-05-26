@@ -199,7 +199,63 @@ async def batch_delete_preview(
     }
 
 
-@router.post("/batch-delete/commit")
+@router.post("/batch-delete/preview-by-ids")
+async def batch_delete_preview_by_ids(
+    data: BatchDeleteCommitRequest,
+    current_user: dict = Depends(write_access),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Preview payments by their exact Payment IDs.
+    Safer than OR-number lookup — targets only the specific rows you want.
+    """
+    if not data.payment_ids:
+        raise HTTPException(status_code=400, detail="payment_ids list is required.")
+
+    id_list = [int(i) for i in data.payment_ids][:500]
+
+    rows = (
+        db_session.query(
+            Payment.id,
+            Payment.or_number,
+            Payment.tax_year,
+            Payment.amount,
+            Payment.discount,
+            Payment.penalty,
+            Payment.date_paid,
+            Property.td_number,
+            Property.owner_name,
+        )
+        .join(Property, Property.id == Payment.property_id)
+        .filter(Payment.id.in_(id_list))
+        .order_by(Property.td_number.asc(), Payment.tax_year.asc())
+        .all()
+    )
+
+    found_ids  = {r[0] for r in rows}
+    not_found  = [i for i in id_list if i not in found_ids]
+
+    return {
+        "found": len(rows),
+        "not_found_count": len(not_found),
+        "not_found": not_found[:50],
+        "preview": [
+            {
+                "payment_id": r[0],
+                "or_number":  r[1],
+                "tax_year":   r[2],
+                "amount":     float(r[3] or 0),
+                "discount":   float(r[4] or 0),
+                "penalty":    float(r[5] or 0),
+                "date_paid":  r[6].strftime("%Y-%m-%d") if r[6] else None,
+                "td_number":  r[7],
+                "owner_name": r[8],
+            }
+            for r in rows
+        ],
+    }
+
+
 async def batch_delete_commit(
     data: BatchDeleteCommitRequest,
     current_user: dict = Depends(write_access),

@@ -84,6 +84,12 @@ def batch_delete_preview(or_numbers: list):
                        data={"or_numbers": or_numbers})
 
 
+def batch_delete_preview_by_ids(payment_ids: list):
+    """Preview payments by exact Payment IDs — safer for targeting specific duplicates."""
+    return api_request("POST", "/payments/batch-delete/preview-by-ids",
+                       data={"payment_ids": payment_ids})
+
+
 def batch_delete_commit(payment_ids: list):
     """Delete the confirmed payment IDs and reverse their billing balances."""
     return api_request("POST", "/payments/batch-delete/commit",
