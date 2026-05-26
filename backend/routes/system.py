@@ -17,8 +17,136 @@ class RestoreRequest(BaseModel):
     file_path: str
 
 # ---------------------------------------------------------------------------
-# TD Number Format Audit
+# Smart Payment Computation
 # ---------------------------------------------------------------------------
+
+class ComputePaymentRequest(BaseModel):
+    assessed_value: float
+    tax_year: int
+    date_paid: str          # YYYY-MM-DD
+    payment_type: str = "annual"   # "annual" or "quarterly"
+    quarter: int = 0        # 1-4, only used when payment_type="quarterly"
+
+
+@router.post("/system/compute-payment")
+async def compute_payment(
+    data: ComputePaymentRequest,
+    current_user: dict = Depends(read_only),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Smart payment computation.
+    Given assessed_value, tax_year, and date_paid, returns:
+      - basic_tax, sef_tax, total_tax (before discount/penalty)
+      - discount_rate, discount_amount
+      - penalty_months, penalty_amount
+      - net_amount_due  (total_tax - discount + penalty)
+      - breakdown explanation string
+
+    Discount rules (on Basic + SEF only):
+      - Paid before Jan 1 of tax_year  → 20% (advance payment)
+      - Paid Jan 1 – Mar 31 of tax_year → 10% (prompt payment)
+      - Paid Apr 1 onwards              → 0%
+
+    Penalty rules (annual, deadline = Jan 31 of tax_year):
+      - Paid on or before Jan 31 → no penalty
+      - Paid after Jan 31 → 2%/month × months late (from Feb 1)
+      - If discount applies (paid before Apr 1) → no penalty
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+    from datetime import date
+    from backend.models import TaxPolicy
+
+    try:
+        paid_date = datetime.strptime(data.date_paid, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date_paid format. Use YYYY-MM-DD.")
+
+    tax_year  = data.tax_year
+    av        = Decimal(str(data.assessed_value))
+
+    # ── Fetch tax policy rates ────────────────────────────────────────────────
+    policy = db_session.query(TaxPolicy).filter(TaxPolicy.tax_year == tax_year).first()
+    basic_rate   = Decimal(str(policy.basic_rate))   if policy else Decimal("0.01")
+    sef_rate     = Decimal(str(policy.sef_rate))     if policy else Decimal("0.01")
+    penalty_rate = Decimal(str(policy.penalty_rate)) if policy else Decimal("0.02")
+
+    basic_tax = (av * basic_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    sef_tax   = (av * sef_rate).quantize(Decimal("0.01"),   rounding=ROUND_HALF_UP)
+    total_tax = basic_tax + sef_tax
+
+    # ── Discount logic ────────────────────────────────────────────────────────
+    advance_deadline = date(tax_year - 1, 12, 31)   # before Jan 1 of tax year
+    prompt_deadline  = date(tax_year, 3, 31)         # Jan 1 – Mar 31
+
+    if paid_date <= advance_deadline:
+        discount_rate   = Decimal("0.20")
+        discount_label  = "20% advance payment discount"
+    elif paid_date <= prompt_deadline:
+        discount_rate   = Decimal("0.10")
+        discount_label  = "10% prompt payment discount (Jan–Mar)"
+    else:
+        discount_rate   = Decimal("0")
+        discount_label  = "No discount (paid after March 31)"
+
+    discount_amount = (total_tax * discount_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    # ── Penalty logic ─────────────────────────────────────────────────────────
+    penalty_amount = Decimal("0")
+    penalty_months = 0
+    penalty_label  = "No penalty"
+
+    # If discount applies → paid on time, no penalty
+    if discount_rate > 0:
+        penalty_label = "No penalty (paid within discount period)"
+    else:
+        # Annual deadline: January 31 of tax year
+        annual_deadline = date(tax_year, 1, 31)
+
+        if paid_date > annual_deadline:
+            # Count months from Feb 1 of tax year to paid_date
+            from_date = date(tax_year, 2, 1)
+            months_late = (paid_date.year - from_date.year) * 12 + (paid_date.month - from_date.month)
+            # If paid_date day >= from_date day, count that month too
+            if paid_date.day >= from_date.day:
+                months_late += 1
+            months_late = max(1, months_late)
+
+            penalty_months = months_late
+            penalty_amount = (total_tax * penalty_rate * Decimal(str(months_late))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            penalty_label = (
+                f"{months_late} month(s) late × {float(penalty_rate)*100:.0f}%/mo "
+                f"= ₱{penalty_amount:,.2f}"
+            )
+
+    net_amount_due = total_tax - discount_amount + penalty_amount
+
+    return {
+        "assessed_value":  float(av),
+        "basic_rate":      float(basic_rate),
+        "sef_rate":        float(sef_rate),
+        "penalty_rate":    float(penalty_rate),
+        "basic_tax":       float(basic_tax),
+        "sef_tax":         float(sef_tax),
+        "total_tax":       float(total_tax),
+        "discount_rate":   float(discount_rate),
+        "discount_amount": float(discount_amount),
+        "discount_label":  discount_label,
+        "penalty_months":  penalty_months,
+        "penalty_amount":  float(penalty_amount),
+        "penalty_label":   penalty_label,
+        "net_amount_due":  float(net_amount_due),
+        "breakdown": (
+            f"Basic: ₱{basic_tax:,.2f} + SEF: ₱{sef_tax:,.2f} = ₱{total_tax:,.2f}  |  "
+            f"Discount: -₱{discount_amount:,.2f} ({discount_label})  |  "
+            f"Penalty: +₱{penalty_amount:,.2f} ({penalty_label})  |  "
+            f"Net Due: ₱{net_amount_due:,.2f}"
+        ),
+    }
+
+
 
 @router.get("/system/td-number-audit")
 async def td_number_audit(

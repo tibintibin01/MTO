@@ -281,6 +281,29 @@ class PropertyEditModal(ctk.CTkToplevel):
 
         self.calc_box = ctk.CTkFrame(self.scroll_form, fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK), corner_radius=8)
         self.calc_box.pack(fill="x", padx=10, pady=15)
+
+        # ── Auto-Compute button ───────────────────────────────────────────────
+        compute_fr = ctk.CTkFrame(self.scroll_form, fg_color="transparent")
+        compute_fr.pack(fill="x", padx=10, pady=(0, 6))
+
+        self._compute_btn = ctk.CTkButton(
+            compute_fr,
+            text="⚡  AUTO-COMPUTE PENALTY & DISCOUNT",
+            command=self._auto_compute,
+            height=38,
+            font=("Inter", 11, "bold"),
+            fg_color="#7c3aed",
+            hover_color="#6d28d9",
+            text_color="white",
+        )
+        self._compute_btn.pack(fill="x")
+
+        self._compute_lbl = ctk.CTkLabel(
+            compute_fr, text="Fill in Assessed Value, Tax Year, and OR Date first.",
+            font=("Inter", 9), text_color="#64748b", anchor="w",
+        )
+        self._compute_lbl.pack(anchor="w", pady=(2, 0))
+
         self.total_lbl = ctk.CTkLabel(self.calc_box, text="TOTAL TAX DUE: 0.00", font=("Segoe UI", 12, "bold"), text_color="#1f538d")
         self.total_lbl.pack(pady=15)
 
@@ -289,6 +312,82 @@ class PropertyEditModal(ctk.CTkToplevel):
         ctk.CTkButton(footer, text="CANCEL", command=self.destroy, fg_color="#95a5a6", width=120).pack(side="left")
         self.save_btn = ctk.CTkButton(footer, text="SAVE PROPERTY", command=self.save, fg_color="#2ecc71", width=200, state="disabled")
         self.save_btn.pack(side="right")
+
+    def _auto_compute(self):
+        """
+        Calls the backend compute-payment endpoint and auto-fills
+        Penalty, Discount, and Amount Paid based on date_paid vs tax_year.
+        """
+        import threading
+        import api_clients.system_service as system_svc
+
+        # Validate required fields
+        av_str   = self.vars["assessed_value"].get().replace(",", "").strip()
+        yr_str   = self.vars["tax_year"].get().strip()
+        date_str = self.vars["or_date"].get().strip()
+
+        if not av_str or not yr_str or not date_str:
+            self._compute_lbl.configure(
+                text="⚠️  Fill in Assessed Value, Tax Year, and OR Date first.",
+                text_color="#f59e0b",
+            )
+            return
+
+        try:
+            av = float(av_str)
+            yr = int(yr_str)
+        except ValueError:
+            self._compute_lbl.configure(
+                text="⚠️  Assessed Value and Tax Year must be numbers.",
+                text_color="#f59e0b",
+            )
+            return
+
+        # Normalize date to YYYY-MM-DD
+        from api_clients.billing_service import normalize_date_input
+        clean_date = normalize_date_input(date_str)
+        if not clean_date:
+            self._compute_lbl.configure(
+                text="⚠️  Invalid OR Date format. Use YYYY-MM-DD.",
+                text_color="#f59e0b",
+            )
+            return
+
+        self._compute_btn.configure(state="disabled", text="⏳  COMPUTING...")
+        self._compute_lbl.configure(text="Fetching rates from server...", text_color="#64748b")
+
+        def worker():
+            try:
+                result = system_svc.compute_payment(av, yr, clean_date)
+                self.after(0, lambda r=result: self._apply_compute(r))
+            except Exception as e:
+                self.after(0, lambda err=e: self._compute_lbl.configure(
+                    text=f"⚠️  {str(err)}", text_color="#ef4444"
+                ))
+            finally:
+                if self.winfo_exists():
+                    self.after(0, lambda: self._compute_btn.configure(
+                        state="normal", text="⚡  AUTO-COMPUTE PENALTY & DISCOUNT"
+                    ))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_compute(self, result: dict):
+        """Apply computed values to the form fields."""
+        discount = result.get("discount_amount", 0.0)
+        penalty  = result.get("penalty_amount",  0.0)
+        net_due  = result.get("net_amount_due",  0.0)
+
+        self.vars["discount"].set(f"{discount:.2f}")
+        self.vars["penalty"].set(f"{penalty:.2f}")
+        self.vars["amount_paid"].set(f"{net_due:.2f}")
+
+        breakdown = result.get("breakdown", "")
+        self._compute_lbl.configure(
+            text=f"✅  {breakdown}",
+            text_color="#10b981",
+        )
+        self.recompute()
 
     def recompute(self, *args):
         try:

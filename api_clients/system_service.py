@@ -192,3 +192,37 @@ def fix_td_numbers(dry_run: bool = True):
         "POST",
         f"/system/td-number-fix?dry_run={'true' if dry_run else 'false'}"
     )
+
+def compute_payment(assessed_value: float, tax_year: int, date_paid: str,
+                    payment_type: str = "annual", quarter: int = 0):
+    """
+    Smart payment computation.
+    Returns discount and penalty amounts based on date_paid vs tax_year deadline.
+
+    Discount rules (Basic + SEF only):
+      - Paid before Jan 1 of tax_year  → 20% advance discount
+      - Paid Jan 1 – Mar 31 of tax_year → 10% prompt payment discount
+      - Paid Apr 1 onwards              → 0%
+
+    Penalty rules (annual deadline = Jan 31 of tax_year):
+      - Paid on/before Jan 31 or within discount period → no penalty
+      - Paid after Jan 31 → 2%/month × months late
+
+    Args:
+        assessed_value: property assessed value
+        tax_year:       the tax year being paid
+        date_paid:      payment date as YYYY-MM-DD string
+        payment_type:   "annual" (default) or "quarterly"
+        quarter:        1-4, only used for quarterly
+
+    Returns dict with: basic_tax, sef_tax, total_tax, discount_rate,
+        discount_amount, discount_label, penalty_months, penalty_amount,
+        penalty_label, net_amount_due, breakdown
+    """
+    return api_request("POST", "/system/compute-payment", data={
+        "assessed_value": assessed_value,
+        "tax_year":       tax_year,
+        "date_paid":      date_paid,
+        "payment_type":   payment_type,
+        "quarter":        quarter,
+    })
