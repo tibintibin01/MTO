@@ -9,13 +9,13 @@ import {
   Database, 
   Users, 
   LogOut, 
-  ShieldAlert,
   User as UserIcon,
   Menu,
   X,
   CheckCircle2,
 } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -109,8 +109,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* Sidebar - Desktop */}
       <aside className="hidden lg:flex flex-col w-64 bg-slate-900 border-r border-slate-800 shrink-0">
         <div className="h-20 flex items-center gap-3 px-6 border-b border-slate-800">
-          <div className="w-10 h-10 bg-[#1f4e78]/20 border border-[#2c6ea1]/40 text-[#4ca2ff] rounded-xl flex items-center justify-center">
-            <ShieldAlert className="w-5 h-5" />
+          <div className="relative w-10 h-10 flex-shrink-0 rounded-full bg-white shadow ring-2 ring-white/20 overflow-hidden">
+            <Image
+              src="/dipaculao-logo.png"
+              alt="Dipaculao Logo"
+              fill
+              className="object-contain p-0.5"
+              priority
+            />
           </div>
           <div>
             <h1 className="font-extrabold text-sm tracking-tight text-white uppercase">MTO Treasury</h1>
@@ -165,8 +171,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col animate-slide-in">
             <div className="h-20 flex items-center justify-between px-6 border-b border-slate-800">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-[#1f4e78]/20 border border-[#2c6ea1]/40 text-[#4ca2ff] rounded-xl flex items-center justify-center">
-                  <ShieldAlert className="w-5 h-5" />
+                <div className="relative w-10 h-10 flex-shrink-0 rounded-full bg-white shadow ring-2 ring-white/20 overflow-hidden">
+                  <Image
+                    src="/dipaculao-logo.png"
+                    alt="Dipaculao Logo"
+                    fill
+                    className="object-contain p-0.5"
+                  />
                 </div>
                 <h1 className="font-extrabold text-sm text-white">MTO Panel</h1>
               </div>
