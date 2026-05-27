@@ -67,7 +67,7 @@ export default function PropertyDetail() {
         <p className="text-slate-500 mb-8 max-w-sm mx-auto">{error}</p>
         <div className="flex items-center justify-center gap-3">
           <button onClick={handleRetry} disabled={retrying}
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#1a3a6b] text-white rounded-lg font-semibold text-sm hover:bg-[#0f2a5e] transition-colors disabled:opacity-50">
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#367588] text-white rounded-lg font-semibold text-sm hover:bg-[#2a5f70] transition-colors disabled:opacity-50">
             <RefreshCw className={`w-4 h-4 ${retrying ? "animate-spin" : ""}`} />
             {retrying ? "Retrying..." : "Try again"}
           </button>
@@ -135,8 +135,8 @@ export default function PropertyDetail() {
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Property Details</p>
             <div className="space-y-4">
               <div className="flex items-start gap-3">
-                <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <Building2 className="w-4 h-4 text-[#1a3a6b]" />
+                <div className="w-8 h-8 bg-teal-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <Building2 className="w-4 h-4 text-[#367588]" />
                 </div>
                 <div>
                   <p className="text-xs text-slate-400 font-semibold uppercase">Owner</p>
@@ -144,8 +144,8 @@ export default function PropertyDetail() {
                 </div>
               </div>
               <div className="flex items-start gap-3">
-                <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <MapPin className="w-4 h-4 text-[#1a3a6b]" />
+                <div className="w-8 h-8 bg-teal-50 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <MapPin className="w-4 h-4 text-[#367588]" />
                 </div>
                 <div>
                   <p className="text-xs text-slate-400 font-semibold uppercase">Location</p>
@@ -155,7 +155,7 @@ export default function PropertyDetail() {
             </div>
           </div>
 
-          <div className="bg-[#1a3a6b] rounded-2xl shadow-sm p-6 text-white flex flex-col justify-between">
+          <div className="bg-[#367588] rounded-2xl shadow-sm p-6 text-white flex flex-col justify-between">
             <p className="text-blue-200 text-xs font-bold uppercase tracking-widest">Assessed Value</p>
             <div>
               <p className="text-3xl font-black mt-2">
@@ -202,7 +202,7 @@ export default function PropertyDetail() {
         {/* ── Payment history ── */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden mb-6">
           <div className="px-6 py-4 border-b border-slate-100 flex items-center gap-2">
-            <FileText className="w-4 h-4 text-[#1a3a6b]" />
+            <FileText className="w-4 h-4 text-[#367588]" />
             <h2 className="font-bold text-slate-800">Payment History</h2>
             <span className="ml-auto text-xs text-slate-400 bg-slate-50 border border-slate-100 px-2 py-1 rounded-full">
               From 2023 onwards
@@ -232,7 +232,7 @@ export default function PropertyDetail() {
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
                         <Calendar className="w-3.5 h-3.5 text-slate-300" />
-                        <span className="font-bold text-[#1a3a6b]">{p.period}</span>
+                        <span className="font-bold text-[#367588]">{p.period}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4 text-slate-500 font-mono text-xs">{p.or_number}</td>
@@ -262,7 +262,7 @@ export default function PropertyDetail() {
         </div>
 
         {/* ── CTA ── */}
-        <div className="bg-[#0f2a5e] rounded-2xl p-6 text-white flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="bg-[#367588] rounded-2xl p-6 text-white flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-white/10 rounded-xl flex items-center justify-center flex-shrink-0">
               <Phone className="w-5 h-5 text-yellow-300" />
@@ -274,7 +274,7 @@ export default function PropertyDetail() {
             </div>
           </div>
           <Link href="/help"
-            className="bg-yellow-400 text-[#0f2a5e] px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-yellow-300 transition-colors whitespace-nowrap flex-shrink-0">
+            className="bg-yellow-400 text-[#1a3a6b] px-5 py-2.5 rounded-xl font-bold text-sm hover:bg-yellow-300 transition-colors whitespace-nowrap flex-shrink-0">
             Help & Support
           </Link>
         </div>
