@@ -91,10 +91,8 @@ export default function PropertyDetail() {
   return (
     <div className="flex flex-col min-h-screen bg-[#f0f4f8]">
 
-      {/* ── Hero header ── */}
-      <div className={`${isDelinquent ? "bg-gradient-to-r from-[#7c1d1d] via-[#991b1b] to-[#7c1d1d]"
-        : isCompliant ? "bg-gradient-to-r from-[#14532d] via-[#166534] to-[#14532d]"
-        : "bg-gradient-to-r from-[#1a3a6b] via-[#1f4e78] to-[#1a3a6b]"} text-white`}>
+      {/* ── Hero header — always dark blue, status shown as accent banner ── */}
+      <div className="bg-gradient-to-r from-[#1a3a6b] via-[#1f4e78] to-[#1a3a6b] text-white">
         <div className="max-w-4xl mx-auto px-4 py-6">
           <Link href="/" className="inline-flex items-center gap-2 text-sm text-white/70 hover:text-white mb-6 transition-colors">
             <ArrowLeft className="w-4 h-4" /> Back to Search
@@ -104,17 +102,25 @@ export default function PropertyDetail() {
             <div>
               <div className="flex items-center gap-3 mb-2">
                 {isDelinquent
-                  ? <span className="bg-red-500/30 border border-red-400/40 text-red-200 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-widest">⚠ Payment Required</span>
+                  ? <span className="bg-red-500/20 border border-red-400/40 text-red-300 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-widest flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                      Payment Required
+                    </span>
                   : isCompliant
-                  ? <span className="bg-green-500/30 border border-green-400/40 text-green-200 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-widest">✓ Account Updated</span>
-                  : <span className="bg-white/10 border border-white/20 text-white/70 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-widest">Not Yet Billed</span>
+                  ? <span className="bg-green-500/20 border border-green-400/40 text-green-300 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-widest flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                      Account Updated
+                    </span>
+                  : <span className="bg-white/10 border border-white/20 text-white/60 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-widest">
+                      Not Yet Billed
+                    </span>
                 }
               </div>
               <h1 className="text-3xl sm:text-4xl font-black tracking-tight">{data.td_number}</h1>
-              {data.pin && <p className="text-white/60 text-sm mt-1">PIN: {data.pin}</p>}
+              {data.pin && <p className="text-white/50 text-sm mt-1">PIN: {data.pin}</p>}
             </div>
             <div className="text-right">
-              <p className="text-white/50 text-xs uppercase tracking-widest mb-1">As of</p>
+              <p className="text-white/40 text-xs uppercase tracking-widest mb-1">As of</p>
               <p className="text-white font-bold">{new Date().toLocaleDateString("en-PH", { year: "numeric", month: "long", day: "numeric" })}</p>
             </div>
           </div>
