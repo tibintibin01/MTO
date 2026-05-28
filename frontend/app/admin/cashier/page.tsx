@@ -216,9 +216,9 @@ export default function AdminCashier() {
 
       {/* Ledger list table */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-auto shadow-xl shadow-black/15" style={{maxHeight:"calc(100vh - 380px)"}}>
-          <table className="w-full text-left text-sm">
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-slate-950/95 border-b border-slate-800 text-slate-400 font-extrabold text-xs uppercase tracking-wider backdrop-blur">
+        <table className="w-full text-left text-sm">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-slate-950/95 border-b border-slate-800 text-slate-400 font-extrabold text-xs uppercase tracking-wider backdrop-blur">
                 <th className="px-6 py-4 font-extrabold">OR Number</th>
                 <th className="px-6 py-4 font-extrabold">Property TDN</th>
                 <th className="px-6 py-4 font-extrabold">Collected By</th>
@@ -265,7 +265,6 @@ export default function AdminCashier() {
               )}
             </tbody>
           </table>
-        </div>
       </div>
     </div>
   );

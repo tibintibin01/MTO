@@ -272,9 +272,9 @@ export default function AdminProperties() {
 
       {/* Main Table Screen */}
       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-auto shadow-xl shadow-black/15" style={{maxHeight:"calc(100vh - 340px)"}}>
-          <table className="w-full text-left text-sm">
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-slate-950/95 border-b border-slate-800 text-slate-400 font-extrabold text-xs uppercase tracking-wider backdrop-blur">
+        <table className="w-full text-left text-sm">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-slate-950/95 border-b border-slate-800 text-slate-400 font-extrabold text-xs uppercase tracking-wider backdrop-blur">
                 <th className="px-6 py-4 w-12 text-center">
                   <button onClick={toggleSelectAll} className="text-slate-400 hover:text-white">
                     {selectedIds.length === properties.length && properties.length > 0 ? (
@@ -354,7 +354,7 @@ export default function AdminProperties() {
                 </tr>
               )}
             </tbody>
-          </table>
+        </table>
       </div>
 
       {/* Bulk Barangay Actions Drawer at Bottom */}
