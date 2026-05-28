@@ -162,7 +162,7 @@ export default function PropertyDetail() {
               border:"1px solid rgba(255,255,255,0.15)",
               boxShadow:"0 8px 32px rgba(0,0,0,0.3)",
             }}>
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
 
             {/* TD + status */}
             <div className="lg:col-span-5">
@@ -200,7 +200,7 @@ export default function PropertyDetail() {
             </div>
 
             {/* Property Details card — inside glass panel, semi-transparent */}
-            <div className="lg:col-span-4 rounded-2xl p-5"
+            <div className="lg:col-span-4 rounded-2xl p-5 h-full"
               style={{
                 background:"rgba(255,255,255,0.12)",
                 border:"1px solid rgba(255,255,255,0.18)",
@@ -234,7 +234,7 @@ export default function PropertyDetail() {
             </div>
 
             {/* Assessed Value card — teal gradient with faint house icon */}
-            <div className="lg:col-span-3 rounded-2xl p-5 text-white shadow-xl relative overflow-hidden"
+            <div className="lg:col-span-3 rounded-2xl p-5 text-white shadow-xl relative overflow-hidden h-full"
               style={{background:"linear-gradient(135deg,#1a7a8a 0%,#0d5f6e 100%)"}}>
               {/* Faint house watermark */}
               <div className="absolute bottom-2 right-3 opacity-10 text-8xl select-none pointer-events-none">🏠</div>
