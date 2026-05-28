@@ -119,7 +119,15 @@ def get_backup_status(db_session: Session = None):
         }
 
         if latest:
-            ts_str = latest.timestamp.strftime("%Y-%m-%d %H:%M:%S") if latest.timestamp else "Never"
+            # Convert UTC timestamp to Philippine Standard Time (UTC+8) for display
+            PST = timezone(timedelta(hours=8))
+            ts = latest.timestamp
+            if ts:
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                ts_str = ts.astimezone(PST).strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                ts_str = "Never"
             raw_health = latest.health or "UNKNOWN"
             health_display = (
                 "SUCCESS"
@@ -189,7 +197,9 @@ async def run_hybrid_backup(user=None, db_session: Session = None):
         # 1. Local Backup
         await report_progress(1, 10, "Creating local SQL dump...")
         os.makedirs(LOCAL_DIR, exist_ok=True)
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
+        # Use Philippine Standard Time (UTC+8) for the backup filename
+        PST = timezone(timedelta(hours=8))
+        timestamp = datetime.now(PST).strftime("%Y-%m-%d_%H-%M-%S")
         filename = f"revenue_backup_{timestamp}.sql"
         local_path = os.path.join(LOCAL_DIR, filename)
 
