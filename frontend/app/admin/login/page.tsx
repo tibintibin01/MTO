@@ -55,8 +55,10 @@ export default function AdminLogin() {
           className="object-cover object-center"
           priority
         />
-        {/* Dark overlay — heavier on right where form is */}
-        <div className="absolute inset-0" style={{background:"linear-gradient(to right,rgba(10,22,40,0.75) 0%,rgba(10,22,40,0.55) 50%,rgba(10,22,40,0.88) 100%)"}} />
+        {/* Dark overlay — heavier, photo more subtle */}
+        <div className="absolute inset-0" style={{background:"linear-gradient(to right,rgba(10,22,40,0.88) 0%,rgba(10,22,40,0.75) 50%,rgba(10,22,40,0.92) 100%)"}} />
+        {/* Extra dimming layer */}
+        <div className="absolute inset-0" style={{background:"rgba(10,22,40,0.45)"}} />
       </div>
 
       {/* ── Header ── */}
@@ -193,32 +195,34 @@ export default function AdminLogin() {
       </div>
 
       {/* ── Footer ── */}
-      <div className="relative z-10 border-t px-8 py-4 grid grid-cols-1 sm:grid-cols-3 gap-4"
-        style={{borderColor:"rgba(255,255,255,0.08)", background:"rgba(0,0,0,0.3)"}}>
+      <div className="relative z-10 border-t px-8 py-5 grid grid-cols-1 sm:grid-cols-3 gap-6 items-center"
+        style={{borderColor:"rgba(255,255,255,0.08)", background:"rgba(5,12,28,0.85)"}}>
 
-        {/* Col 1 */}
+        {/* Col 1 — Logo + name */}
         <div className="flex items-center gap-3">
-          <div className="relative w-8 h-8 flex-shrink-0 rounded-full bg-white overflow-hidden">
+          <div className="relative w-9 h-9 flex-shrink-0 rounded-full bg-white overflow-hidden ring-1 ring-white/20">
             <Image src="/dipaculao-logo.png" alt="" fill className="object-contain p-0.5" />
           </div>
           <div>
-            <p className="text-white text-xs font-bold">Bayan ng Dipaculao</p>
+            <p className="text-white text-sm font-bold">Bayan ng Dipaculao</p>
             <p className="text-xs" style={{color:"#475569"}}>Province of Aurora</p>
           </div>
         </div>
 
-        {/* Col 2 */}
-        <div className="flex items-center gap-3">
-          <Lock className="w-4 h-4 flex-shrink-0" style={{color:"#475569"}} />
-          <p className="text-xs" style={{color:"#475569"}}>
-            Data Privacy Act of 2012 (RA 10173)<br />and the Local Government Code (RA 7160).
+        {/* Col 2 — Legal */}
+        <div className="flex items-start gap-3">
+          <Lock className="w-4 h-4 flex-shrink-0 mt-0.5" style={{color:"#475569"}} />
+          <p className="text-xs leading-relaxed" style={{color:"#64748b"}}>
+            Data Privacy Act of 2012 (RA 10173)<br />
+            and the Local Government Code (RA 7160).
           </p>
         </div>
 
-        {/* Col 3 */}
-        <div className="flex items-center gap-3 sm:justify-end">
-          <p className="text-xs" style={{color:"#475569"}}>
-            © 2026 Municipal Treasury Office of<br />Dipaculao, Aurora. All Rights Reserved.
+        {/* Col 3 — Copyright */}
+        <div className="flex items-start gap-3 sm:justify-end">
+          <p className="text-xs leading-relaxed text-right" style={{color:"#64748b"}}>
+            © 2026 Municipal Treasury Office of<br />
+            Dipaculao, Aurora. All Rights Reserved.
           </p>
         </div>
 
