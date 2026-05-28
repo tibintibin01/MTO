@@ -91,12 +91,12 @@ def get_last_year_summary(db_session: Session = None):
     last_year_start = date(last_year, 1, 1)
     last_year_end   = date(last_year, 12, 31)
 
-    # Total collected in last year
+    # Total collected in last year — use year_of() consistent with rest of codebase
     last_year_collected = db_session.query(
         func.coalesce(func.sum(Payment.amount), 0)
     ).filter(
-        cast(Payment.date_paid, Date) >= last_year_start,
-        cast(Payment.date_paid, Date) <= last_year_end,
+        Payment.date_paid != None,
+        year_of(Payment.date_paid) == last_year,
     ).scalar()
 
     # Total receivables as of end of last year (billing records up to last year)
@@ -123,7 +123,7 @@ def get_last_year_summary(db_session: Session = None):
         func.count(Property.id)
     ).filter(
         Property.deleted_at == None,
-        func.year(Property.created_at) <= last_year,
+        year_of(Property.created_at) <= last_year,
     ).scalar()
 
     return {
