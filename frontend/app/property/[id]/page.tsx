@@ -352,42 +352,51 @@ export default function PropertyDetail() {
 
           {/* Sidebar */}
           <div className="space-y-4">
-            <div className="rounded-2xl p-6 text-white" style={{background:C.navyDark}}>
-              <p className="font-bold text-base mb-1 leading-snug">Need to pay or correct your records?</p>
-              <p className="text-white/40 text-xs mb-5 leading-relaxed">
-                Visit the Municipal Treasury Office to make payments, request certifications, or correct property information.
-              </p>
-              <div className="space-y-4 mb-5">
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{background:"rgba(255,255,255,0.08)"}}>
-                    <MapPin className="w-4 h-4" style={{color:C.tealLight}} />
-                  </div>
-                  <div>
-                    <p className="text-white/40 text-[10px] uppercase tracking-wider font-bold mb-0.5">Address</p>
-                    <p className="text-white/80 text-xs leading-relaxed">Doña Aurora St., North Pob.<br />Dipaculao, Aurora 3203</p>
-                  </div>
+            <div className="rounded-2xl p-6 text-white" style={{background:"#1a3a8f"}}>
+              {/* Header with headset icon */}
+              <div className="flex items-start gap-4 mb-5">
+                <div className="w-14 h-14 rounded-full flex items-center justify-center flex-shrink-0 mt-1"
+                  style={{background:"#2d52b0"}}>
+                  <Phone className="w-6 h-6 text-white" />
                 </div>
-                <div className="flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{background:"rgba(255,255,255,0.08)"}}>
-                    <Clock className="w-4 h-4" style={{color:C.tealLight}} />
-                  </div>
-                  <div>
-                    <p className="text-white/40 text-[10px] uppercase tracking-wider font-bold mb-0.5">Office Hours</p>
-                    <p className="text-white/80 text-xs">Mon–Fri · 8:00 AM – 5:00 PM</p>
-                    <p className="text-white/30 text-[10px]">Excluding holidays</p>
-                  </div>
+                <div>
+                  <p className="font-bold text-xl leading-snug text-white">
+                    Need to pay or<br />correct your records?
+                  </p>
+                  <p className="text-sm leading-relaxed mt-2" style={{color:"#a8b8e8"}}>
+                    Visit the Municipal Treasury Office — Doña Aurora St., North Pob., Dipaculao, Aurora 3203
+                  </p>
                 </div>
               </div>
+
+              {/* Divider */}
+              <div className="mb-5" style={{borderTop:"1px solid rgba(255,255,255,0.12)"}} />
+
+              {/* Hours */}
+              <div className="flex items-start gap-3 mb-6">
+                <div className="w-8 h-8 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5"
+                  style={{borderColor:"rgba(255,255,255,0.35)"}}>
+                  <Clock className="w-4 h-4" style={{color:"rgba(255,255,255,0.7)"}} />
+                </div>
+                <div>
+                  <p className="text-white text-sm">Mon–Fri</p>
+                  <p className="text-white font-bold text-lg leading-tight">8:00 AM – 5:00 PM</p>
+                  <p className="text-sm" style={{color:"#a8b8e8"}}>Excluding holidays</p>
+                </div>
+              </div>
+
+              {/* Yellow pill button */}
               <Link href="/help"
-                className="flex items-center justify-between w-full text-white font-bold text-sm px-4 py-3 rounded-xl transition-colors"
-                style={{background:C.teal}}
-                onMouseEnter={e=>(e.currentTarget.style.background="#2a5f70")}
-                onMouseLeave={e=>(e.currentTarget.style.background=C.teal)}>
-                <div className="flex items-center gap-2">
-                  <Phone className="w-4 h-4" />
+                className="flex items-center justify-between w-full font-bold text-base px-5 py-3.5 rounded-full hover:opacity-90 transition-opacity"
+                style={{background:"#f5c518", color:"#1a1a2e"}}>
+                <div className="flex items-center gap-3">
+                  <div className="w-7 h-7 rounded-full border-2 flex items-center justify-center flex-shrink-0"
+                    style={{borderColor:"rgba(26,26,46,0.5)"}}>
+                    <span className="text-xs font-black" style={{color:"#1a1a2e"}}>💬</span>
+                  </div>
                   Help &amp; Support
                 </div>
-                <ChevronRight className="w-4 h-4 opacity-60" />
+                <ChevronRight className="w-5 h-5" />
               </Link>
             </div>
 
