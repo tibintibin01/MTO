@@ -8,6 +8,7 @@ import {
   Calendar, ChevronRight, Copy, Check, Home,
 } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 import { useToast } from "../../components/ToastProvider";
 
 /* ─── Design tokens (matched from reference screenshot) ─────────────────── */
@@ -133,12 +134,12 @@ export default function PropertyDetail() {
       {/* ── HERO ─────────────────────────────────────────────────────────── */}
       <div className="relative overflow-hidden" style={{background:C.heroBg}}>
 
-        {/* Teal glow orbs for depth */}
-        <div className="absolute inset-0 pointer-events-none overflow-hidden">
-          <div className="absolute top-0 right-0 w-96 h-96 rounded-full opacity-10"
-            style={{background:"radial-gradient(circle,#367588 0%,transparent 70%)",transform:"translate(30%,-30%)"}} />
-          <div className="absolute bottom-0 left-1/4 w-64 h-64 rounded-full opacity-8"
-            style={{background:"radial-gradient(circle,#1a7a8a 0%,transparent 70%)",transform:"translateY(40%)"}} />
+        {/* Municipal Hall photo — right side, faded behind cards */}
+        <div className="absolute inset-0 flex justify-end pointer-events-none">
+          <div className="relative w-2/3 h-full">
+            <Image src="/municipal-hall.jpg" alt="" fill className="object-cover object-center" priority />
+            <div className="absolute inset-0" style={{background:"linear-gradient(to right,#0a1628 0%,#0a162870 40%,transparent 100%)"}} />
+          </div>
         </div>
 
         {/* Dot grid */}
@@ -188,31 +189,37 @@ export default function PropertyDetail() {
               </p>
             </div>
 
-            {/* Property Details card — solid white with shadow */}
-            <div className="lg:col-span-4 rounded-2xl p-5 shadow-xl" style={{background:"#ffffff"}}>
+            {/* Property Details card — GLASS */}
+            <div className="lg:col-span-4 rounded-2xl p-5 shadow-xl"
+              style={{
+                background:"rgba(255,255,255,0.12)",
+                backdropFilter:"blur(16px)",
+                WebkitBackdropFilter:"blur(16px)",
+                border:"1px solid rgba(255,255,255,0.2)",
+              }}>
               <div className="flex items-center gap-2 mb-4">
-                <FileText className="w-4 h-4" style={{color:"#1a3a8f"}} />
-                <span className="font-bold text-slate-700 text-sm">Property Details</span>
+                <FileText className="w-4 h-4 text-white/70" />
+                <span className="font-bold text-white/80 text-sm">Property Details</span>
               </div>
               <div className="space-y-4">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
-                    style={{background:"#eef2ff"}}>
-                    <Building2 className="w-4 h-4" style={{color:"#1a3a8f"}} />
+                    style={{background:"rgba(255,255,255,0.15)"}}>
+                    <Building2 className="w-4 h-4 text-white/80" />
                   </div>
                   <div>
-                    <p className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Owner</p>
-                    <p className="text-slate-800 font-bold text-sm">{data.owner_name}</p>
+                    <p className="text-white/50 text-[10px] uppercase tracking-wider font-semibold">Owner</p>
+                    <p className="text-white font-bold text-sm">{data.owner_name}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
-                    style={{background:"#eef2ff"}}>
-                    <MapPin className="w-4 h-4" style={{color:"#1a3a8f"}} />
+                    style={{background:"rgba(255,255,255,0.15)"}}>
+                    <MapPin className="w-4 h-4 text-white/80" />
                   </div>
                   <div>
-                    <p className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Location</p>
-                    <p className="text-slate-800 font-bold text-sm">{data.location}</p>
+                    <p className="text-white/50 text-[10px] uppercase tracking-wider font-semibold">Location</p>
+                    <p className="text-white font-bold text-sm">{data.location}</p>
                   </div>
                 </div>
               </div>
