@@ -81,7 +81,7 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div className="space-y-8 max-w-[1600px] mx-auto">
+    <div className="space-y-6 max-w-[1600px] mx-auto">
       {/* Top Header Actions */}
       <div className="flex items-center justify-between">
         <div>
@@ -161,15 +161,15 @@ export default function AdminDashboard() {
       {/* Barangay distribution and trend charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Barangay Breakdown Table */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 lg:col-span-2 shadow-xl shadow-black/15">
-          <h3 className="text-base font-bold text-white uppercase tracking-wider mb-6 flex items-center gap-2">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 lg:col-span-2 shadow-xl shadow-black/15 flex flex-col" style={{maxHeight:"420px"}}>
+          <h3 className="text-base font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2 flex-shrink-0">
             <Building2 className="w-5 h-5 text-[#4ca2ff]" />
             Barangay Treasury Contribution
           </h3>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-auto flex-1 min-h-0">
             <table className="w-full text-left text-sm">
-              <thead>
+              <thead className="sticky top-0 bg-slate-900 z-10">
                 <tr className="border-b border-slate-800 text-slate-400 font-extrabold text-xs uppercase tracking-wider">
                   <th className="pb-3 font-extrabold">Barangay Name</th>
                   <th className="pb-3 text-right font-extrabold">Receivables</th>
@@ -180,17 +180,17 @@ export default function AdminDashboard() {
               <tbody className="divide-y divide-slate-800/60">
                 {(data?.barangays || []).map((b: any, i: number) => (
                   <tr key={i} className="hover:bg-slate-850/50 transition-colors">
-                    <td className="py-4 font-bold text-white">{b.name}</td>
-                    <td className="py-4 text-right text-slate-400">P {(b.value || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td className="py-4 text-right font-bold text-green-400">P {(b.collected || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td className="py-4 text-right">
+                    <td className="py-3 font-bold text-white">{b.name}</td>
+                    <td className="py-3 text-right text-slate-400">P {(b.value || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="py-3 text-right font-bold text-green-400">P {(b.collected || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="py-3 text-right">
                       <div className="flex items-center justify-end gap-3">
                         <span className="font-bold text-xs">{(b.percentage || 0).toFixed(1)}%</span>
                         <div className="w-16 h-2 bg-slate-800 rounded-full overflow-hidden">
-                          <div 
+                          <div
                             className="h-full bg-gradient-to-r from-blue-500 to-[#1f4e78] rounded-full"
                             style={{ width: `${b.percentage || 0}%` }}
-                          ></div>
+                          />
                         </div>
                       </div>
                     </td>
