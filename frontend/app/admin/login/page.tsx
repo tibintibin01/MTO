@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ShieldAlert, User, Lock, ArrowRight } from "lucide-react";
+import Image from "next/image";
 
 export default function AdminLogin() {
   const router = useRouter();
@@ -15,38 +16,25 @@ export default function AdminLogin() {
     e.preventDefault();
     setLoading(true);
     setError("");
-
     try {
       const res = await fetch("/api/v1/api/auth/login", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
-          "X-Requested-With": "XMLHttpRequest"
+          "X-Requested-With": "XMLHttpRequest",
         },
         body: JSON.stringify({ username, password }),
       });
-
       if (!res.ok) {
         const errJson = await res.json();
         throw new Error(errJson.detail || "Authentication failed. Invalid username or password.");
       }
-
       const data = await res.json();
-      
-      // Store only non-sensitive display data in sessionStorage.
-      // sessionStorage is tab-scoped and cleared on close — safer than localStorage.
-      // Tokens are stored in httpOnly cookies by the server — never in JS storage.
       sessionStorage.setItem("mto_user", JSON.stringify({
         username: data.username,
         role: data.role,
-        // Store refresh token in sessionStorage so logout can revoke it server-side.
-        // This is acceptable because: (a) it's sessionStorage not localStorage,
-        // (b) the refresh token is useless without the httpOnly access_token cookie,
-        // (c) the alternative is the token surviving logout indefinitely.
         refresh_token: data.refresh_token ?? "",
       }));
-
-      // Use router.push — no full page reload, preserves React state
       router.push("/admin/dashboard");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Authentication failed.");
@@ -56,77 +44,184 @@ export default function AdminLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 relative overflow-hidden font-sans">
-      {/* Background elements */}
-      <div className="absolute top-[-20%] left-[-20%] w-[60%] h-[60%] bg-blue-900/20 rounded-full blur-[120px] pointer-events-none"></div>
-      <div className="absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] bg-indigo-900/20 rounded-full blur-[120px] pointer-events-none"></div>
+    <div className="min-h-screen relative overflow-hidden flex flex-col" style={{background:"#0a1628"}}>
 
-      <div className="max-w-md w-full bg-slate-800/60 backdrop-blur-xl border border-slate-700/50 rounded-2xl p-8 shadow-2xl relative z-10">
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-[#1f4e78]/20 border border-[#2c6ea1]/40 text-[#4ca2ff] rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-inner">
-            <ShieldAlert className="w-8 h-8" />
-          </div>
-          <h2 className="text-2xl font-black text-white tracking-tight">Municipal Treasury</h2>
-          <p className="text-slate-400 text-sm mt-1">Staff Secure Access Terminal</p>
+      {/* ── Background: municipal hall photo ── */}
+      <div className="absolute inset-0">
+        <Image
+          src="/municipal-hall.png"
+          alt="Dipaculao Municipal Hall"
+          fill
+          className="object-cover object-center"
+          priority
+        />
+        {/* Dark overlay — heavier on right where form is */}
+        <div className="absolute inset-0" style={{background:"linear-gradient(to right,rgba(10,22,40,0.75) 0%,rgba(10,22,40,0.55) 50%,rgba(10,22,40,0.88) 100%)"}} />
+      </div>
+
+      {/* ── Header ── */}
+      <div className="relative z-10 px-8 py-5 flex items-center gap-4">
+        <div className="relative w-12 h-12 flex-shrink-0 rounded-full bg-white shadow ring-2 ring-white/20 overflow-hidden">
+          <Image src="/dipaculao-logo.png" alt="Dipaculao Logo" fill className="object-contain p-0.5" />
         </div>
+        <div>
+          <p className="text-white/50 text-xs uppercase tracking-widest">Republic of the Philippines</p>
+          <p className="text-white font-black text-lg leading-tight">Bayan ng Dipaculao</p>
+          <p className="text-white/50 text-xs">Municipal Treasury Office – Aurora</p>
+        </div>
+      </div>
 
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 flex gap-3 mb-6 text-sm text-red-300">
-            <span className="font-bold flex-1">{error}</span>
-          </div>
-        )}
+      {/* ── Main content ── */}
+      <div className="relative z-10 flex-1 flex items-center justify-end px-8 sm:px-16 py-8">
 
-        <form onSubmit={handleLogin} className="space-y-6">
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Username</label>
-            <div className="relative">
-              <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500">
-                <User className="w-5 h-5" />
-              </span>
-              <input
-                type="text"
-                className="w-full pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-700/80 rounded-xl text-white placeholder-slate-500 focus:ring-2 focus:ring-[#1f4e78] focus:border-transparent outline-none transition-all"
-                placeholder="Enter username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required
-              />
+        {/* Login card — right side */}
+        <div className="w-full max-w-sm rounded-2xl p-8"
+          style={{
+            background:"rgba(13,28,58,0.85)",
+            backdropFilter:"blur(20px)",
+            WebkitBackdropFilter:"blur(20px)",
+            border:"1px solid rgba(255,255,255,0.1)",
+            boxShadow:"0 24px 64px rgba(0,0,0,0.5)",
+          }}>
+
+          {/* Icon */}
+          <div className="flex justify-center mb-5">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
+              style={{background:"rgba(31,78,120,0.4)", border:"1px solid rgba(74,162,255,0.3)"}}>
+              <ShieldAlert className="w-7 h-7" style={{color:"#4ca2ff"}} />
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Password</label>
-            <div className="relative">
-              <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-500">
-                <Lock className="w-5 h-5" />
-              </span>
-              <input
-                type="password"
-                className="w-full pl-10 pr-4 py-3 bg-slate-900/60 border border-slate-700/80 rounded-xl text-white placeholder-slate-500 focus:ring-2 focus:ring-[#1f4e78] focus:border-transparent outline-none transition-all"
-                placeholder="Enter password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </div>
+          {/* Title */}
+          <div className="text-center mb-7">
+            <h2 className="text-2xl font-black text-white tracking-tight">Municipal Treasury</h2>
+            <p className="text-sm mt-1" style={{color:"#4ca2ff"}}>Staff Secure Access Terminal</p>
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-[#1f4e78] hover:bg-[#2c6ea1] disabled:opacity-50 text-white font-bold py-3 px-6 rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#1f4e78]/30 group"
-          >
-            {loading ? "AUTHENTICATING..." : (
-              <>
-                AUTHENTICATE STAFF <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </>
-            )}
-          </button>
-        </form>
+          {/* Error */}
+          {error && (
+            <div className="rounded-xl p-3 mb-5 text-sm text-red-300 flex gap-2"
+              style={{background:"rgba(239,68,68,0.1)", border:"1px solid rgba(239,68,68,0.25)"}}>
+              <span>⚠</span> {error}
+            </div>
+          )}
 
-        <div className="text-center mt-8 pt-6 border-t border-slate-700/50">
-          <p className="text-xs text-slate-500">Authorized personnel access only. Audit tracking active.</p>
+          {/* Form */}
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-widest mb-2" style={{color:"#94a3b8"}}>
+                Username
+              </label>
+              <div className="relative">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center" style={{color:"#64748b"}}>
+                  <User className="w-4 h-4" />
+                </span>
+                <input
+                  type="text"
+                  className="w-full pl-10 pr-4 py-3 rounded-xl text-white placeholder-slate-500 outline-none transition-all text-sm"
+                  style={{
+                    background:"rgba(255,255,255,0.06)",
+                    border:"1px solid rgba(255,255,255,0.1)",
+                  }}
+                  placeholder="Enter username"
+                  value={username}
+                  onChange={e => setUsername(e.target.value)}
+                  onFocus={e => e.currentTarget.style.border="1px solid rgba(74,162,255,0.5)"}
+                  onBlur={e => e.currentTarget.style.border="1px solid rgba(255,255,255,0.1)"}
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-widest mb-2" style={{color:"#94a3b8"}}>
+                Password
+              </label>
+              <div className="relative">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center" style={{color:"#64748b"}}>
+                  <Lock className="w-4 h-4" />
+                </span>
+                <input
+                  type="password"
+                  className="w-full pl-10 pr-4 py-3 rounded-xl text-white placeholder-slate-500 outline-none transition-all text-sm"
+                  style={{
+                    background:"rgba(255,255,255,0.06)",
+                    border:"1px solid rgba(255,255,255,0.1)",
+                  }}
+                  placeholder="Enter password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  onFocus={e => e.currentTarget.style.border="1px solid rgba(74,162,255,0.5)"}
+                  onBlur={e => e.currentTarget.style.border="1px solid rgba(255,255,255,0.1)"}
+                  required
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full font-bold py-3 px-6 rounded-xl transition-all flex items-center justify-center gap-2 mt-2 text-sm tracking-widest uppercase disabled:opacity-50"
+              style={{background:"#1a5fa8", color:"white"}}
+              onMouseEnter={e => !loading && (e.currentTarget.style.background="#2272c3")}
+              onMouseLeave={e => (e.currentTarget.style.background="#1a5fa8")}
+            >
+              {loading ? "Authenticating..." : (
+                <>Authenticate Staff <ArrowRight className="w-4 h-4" /></>
+              )}
+            </button>
+          </form>
+
+          <p className="text-center text-xs mt-6" style={{color:"#475569"}}>
+            Authorized personnel access only.<br />Audit tracking active.
+          </p>
         </div>
+      </div>
+
+      {/* ── Bottom left badge ── */}
+      <div className="relative z-10 px-8 pb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{background:"rgba(255,255,255,0.08)", border:"1px solid rgba(255,255,255,0.1)"}}>
+            <ShieldAlert className="w-4 h-4" style={{color:"#4ca2ff"}} />
+          </div>
+          <div>
+            <p className="text-white text-xs font-bold">Secure Access</p>
+            <p className="text-xs" style={{color:"#475569"}}>This system is for authorized municipal personnel only.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Footer ── */}
+      <div className="relative z-10 border-t px-8 py-4 grid grid-cols-1 sm:grid-cols-3 gap-4"
+        style={{borderColor:"rgba(255,255,255,0.08)", background:"rgba(0,0,0,0.3)"}}>
+
+        {/* Col 1 */}
+        <div className="flex items-center gap-3">
+          <div className="relative w-8 h-8 flex-shrink-0 rounded-full bg-white overflow-hidden">
+            <Image src="/dipaculao-logo.png" alt="" fill className="object-contain p-0.5" />
+          </div>
+          <div>
+            <p className="text-white text-xs font-bold">Bayan ng Dipaculao</p>
+            <p className="text-xs" style={{color:"#475569"}}>Province of Aurora</p>
+          </div>
+        </div>
+
+        {/* Col 2 */}
+        <div className="flex items-center gap-3">
+          <Lock className="w-4 h-4 flex-shrink-0" style={{color:"#475569"}} />
+          <p className="text-xs" style={{color:"#475569"}}>
+            Data Privacy Act of 2012 (RA 10173)<br />and the Local Government Code (RA 7160).
+          </p>
+        </div>
+
+        {/* Col 3 */}
+        <div className="flex items-center gap-3 sm:justify-end">
+          <p className="text-xs" style={{color:"#475569"}}>
+            © 2026 Municipal Treasury Office of<br />Dipaculao, Aurora. All Rights Reserved.
+          </p>
+        </div>
+
       </div>
     </div>
   );
