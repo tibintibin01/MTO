@@ -119,7 +119,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             />
           </div>
           <div>
-            <h1 className="font-extrabold text-sm tracking-tight text-white uppercase">MTO Treasury</h1>
+            <h1 className="font-extrabold text-sm tracking-tight text-white uppercase">Municipal Treasury</h1>
             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Admin Terminal</p>
           </div>
         </div>
@@ -179,7 +179,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     className="object-contain p-0.5"
                   />
                 </div>
-                <h1 className="font-extrabold text-sm text-white">MTO Panel</h1>
+                <h1 className="font-extrabold text-sm text-white">Municipal Treasury</h1>
               </div>
               <button onClick={() => setMobileOpen(false)} className="text-slate-400 hover:text-white">
                 <X className="w-6 h-6" />
