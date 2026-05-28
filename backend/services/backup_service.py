@@ -113,6 +113,8 @@ def get_backup_status(db_session: Session = None):
         result = {
             "is_running": running is not None,
             "last_local": "Never",
+            "last_usb":   "Never",
+            "last_cloud": "Never",
             "last_verify": "Unknown",
             "last_checksum": "None",
             "health": "UNKNOWN",
@@ -134,11 +136,17 @@ def get_backup_status(db_session: Session = None):
                 if raw_health in ("OK", "Success", "SUCCESS") or "Success" in raw_health
                 else raw_health.replace("Issue: ", "").strip()
             )
+            # Determine USB/Cloud status from the backup status field
+            usb_status   = ts_str if latest.status in ("SYNCED", "LOCAL_ONLY", "SUCCESS", "OK") else "Never"
+            cloud_status = ts_str if latest.status == "SYNCED" else "Never"
+
             result.update({
-                "last_local": ts_str,
-                "last_verify": health_display,
+                "last_local":    ts_str,
+                "last_usb":      usb_status,
+                "last_cloud":    cloud_status,
+                "last_verify":   health_display,
                 "last_checksum": latest.checksum or "None",
-                "health": raw_health,
+                "health":        raw_health,
             })
 
         return result
