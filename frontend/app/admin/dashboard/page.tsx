@@ -208,29 +208,31 @@ export default function AdminDashboard() {
             Monthly Revenue Trend
           </h3>
 
-          <div className="flex-1 flex flex-col justify-between space-y-4">
-            <div className="space-y-3">
+          <div className="flex-1 flex flex-col justify-between space-y-4 overflow-auto min-h-0">
+          <div className="flex-1 overflow-auto min-h-0">
+            <div className="space-y-3 pr-1">
               {(() => {
                 const trend = data?.trend || [];
                 const maxRevenue = Math.max(...trend.map((t: any) => t.total || 0), 1);
                 return trend.map((t: any, i: number) => (
                   <div key={i} className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500 uppercase tracking-widest w-12">{t.month}</span>
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-widest w-12 flex-shrink-0">{t.month}</span>
                     <div className="flex-1 mx-4 h-6 bg-slate-800/50 border border-slate-800 rounded-lg overflow-hidden flex items-center px-1">
                       <div
                         className="h-4 bg-gradient-to-r from-emerald-500 to-teal-600 rounded"
                         style={{ width: `${Math.min(((t.total || 0) / maxRevenue) * 100, 100)}%` }}
                       ></div>
                     </div>
-                    <span className="text-xs font-black text-slate-400">
+                    <span className="text-xs font-black text-slate-400 w-14 text-right flex-shrink-0">
                       ₱{((t.total || 0) / 1000).toFixed(0)}k
                     </span>
                   </div>
                 ));
               })()}
             </div>
+          </div>
 
-            <div className="bg-slate-950 rounded-xl p-4 border border-slate-800/80">
+          <div className="bg-slate-950 rounded-xl p-4 border border-slate-800/80 flex-shrink-0 mt-3">
               <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Active System Status</p>
               <div className="flex items-center gap-2 mt-1">
                 <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
@@ -238,7 +240,6 @@ export default function AdminDashboard() {
               </div>
             </div>
           </div>
-        </div>
       </div>
     </div>
   );
