@@ -9,6 +9,7 @@ import {
   Database, 
   Users, 
   LogOut, 
+  ShieldAlert,
   User as UserIcon,
   Menu,
   X,
@@ -146,6 +147,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </nav>
 
         <div className="p-4 border-t border-slate-800 bg-slate-900/50">
+
+          {/* Secure Access card */}
+          <div className="flex items-center gap-3 p-3 rounded-xl mb-3"
+            style={{background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.06)"}}>
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+              style={{background:"rgba(31,78,120,0.4)", border:"1px solid rgba(74,162,255,0.2)"}}>
+              <ShieldAlert className="w-4 h-4" style={{color:"#4ca2ff"}} />
+            </div>
+            <div>
+              <p className="text-white text-xs font-bold">Secure Access</p>
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                Authorized personnel only.<br />All activities are logged.
+              </p>
+            </div>
+          </div>
+
           <div className="flex items-center gap-3 px-2 py-3 rounded-xl mb-2">
             <div className="w-8 h-8 bg-slate-800 rounded-full flex items-center justify-center text-slate-300 font-black text-sm uppercase">
               {user?.username?.substring(0, 2)}
