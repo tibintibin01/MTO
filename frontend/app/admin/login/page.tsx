@@ -194,7 +194,7 @@ export default function AdminLogin() {
             </div>
             <div>
               <p className="text-white text-xs font-bold">Secure Access</p>
-              <p className="text-xs" style={{color:"#334155"}}>This system is for authorized municipal<br />personnel only.</p>
+              <p className="text-xs" style={{color:"#94a3b8"}}>This system is for authorized municipal<br />personnel only.</p>
             </div>
           </div>
         </div>
