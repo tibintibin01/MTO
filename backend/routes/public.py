@@ -62,9 +62,7 @@ def search_property_public(query: str, request: Request, db_session: Session = D
 
     # Determine status using billing balance — same logic as the delinquency dashboard.
     # A property is UPDATED only if total_paid >= total_due across ALL billing years.
-    # Checking payment count alone is wrong — a property with payments can still be
-    # delinquent if those payments don't cover all billing years.
-    from backend.models import PropertyBilling
+    from backend.models import PropertyBilling, Payment
     from sqlalchemy import func
 
     TOTAL_RATE = 0.02  # default 1% basic + 1% SEF
@@ -75,11 +73,21 @@ def search_property_public(query: str, request: Request, db_session: Session = D
             + PropertyBilling.penalty
             - PropertyBilling.discount
         ), 0).label("total_due"),
-        func.coalesce(func.sum(PropertyBilling.amount_paid), 0).label("total_paid"),
+        func.coalesce(func.sum(PropertyBilling.amount_paid), 0).label("total_paid_billing"),
     ).filter(PropertyBilling.property_id == prop.id).first()
 
-    total_due  = float(billing_summary.total_due  or 0)
-    total_paid = float(billing_summary.total_paid or 0)
+    total_due = float(billing_summary.total_due or 0)
+
+    # Use the GREATER of: billing amount_paid OR actual payments recorded
+    # This handles cases where payments were imported but billing records
+    # weren't updated — the payment table is the source of truth.
+    total_paid_billing = float(billing_summary.total_paid_billing or 0)
+    total_paid_actual = float(
+        db_session.query(func.coalesce(func.sum(Payment.amount), 0))
+        .filter(Payment.property_id == prop.id)
+        .scalar() or 0
+    )
+    total_paid = max(total_paid_billing, total_paid_actual)
 
     # UPDATED = has billing records AND fully paid
     # DELINQUENT = has unpaid balance OR no billing records at all
