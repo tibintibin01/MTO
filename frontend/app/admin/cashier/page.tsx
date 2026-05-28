@@ -215,11 +215,11 @@ export default function AdminCashier() {
       </div>
 
       {/* Ledger list table */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl shadow-black/15">
-        <div className="overflow-x-auto">
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl shadow-black/15" style={{maxHeight:"calc(100vh - 380px)"}}>
+        <div className="overflow-auto h-full">
           <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="bg-slate-950/60 border-b border-slate-800 text-slate-400 font-extrabold text-xs uppercase tracking-wider">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-slate-950/95 border-b border-slate-800 text-slate-400 font-extrabold text-xs uppercase tracking-wider backdrop-blur">
                 <th className="px-6 py-4 font-extrabold">OR Number</th>
                 <th className="px-6 py-4 font-extrabold">Property TDN</th>
                 <th className="px-6 py-4 font-extrabold">Collected By</th>
