@@ -163,15 +163,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </div>
           </div>
 
-          <div className="flex items-center gap-3 px-2 py-3 rounded-xl mb-2">
-            <div className="w-8 h-8 bg-slate-800 rounded-full flex items-center justify-center text-slate-300 font-black text-sm uppercase">
-              {user?.username?.substring(0, 2)}
-            </div>
-            <div className="overflow-hidden">
-              <p className="font-bold text-sm text-white truncate">{user?.username}</p>
-              <p className="text-[10px] text-slate-500 uppercase tracking-wider font-extrabold">{user?.role}</p>
-            </div>
-          </div>
           <button
             onClick={handleLogout}
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 font-bold text-xs uppercase tracking-wider rounded-xl transition-colors border border-red-500/20"
