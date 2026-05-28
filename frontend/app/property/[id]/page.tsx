@@ -8,7 +8,6 @@ import {
   Calendar, ChevronRight, Copy, Check, Home,
 } from "lucide-react";
 import Link from "next/link";
-import Image from "next/image";
 import { useToast } from "../../components/ToastProvider";
 
 /* ─── Design tokens (matched from reference screenshot) ─────────────────── */
@@ -123,12 +122,12 @@ export default function PropertyDetail() {
       {/* ── HERO ─────────────────────────────────────────────────────────── */}
       <div className="relative overflow-hidden" style={{background:C.heroBg}}>
 
-        {/* Municipal Hall photo — right side, faded */}
-        <div className="absolute inset-0 flex justify-end pointer-events-none">
-          <div className="relative w-1/2 h-full opacity-25">
-            <Image src="/municipal-hall.jpg" alt="" fill className="object-cover object-right" priority />
-            <div className="absolute inset-0" style={{background:"linear-gradient(to right,#0a1628 0%,#0a162880 50%,transparent 100%)"}} />
-          </div>
+        {/* Teal glow orbs for depth */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          <div className="absolute top-0 right-0 w-96 h-96 rounded-full opacity-10"
+            style={{background:"radial-gradient(circle,#367588 0%,transparent 70%)",transform:"translate(30%,-30%)"}} />
+          <div className="absolute bottom-0 left-1/4 w-64 h-64 rounded-full opacity-8"
+            style={{background:"radial-gradient(circle,#1a7a8a 0%,transparent 70%)",transform:"translateY(40%)"}} />
         </div>
 
         {/* Dot grid */}
