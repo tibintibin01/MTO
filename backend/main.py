@@ -1,7 +1,5 @@
 import os
-import sys
 from contextlib import asynccontextmanager
-from typing import List, Optional
 
 try:
     import sentry_sdk
@@ -20,7 +18,6 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from utils.config import config as mto_config
 from utils.resilience import CircuitBreaker
 from utils.metrics import MetricsManager
 from utils.logger import mto_logger
@@ -171,6 +168,55 @@ async def security_headers_middleware(request: Request, call_next):
         "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
     )
     return response
+
+
+# ---------------------------------------------------------------------------
+# REQUEST BODY SIZE LIMIT MIDDLEWARE
+# ---------------------------------------------------------------------------
+# Rejects requests whose Content-Length exceeds the configured maximum.
+# Without this, a malicious client can send a multi-GB payload that exhausts
+# memory or blocks the event loop while the body is being read.
+#
+# Limits:
+#   /system/import/*  → 50 MB  (bulk Excel imports can be large)
+#   everything else   → 10 MB  (generous for JSON payloads)
+#
+# Note: This checks Content-Length only. Chunked-encoded requests without
+# a Content-Length header are not blocked here — uvicorn's own limits apply.
+# ---------------------------------------------------------------------------
+
+_BODY_LIMIT_DEFAULT = 10 * 1024 * 1024   # 10 MB
+_BODY_LIMIT_IMPORT  = 50 * 1024 * 1024   # 50 MB for bulk imports
+
+@app.middleware("http")
+async def request_body_size_middleware(request: Request, call_next):
+    """Rejects oversized request bodies before they reach route handlers."""
+    from fastapi.responses import JSONResponse as _JSONResponse
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            size = int(content_length)
+        except ValueError:
+            return _JSONResponse(
+                status_code=400,
+                content={"code": "VALIDATION_ERROR", "detail": "Invalid Content-Length header."},
+            )
+
+        path = request.url.path
+        limit = _BODY_LIMIT_IMPORT if path.startswith("/system/import") else _BODY_LIMIT_DEFAULT
+
+        if size > limit:
+            limit_mb = limit // (1024 * 1024)
+            return _JSONResponse(
+                status_code=413,
+                content={
+                    "code": "PAYLOAD_TOO_LARGE",
+                    "detail": f"Request body exceeds the {limit_mb} MB limit for this endpoint.",
+                },
+            )
+
+    return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -342,9 +388,6 @@ async def idempotency_middleware(request: Request, call_next):
 
     # Key is new — process the request and cache the response.
     # Re-inject the consumed body bytes so the route handler can read them.
-    from starlette.datastructures import Headers
-    from starlette.types import Scope, Receive, Send
-    import io
 
     async def receive_with_body():
         return {"type": "http.request", "body": body_bytes, "more_body": False}
@@ -642,36 +685,9 @@ async def root():
     return {"message": "Municipal Revenue System API is running", "status": "online"}
 
 
-@app.get("/readyz", tags=["Health"])
-async def readyz():
-    """
-    Lightweight liveness probe for Kubernetes.
-
-    Returns 200 immediately if the process is alive — no DB check.
-    K8s uses this to decide whether to restart the container (liveness).
-    Use /healthz for the readiness probe (checks DB, workers, storage).
-
-    Intentionally kept dependency-free so it never fails due to a DB outage
-    — a DB outage should trigger readiness failure, not a container restart.
-    """
-    return {"status": "alive"}
-
-@app.get("/api/v1/version")
-async def api_version():
-    """
-    Returns the current API version and build info.
-    The desktop client calls this on startup to detect version mismatches
-    between the client app and the server.
-    """
-    import platform
-    return {
-        "api_version": API_VERSION,
-        "min_client_version": API_MIN_CLIENT_VERSION,
-        "app_name": "MTO Treasury System",
-        "app_version": "2.1.0",
-        "python_version": platform.python_version(),
-        "status": "online",
-    }
+# NOTE: /readyz and /api/v1/version are now defined in backend/routes/health.py
+# and registered via app.include_router(system.router) above.
+# They are intentionally removed here to avoid duplicate route registration.
 
 if __name__ == "__main__":
     import uvicorn

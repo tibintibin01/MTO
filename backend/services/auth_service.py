@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from backend.models import User, RefreshToken, AuditLog
-from backend.database import SessionLocal, engine
-from utils import log_error_to_file, hash_password, is_password_hashed, verify_password, needs_rehash
+from utils import log_error_to_file, hash_password, verify_password, needs_rehash
 from datetime import datetime, timedelta, timezone
 
 from functools import wraps

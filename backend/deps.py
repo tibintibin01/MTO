@@ -5,7 +5,8 @@ from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+import jwt as _pyjwt
+from jwt.exceptions import InvalidTokenError as JWTError  # noqa: F401 — re-exported for callers
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -293,7 +294,7 @@ async def get_current_user(request: Request, token: Optional[str] = None, db_ses
         raise credentials_exception
 
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = _pyjwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: int = payload.get("id")
         username: str = payload.get("sub")
         role: str = payload.get("role")
@@ -435,5 +436,5 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     # Embed issued-at (iat) so get_current_user can reject tokens issued
     # before a password change even within the 1-hour expiry window.
     to_encode.update({"exp": expire, "iat": now})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = _pyjwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt

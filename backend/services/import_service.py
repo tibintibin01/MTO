@@ -130,7 +130,7 @@ def validate_property_import(file_content, file_extension, db_session: Session =
                     if val < 0:
                         errors.append("Assessed Value cannot be negative")
                 except Exception as e:
-                    mto_logger.warning("Error parsing assessed value: %s", e)
+                    mto_logger.warning(f"Error parsing assessed value: {e}")
                     errors.append("Invalid numeric format for Assessed Value")
 
             status = "❌ ERROR" if errors else "✅ VALID"
@@ -209,6 +209,7 @@ def validate_assessment_import(file_content, file_extension, db_session: Session
 
         results = []
         rows_to_import = []
+        seen_tds = set()
         
         # Get existing TD numbers to determine INSERT vs UPDATE
         existing_tds = {r[0] for r in db_session.query(Property.td_number).all()}
@@ -220,6 +221,10 @@ def validate_assessment_import(file_content, file_extension, db_session: Session
             
             if not td: errors.append("Missing TD Number")
             if not owner: errors.append("Missing Owner Name")
+            if td:
+                if td in seen_tds:
+                    errors.append(f"Duplicate TD Number in import file: {td}")
+                seen_tds.add(td)
             
             val = DataCleanser.to_float(row.get(found_cols.get("assessed_value")))
                 
@@ -315,13 +320,13 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                 "message": msg
             })
         except Exception as e:
-            mto_logger.warning("Failed to broadcast import progress: %s", e)
+            mto_logger.warning(f"Failed to broadcast import progress: {e}")
 
     import asyncio
     try:
         loop = asyncio.get_event_loop()
     except Exception as e:
-        mto_logger.debug("No active event loop found, creating new loop: %s", e)
+        mto_logger.info(f"No active event loop found, creating new loop: {e}")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     
@@ -330,11 +335,22 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
     failed = 0
     failed_rows = []
     total = len(data_list)
+    seen_tds = set()
     
     try:
         for i, row in enumerate(data_list):
             try:
                 td = row["td_number"]
+                if td in seen_tds:
+                    failed += 1
+                    failed_rows.append({
+                        "row": i + 2,
+                        "td_number": td,
+                        "reason": f"Duplicate TD Number in import file: {td}",
+                    })
+                    continue
+                seen_tds.add(td)
+
                 prop = db_session.query(Property).filter(Property.td_number == td).first()
                 
                 if prop:
@@ -388,7 +404,7 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                             loop
                         )
                     except Exception as prog_err:
-                        mto_logger.warning("Failed to submit progress update: %s", prog_err)
+                        mto_logger.warning(f"Failed to submit progress update: {prog_err}")
 
             except Exception as row_err:
                 # Roll back only the current flush group, not the whole batch
@@ -400,8 +416,8 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                     "reason": str(row_err)[:200],
                 })
                 mto_logger.warning(
-                    "Assessment import row %d failed (TD: %s): %s",
-                    i + 2, row.get("td_number", "?"), row_err
+                    f"Assessment import row {i + 2} failed "
+                    f"(TD: {row.get('td_number', '?')}): {row_err}"
                 )
         
         log_action(user, f"Wizard Assessment Import: {inserted} new, {updated} updated, {failed} failed.", db_session=db_session)
@@ -409,7 +425,7 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
         return {"inserted": inserted, "updated": updated, "failed": failed, "failed_rows": failed_rows[:20]}
     except Exception as e:
         db_session.rollback()
-        mto_logger.error("commit_assessment_import failed: %s", e, exc_info=True)
+        mto_logger.error(f"commit_assessment_import failed: {e}")
         raise
 
 def commit_property_import(data_list, user, db_session: Session = None):
@@ -428,13 +444,13 @@ def commit_property_import(data_list, user, db_session: Session = None):
                 "message": msg
             })
         except Exception as e:
-            mto_logger.warning("Failed to broadcast import progress: %s", e)
+            mto_logger.warning(f"Failed to broadcast import progress: {e}")
 
     import asyncio
     try:
         loop = asyncio.get_event_loop()
     except Exception as e:
-        mto_logger.debug("No active event loop found, creating new loop: %s", e)
+        mto_logger.info(f"No active event loop found, creating new loop: {e}")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     
@@ -463,14 +479,14 @@ def commit_property_import(data_list, user, db_session: Session = None):
                         loop
                     )
                 except Exception as e:
-                    mto_logger.warning("Failed to submit progress update: %s", e)
+                    mto_logger.warning(f"Failed to submit progress update: {e}")
         
         log_action(user, f"Bulk imported {count} property records.", db_session=db_session)
         db_session.commit()
         return count
     except Exception as e:
         db_session.rollback()
-        mto_logger.error("commit_property_import failed: %s", e, exc_info=True)
+        mto_logger.error(f"commit_property_import failed: {e}")
         raise
 
 def import_assessment_roll_from_excel(file_path, user, db_session: Session = None):
@@ -536,7 +552,7 @@ def import_assessment_roll_from_excel(file_path, user, db_session: Session = Non
                     try:
                         val = float(row.get(found_cols["VALUE"], 0))
                     except Exception as e:
-                        mto_logger.warning("Error parsing value for TD %s: %s", td, e)
+                        mto_logger.warning(f"Error parsing value for TD {td}: {e}")
                         val = 0.0
                     
                     lot_val = str(row.get(found_cols["LOT"], "")).strip() if found_cols["LOT"] else ""
@@ -854,7 +870,7 @@ def commit_payment_import(data_list, user, db_session: Session = None):
                 skipped += 1
                 reason = f"OR {row.get('or_number', '?')}: {str(row_err)[:120]}"
                 skip_reasons.append(reason)
-                mto_logger.warning("Payment import skipped row: %s", reason)
+                mto_logger.warning(f"Payment import skipped row: {reason}")
 
         log_action(
             user,
@@ -867,7 +883,7 @@ def commit_payment_import(data_list, user, db_session: Session = None):
             from backend.services.stats_service import refresh_system_stats
             refresh_system_stats(db_session=db_session)
         except Exception as e:
-            mto_logger.warning("Stats refresh failed after payment import: %s", e)
+            mto_logger.warning(f"Stats refresh failed after payment import: {e}")
 
         return {
             "inserted": inserted,
@@ -877,7 +893,7 @@ def commit_payment_import(data_list, user, db_session: Session = None):
 
     except Exception as e:
         db_session.rollback()
-        mto_logger.error("commit_payment_import failed: %s", e, exc_info=True)
+        mto_logger.error(f"commit_payment_import failed: {e}")
         raise
         raise
 
@@ -904,7 +920,7 @@ def save_import_cache(data: list) -> str | None:
             json.dump(data, f, ensure_ascii=False)
         return token
     except OSError as e:
-        mto_logger.error("save_import_cache: failed to write cache file: %s", e)
+        mto_logger.error(f"save_import_cache: failed to write cache file: {e}")
         return None
 
 def load_import_cache(token: str) -> Optional[list]:
@@ -927,10 +943,10 @@ def load_import_cache(token: str) -> Optional[list]:
         try:
             os.remove(file_path)
         except Exception as e:
-            mto_logger.warning("Failed to delete import cache file %s: %s", file_path, e)
+            mto_logger.warning(f"Failed to delete import cache file {file_path}: {e}")
         return data
     except Exception as e:
-        mto_logger.error("Failed to load import cache for token %s: %s", token, e)
+        mto_logger.error(f"Failed to load import cache for token {token}: {e}")
         return None
 
 def prune_old_import_cache(max_age_seconds: int = 3600):

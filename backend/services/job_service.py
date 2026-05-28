@@ -38,7 +38,7 @@ import threading
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any  # noqa: F401 — reserved for future typed job payloads
 
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, DisconnectionError
@@ -83,6 +83,7 @@ SLOW_JOB_TYPES = frozenset({
     "import_commit",
     "sync_billing_years",
     "retention_run",
+    "accrue_penalties",   # Monthly penalty accrual for delinquent accounts
 })
 
 ALL_JOB_TYPES = FAST_JOB_TYPES | SLOW_JOB_TYPES
@@ -265,6 +266,8 @@ def _run_job(job: Job):
             _handle_sync_billing_years(job, payload)
         elif job.job_type == "retention_run":
             _handle_retention_run(job, payload)
+        elif job.job_type == "accrue_penalties":
+            _handle_accrue_penalties(job, payload)
         else:
             raise ValueError(f"Unknown job type: {job.job_type}")
 
@@ -335,6 +338,106 @@ def _handle_retention_run(job: Job, payload: dict):
                 completed_at=datetime.now(timezone.utc),
                 progress=100,
                 progress_message=summary)
+
+
+def _handle_accrue_penalties(job: Job, payload: dict):
+    """
+    Monthly penalty accrual for all delinquent PropertyBilling records.
+
+    For each active property billing row where:
+      - tax_year < current year (prior year, not yet settled)
+      - amount_paid < (assessed_value * total_rate)  (still has a balance)
+
+    Adds 2% of the outstanding balance to the penalty column.
+    This ensures the delinquency dashboard always shows current penalty
+    amounts without requiring a manual computation trigger.
+
+    dry_run=True → computes totals but writes nothing to the DB.
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+    from backend.models import PropertyBilling, TaxPolicy
+
+    dry_run = payload.get("dry_run", False)
+    _update_job(job.id, progress=5, progress_message="Starting penalty accrual...")
+
+    updated = 0
+    skipped = 0
+    total_penalty_added = Decimal("0.00")
+
+    with SessionLocal() as db:
+        current_year = datetime.now(timezone.utc).year
+
+        # Fetch all prior-year billing rows that still have a balance
+        rows = (
+            db.query(PropertyBilling)
+            .filter(
+                PropertyBilling.tax_year < current_year,
+                PropertyBilling.is_archived == False,
+            )
+            .all()
+        )
+
+        _update_job(job.id, progress=20,
+                    progress_message=f"Scanning {len(rows)} billing rows...")
+
+        # Cache tax policies to avoid N+1 queries
+        policies = {
+            p.tax_year: p
+            for p in db.query(TaxPolicy).all()
+        }
+
+        for billing in rows:
+            policy = policies.get(billing.tax_year)
+            basic_rate   = Decimal(str(policy.basic_rate))   if policy else Decimal("0.01")
+            sef_rate     = Decimal(str(policy.sef_rate))     if policy else Decimal("0.01")
+            penalty_rate = Decimal(str(policy.penalty_rate)) if policy else Decimal("0.02")
+
+            av = Decimal(str(billing.assessed_value or 0))
+            total_tax = (av * (basic_rate + sef_rate)).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            amount_paid = Decimal(str(billing.amount_paid or 0))
+            current_penalty = Decimal(str(billing.penalty or 0))
+
+            # Outstanding balance before this accrual
+            balance = total_tax - amount_paid
+            if balance <= 0:
+                skipped += 1
+                continue
+
+            # Accrue one month's penalty on the outstanding balance
+            new_penalty_increment = (balance * penalty_rate).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+
+            if not dry_run:
+                billing.penalty = current_penalty + new_penalty_increment
+
+            total_penalty_added += new_penalty_increment
+            updated += 1
+
+        if not dry_run and updated > 0:
+            db.commit()
+
+    summary = (
+        f"{'DRY RUN — ' if dry_run else ''}"
+        f"Penalty accrual: {updated} rows updated, {skipped} skipped (no balance). "
+        f"Total penalty added: ₱{total_penalty_added:,.2f}"
+    )
+    mto_logger.info(summary, job_id=job.id[:8])
+    _update_job(
+        job.id,
+        status="COMPLETED",
+        result=json.dumps({
+            "dry_run": dry_run,
+            "rows_updated": updated,
+            "rows_skipped": skipped,
+            "total_penalty_added": float(total_penalty_added),
+        }),
+        completed_at=datetime.now(timezone.utc),
+        progress=100,
+        progress_message=summary,
+    )
 
 
 def _handle_backup(job: Job, payload: dict):
@@ -566,6 +669,52 @@ def _check_scheduled_backup():
 
     except Exception as e:
         mto_logger.error("Scheduled backup check failed: %s", e)
+
+
+def _check_monthly_penalty_accrual():
+    """
+    Submits a penalty accrual job on the 1st of each month at 00:05 local time.
+
+    Penalties accrue monthly per RA 7160 (Local Government Code) — 2% per month
+    on the outstanding balance. Without this job, penalty amounts only update
+    when a cashier manually triggers a computation. This job ensures the
+    delinquency dashboard always shows current, accurate penalty totals.
+
+    Idempotency: checks the jobs table for a completed accrual job this month
+    before submitting. Safe to call every 5 minutes.
+    """
+    now = datetime.now()
+
+    # Only run on the 1st of the month, between 00:05 and 00:10
+    if now.day != 1:
+        return
+    if not (0 == now.hour and 5 <= now.minute < 10):
+        return
+
+    try:
+        from backend.models import Job
+        # Month window: from midnight on the 1st to now
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        with SessionLocal() as db:
+            already_ran = db.query(Job).filter(
+                Job.job_type == "accrue_penalties",
+                Job.status.in_(["PENDING", "RUNNING", "COMPLETED"]),
+                Job.created_at >= month_start,
+            ).first()
+
+            if already_ran:
+                return
+
+        job_id = submit_job(job_type="accrue_penalties", submitted_by="system:scheduler",
+                            payload={"dry_run": False})
+        mto_logger.info(
+            "Monthly penalty accrual job submitted for %s-%02d: job %s",
+            now.year, now.month, job_id[:8],
+        )
+
+    except Exception as e:
+        mto_logger.error("Monthly penalty accrual check failed: %s", e)
 
 
 def _recover_stale_jobs():
@@ -818,12 +967,58 @@ def start_worker():
             time.sleep(300)
             _recover_stale_jobs()
             _check_scheduled_backup()
+            _cleanup_expired_idempotency_keys()
+            _check_monthly_penalty_accrual()
 
     threading.Thread(target=maintenance_loop, daemon=True, name="JobMaintenance").start()
 
     mto_logger.info(
         f"Job worker pools started: {FAST_POOL_SIZE} fast + {SLOW_POOL_SIZE} slow threads."
     )
+
+
+def _cleanup_expired_idempotency_keys() -> None:
+    """
+    Deletes idempotency_keys rows whose expires_at has passed.
+
+    Called every 5 minutes by the maintenance thread. Without this, the
+    table grows unbounded — every POST/PUT with an X-Idempotency-Key header
+    adds a row that is never removed.
+
+    Deletes in batches of 500 to avoid long-running DELETE statements that
+    could lock the table and block concurrent payment operations.
+    """
+    try:
+        with SessionLocal() as db:
+            now = datetime.now(timezone.utc)
+            total_deleted = 0
+            while True:
+                # Batch delete — find expired key IDs first, then delete by PK
+                # to avoid a full table scan on the DELETE itself.
+                rows = db.execute(text(
+                    "SELECT id FROM idempotency_keys "
+                    "WHERE expires_at < :now LIMIT 500"
+                ), {"now": now}).fetchall()
+
+                if not rows:
+                    break
+
+                ids = [r[0] for r in rows]
+                db.execute(text(
+                    "DELETE FROM idempotency_keys WHERE id IN :ids"
+                ), {"ids": tuple(ids)})
+                db.commit()
+                total_deleted += len(ids)
+
+                if len(ids) < 500:
+                    break  # No more expired rows
+
+            if total_deleted > 0:
+                mto_logger.info(
+                    f"Idempotency key cleanup: {total_deleted} expired keys deleted."
+                )
+    except Exception as e:
+        mto_logger.warning(f"Idempotency key cleanup failed (non-fatal): {e}")
 
 
 def stop_worker():

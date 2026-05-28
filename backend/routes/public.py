@@ -1,9 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.models import Property, Payment
-from typing import List, Optional
 from datetime import datetime
 from backend.deps import limiter
 import re

@@ -1,16 +1,11 @@
-import os
-import sys
 from datetime import datetime, timezone
-from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, status
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 
 import backend.services.property_service as prop_svc
 import backend.services.billing_service as bill_svc
-import backend.services.payment_service as pay_svc
-
-import backend.services.system_service as sys_svc
 from backend.deps import get_current_user, write_access, admin_only, limiter, user_limiter, get_db, Session
 from backend.schemas import PropertySaveSchema, BulkUpdateBarangaySchema
 from utils.logger import mto_logger
@@ -166,6 +161,8 @@ async def update_property(
         if not res:
             raise HTTPException(status_code=400, detail="Failed to update property")
         return res
+    except HTTPException:
+        raise
     except Exception as e:
         if getattr(e, "is_sync_conflict", False):
             return JSONResponse(

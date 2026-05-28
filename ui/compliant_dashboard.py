@@ -40,6 +40,7 @@ class CompliantDashboardPage:
         self._summary = []
         self._selected_barangay = "ALL"
         self._all_rows: list = []
+        self._prop_resize_job = None
 
         self.container = ctk.CTkFrame(parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
@@ -318,12 +319,15 @@ class CompliantDashboardPage:
 
         self._prop_tree.tag_configure("oddrow",  background=_ROW_ODD,  foreground=_ROW_FG)
         self._prop_tree.tag_configure("evenrow", background=_ROW_EVEN, foreground=_ROW_FG)
+        self._prop_tree.tag_configure("filler_odd",  background=_ROW_ODD, foreground=_ROW_ODD)
+        self._prop_tree.tag_configure("filler_even", background=_ROW_EVEN, foreground=_ROW_EVEN)
 
         # Fill the empty space below data rows with the same dark background
         # so the white gap doesn't appear when there are fewer rows than the
         # visible height of the widget.
         style.configure("Compliant.Treeview", rowheight=34)
         self._prop_tree.configure(style="Compliant.Treeview")
+        self._prop_tree.bind("<Configure>", self._on_prop_tree_resize)
 
     # ── Data loading ──────────────────────────────────────────────────────────
 
@@ -409,6 +413,8 @@ class CompliantDashboardPage:
             display[8] = r[8] if r[8] and str(r[8]) != "None" else "—"
             self._prop_tree.insert("", "end", values=display, tags=(tag,))
 
+        self._fill_prop_tree_background(len(rows))
+
         brgy = (
             "ALL COMPLIANT PROPERTIES"
             if self._selected_barangay == "ALL"
@@ -417,6 +423,35 @@ class CompliantDashboardPage:
         self._list_label.configure(text=f"{brgy}  ({len(rows)} shown)")
 
     # ── Barangay filter ───────────────────────────────────────────────────────
+
+    def _on_prop_tree_resize(self, event=None):
+        if self._prop_resize_job:
+            self.container.after_cancel(self._prop_resize_job)
+        self._prop_resize_job = self.container.after(80, self._run_prop_tree_resize)
+
+    def _run_prop_tree_resize(self):
+        self._prop_resize_job = None
+        self._apply_search()
+
+    def _fill_prop_tree_background(self, real_row_count):
+        rowheight = 34
+        header_allowance = 28
+        visible_rows = max(0, (self._prop_tree.winfo_height() - header_allowance) // rowheight)
+        if visible_rows <= 1:
+            visible_rows = 18
+
+        filler_count = max(0, visible_rows - real_row_count)
+        blank_values = ("",) * len(self._prop_tree["columns"])
+        for i in range(filler_count):
+            row_index = real_row_count + i
+            tag = "filler_even" if row_index % 2 == 0 else "filler_odd"
+            self._prop_tree.insert(
+                "",
+                "end",
+                iid=f"__filler_{i}",
+                values=blank_values,
+                tags=(tag,),
+            )
 
     def _on_barangay_select(self, event=None):
         sel = self._sum_tree.selection()

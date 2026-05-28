@@ -630,7 +630,6 @@ def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 
 
     try:
         from backend.models import Payment, PaymentBilling
-        from utils.db_compat import year_of
 
         year_filter = str(report_year) if report_year else None
 
@@ -672,7 +671,7 @@ def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 
         # 2. Total Collected per barangay — sum payments where date_paid falls
         # within the selected year range. Uses cast to Date for reliable comparison
         # and explicitly excludes NULL date_paid rows.
-        from sqlalchemy import cast, Integer as SAInteger
+        from sqlalchemy import cast
         from datetime import date as pydate
 
         coll_query = (

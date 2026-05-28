@@ -1,15 +1,10 @@
 from datetime import datetime, timezone
 import re
-from sqlalchemy import or_, and_, func, case, cast
-from sqlalchemy.types import Date
+from sqlalchemy import or_, and_, func, case
 from sqlalchemy.orm import Session
 from backend.models import Property, PropertyBilling, PaymentBilling, Payment, TaxPolicy
-from backend.database import SessionLocal
 from decimal import Decimal, ROUND_HALF_UP
 from utils.db_compat import greatest, year_of, month_of
-
-
-from utils.logger import mto_logger
 
 def sync_property_billing(
 

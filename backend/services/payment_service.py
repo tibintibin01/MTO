@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 import re
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from backend.database import SessionLocal
 from backend.models import ReceiptHistory
-from sqlalchemy import or_, and_, func, cast
+from sqlalchemy import or_, func, cast
 from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
 from backend.models import Payment, Property, PropertyBilling, PaymentBilling
 from backend.services.auth_service import get_username, require_permission
 from backend.services.billing_service import format_tax_years, normalize_date_input
-from utils.db_compat import date_trunc, year_of, month_of, today
+from utils.db_compat import year_of, month_of, today
 
 
 def _d(value) -> Decimal:

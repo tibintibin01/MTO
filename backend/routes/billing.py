@@ -325,3 +325,244 @@ async def serve_analytics_dashboard():
     if not os.path.exists(html_path):
         raise HTTPException(status_code=404, detail="Analytics dashboard file not found.")
     return FileResponse(html_path, media_type="text/html")
+
+
+# ---------------------------------------------------------------------------
+# Excel Export — for COA auditors and management reporting
+# ---------------------------------------------------------------------------
+
+class ExportReportRequest(BaseModel):
+    month: str = "All"
+    year: str = "All"
+    report_type: str = "collections"   # collections | delinquents | assessment_roll
+
+
+@router.post("/billing/export/excel", tags=["Reports"])
+async def export_billing_excel(
+    data: ExportReportRequest,
+    current_user: dict = Depends(read_only),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Exports billing/collection data as an Excel (.xlsx) file.
+
+    report_type values:
+      collections     — payment report details (filtered by month/year)
+      delinquents     — all properties with outstanding balances
+      assessment_roll — full assessment roll with billing summary
+
+    Returns the file directly as a download. openpyxl is already in
+    requirements.txt so no new dependency is needed.
+
+    COA auditors need Excel, not PDFs — this endpoint closes that gap.
+    """
+    import io
+    import asyncio
+    from datetime import datetime, timezone
+    from fastapi.responses import StreamingResponse
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    def _build_workbook() -> bytes:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+
+        # ── Shared styles ────────────────────────────────────────────────────
+        header_font  = Font(bold=True, color="FFFFFF", size=11)
+        header_fill  = PatternFill("solid", fgColor="1F4E78")
+        title_font   = Font(bold=True, size=13)
+        center_align = Alignment(horizontal="center", vertical="center")
+        right_align  = Alignment(horizontal="right")
+        thin_border  = Border(
+            left=Side(style="thin"), right=Side(style="thin"),
+            top=Side(style="thin"), bottom=Side(style="thin"),
+        )
+        currency_fmt = '#,##0.00'
+        date_str     = datetime.now(timezone.utc).strftime("%B %d, %Y %I:%M %p UTC")
+
+        def style_header_row(ws, row_num: int, col_count: int):
+            for col in range(1, col_count + 1):
+                cell = ws.cell(row=row_num, column=col)
+                cell.font   = header_font
+                cell.fill   = header_fill
+                cell.alignment = center_align
+                cell.border = thin_border
+
+        def auto_width(ws):
+            for col in ws.columns:
+                max_len = max((len(str(c.value or "")) for c in col), default=10)
+                ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 4, 50)
+
+        # ── Report: Collections ───────────────────────────────────────────────
+        if data.report_type == "collections":
+            ws.title = "Collections"
+            ws["A1"] = "MUNICIPAL TREASURY OFFICE — COLLECTION REPORT"
+            ws["A1"].font = title_font
+            ws["A2"] = f"Period: {data.month} / {data.year}    Generated: {date_str}"
+            ws["A2"].font = Font(italic=True, size=10)
+            ws.merge_cells("A1:I1")
+            ws.merge_cells("A2:I2")
+            ws["A1"].alignment = center_align
+            ws["A2"].alignment = center_align
+
+            headers = ["TD Number", "Owner Name", "Barangay", "Tax Year",
+                       "OR Number", "Date Paid", "Basic", "SEF", "Total Paid"]
+            for col_idx, h in enumerate(headers, 1):
+                ws.cell(row=4, column=col_idx, value=h)
+            style_header_row(ws, 4, len(headers))
+
+            rows = bill_svc.get_report_details(
+                data.month, data.year, limit=10000, cursor=None, db_session=db_session
+            )
+            if isinstance(rows, dict) and "items" in rows:
+                rows = rows["items"]
+
+            total_basic = total_sef = total_paid = 0.0
+            for row_idx, row in enumerate(rows or [], start=5):
+                if isinstance(row, dict):
+                    vals = [
+                        row.get("td_number", ""), row.get("owner_name", ""),
+                        row.get("barangay", ""), row.get("tax_year", ""),
+                        row.get("or_number", ""), row.get("date_paid", ""),
+                        float(row.get("basic_amount", 0) or 0),
+                        float(row.get("sef_amount", 0) or 0),
+                        float(row.get("amount_paid", 0) or 0),
+                    ]
+                else:
+                    vals = list(row) + [""] * max(0, 9 - len(row))
+
+                for col_idx, val in enumerate(vals, 1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                    cell.border = thin_border
+                    if col_idx >= 7:
+                        cell.number_format = currency_fmt
+                        cell.alignment = right_align
+
+                if len(vals) >= 9:
+                    total_basic += float(vals[6] or 0)
+                    total_sef   += float(vals[7] or 0)
+                    total_paid  += float(vals[8] or 0)
+
+            # Totals row
+            total_row = len(rows or []) + 5
+            ws.cell(row=total_row, column=6, value="TOTAL").font = Font(bold=True)
+            for col_idx, total in [(7, total_basic), (8, total_sef), (9, total_paid)]:
+                cell = ws.cell(row=total_row, column=col_idx, value=total)
+                cell.font = Font(bold=True)
+                cell.number_format = currency_fmt
+                cell.alignment = right_align
+
+        # ── Report: Delinquents ───────────────────────────────────────────────
+        elif data.report_type == "delinquents":
+            ws.title = "Delinquent Accounts"
+            ws["A1"] = "MUNICIPAL TREASURY OFFICE — DELINQUENT ACCOUNTS"
+            ws["A1"].font = title_font
+            ws["A2"] = f"Generated: {date_str}"
+            ws["A2"].font = Font(italic=True, size=10)
+            ws.merge_cells("A1:G1")
+            ws.merge_cells("A2:G2")
+            ws["A1"].alignment = center_align
+
+            headers = ["TD Number", "Owner Name", "Location", "Total Due", "Total Paid", "Balance", "Status"]
+            for col_idx, h in enumerate(headers, 1):
+                ws.cell(row=4, column=col_idx, value=h)
+            style_header_row(ws, 4, len(headers))
+
+            result = bill_svc.get_delinquent_accounts(limit=10000, cursor=None, db_session=db_session)
+            items = result.get("items", []) if isinstance(result, dict) else result
+
+            total_balance = 0.0
+            for row_idx, item in enumerate(items or [], start=5):
+                if isinstance(item, dict):
+                    balance = float(item.get("balance", 0) or 0)
+                    vals = [
+                        item.get("td_number", ""), item.get("owner_name", ""),
+                        item.get("location", ""),
+                        float(item.get("total_due", 0) or 0),
+                        float(item.get("total_paid", 0) or 0),
+                        balance,
+                        "DELINQUENT" if balance > 0 else "SETTLED",
+                    ]
+                else:
+                    vals = list(item) + [""] * max(0, 7 - len(item))
+
+                for col_idx, val in enumerate(vals, 1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                    cell.border = thin_border
+                    if col_idx in (4, 5, 6):
+                        cell.number_format = currency_fmt
+                        cell.alignment = right_align
+
+                total_balance += float(vals[5] or 0)
+
+            total_row = len(items or []) + 5
+            ws.cell(row=total_row, column=5, value="TOTAL BALANCE").font = Font(bold=True)
+            cell = ws.cell(row=total_row, column=6, value=total_balance)
+            cell.font = Font(bold=True)
+            cell.number_format = currency_fmt
+            cell.alignment = right_align
+
+        # ── Report: Assessment Roll ───────────────────────────────────────────
+        else:
+            ws.title = "Assessment Roll"
+            ws["A1"] = "MUNICIPAL TREASURY OFFICE — ASSESSMENT ROLL"
+            ws["A1"].font = title_font
+            ws["A2"] = f"Generated: {date_str}"
+            ws["A2"].font = Font(italic=True, size=10)
+            ws.merge_cells("A1:F1")
+            ws.merge_cells("A2:F2")
+            ws["A1"].alignment = center_align
+
+            headers = ["TD Number", "Owner Name", "Barangay", "Kind of Property",
+                       "Assessed Value", "Tax Year"]
+            for col_idx, h in enumerate(headers, 1):
+                ws.cell(row=4, column=col_idx, value=h)
+            style_header_row(ws, 4, len(headers))
+
+            result = prop_svc.get_assessment_roll(limit=10000, cursor=None, db_session=db_session)
+            items = result.get("items", []) if isinstance(result, dict) else result
+
+            for row_idx, item in enumerate(items or [], start=5):
+                if isinstance(item, dict):
+                    vals = [
+                        item.get("td_number", ""), item.get("owner_name", ""),
+                        item.get("barangay", ""), item.get("kind_of_property", ""),
+                        float(item.get("assessed_value", 0) or 0),
+                        item.get("tax_year", ""),
+                    ]
+                else:
+                    vals = list(item) + [""] * max(0, 6 - len(item))
+
+                for col_idx, val in enumerate(vals, 1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                    cell.border = thin_border
+                    if col_idx == 5:
+                        cell.number_format = currency_fmt
+                        cell.alignment = right_align
+
+        auto_width(ws)
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf.read()
+
+    # Run the CPU-bound workbook build in a thread to avoid blocking the event loop
+    excel_bytes = await asyncio.to_thread(_build_workbook)
+
+    report_label = data.report_type.replace("_", "-")
+    period_label = f"{data.month}-{data.year}" if data.report_type == "collections" else "all"
+    filename = f"MTO_{report_label}_{period_label}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.xlsx"
+
+    mto_logger.info(
+        f"Excel export generated: {filename}",
+        user=current_user.get("username"),
+        report_type=data.report_type,
+    )
+
+    return StreamingResponse(
+        io.BytesIO(excel_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

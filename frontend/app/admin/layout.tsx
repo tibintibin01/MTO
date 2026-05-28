@@ -33,21 +33,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       return;
     }
 
-    const verifyAuth = async () => {
+    // The Edge middleware (middleware.ts) already guards all /admin/* routes
+    // and redirects unauthenticated users to /admin/login before React renders.
+    // We only need to fetch the user's display data here — not re-validate auth.
+    const fetchUser = async () => {
       try {
         const res = await fetch("/api/v1/me");
         if (!res.ok) {
-          // Use router.push for client-side navigation — no full page reload
+          // Token present but invalid/expired — middleware missed it (cookie presence
+          // check only). Let the server redirect handle it.
           router.push("/admin/login");
           return;
         }
         const data = await res.json();
         setUser(data);
-        // Store in sessionStorage, not localStorage.
-        // localStorage persists across browser sessions and is readable by any
-        // script on the page — an XSS attack can exfiltrate the user's role.
-        // sessionStorage is cleared when the tab closes and is scoped to the tab.
-        // We only store non-sensitive display data (username, role) — never tokens.
+        // Store non-sensitive display data in sessionStorage (cleared on tab close).
+        // Never store tokens here — they live in the httpOnly cookie only.
         sessionStorage.setItem("mto_user", JSON.stringify({ username: data.username, role: data.role }));
         setLoading(false);
       } catch {
@@ -55,7 +56,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       }
     };
 
-    verifyAuth();
+    fetchUser();
   }, [pathname, router]);
 
   const handleLogout = async () => {
