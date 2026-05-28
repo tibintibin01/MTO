@@ -146,7 +146,8 @@ export default function PropertyDetail() {
           style={{backgroundImage:"radial-gradient(circle,#ffffff 1px,transparent 1px)",backgroundSize:"28px 28px"}} />
 
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-6">
-          <Link href="/" className="inline-flex items-center gap-1.5 text-white/50 hover:text-white/90 text-sm mb-5 transition-colors">
+          <Link href="/" className="inline-flex items-center gap-1.5 text-sm mb-5 transition-colors px-4 py-2 rounded-full"
+            style={{background:"rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.85)", backdropFilter:"blur(8px)"}}>
             <ArrowLeft className="w-4 h-4" /> Back to Search
           </Link>
 
@@ -187,16 +188,17 @@ export default function PropertyDetail() {
               </p>
             </div>
 
-            {/* Property Details card — white */}
-            <div className="lg:col-span-4 rounded-2xl p-5 shadow-lg" style={{background:C.detailCard}}>
+            {/* Property Details card — solid white with shadow */}
+            <div className="lg:col-span-4 rounded-2xl p-5 shadow-xl" style={{background:"#ffffff"}}>
               <div className="flex items-center gap-2 mb-4">
-                <FileText className="w-4 h-4" style={{color:C.teal}} />
-                <span className="text-slate-500 text-xs font-bold uppercase tracking-widest">Property Details</span>
+                <FileText className="w-4 h-4" style={{color:"#1a3a8f"}} />
+                <span className="font-bold text-slate-700 text-sm">Property Details</span>
               </div>
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{background:"#e8f4f7"}}>
-                    <Building2 className="w-4 h-4" style={{color:C.teal}} />
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{background:"#eef2ff"}}>
+                    <Building2 className="w-4 h-4" style={{color:"#1a3a8f"}} />
                   </div>
                   <div>
                     <p className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Owner</p>
@@ -204,8 +206,9 @@ export default function PropertyDetail() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{background:"#e8f4f7"}}>
-                    <MapPin className="w-4 h-4" style={{color:C.teal}} />
+                  <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{background:"#eef2ff"}}>
+                    <MapPin className="w-4 h-4" style={{color:"#1a3a8f"}} />
                   </div>
                   <div>
                     <p className="text-slate-400 text-[10px] uppercase tracking-wider font-semibold">Location</p>
@@ -215,18 +218,23 @@ export default function PropertyDetail() {
               </div>
             </div>
 
-            {/* Assessed Value card — teal gradient */}
-            <div className="lg:col-span-3 rounded-2xl p-5 text-white shadow-lg" style={{background:C.assessCard}}>
-              <div className="flex items-center gap-2 mb-3">
-                <Home className="w-4 h-4 text-white/60" />
-                <span className="text-white/60 text-xs font-bold uppercase tracking-widest">Assessed Value</span>
+            {/* Assessed Value card — teal gradient with faint house icon */}
+            <div className="lg:col-span-3 rounded-2xl p-5 text-white shadow-xl relative overflow-hidden"
+              style={{background:"linear-gradient(135deg,#1a7a8a 0%,#0d5f6e 100%)"}}>
+              {/* Faint house watermark */}
+              <div className="absolute bottom-2 right-3 opacity-10 text-8xl select-none pointer-events-none">🏠</div>
+              <div className="relative">
+                <div className="flex items-center gap-2 mb-3">
+                  <Home className="w-4 h-4 text-white/60" />
+                  <span className="text-white/60 text-xs font-bold uppercase tracking-widest">Assessed Value</span>
+                </div>
+                <p className="text-3xl font-black leading-tight">
+                  ₱{data.assessed_value.toLocaleString("en-PH",{minimumFractionDigits:2})}
+                </p>
+                <span className="inline-flex items-center gap-1.5 bg-white/15 border border-white/20 px-2.5 py-1 rounded-full mt-3 text-xs font-bold text-white/80 uppercase">
+                  <Home className="w-3 h-3" /> {data.kind}
+                </span>
               </div>
-              <p className="text-3xl font-black leading-tight">
-                ₱{data.assessed_value.toLocaleString("en-PH",{minimumFractionDigits:2})}
-              </p>
-              <span className="inline-flex items-center gap-1.5 bg-white/15 border border-white/20 px-2.5 py-1 rounded-full mt-3 text-xs font-bold text-white/80 uppercase">
-                <Home className="w-3 h-3" /> {data.kind}
-              </span>
             </div>
 
           </div>
