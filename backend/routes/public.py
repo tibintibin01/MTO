@@ -60,11 +60,14 @@ def search_property_public(query: str, request: Request, db_session: Session = D
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found.")
 
-    # Determine status using billing balance — same logic as the delinquency dashboard.
-    # A property is UPDATED only if total_paid >= total_due across ALL billing years.
+    # Determine status using billing balance.
+    # Only count billing years from DATA_START_YEAR (2023) onwards —
+    # prior years may have been paid before the system was set up and
+    # we have no records to verify them.
     from backend.models import PropertyBilling, Payment
     from sqlalchemy import func
 
+    DATA_START_YEAR = 2023
     TOTAL_RATE = 0.02  # default 1% basic + 1% SEF
 
     billing_summary = db_session.query(
@@ -74,7 +77,10 @@ def search_property_public(query: str, request: Request, db_session: Session = D
             - PropertyBilling.discount
         ), 0).label("total_due"),
         func.coalesce(func.sum(PropertyBilling.amount_paid), 0).label("total_paid_billing"),
-    ).filter(PropertyBilling.property_id == prop.id).first()
+    ).filter(
+        PropertyBilling.property_id == prop.id,
+        PropertyBilling.tax_year >= DATA_START_YEAR,
+    ).first()
 
     total_due = float(billing_summary.total_due or 0)
 
