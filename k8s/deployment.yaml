@@ -24,15 +24,10 @@ spec:
         image: mto-treasury:latest
         imagePullPolicy: IfNotPresent
         ports:
-        - containerPort: 8000
+        - containerPort: 8001
           name: http
 
-        # Non-secret configuration from ConfigMap
-        envFrom:
-        - configMapRef:
-            name: mto-config
-
-        # Secrets injected as environment variables from a K8s Secret.
+        # Non-secret configuration from ConfigMap, and secrets from K8s Secret.
         # Create the secret before deploying:
         #   kubectl create secret generic mto-secrets \
         #     --from-literal=MTO_JWT_SECRET=<value> \
@@ -53,15 +48,15 @@ spec:
             cpu: "200m"
             memory: "256Mi"
 
-        # Liveness probe — restarts the container if the app is deadlocked
-        # or has crashed. Uses /healthz which checks DB connectivity, cache,
-        # storage, and vault — not just "is the process running".
-        # The root endpoint (/) only returns {"message": "...online"} and
-        # does not verify any dependencies are healthy.
+        # Liveness probe — restarts the container only if the process itself
+        # is deadlocked or unresponsive. Uses /readyz which is dependency-free
+        # (no DB check) so a DB outage does NOT trigger a container restart —
+        # it should trigger readiness failure instead, keeping the pod alive
+        # to recover when the DB comes back.
         livenessProbe:
           httpGet:
-            path: /healthz
-            port: 8000
+            path: /readyz
+            port: 8001
           initialDelaySeconds: 20
           periodSeconds: 30
           failureThreshold: 3
@@ -76,7 +71,7 @@ spec:
         readinessProbe:
           httpGet:
             path: /healthz
-            port: 8000
+            port: 8001
           initialDelaySeconds: 10
           periodSeconds: 10
           failureThreshold: 3
@@ -93,6 +88,6 @@ spec:
   ports:
     - protocol: TCP
       port: 80
-      targetPort: 8000
+      targetPort: 8001
       name: http
   type: LoadBalancer

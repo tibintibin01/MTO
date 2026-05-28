@@ -86,9 +86,12 @@ def get_assessment_roll():
     return api_request("GET", "/billing/assessment-roll")
 
 
-def get_report_details(month="All", year="All"):
+def get_report_details(month="All", year="All", limit=100, cursor=None):
+    params = {"month": month, "year": year, "limit": limit}
+    if cursor is not None:
+        params["cursor"] = cursor
     result = api_request(
-        "GET", "/billing/report-details", params={"month": month, "year": year}
+        "GET", "/billing/report-details", params=params
     )
     # Backend now returns {"items": [...], "next_cursor": ..., "has_more": ..., "count": ...}
     if isinstance(result, dict) and "items" in result:
@@ -139,4 +142,44 @@ def download_statement_pdf(property_id):
 def download_notice_pdf(property_id):
     """Triggers the download of a delinquency notice PDF and returns the local path."""
     return api_download_file("GET", f"/properties/{property_id}/notice-pdf")
+
+
+def get_compliant_accounts(barangay=None, limit=100):
+    """
+    Returns properties with zero outstanding balance across all billing years.
+    Optionally filtered by barangay.
+    Returns a flat list of tuples for the treeview:
+      (id, td_number, owner_name, barangay, kind, total_paid, years_covered, last_or, last_paid)
+    """
+    params = {"limit": limit}
+    if barangay and barangay != "ALL":
+        params["barangay"] = barangay
+
+    result = api_request("GET", "/billing/compliant", params=params)
+    if isinstance(result, dict) and "items" in result:
+        return [
+            (
+                item.get("id"),
+                item.get("td_number"),
+                item.get("owner_name"),
+                item.get("barangay", "—"),
+                item.get("kind_of_property", "—"),
+                item.get("total_paid", 0),
+                item.get("years_covered", 0),
+                item.get("last_or") or "—",
+                item.get("last_paid") or "—",
+            )
+            for item in result["items"]
+        ]
+    return []
+
+
+def get_compliant_summary():
+    """
+    Returns per-barangay compliance summary.
+    Each item: {barangay, total_properties, compliant_count, delinquent_count,
+                compliance_rate, collected_from_compliant}
+    """
+    result = api_request("GET", "/billing/compliant/summary")
+    return result if isinstance(result, list) else []
 

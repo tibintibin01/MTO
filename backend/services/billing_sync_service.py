@@ -145,16 +145,25 @@ def sync_billing_years(
             )
 
             assessed = Decimal(str(prop.assessed_value or 0))
-            basic = (assessed * Decimal("0.01")).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
-            sef = basic  # SEF = 1% same as basic
-            total_due = basic + sef  # 2% total, no penalty for new records
+
+            # Fetch tax policy rates per year — fall back to 1%+1% if not configured
+            from backend.models import TaxPolicy
 
             for year in range(start_year, current_year + 1):
                 if year in existing_years:
                     skipped += 1
                     continue
+
+                # Look up rate for this specific year
+                policy = db_session.query(TaxPolicy).filter(
+                    TaxPolicy.tax_year == year
+                ).first()
+                basic_rate = Decimal(str(policy.basic_rate)) if policy else Decimal("0.01")
+                sef_rate   = Decimal(str(policy.sef_rate))   if policy else Decimal("0.01")
+
+                basic = (assessed * basic_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                sef   = (assessed * sef_rate).quantize(Decimal("0.01"),   rounding=ROUND_HALF_UP)
+                total_due = basic + sef
 
                 if not dry_run:
                     billing = PropertyBilling(
@@ -162,9 +171,6 @@ def sync_billing_years(
                         tax_year=year,
                         assessed_value=assessed,
                         penalty=Decimal("0.00"),
-                        # Discount is intentionally 0 for new billing records.
-                        # Discounts are only applied at the time of payment posting,
-                        # not pre-emptively. A discount on an unpaid year is incorrect.
                         discount=Decimal("0.00"),
                         amount_paid=Decimal("0.00"),
                     )

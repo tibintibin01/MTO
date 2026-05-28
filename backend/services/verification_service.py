@@ -55,10 +55,20 @@ def perform_restore_test(file_path, db_session: Session = None):
     Verifies that the backup can actually be restored by performing
     a dry-run restore into a temporary validation database.
     """
-    # Create a safe temp name (sanitize filename to be a valid DB name)
+    # Create a safe temp name (sanitize filename to be a valid DB name).
+    # Only allow alphanumeric + underscore — no SQL injection possible.
     base_name = os.path.basename(file_path).split('.')[0]
     safe_name = "".join([c if c.isalnum() else "_" for c in base_name])
+    # Hard-cap length so the DB name stays within MariaDB's 64-char limit
+    safe_name = safe_name[:40]
     temp_db_name = f"mto_verify_{safe_name}"
+
+    # Validate the final name is safe before interpolating into SQL.
+    # This is a defence-in-depth check — safe_name construction above already
+    # guarantees only [a-zA-Z0-9_] characters, but we verify explicitly.
+    import re as _re
+    if not _re.fullmatch(r"[a-zA-Z0-9_]+", temp_db_name):
+        return False, f"Unsafe temp DB name generated: {temp_db_name!r}"
     
     mysql_path = DB_CONFIG.get("mysql_path", "mysql")
     db_user = DB_CONFIG["user"]

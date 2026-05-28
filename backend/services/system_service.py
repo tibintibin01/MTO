@@ -1,12 +1,11 @@
 import os
-import sys
 import subprocess
 from datetime import datetime, timedelta, timezone
 
 from utils.config import config as mto_config
 from utils.secrets_manager import secrets
-from backend.database import SessionLocal
-from sqlalchemy import or_, and_, func, cast
+from backend.database import engine
+from sqlalchemy import or_, func, cast
 from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
 from backend.models import Payment, Property, AuditLog, User

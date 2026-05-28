@@ -46,7 +46,13 @@ async def reset_user_password(
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db)
 ):
-    auth_svc.reset_user_password(user_id, data.new_password, current_user, db_session=db_session)
+    try:
+        auth_svc.reset_user_password(user_id, data.new_password, current_user, db_session=db_session)
+    except Exception as e:
+        # ValidationError from validate_password_complexity — return 422 with
+        # a clear message so the desktop client can show it to the admin.
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail=str(e))
     return {"status": "password_reset"}
 
 @router.delete("/{user_id}")

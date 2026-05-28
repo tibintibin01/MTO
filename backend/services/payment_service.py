@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 import re
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from backend.database import SessionLocal
 from backend.models import ReceiptHistory
-from sqlalchemy import or_, and_, func, cast
+from sqlalchemy import or_, func, cast
 from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
 from backend.models import Payment, Property, PropertyBilling, PaymentBilling
 from backend.services.auth_service import get_username, require_permission
 from backend.services.billing_service import format_tax_years, normalize_date_input
-from utils.db_compat import date_trunc, year_of, month_of, today
+from utils.db_compat import year_of, month_of, today
 
 
 def _d(value) -> Decimal:
@@ -165,10 +165,14 @@ def get_next_or_number(default_prefix="OR-", db_session: Session = None):
 
     or_num = f"{seq.prefix}{seq.next_value:0{seq.digits}d}"
 
-    # Increment and persist within the caller's transaction
+    # Increment within the caller's transaction — do NOT commit here.
+    # Committing mid-transaction would consume the OR number even if the
+    # payment fails afterward, creating gaps in the receipt sequence that
+    # COA auditors will flag. flush() makes the increment visible within
+    # the current transaction without releasing the row lock prematurely.
     seq.next_value += 1
     db_session.add(seq)
-    db_session.commit()
+    db_session.flush()
 
     return or_num
 
@@ -253,6 +257,9 @@ def get_unified_payment_history(term, db_session: Session = None):
         Payment.date_paid,
         Payment.or_number,
         Payment.tax_year,
+        # Basic and SEF are derived from assessed_value at the default 1% each.
+        # These are display-only columns on the ledger — the authoritative
+        # amounts are in PropertyBilling. Using 0.01 matches the TaxPolicy default.
         (Property.assessed_value * 0.01).label('basic'),
         (Property.assessed_value * 0.01).label('sef'),
         Payment.penalty,
@@ -285,6 +292,8 @@ def get_payment_ledger(td_number, db_session: Session = None):
         Payment.date_paid,
         Payment.or_number,
         Payment.tax_year,
+        # Display-only basic/SEF split at default 1% each.
+        # Authoritative amounts are in PropertyBilling.
         (Property.assessed_value * 0.01).label('basic'),
         (Property.assessed_value * 0.01).label('sef'),
         Payment.penalty,

@@ -4,7 +4,11 @@ pydantic==2.5.2
 sqlalchemy==2.0.23
 pymysql==1.1.0
 python-dotenv==1.0.0
-python-jose[cryptography]==3.3.0
+# Replaced python-jose (unmaintained, CVEs) with PyJWT + cryptography.
+# PyJWT is actively maintained, has no known CVEs, and the API is nearly
+# identical — jwt.encode/decode with the same HS256 algorithm.
+PyJWT==2.8.0
+cryptography==41.0.7
 bcrypt==4.2.1
 slowapi==0.1.8
 sentry-sdk[fastapi]==1.35.0

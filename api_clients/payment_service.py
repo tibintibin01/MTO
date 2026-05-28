@@ -76,3 +76,21 @@ def generate_receipt_pdf(payment_id) -> str:
     """
     from api_clients.api_helper import api_download_file
     return api_download_file("POST", f"/payments/{payment_id}/receipt-pdf")
+
+
+def batch_delete_preview(or_numbers: list):
+    """Preview which payments match the given OR numbers before deleting."""
+    return api_request("POST", "/payments/batch-delete/preview",
+                       data={"or_numbers": or_numbers})
+
+
+def batch_delete_preview_by_ids(payment_ids: list):
+    """Preview payments by exact Payment IDs — safer for targeting specific duplicates."""
+    return api_request("POST", "/payments/batch-delete/preview-by-ids",
+                       data={"payment_ids": payment_ids})
+
+
+def batch_delete_commit(payment_ids: list):
+    """Delete the confirmed payment IDs and reverse their billing balances."""
+    return api_request("POST", "/payments/batch-delete/commit",
+                       data={"payment_ids": payment_ids})

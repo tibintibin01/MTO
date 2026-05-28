@@ -9,7 +9,7 @@ The desktop app's progress bars and the WebSocket notification system both
 use these endpoints to show real-time feedback without blocking the UI.
 """
 
-from typing import List, Optional
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 

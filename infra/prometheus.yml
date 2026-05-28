@@ -1,8 +1,44 @@
 global:
   scrape_interval: 15s
+  evaluation_interval: 15s
 
 scrape_configs:
+  # ---------------------------------------------------------------------------
+  # WIN 10: MTO backend metrics — authenticated scrape.
+  #
+  # The /api/v1/metrics endpoint requires admin_only auth (see system.py).
+  # Prometheus must present a valid admin JWT as a Bearer token.
+  #
+  # How to generate the scrape token:
+  #   1. Log in as an admin user via POST /api/auth/login
+  #   2. Copy the access_token from the response
+  #   3. Store it in a file: echo "Bearer <token>" > /etc/prometheus/mto_token
+  #   4. Reference that file in bearer_token_file below
+  #
+  # In production (K8s), store the token in a Secret and mount it as a file:
+  #   kubectl create secret generic prometheus-mto-token \
+  #     --from-literal=token="Bearer <admin_jwt>"
+  #   Then mount at /etc/prometheus/mto_token in the Prometheus pod.
+  #
+  # Token rotation: admin JWTs expire after 1 hour. Use a long-lived service
+  # account token or a dedicated monitoring user with the 'viewer' role once
+  # the metrics endpoint is relaxed to allow viewer access.
+  # ---------------------------------------------------------------------------
   - job_name: 'mto-backend'
     metrics_path: '/api/v1/metrics'
+    scheme: http
+    authorization:
+      # Read the Bearer token from a file so it is never hardcoded in this config.
+      # The file must contain only the raw token value (no "Bearer " prefix —
+      # Prometheus adds that automatically when using the authorization block).
+      credentials_file: /etc/prometheus/mto_token
     static_configs:
       - targets: ['api:8001']
+        labels:
+          service: 'mto-backend'
+          environment: 'production'
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

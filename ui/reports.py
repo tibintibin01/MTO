@@ -86,8 +86,14 @@ class ReportsPage:
             font=ModernTheme.BUTTON, fg_color=ModernTheme.SUCCESS
         ).pack(side="left", padx=10)
 
+        # ── Pagination state ──────────────────────────────────────────────────
+        self._coll_page_size = 100
+        self._coll_cursors = [None]   # index 0 = first page cursor (None)
+        self._coll_page = 0
+        self._coll_has_more = False
+
         self.coll_table_fr = ctk.CTkFrame(self.collection_tab)
-        self.coll_table_fr.pack(fill="both", expand=True, padx=10, pady=10)
+        self.coll_table_fr.pack(fill="both", expand=True, padx=10, pady=(10, 0))
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -116,17 +122,63 @@ class ReportsPage:
             tr("reports.collection.table.amount"),
             tr("reports.collection.table.posted")
         )
-        self.coll_tree = ttk.Treeview(self.coll_table_fr, columns=cols, show="headings")
+
+        tree_container = tk.Frame(self.coll_table_fr, bg="#1e1e1e")
+        tree_container.pack(fill="both", expand=True)
+
+        scrolly = ttk.Scrollbar(tree_container, orient="vertical")
+        scrollx = ttk.Scrollbar(tree_container, orient="horizontal")
+        scrolly.pack(side="right", fill="y")
+        scrollx.pack(side="bottom", fill="x")
+
+        self.coll_tree = ttk.Treeview(
+            tree_container, columns=cols, show="headings",
+            yscrollcommand=scrolly.set, xscrollcommand=scrollx.set,
+        )
+        scrolly.configure(command=self.coll_tree.yview)
+        scrollx.configure(command=self.coll_tree.xview)
+
         for col in cols:
             self.coll_tree.heading(col, text=col.upper())
-            self.coll_tree.column(col, width=100, anchor="center")
-        self.coll_tree.pack(fill="both", expand=True)
+            self.coll_tree.column(col, width=110, anchor="center")
+        self.coll_tree.column(tr("reports.collection.table.owner"), width=180, anchor="w")
+        self.coll_tree.pack(side="left", fill="both", expand=True)
 
-        # Zebra Tags
-        self.coll_tree.tag_configure("oddrow", background="#2b2b2b", foreground="white")
-        self.coll_tree.tag_configure(
-            "evenrow", background="#333333", foreground="white"
+        self.coll_tree.tag_configure("oddrow",  background="#2b2b2b", foreground="white")
+        self.coll_tree.tag_configure("evenrow", background="#333333", foreground="white")
+
+        # ── Pagination bar ────────────────────────────────────────────────────
+        pag_fr = ctk.CTkFrame(self.collection_tab, fg_color="transparent")
+        pag_fr.pack(fill="x", padx=10, pady=(4, 10))
+
+        self._coll_prev_btn = ctk.CTkButton(
+            pag_fr, text="◀  PREVIOUS",
+            command=self._coll_prev_page,
+            width=120, height=32,
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SECONDARY,
+            hover_color=ModernTheme.SECONDARY_HOVER,
+            state="disabled",
         )
+        self._coll_prev_btn.pack(side="left", padx=(0, 8))
+
+        self._coll_page_lbl = ctk.CTkLabel(
+            pag_fr, text="Page 1",
+            font=("Inter", 11, "bold"),
+            text_color=ModernTheme.TEXT_GRAY,
+        )
+        self._coll_page_lbl.pack(side="left", expand=True)
+
+        self._coll_next_btn = ctk.CTkButton(
+            pag_fr, text="NEXT  ▶",
+            command=self._coll_next_page,
+            width=120, height=32,
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SECONDARY,
+            hover_color=ModernTheme.SECONDARY_HOVER,
+            state="disabled",
+        )
+        self._coll_next_btn.pack(side="right")
 
     def setup_receivables_tab(self):
         receiv_fr = ctk.CTkFrame(self.receivables_tab, fg_color="transparent")
@@ -261,13 +313,25 @@ class ReportsPage:
         self.brgy_total_lbl.pack(side="right", padx=30, pady=10)
 
     def generate_collection_report(self):
+        # Reset to page 1 on a new search
+        self._coll_cursors = [None]
+        self._coll_page = 0
+        self._coll_has_more = False
+        self._coll_load_page()
+
+    def _coll_load_page(self):
         month = self.month_cb.get()
         year = self.year_cb.get()
+        cursor = self._coll_cursors[self._coll_page]
         self._show_loading()
 
         def worker():
             try:
-                data = billing.get_report_details(month, year)
+                data = billing.get_report_details(
+                    month, year,
+                    limit=self._coll_page_size,
+                    cursor=cursor,
+                )
                 self.container.after(0, lambda: self._update_coll_table(data))
             except Exception as e:
                 self.container.after(
@@ -278,22 +342,63 @@ class ReportsPage:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _coll_next_page(self):
+        if self._coll_has_more:
+            self._coll_page += 1
+            self._coll_load_page()
+
+    def _coll_prev_page(self):
+        if self._coll_page > 0:
+            self._coll_page -= 1
+            self._coll_load_page()
+
     def _update_coll_table(self, data):
         for item in self.coll_tree.get_children():
             self.coll_tree.delete(item)
 
-        if not data:
-            ErrorDialog(self.parent.winfo_toplevel(), tr("reports.tabs.collection"), tr("reports.errors.no_collection"))
+        # data may be a dict with pagination info or a plain list (legacy)
+        if isinstance(data, dict):
+            items = data.get("items", [])
+            next_cursor = data.get("next_cursor")
+            has_more = data.get("has_more", False)
+        else:
+            items = data or []
+            next_cursor = None
+            has_more = False
+
+        if not items and self._coll_page == 0:
+            self._coll_page_lbl.configure(text="No results")
+            self._coll_prev_btn.configure(state="disabled")
+            self._coll_next_btn.configure(state="disabled")
             return
 
-        for i, row in enumerate(data):
-            # Format the amount (index 6)
+        # Store next cursor for the next page
+        self._coll_has_more = has_more
+        if has_more and next_cursor is not None:
+            if len(self._coll_cursors) <= self._coll_page + 1:
+                self._coll_cursors.append(next_cursor)
+            else:
+                self._coll_cursors[self._coll_page + 1] = next_cursor
+
+        for i, row in enumerate(items):
             formatted_row = list(row)
             if len(formatted_row) > 6:
                 formatted_row[6] = format_curr(formatted_row[6])
-
             tag = "evenrow" if i % 2 == 0 else "oddrow"
             self.coll_tree.insert("", "end", values=formatted_row, tags=(tag,))
+
+        # Update pagination controls
+        page_num = self._coll_page + 1
+        count = len(items)
+        self._coll_page_lbl.configure(
+            text=f"Page {page_num}  ·  {count} records shown"
+        )
+        self._coll_prev_btn.configure(
+            state="normal" if self._coll_page > 0 else "disabled"
+        )
+        self._coll_next_btn.configure(
+            state="normal" if has_more else "disabled"
+        )
 
     def generate_receivables_report(self):
         year = self.receiv_year_cb.get()

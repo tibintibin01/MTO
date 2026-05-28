@@ -90,6 +90,27 @@ class ModernChartWidget:
                 spine.set_color(ModernTheme.BORDER_DARK if ctk.get_appearance_mode().lower() == "dark" else ModernTheme.BORDER_LIGHT)
             self.ax.grid(True, axis="y", alpha=0.05)
 
+            # ── Format Y-axis as peso values — no scientific notation ─────────
+            import matplotlib.ticker as mticker
+
+            max_val = max(y_data) if y_data else 0
+            if max_val >= 1_000_000:
+                # Show as "₱1.2M"
+                self.ax.yaxis.set_major_formatter(
+                    mticker.FuncFormatter(lambda x, _: f"₱{x/1_000_000:.1f}M")
+                )
+            elif max_val >= 1_000:
+                # Show as "₱12,500"
+                self.ax.yaxis.set_major_formatter(
+                    mticker.FuncFormatter(lambda x, _: f"₱{x:,.0f}")
+                )
+            else:
+                self.ax.yaxis.set_major_formatter(
+                    mticker.FuncFormatter(lambda x, _: f"₱{x:.0f}")
+                )
+            # Prevent matplotlib from using offset/scientific notation
+            self.ax.ticklabel_format(style="plain", axis="y")
+
         self.figure.tight_layout()
         self.canvas.draw()
 
@@ -393,3 +414,155 @@ class SyncBadge(ctk.CTkFrame):
             self.label.configure(text=f"● {self.last_count} Pending", text_color="#f39c12")
         else:
             self.label.configure(text="● Synced", text_color="#2ecc71")
+
+
+def attach_autocomplete(entry: ctk.CTkEntry, values: list, variable: tk.StringVar):
+    """
+    Attaches autocomplete behaviour to an EXISTING CTkEntry.
+    No wrapper frame — works safely inside CTkScrollableFrame.
+
+    Usage:
+        var = tk.StringVar()
+        entry = ctk.CTkEntry(parent, textvariable=var, height=40)
+        entry.pack(fill="x", padx=10)
+        attach_autocomplete(entry, values=BARANGAY_LIST, variable=var)
+
+    Behaviour:
+        - Typing filters the list (prefix first, then contains, case-insensitive)
+        - ↓ arrow moves focus into the dropdown
+        - Enter / Tab selects the highlighted item
+        - Escape closes without selecting
+        - Click selects
+        - On blur: auto-completes if only one match remains
+    """
+    _state = {"win": None, "lb": None}
+
+    def _close():
+        if _state["win"]:
+            try:
+                _state["win"].destroy()
+            except Exception:
+                pass
+        _state["win"] = None
+        _state["lb"] = None
+
+    def _open(items):
+        _close()
+        entry.update_idletasks()
+        x = entry.winfo_rootx()
+        y = entry.winfo_rooty() + entry.winfo_height()
+        w = entry.winfo_width()
+        h = min(len(items), 8) * 28
+
+        win = tk.Toplevel(entry)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        win.configure(bg="#1e293b")
+
+        lb = tk.Listbox(
+            win, font=("Inter", 11),
+            bg="#1e293b", fg="#cbd5e1",
+            selectbackground="#1d4ed8", selectforeground="#ffffff",
+            activestyle="none", borderwidth=0,
+            highlightthickness=1, highlightcolor="#334155", relief="flat",
+        )
+        lb.pack(fill="both", expand=True)
+        for item in items:
+            lb.insert(tk.END, item)
+
+        def on_select(e=None):
+            sel = lb.curselection()
+            if sel:
+                val = lb.get(sel[0])
+                traces = variable.trace_info()
+                if traces:
+                    variable.trace_remove("write", traces[0][1])
+                variable.set(val)
+                variable.trace_add("write", on_type)
+            _close()
+            entry.focus_set()
+
+        lb.bind("<ButtonRelease-1>", on_select)
+        lb.bind("<Return>",          on_select)
+        lb.bind("<Tab>",             on_select)
+        lb.bind("<Escape>",          lambda e: _close())
+        lb.bind("<FocusOut>",        lambda e: entry.after(150, _close))
+        win.bind("<FocusOut>",       lambda e: entry.after(150, _close))
+
+        _state["win"] = win
+        _state["lb"] = lb
+
+    def on_type(*_):
+        term = variable.get().strip().upper()
+        if not term:
+            _close()
+            return
+        prefix   = [v for v in values if v.upper().startswith(term)]
+        contains = [v for v in values if not v.upper().startswith(term) and term in v.upper()]
+        matches = prefix + contains
+        if matches:
+            _open(matches)
+        else:
+            _close()
+
+    def on_focus_out(e=None):
+        entry.after(150, auto_complete_blur)
+
+    def auto_complete_blur():
+        term = variable.get().strip().upper()
+        matches = [v for v in values if v.upper().startswith(term)]
+        if len(matches) == 1:
+            traces = variable.trace_info()
+            if traces:
+                variable.trace_remove("write", traces[0][1])
+            variable.set(matches[0])
+            variable.trace_add("write", on_type)
+        _close()
+
+    def on_down(e=None):
+        lb = _state["lb"]
+        if lb and lb.size() > 0:
+            lb.focus_set()
+            lb.selection_set(0)
+            lb.activate(0)
+
+    def on_tab(e=None):
+        lb = _state["lb"]
+        if lb and lb.size() > 0:
+            lb.selection_set(0)
+            sel = lb.curselection()
+            if sel:
+                val = lb.get(sel[0])
+                traces = variable.trace_info()
+                if traces:
+                    variable.trace_remove("write", traces[0][1])
+                variable.set(val)
+                variable.trace_add("write", on_type)
+            _close()
+            entry.focus_set()
+
+    variable.trace_add("write", on_type)
+    entry.bind("<Down>",     on_down)
+    entry.bind("<Escape>",   lambda e: _close())
+    entry.bind("<FocusOut>", on_focus_out)
+    entry.bind("<Tab>",      on_tab)
+
+
+# Keep the class name as an alias so existing imports don't break,
+# but it now just wraps a plain CTkEntry + attach_autocomplete.
+class AutocompleteComboBox(ctk.CTkFrame):
+    """Thin shim — use attach_autocomplete() directly for new code."""
+    def __init__(self, parent, values, variable=None, height=40,
+                 placeholder="Type to search...", **kwargs):
+        super().__init__(parent, fg_color="transparent", height=height, **kwargs)
+        self.pack_propagate(False)
+        self._var = variable or tk.StringVar()
+        self._entry = ctk.CTkEntry(self, textvariable=self._var,
+                                   height=height, placeholder_text=placeholder)
+        self._entry.place(relx=0, rely=0, relwidth=1, relheight=1)
+        attach_autocomplete(self._entry, values, self._var)
+
+    def get(self): return self._var.get()
+    def set(self, v): self._var.set(v)
+    def bind(self, seq, func, add=None): self._entry.bind(seq, func, add)

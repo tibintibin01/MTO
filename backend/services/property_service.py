@@ -2,6 +2,7 @@
 import json
 from datetime import datetime, timezone
 from sqlalchemy import text, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment, AuditLog
 from backend.services.auth_service import get_username, require_permission
@@ -31,48 +32,108 @@ def search_properties(
     term, limit=100, cursor=None, kind=None, year_start=None, year_end=None, barangay=None, db_session: Session = None
 ):
     """
-    Enhanced search with optional filters using SQLAlchemy ORM.
+    Enhanced search with optional filters and fuzzy owner-name matching.
+
+    Search strategy:
+      - TD number / PIN (contains dashes or is all-digits): exact SQL match only.
+        Fuzzy matching on structured identifiers produces false positives.
+      - Owner name / location (contains letters, no dashes): SQL LIKE for
+        candidate retrieval, then Python-side fuzzy re-ranking using
+        difflib.SequenceMatcher. This catches typos, missing spaces, and
+        slight misspellings without any new dependencies.
+
+    Fuzzy threshold: 0.55 similarity ratio (0–1 scale).
+      - "dela crus" vs "DELA CRUZ"  → ~0.89 ✅
+      - "delacrus"  vs "DELA CRUZ"  → ~0.72 ✅
+      - "juan"      vs "JUAN DELA CRUZ" → ~0.44 ❌ (too short, use LIKE instead)
+    Results are sorted by similarity score descending so the best match
+    appears first.
     """
+    import difflib
+
     query = db_session.query(Property).filter(Property.deleted_at == None)
-    
+
+    # Determine search mode from the term
+    is_id_search = False
     if term:
         clean_term = str(term).strip()
         if " " in clean_term and not any(c.isalpha() for c in clean_term):
+            # Looks like a spaced TD number — convert spaces to dashes
             dashed_term = clean_term.replace(" ", "-")
             query = query.filter(
-                (Property.td_number == dashed_term) | 
+                (Property.td_number == dashed_term) |
                 (Property.pin == dashed_term) |
-                (Property.td_number.like(f"%{dashed_term}%")) | 
+                (Property.td_number.like(f"%{dashed_term}%")) |
                 (Property.pin.like(f"%{dashed_term}%"))
             )
+            is_id_search = True
         elif "-" in clean_term:
-            query = query.filter((Property.td_number == clean_term) | (Property.pin == clean_term))
+            # Structured TD number / PIN — exact match only
+            query = query.filter(
+                (Property.td_number == clean_term) | (Property.pin == clean_term)
+            )
+            is_id_search = True
         else:
+            # Name / location search — broad LIKE to pull candidates, then fuzzy-rank
             like_term = f"%{clean_term}%"
             query = query.filter(
-                (Property.td_number.like(like_term)) | 
-                (Property.owner_name.like(like_term)) | 
-                (Property.pin.like(like_term)) | 
+                (Property.td_number.like(like_term)) |
+                (Property.owner_name.like(like_term)) |
+                (Property.pin.like(like_term)) |
                 (Property.location.like(like_term))
             )
-    
+
     if kind and kind != "ALL":
         query = query.filter(Property.kind_of_property == kind)
-    
+
     if year_start:
         query = query.filter(Property.effectivity_date >= str(year_start))
-    
+
     if year_end:
         query = query.filter(Property.effectivity_date <= str(year_end))
-        
+
     if barangay and barangay != "ALL":
         query = query.filter(Property.barangay == barangay)
-        
+
     if cursor:
         query = query.filter(Property.id < int(cursor))
-        
-    results = query.order_by(Property.id.desc()).limit(limit).all()
-    
+
+    # Fetch a larger candidate pool when fuzzy matching will be applied so
+    # we have enough results to rank before trimming to the requested limit.
+    fetch_limit = limit if is_id_search or not term else min(limit * 4, 400)
+    results = query.order_by(Property.id.desc()).limit(fetch_limit).all()
+
+    # ── Fuzzy re-ranking for name searches ──────────────────────────────────
+    # Only apply when the term contains letters and is not a structured ID.
+    FUZZY_THRESHOLD = 0.55
+
+    if term and not is_id_search and any(c.isalpha() for c in str(term).strip()):
+        search_upper = str(term).strip().upper()
+
+        def _score(prop) -> float:
+            """
+            Returns the best similarity ratio across the searchable text fields.
+            Uses SequenceMatcher which handles insertions, deletions, and
+            substitutions — good for name typos and missing spaces.
+            """
+            candidates = [
+                prop.owner_name or "",
+                prop.location or "",
+                prop.td_number or "",
+            ]
+            return max(
+                difflib.SequenceMatcher(None, search_upper, c.upper()).ratio()
+                for c in candidates
+            )
+
+        scored = [(p, _score(p)) for p in results]
+        # Keep only results above the threshold, sorted best-first
+        scored = [(p, s) for p, s in scored if s >= FUZZY_THRESHOLD]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        results = [p for p, _ in scored[:limit]]
+    else:
+        results = results[:limit]
+
     return [
         (
             p.id, p.td_number, p.owner_name, p.payor_name, p.lot_number, p.area, p.location, p.kind_of_property,
@@ -131,8 +192,22 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
 
         # 3. Map Fields (Normalize)
         def _up(v): return str(v).strip().upper() if v else None
-        
-        prop.td_number = _up(data.get("TD Number", prop.td_number))
+
+        new_td_number = _up(data.get("TD Number", prop.td_number))
+        duplicate_query = db_session.query(Property).filter(Property.td_number == new_td_number)
+        if prop.id:
+            duplicate_query = duplicate_query.filter(Property.id != prop.id)
+        duplicate = duplicate_query.first()
+        if duplicate:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"TD Number {new_td_number} is already used by property "
+                    f"ID {duplicate.id}: {duplicate.owner_name}"
+                ),
+            )
+
+        prop.td_number = new_td_number
         prop.owner_name = _up(data.get("Owner Name", prop.owner_name))
         prop.payor_name = _up(data.get("Payor", prop.payor_name) or data.get("Owner Name", prop.owner_name))
         prop.lot_number = _up(data.get("Lot Number", prop.lot_number))
@@ -162,7 +237,16 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
         
         # 4. Log Change
         after_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
-        log_data_change(user["id"] if user else 0, "properties", prop.id, action, before=before_data, after=after_data)
+        log_data_change(
+            user["id"] if user else 0,
+            "properties",
+            prop.id,
+            action,
+            before=before_data,
+            after=after_data,
+            username=get_username(user) if user else "unknown",
+            db_session=db_session,
+        )
         
         # 5. Financial Sync
         _sync_financial_records(prop.id, data, db_session)
@@ -176,8 +260,13 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
 
     except Exception as e:
         db_session.rollback()
-        if isinstance(e, (ValidationError, SyncConflictError)):
+        if isinstance(e, (HTTPException, ValidationError, SyncConflictError)):
             raise
+        if isinstance(e, IntegrityError) and "uq_properties_td_number" in str(e):
+            raise HTTPException(
+                status_code=409,
+                detail="TD Number is already used by another property.",
+            )
         raise HTTPException(status_code=500, detail=f"Save failed: {str(e)}")
 
 
@@ -242,6 +331,8 @@ def _sync_financial_records(prop_id, data, db_session: Session):
         pay_obj.tax_year = tax_year_str
         pay_obj.posted_by = posted_by
         pay_obj.payor_name = payor_name
+        pay_obj.penalty = pen    # store penalty on Payment record
+        pay_obj.discount = disc  # store discount on Payment record
         
         db_session.flush() # Get payment_id
         billing.sync_payment_billings(None, pay_obj.id, allocated, db_session=db_session)
@@ -336,18 +427,82 @@ def restore_property(property_id, user=None, db_session: Session = None):
 
 @require_permission("property_delete")
 def purge_property(property_id, user=None, db_session: Session = None):
-    """Permanently deletes a property from the database."""
+    """
+    Permanently deletes a property and ALL its child records from the database.
+
+    Deletion order matters — FK constraints with RESTRICT must be satisfied:
+      1. payment_billings  (FK → payments.id CASCADE, but delete explicitly first)
+      2. receipt_history   (FK → properties.id RESTRICT)
+      3. property_assessment_history (FK → properties.id RESTRICT)
+      4. property_billings (FK → properties.id RESTRICT)
+      5. payments          (FK → properties.id RESTRICT)
+      6. property          (the record itself)
+    """
+    from backend.models import (
+        PaymentBilling, ReceiptHistory, PropertyAssessmentHistory
+    )
+
     prop = db_session.query(Property).filter(Property.id == property_id).first()
     if not prop:
         return 0
-        
+
     full_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
 
-    # Delete associated billings and payments first
-    db_session.query(PropertyBilling).filter(PropertyBilling.property_id == property_id).delete()
-    db_session.query(Payment).filter(Payment.property_id == property_id).delete()
-    db_session.delete(prop)
-    db_session.commit()
+    try:
+        # 1. payment_billings — must go before payments
+        payment_ids = [
+            r[0] for r in db_session.query(Payment.id)
+            .filter(Payment.property_id == property_id).all()
+        ]
+        if payment_ids:
+            db_session.query(PaymentBilling).filter(
+                PaymentBilling.payment_id.in_(payment_ids)
+            ).delete(synchronize_session=False)
+
+        # 2. receipt_history
+        db_session.query(ReceiptHistory).filter(
+            ReceiptHistory.property_id == property_id
+        ).delete(synchronize_session=False)
+
+        # 3. property_assessment_history
+        db_session.query(PropertyAssessmentHistory).filter(
+            PropertyAssessmentHistory.property_id == property_id
+        ).delete(synchronize_session=False)
+
+        # 4. property_billings
+        db_session.query(PropertyBilling).filter(
+            PropertyBilling.property_id == property_id
+        ).delete(synchronize_session=False)
+
+        # 5. payments
+        db_session.query(Payment).filter(
+            Payment.property_id == property_id
+        ).delete(synchronize_session=False)
+
+        # 6. the property itself
+        db_session.delete(prop)
+        db_session.flush()
+
+        # Audit log
+        if user:
+            from backend.services.history_service import log_data_change
+            log_data_change(
+                user_id=user.get("id") if isinstance(user, dict) else 0,
+                username=get_username(user),
+                table_name="properties",
+                record_id=property_id,
+                action="PURGE",
+                before=full_data,
+                after=None,
+                db_session=db_session,
+            )
+
+        db_session.commit()
+        return 1
+
+    except Exception:
+        db_session.rollback()
+        raise
 
     if user:
         from backend.services.history_service import log_data_change
@@ -382,9 +537,11 @@ def bulk_update_barangay(property_ids, new_barangay, user=None, db_session: Sess
     """Updates the barangay for multiple properties at once."""
     if not property_ids or not new_barangay:
         return 0
-        count = db_session.query(Property).filter(Property.id.in_(property_ids)).update({Property.barangay: new_barangay}, synchronize_session=False)
+    count = db_session.query(Property).filter(Property.id.in_(property_ids)).update(
+        {Property.barangay: new_barangay}, synchronize_session=False
+    )
     db_session.commit()
-    
+
     if count and user:
         from backend.services.history_service import log_data_change
         log_data_change(
@@ -473,17 +630,28 @@ def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 
 
     try:
         from backend.models import Payment, PaymentBilling
-        from utils.db_compat import year_of
 
         year_filter = str(report_year) if report_year else None
 
         # 1. Total Due per barangay — sum all billing records up to report_year
+        # Join TaxPolicy per billing year so the rate reflects any policy changes.
+        # Uses COALESCE to fall back to 1%+1%=2% if no policy row exists for a year.
+        from backend.models import TaxPolicy as _TaxPolicy
+        tp_alias = db_session.query(_TaxPolicy).subquery()
+
         due_query = (
             db_session.query(
                 func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
                 func.sum(PropertyBilling.assessed_value).label("total_assessed"),
                 func.sum(
-                    (PropertyBilling.assessed_value * 0.02)
+                    (PropertyBilling.assessed_value *
+                     func.coalesce(
+                         db_session.query(_TaxPolicy.basic_rate + _TaxPolicy.sef_rate)
+                         .filter(_TaxPolicy.tax_year == PropertyBilling.tax_year)
+                         .correlate(PropertyBilling)
+                         .scalar_subquery(),
+                         0.02
+                     ))
                     + PropertyBilling.penalty
                     - PropertyBilling.discount
                 ).label("total_due"),
@@ -503,7 +671,7 @@ def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 
         # 2. Total Collected per barangay — sum payments where date_paid falls
         # within the selected year range. Uses cast to Date for reliable comparison
         # and explicitly excludes NULL date_paid rows.
-        from sqlalchemy import cast, Integer as SAInteger
+        from sqlalchemy import cast
         from datetime import date as pydate
 
         coll_query = (

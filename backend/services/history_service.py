@@ -83,7 +83,11 @@ def log_data_change(user_id: int, table_name: str, record_id: int, action: str,
         db_session.commit()
         return True
     except Exception as e:
-        print(f"FAILED TO LOG AUDIT DATA: {e}")
+        from utils.logger import mto_logger
+        mto_logger.error(
+            f"CRITICAL: Failed to write audit log — action={action}, "
+            f"table={table_name}, record_id={record_id}, user={username}: {e}"
+        )
         return False
 
 

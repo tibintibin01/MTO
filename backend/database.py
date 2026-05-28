@@ -1,6 +1,5 @@
 from sqlalchemy import create_engine, text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from utils.config import config as mto_config
 from utils.secrets_manager import secrets
 
@@ -13,6 +12,12 @@ engine = create_engine(
     pool_recycle=1800,
     pool_pre_ping=True
 )
+
+# SQLAlchemy 2.0 style base class.
+# declarative_base() from sqlalchemy.ext.declarative is deprecated since 2.0
+# and will be removed in a future version. DeclarativeBase is the replacement.
+class Base(DeclarativeBase):
+    pass
 
 from sqlalchemy import event
 from utils.logger import mto_logger
@@ -30,14 +35,37 @@ def checkout(dbapi_connection, connection_record, connection_proxy):
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-Base = declarative_base()
-
 def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+def dispose_and_reconnect() -> bool:
+    """
+    Invalidates all pooled connections and verifies the DB is reachable.
+
+    Called by the job worker after detecting an OperationalError (DB outage,
+    network blip, MariaDB restart). pool_pre_ping=True catches stale
+    connections on checkout, but under certain failure modes (mid-query
+    disconnect) the pool can still hold broken connections that pre_ping
+    misses. Calling engine.dispose() forces every thread to open a fresh
+    connection on its next request.
+
+    Returns True if the DB is reachable after disposal, False otherwise.
+    """
+    try:
+        engine.dispose()
+        # Verify the DB is actually back before returning True
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        mto_logger.info("DB pool disposed and reconnected successfully.")
+        return True
+    except Exception as e:
+        mto_logger.warning(f"DB pool dispose/reconnect failed: {e}")
+        return False
 
 
 def wait_for_db(max_attempts: int = 10, base_delay: float = 2.0) -> bool:

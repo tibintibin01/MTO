@@ -90,43 +90,76 @@ class ImportWizardModal(ctk.CTkToplevel):
             
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Import.Treeview", 
-                        rowheight=35, 
+        style.configure("Import.Treeview",
+                        rowheight=35,
                         font=ModernTheme.BODY,
                         background="#1e1e1e",
                         fieldbackground="#1e1e1e",
                         foreground="white")
-        style.configure("Import.Treeview.Heading", 
+        style.configure("Import.Treeview.Heading",
                         font=ModernTheme.BODY_BOLD,
                         background="#333333",
                         foreground="white")
-        
-        self.tree = ttk.Treeview(table_fr, columns=cols, show="headings", style="Import.Treeview")
 
+        # ── Layout: scrollbars packed BEFORE the treeview ────────────────────
+        # Pack order matters in tkinter: side="bottom" scrollbar must be packed
+        # before side="left" treeview, otherwise the treeview expands over it.
+        scrolly = ttk.Scrollbar(table_fr, orient="vertical")
+        scrollx = ttk.Scrollbar(table_fr, orient="horizontal")
+        scrolly.pack(side="right", fill="y")
+        scrollx.pack(side="bottom", fill="x")   # ← must come before tree.pack
+
+        self.tree = ttk.Treeview(
+            table_fr, columns=cols, show="headings",
+            style="Import.Treeview",
+            yscrollcommand=scrolly.set,
+            xscrollcommand=scrollx.set,
+        )
+        scrolly.configure(command=self.tree.yview)
+        scrollx.configure(command=self.tree.xview)
+
+        # Column widths — wide enough to show full content without truncation
+        if self.mode == "payments":
+            col_widths = {
+                "ROW":          55,
+                "TD NUMBER":    130,
+                "SYSTEM OWNER": 200,
+                "OR NUMBER":    100,
+                "YEAR":          70,
+                "TOTAL":         90,
+                "PENALTY":       80,
+                "DISCOUNT":      80,
+                "STATUS":        90,
+                "MESSAGE":      320,
+            }
+        else:
+            col_widths = {
+                "ROW":       55,
+                "TD NUMBER": 130,
+                "OWNER":     180,
+                "LOT":       100,
+                "ACTION":     80,
+                "STATUS":     90,
+                "MESSAGE":   280,
+            }
 
         for col in cols:
             self.tree.heading(col, text=col)
-            self.tree.column(col, anchor="center", width=80)
-        
-        if self.mode == "payments":
-            self.tree.column("SYSTEM OWNER", width=150, anchor="w")
-            self.tree.column("MESSAGE", width=250, anchor="w")
-        else:
-            self.tree.column("MESSAGE", width=250, anchor="w")
-            self.tree.column("OWNER", width=120, anchor="w")
-            self.tree.column("LOT", width=100, anchor="w")
+            self.tree.column(col, anchor="center",
+                             width=col_widths.get(col, 80),
+                             minwidth=50)
 
-        self.tree.tag_configure("ERROR", background="#ffdada", foreground="black")
-        self.tree.tag_configure("VALID", background="#eaffea", foreground="black")
+        # Left-align text-heavy columns
+        for col in ("SYSTEM OWNER", "OWNER", "MESSAGE"):
+            if col in cols:
+                self.tree.column(col, anchor="w")
+
+        self.tree.tag_configure("ERROR",    background="#ffdada", foreground="black")
+        self.tree.tag_configure("VALID",    background="#eaffea", foreground="black")
         self.tree.tag_configure("CONFLICT", background="#fff4d1", foreground="black")
-        
-        scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview)
-        scrollx = ttk.Scrollbar(table_fr, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=scrolly.set, xscrollcommand=scrollx.set)
-        
-        scrolly.pack(side="right", fill="y")
-        scrollx.pack(side="bottom", fill="x")
-        self.tree.pack(side="left", fill="both", expand=True, padx=5, pady=5)
+        self.tree.tag_configure("WARNING",  background="#fff4d1", foreground="black")
+
+        self.tree.pack(side="left", fill="both", expand=True, padx=(5, 0), pady=5)
 
         
         # Fill table
@@ -212,15 +245,115 @@ class ImportWizardModal(ctk.CTkToplevel):
         if not self.validated_data:
             messagebox.showwarning("No Data", "No valid rows found to import.")
             return
-            
-        msg = f"Are you sure you want to import {len(self.validated_data)} {'payment' if self.mode == 'payments' else 'property'} records into the system?"
-        
-        self.grab_release()
-        confirmed = messagebox.askyesno("Confirm Import", msg, parent=self)
-        if not confirmed:
-            self.grab_set()
+
+        count = len(self.validated_data)
+        record_type = "payment" if self.mode == "payments" else "property"
+
+        # ── Premium confirmation dialog ───────────────────────────────────────
+        confirmed = tk.BooleanVar(value=False)
+
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("")
+        dlg.resizable(False, False)
+        dlg.overrideredirect(True)
+        dlg.attributes("-topmost", True)
+        dlg.grab_set()
+
+        dlg.update_idletasks()
+        dw, dh = 420, 260
+        sw = dlg.winfo_screenwidth()
+        sh = dlg.winfo_screenheight()
+        dlg.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
+
+        outer = ctk.CTkFrame(
+            dlg,
+            fg_color="#0f172a",
+            corner_radius=16,
+            border_width=1,
+            border_color="#1e3a5f",
+        )
+        outer.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Blue accent bar
+        ctk.CTkFrame(outer, height=5, fg_color="#1d4ed8", corner_radius=0).pack(fill="x")
+
+        # Icon
+        icon_fr = ctk.CTkFrame(
+            outer, width=56, height=56, corner_radius=28,
+            fg_color="#1e3a5f",
+            border_width=2, border_color="#3b82f6",
+        )
+        icon_fr.pack(pady=(20, 0))
+        icon_fr.pack_propagate(False)
+        ctk.CTkLabel(
+            icon_fr, text="📥",
+            font=("Segoe UI Emoji", 22),
+            text_color="#60a5fa",
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        # Title
+        ctk.CTkLabel(
+            outer,
+            text="Confirm Import",
+            font=("Inter", 15, "bold"),
+            text_color="#f1f5f9",
+        ).pack(pady=(10, 2))
+
+        # Message
+        ctk.CTkLabel(
+            outer,
+            text=f"You are about to import  {count:,}  {record_type} records\ninto the system. This action cannot be undone.",
+            font=("Inter", 11),
+            text_color="#94a3b8",
+            justify="center",
+        ).pack(pady=(0, 4))
+
+        # Divider
+        ctk.CTkFrame(outer, height=1, fg_color="#1e293b").pack(fill="x", padx=20, pady=(10, 0))
+
+        # Buttons
+        btn_fr = ctk.CTkFrame(outer, fg_color="transparent")
+        btn_fr.pack(pady=14)
+
+        def on_cancel():
+            confirmed.set(False)
+            dlg.grab_release()
+            dlg.destroy()
+
+        def on_confirm():
+            confirmed.set(True)
+            dlg.grab_release()
+            dlg.destroy()
+
+        ctk.CTkButton(
+            btn_fr, text="CANCEL",
+            command=on_cancel,
+            fg_color="#1e293b",
+            hover_color="#334155",
+            text_color="#94a3b8",
+            border_width=1,
+            border_color="#334155",
+            font=("Inter", 12, "bold"),
+            width=130, height=38, corner_radius=8,
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_fr, text=f"  IMPORT {count:,}  ",
+            command=on_confirm,
+            fg_color="#1d4ed8",
+            hover_color="#1e40af",
+            text_color="white",
+            font=("Inter", 12, "bold"),
+            width=150, height=38, corner_radius=8,
+        ).pack(side="left")
+
+        dlg.bind("<Return>", lambda e: on_confirm())
+        dlg.bind("<Escape>", lambda e: on_cancel())
+        dlg.focus_set()
+        dlg.wait_window()
+
+        if not confirmed.get():
             return
-        self.grab_set()
 
         # Disable button and show loading indicator
         self.commit_btn.configure(state="disabled", text="⏳ IMPORTING... PLEASE WAIT")
@@ -277,20 +410,117 @@ class ImportWizardModal(ctk.CTkToplevel):
             return
         if self._closing or not exists:
             return
+
+        # ── Premium success dialog ────────────────────────────────────────────
         if isinstance(stats, dict):
-            msg = f"Import Complete!\n\n🆕 New Records: {stats.get('inserted', 0)}\n🔄 Updated Records: {stats.get('updated', 0)}"
+            inserted = stats.get("inserted", 0)
+            updated  = stats.get("updated", 0)
+            total    = inserted + updated
+            detail   = f"🆕  New records:      {inserted:,}\n🔄  Updated records:  {updated:,}"
         else:
-            msg = f"Successfully imported {stats} records!"
-            
+            total  = stats
+            detail = f"Records saved to the financial ledger."
+
         self._closing = True
         try:
             self.grab_release()
         except tk.TclError:
             pass
-        messagebox.showinfo("Success", msg, parent=self.master)
-        if self.winfo_exists():
-            self.withdraw()
-            self.after(300, self.destroy)
+
+        # Build the dialog
+        dlg = ctk.CTkToplevel(self.master)
+        dlg.title("")
+        dlg.resizable(False, False)
+        dlg.overrideredirect(True)
+        dlg.attributes("-topmost", True)
+        dlg.grab_set()
+
+        dlg.update_idletasks()
+        dw, dh = 420, 280
+        sw = dlg.winfo_screenwidth()
+        sh = dlg.winfo_screenheight()
+        dlg.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
+
+        # Outer frame — dark card
+        outer = ctk.CTkFrame(
+            dlg,
+            fg_color="#0f172a",
+            corner_radius=16,
+            border_width=1,
+            border_color="#1e3a5f",
+        )
+        outer.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Green accent bar at top
+        bar = ctk.CTkFrame(outer, height=5, fg_color="#10b981", corner_radius=0)
+        bar.pack(fill="x")
+
+        # Icon circle
+        icon_fr = ctk.CTkFrame(
+            outer, width=64, height=64, corner_radius=32,
+            fg_color="#064e3b",
+            border_width=2, border_color="#10b981",
+        )
+        icon_fr.pack(pady=(24, 0))
+        icon_fr.pack_propagate(False)
+        ctk.CTkLabel(
+            icon_fr, text="✓",
+            font=("Inter", 28, "bold"),
+            text_color="#10b981",
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        # Title
+        ctk.CTkLabel(
+            outer,
+            text=f"Import Complete",
+            font=("Inter", 16, "bold"),
+            text_color="#f1f5f9",
+        ).pack(pady=(12, 2))
+
+        # Count
+        ctk.CTkLabel(
+            outer,
+            text=f"{total:,} records imported successfully",
+            font=("Inter", 13),
+            text_color="#10b981",
+        ).pack()
+
+        # Detail
+        ctk.CTkLabel(
+            outer,
+            text=detail,
+            font=("Inter", 11),
+            text_color="#64748b",
+            justify="left",
+        ).pack(pady=(6, 0))
+
+        # Divider
+        ctk.CTkFrame(outer, height=1, fg_color="#1e293b").pack(fill="x", padx=20, pady=(16, 0))
+
+        # OK button
+        def close_all():
+            dlg.grab_release()
+            dlg.destroy()
+            if self.winfo_exists():
+                self.withdraw()
+                self.after(300, self.destroy)
+
+        ctk.CTkButton(
+            outer,
+            text="DONE",
+            command=close_all,
+            fg_color="#10b981",
+            hover_color="#059669",
+            text_color="white",
+            font=("Inter", 13, "bold"),
+            width=140,
+            height=38,
+            corner_radius=8,
+        ).pack(pady=14)
+
+        dlg.bind("<Return>", lambda e: close_all())
+        dlg.bind("<Escape>", lambda e: close_all())
+        dlg.focus_set()
 
     def clear_container(self):
         for widget in self.main_container.winfo_children():

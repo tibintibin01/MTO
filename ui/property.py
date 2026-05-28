@@ -8,7 +8,7 @@ from ui.dossier import PropertyDossierModal
 from ui.import_wizard import ImportWizardModal
 from theme_manager import ModernTheme
 from utils import tr, format_curr
-from ui_components import LoadingOverlay, ErrorDialog
+from ui_components import LoadingOverlay, ErrorDialog, AutocompleteComboBox, attach_autocomplete
 
 class PropertyPage:
     def __init__(self, parent, user=None):
@@ -43,11 +43,23 @@ class PropertyPage:
         filter_bar = ctk.CTkFrame(self.container, fg_color=ModernTheme.SECONDARY, corner_radius=8)
         filter_bar.pack(fill="x", pady=(0, 15), padx=5)
 
-        ctk.CTkLabel(filter_bar, text=tr("property.filters.barangay"), font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(15, 5))
-        self.barangay_cmb = ctk.CTkComboBox(filter_bar, values=["ALL"], width=180, height=28, font=ModernTheme.BODY)
-        self.barangay_cmb.pack(side="left", padx=5, pady=8)
+        # Left group — all filters together
+        left_group = ctk.CTkFrame(filter_bar, fg_color="transparent")
+        left_group.pack(side="left", padx=(10, 0), pady=6)
 
-        ctk.CTkButton(filter_bar, text=f"🎯 {tr('property.filters.apply')}", command=self.refresh_table, width=120, height=28, font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.SUCCESS).pack(side="right", padx=15)
+        ctk.CTkLabel(left_group, text=tr("property.filters.barangay"), font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(5, 4))
+        self.barangay_cmb = ctk.CTkComboBox(left_group, values=["ALL"], width=160, height=28, font=ModernTheme.BODY)
+        self.barangay_cmb.pack(side="left", padx=(0, 12))
+
+        ctk.CTkLabel(left_group, text="YEAR FROM:", font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 4))
+        self.year_start_ent = ctk.CTkEntry(left_group, width=70, height=28, placeholder_text="e.g. 2020", font=ModernTheme.BODY)
+        self.year_start_ent.pack(side="left", padx=(0, 6))
+
+        ctk.CTkLabel(left_group, text="TO:", font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 4))
+        self.year_end_ent = ctk.CTkEntry(left_group, width=70, height=28, placeholder_text="e.g. 2024", font=ModernTheme.BODY)
+        self.year_end_ent.pack(side="left", padx=(0, 12))
+
+        ctk.CTkButton(left_group, text=f"🎯 {tr('property.filters.apply')}", command=self.refresh_table, width=130, height=28, font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.SUCCESS).pack(side="left", padx=(0, 5))
 
         table_fr = ctk.CTkFrame(self.container, fg_color="transparent", corner_radius=12)
         style = ttk.Style()
@@ -112,7 +124,19 @@ class PropertyPage:
             try:
                 term = self.search_ent.get().strip()
                 brgy = self.barangay_cmb.get()
-                res = prop_svc.search_properties(term, limit=self.page_size, cursor=self.next_cursor if not reset_page else None, barangay=brgy if brgy != "ALL" else None)
+                year_start_raw = self.year_start_ent.get().strip() if hasattr(self, "year_start_ent") else ""
+                year_end_raw = self.year_end_ent.get().strip() if hasattr(self, "year_end_ent") else ""
+                year_start = int(year_start_raw) if year_start_raw.isdigit() else None
+                year_end = int(year_end_raw) if year_end_raw.isdigit() else None
+                res = prop_svc.search_properties(
+                    term,
+                    limit=self.page_size,
+                    cursor=self.next_cursor if not reset_page else None,
+                    barangay=brgy if brgy != "ALL" else None,
+                    kind=None,
+                    year_start=year_start,
+                    year_end=year_end,
+                )
                 items = res.get("items", [])
                 self.next_cursor = res.get("next_cursor")
                 has_more = res.get("has_more", False)
@@ -167,13 +191,88 @@ class PropertyPage:
 
     def confirm_delete(self):
         sel = self.tree.selection()
-        if not sel: return
+        if not sel:
+            return
         vals = self.tree.item(sel[0])["values"]
-        if messagebox.askyesno("Confirm", f"Delete property owned by {vals[2]}?"):
-            try:
-                prop_svc.delete_property(vals[0], user=self.user)
-                self.refresh_table()
-            except Exception as e: messagebox.showerror("Error", str(e))
+        owner_name = vals[2] if len(vals) > 2 else "this property"
+        td_number  = vals[1] if len(vals) > 1 else ""
+
+        # Premium confirm dialog
+        result = tk.BooleanVar(value=False)
+        dlg = ctk.CTkToplevel(self.container)
+        dlg.title("")
+        dlg.resizable(False, False)
+        dlg.overrideredirect(True)
+        dlg.attributes("-topmost", True)
+
+        dw, dh = 420, 260
+        sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
+        dlg.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
+
+        outer = ctk.CTkFrame(dlg, fg_color="#0f172a", corner_radius=16,
+                             border_width=1, border_color="#1e293b")
+        outer.pack(fill="both", expand=True, padx=2, pady=2)
+        ctk.CTkFrame(outer, height=5, fg_color="#dc2626", corner_radius=0).pack(fill="x")
+
+        icon_row = ctk.CTkFrame(outer, fg_color="transparent")
+        icon_row.pack(pady=(16, 0))
+        icon_fr = ctk.CTkFrame(icon_row, width=50, height=50, corner_radius=25,
+                               fg_color="#1e293b", border_width=2, border_color="#ef4444")
+        icon_fr.pack()
+        icon_fr.pack_propagate(False)
+        ctk.CTkLabel(icon_fr, text="🗑️", font=("Segoe UI Emoji", 18),
+                     text_color="#ef4444").place(relx=0.5, rely=0.5, anchor="center")
+
+        ctk.CTkLabel(outer, text="Delete Property",
+                     font=("Inter", 14, "bold"), text_color="#f1f5f9").pack(pady=(8, 2))
+        ctk.CTkLabel(outer,
+                     text=f"{owner_name}\n{td_number}",
+                     font=("Inter", 11), text_color="#94a3b8", justify="center").pack()
+        ctk.CTkLabel(outer,
+                     text="This property will be moved to the Recycle Bin.",
+                     font=("Inter", 10), text_color="#64748b", justify="center").pack(pady=(4, 0))
+
+        ctk.CTkFrame(outer, height=1, fg_color="#1e293b").pack(fill="x", padx=20, pady=(10, 0))
+
+        btn_fr = ctk.CTkFrame(outer, fg_color="transparent")
+        btn_fr.pack(pady=12)
+
+        def on_cancel():
+            result.set(False)
+            dlg.grab_release()
+            dlg.destroy()
+
+        def on_confirm():
+            result.set(True)
+            dlg.grab_release()
+            dlg.destroy()
+
+        ctk.CTkButton(btn_fr, text="CANCEL", command=on_cancel,
+                      fg_color="#1e293b", hover_color="#334155", text_color="#94a3b8",
+                      border_width=1, border_color="#334155",
+                      font=("Inter", 12, "bold"), width=120, height=36, corner_radius=8,
+                      ).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(btn_fr, text="DELETE", command=on_confirm,
+                      fg_color="#dc2626", hover_color="#b91c1c", text_color="white",
+                      font=("Inter", 12, "bold"), width=120, height=36, corner_radius=8,
+                      ).pack(side="left")
+
+        dlg.bind("<Return>", lambda e: on_confirm())
+        dlg.bind("<Escape>", lambda e: on_cancel())
+        dlg.update_idletasks()
+        dlg.lift()
+        dlg.focus_force()
+        dlg.grab_set()
+        dlg.wait_window()
+
+        if not result.get():
+            return
+
+        try:
+            prop_svc.delete_property(vals[0], user=self.user)
+            self.refresh_table()
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
 
 class PropertyEditModal(ctk.CTkToplevel):
     def __init__(self, parent, title, property_id, callback, user=None):
@@ -209,19 +308,77 @@ class PropertyEditModal(ctk.CTkToplevel):
 
         fields = [("TD Number", "td_number"), ("Owner Name", "owner_name"), ("Payor", "payor_name"), ("Lot Number", "lot_number"), ("Area", "area"), ("Location", "location"), ("Kind", "kind_of_property"), ("Tax Year", "tax_year"), ("OR Number", "or_number"), ("OR Date", "or_date"), ("Assessed Value", "assessed_value"), ("Penalty", "penalty"), ("Discount", "discount"), ("Amount Paid", "amount_paid")]
 
+        def _scroll_to_widget(widget):
+            """
+            Scrolls the CTkScrollableFrame so the focused widget is fully visible.
+            Called on FocusIn so tabbing to any field — especially Tax Year at
+            the bottom — automatically brings it into view without mouse scrolling.
+            """
+            try:
+                # CTkScrollableFrame wraps a tk.Canvas internally
+                canvas = self.scroll_form._parent_canvas
+                # Get widget position relative to the canvas
+                widget.update_idletasks()
+                wy = widget.winfo_y()
+                wh = widget.winfo_height()
+                ch = canvas.winfo_height()
+                # Total scrollable height
+                scroll_region = canvas.cget("scrollregion")
+                if not scroll_region:
+                    return
+                total_h = float(scroll_region.split()[3])
+                if total_h <= 0:
+                    return
+                # Target: centre the widget vertically in the visible area
+                target_top = wy - (ch // 2) + (wh // 2)
+                target_top = max(0, min(target_top, total_h - ch))
+                canvas.yview_moveto(target_top / total_h)
+            except Exception:
+                pass
+
         for label, key in fields:
             ctk.CTkLabel(self.scroll_form, text=label.upper(), font=("Segoe UI", 9, "bold"), text_color="gray").pack(anchor="w", padx=10, pady=(10, 0))
             self.vars[key] = tk.StringVar()
             if key == "location":
-                drop = ctk.CTkComboBox(self.scroll_form, values=self.barangays, variable=self.vars[key], height=40)
-                drop.pack(fill="x", padx=10, pady=(0, 5))
+                entry = ctk.CTkEntry(self.scroll_form, height=40, textvariable=self.vars[key],
+                                     placeholder_text="Type barangay name...")
+                entry.pack(fill="x", padx=10, pady=(0, 5))
+                entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
+                attach_autocomplete(entry, self.barangays, self.vars[key])
             else:
-                ctk.CTkEntry(self.scroll_form, height=40, textvariable=self.vars[key]).pack(fill="x", padx=10, pady=(0, 5))
-                if key in ["assessed_value", "penalty", "discount"]: self.vars[key].trace_add("write", lambda *a: self.recompute())
-                else: self.vars[key].trace_add("write", lambda *a: self.validate())
+                entry = ctk.CTkEntry(self.scroll_form, height=40, textvariable=self.vars[key])
+                entry.pack(fill="x", padx=10, pady=(0, 5))
+                entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
+                if key in ["assessed_value", "penalty", "discount"]:
+                    self.vars[key].trace_add("write", lambda *a: self.recompute())
+                else:
+                    self.vars[key].trace_add("write", lambda *a: self.validate())
 
         self.calc_box = ctk.CTkFrame(self.scroll_form, fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK), corner_radius=8)
         self.calc_box.pack(fill="x", padx=10, pady=15)
+
+        # ── Auto-Compute button ───────────────────────────────────────────────
+        compute_fr = ctk.CTkFrame(self.scroll_form, fg_color="transparent")
+        compute_fr.pack(fill="x", padx=10, pady=(0, 6))
+
+        self._compute_btn = ctk.CTkButton(
+            compute_fr,
+            text="⚡  AUTO-COMPUTE PENALTY & DISCOUNT",
+            command=self._auto_compute,
+            height=38,
+            font=("Inter", 11, "bold"),
+            fg_color="#7c3aed",
+            hover_color="#6d28d9",
+            text_color="white",
+        )
+        self._compute_btn.pack(fill="x")
+
+        self._compute_lbl = ctk.CTkLabel(
+            compute_fr, text="Fill in Assessed Value, Tax Year, and OR Date first.",
+            font=("Inter", 9), text_color="#64748b", anchor="w",
+        )
+        self._compute_lbl.pack(anchor="w", pady=(2, 0))
+
         self.total_lbl = ctk.CTkLabel(self.calc_box, text="TOTAL TAX DUE: 0.00", font=("Segoe UI", 12, "bold"), text_color="#1f538d")
         self.total_lbl.pack(pady=15)
 
@@ -231,15 +388,95 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.save_btn = ctk.CTkButton(footer, text="SAVE PROPERTY", command=self.save, fg_color="#2ecc71", width=200, state="disabled")
         self.save_btn.pack(side="right")
 
+    def _auto_compute(self):
+        """
+        Calls the backend compute-payment endpoint and auto-fills
+        Penalty, Discount, and Amount Paid based on date_paid vs tax_year.
+        """
+        import threading
+        import api_clients.system_service as system_svc
+
+        # Validate required fields
+        av_str   = self.vars["assessed_value"].get().replace(",", "").strip()
+        yr_str   = self.vars["tax_year"].get().strip()
+        date_str = self.vars["or_date"].get().strip()
+
+        if not av_str or not yr_str or not date_str:
+            self._compute_lbl.configure(
+                text="⚠️  Fill in Assessed Value, Tax Year, and OR Date first.",
+                text_color="#f59e0b",
+            )
+            return
+
+        try:
+            av = float(av_str)
+            yr = int(yr_str)
+        except ValueError:
+            self._compute_lbl.configure(
+                text="⚠️  Assessed Value and Tax Year must be numbers.",
+                text_color="#f59e0b",
+            )
+            return
+
+        # Normalize date to YYYY-MM-DD
+        from api_clients.billing_service import normalize_date_input
+        clean_date = normalize_date_input(date_str)
+        if not clean_date:
+            self._compute_lbl.configure(
+                text="⚠️  Invalid OR Date format. Use YYYY-MM-DD.",
+                text_color="#f59e0b",
+            )
+            return
+
+        self._compute_btn.configure(state="disabled", text="⏳  COMPUTING...")
+        self._compute_lbl.configure(text="Fetching rates from server...", text_color="#64748b")
+
+        def worker():
+            try:
+                result = system_svc.compute_payment(av, yr, clean_date)
+                self.after(0, lambda r=result: self._apply_compute(r))
+            except Exception as e:
+                self.after(0, lambda err=e: self._compute_lbl.configure(
+                    text=f"⚠️  {str(err)}", text_color="#ef4444"
+                ))
+            finally:
+                if self.winfo_exists():
+                    self.after(0, lambda: self._compute_btn.configure(
+                        state="normal", text="⚡  AUTO-COMPUTE PENALTY & DISCOUNT"
+                    ))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_compute(self, result: dict):
+        """Apply computed values to the form fields."""
+        discount = result.get("discount_amount", 0.0)
+        penalty  = result.get("penalty_amount",  0.0)
+        net_due  = result.get("net_amount_due",  0.0)
+
+        self.vars["discount"].set(f"{discount:.2f}")
+        self.vars["penalty"].set(f"{penalty:.2f}")
+        self.vars["amount_paid"].set(f"{net_due:.2f}")
+
+        breakdown = result.get("breakdown", "")
+        self._compute_lbl.configure(
+            text=f"✅  {breakdown}",
+            text_color="#10b981",
+        )
+        self.recompute()
+
     def recompute(self, *args):
         try:
             av = float(self.vars["assessed_value"].get().replace(",", "") or 0)
             pe = float(self.vars["penalty"].get().replace(",", "") or 0)
             ds = float(self.vars["discount"].get().replace(",", "") or 0)
+            # Use 2% as the display default (1% basic + 1% SEF per TaxPolicy default).
+            # The AUTO-COMPUTE button fetches the exact rate from TaxPolicy for the
+            # specific tax year — use that for accurate final amounts.
             total = (av * 0.02) + pe - ds
-            self.total_lbl.configure(text=f"TOTAL TAX DUE: {total:,.2f}")
+            self.total_lbl.configure(text=f"TOTAL TAX DUE: {total:,.2f}  (preview — use ⚡ AUTO-COMPUTE for exact amount)")
             if not self.property_id: self.vars["amount_paid"].set(f"{total:.2f}")
-        except: pass
+        except Exception:
+            pass
         self.validate()
 
     def validate(self, *args):

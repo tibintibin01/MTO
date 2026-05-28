@@ -6,6 +6,173 @@ from utils import tr
 import api_clients.auth_service as auth
 import api_clients.system_service as system
 import threading
+from ui_components import show_toast, ErrorDialog
+
+
+# ---------------------------------------------------------------------------
+# Premium confirmation dialog — replaces native messagebox.askyesno
+# ---------------------------------------------------------------------------
+
+class ConfirmDialog(ctk.CTkToplevel):
+    """
+    A styled confirmation dialog that matches the app's dark theme.
+
+    Usage:
+        dlg = ConfirmDialog(parent, title, message, confirm_text, cancel_text, danger)
+        parent.wait_window(dlg)
+        if dlg.result: ...   # True = confirmed, False = cancelled
+    """
+
+    def __init__(
+        self,
+        parent,
+        title: str,
+        message: str,
+        confirm_text: str = "Confirm",
+        cancel_text: str = "Cancel",
+        danger: bool = False,
+        icon: str = "❓",
+    ):
+        super().__init__(parent)
+        self.result = False
+        self.title(title)
+        self.resizable(False, False)
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self.attributes("-topmost", True)
+
+        self._build(title, message, confirm_text, cancel_text, danger, icon)
+
+        self.update_idletasks()
+        w, h = self.winfo_width(), self.winfo_height()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"+{(sw - w) // 2}+{(sh - h) // 2}")
+
+    def _build(self, title, message, confirm_text, cancel_text, danger, icon):
+        self.configure(fg_color="#1a1a2e")
+
+        # ── Top accent bar ──────────────────────────────────────────────────
+        accent_color = "#c0392b" if danger else ModernTheme.PRIMARY
+        bar = ctk.CTkFrame(self, fg_color=accent_color, height=4, corner_radius=0)
+        bar.pack(fill="x")
+
+        # ── Body ────────────────────────────────────────────────────────────
+        body = ctk.CTkFrame(self, fg_color="#1a1a2e")
+        body.pack(fill="both", expand=True, padx=30, pady=24)
+
+        # Icon + message row
+        row = ctk.CTkFrame(body, fg_color="transparent")
+        row.pack(fill="x", pady=(0, 20))
+
+        icon_bg = "#3d1a1a" if danger else "#1a2a3d"
+        icon_fg = "#e74c3c" if danger else "#4ca2ff"
+        icon_fr = ctk.CTkFrame(row, fg_color=icon_bg, width=52, height=52,
+                               corner_radius=26)
+        icon_fr.pack(side="left", padx=(0, 16))
+        icon_fr.pack_propagate(False)
+        ctk.CTkLabel(icon_fr, text=icon, font=("Segoe UI Emoji", 22),
+                     text_color=icon_fg).place(relx=0.5, rely=0.5, anchor="center")
+
+        msg_fr = ctk.CTkFrame(row, fg_color="transparent")
+        msg_fr.pack(side="left", fill="both", expand=True)
+        ctk.CTkLabel(msg_fr, text=title,
+                     font=("Segoe UI", 13, "bold"), text_color="white",
+                     anchor="w").pack(anchor="w")
+        ctk.CTkLabel(msg_fr, text=message,
+                     font=("Segoe UI", 11), text_color="#a0aec0",
+                     wraplength=300, justify="left", anchor="w").pack(anchor="w", pady=(4, 0))
+
+        # Divider
+        ctk.CTkFrame(body, fg_color="#2d2d4e", height=1).pack(fill="x", pady=(0, 16))
+
+        # Buttons
+        btn_row = ctk.CTkFrame(body, fg_color="transparent")
+        btn_row.pack(fill="x")
+
+        ctk.CTkButton(
+            btn_row, text=cancel_text,
+            command=self._cancel,
+            fg_color="#2d2d4e", hover_color="#3d3d5e",
+            text_color="#a0aec0", height=38, width=110,
+            font=("Segoe UI", 11, "bold"), corner_radius=8,
+        ).pack(side="left")
+
+        confirm_color = "#c0392b" if danger else ModernTheme.PRIMARY
+        confirm_hover  = "#a93226" if danger else "#2c6ea1"
+        ctk.CTkButton(
+            btn_row, text=confirm_text,
+            command=self._confirm,
+            fg_color=confirm_color, hover_color=confirm_hover,
+            text_color="white", height=38, width=160,
+            font=("Segoe UI", 11, "bold"), corner_radius=8,
+        ).pack(side="right")
+
+    def _confirm(self):
+        self.result = True
+        self.destroy()
+
+    def _cancel(self):
+        self.result = False
+        self.destroy()
+
+
+class InputDialog(ctk.CTkToplevel):
+    """Styled single-line input dialog — replaces simpledialog.askstring."""
+
+    def __init__(self, parent, title: str, prompt: str, placeholder: str = ""):
+        super().__init__(parent)
+        self.result: str | None = None
+        self.title(title)
+        self.resizable(False, False)
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self.attributes("-topmost", True)
+        self._build(title, prompt, placeholder)
+        self.update_idletasks()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        w, h = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{(sw - w) // 2}+{(sh - h) // 2}")
+
+    def _build(self, title, prompt, placeholder):
+        self.configure(fg_color="#1a1a2e")
+        ctk.CTkFrame(self, fg_color="#c0392b", height=4, corner_radius=0).pack(fill="x")
+
+        body = ctk.CTkFrame(self, fg_color="#1a1a2e")
+        body.pack(fill="both", expand=True, padx=30, pady=24)
+
+        ctk.CTkLabel(body, text=title, font=("Segoe UI", 13, "bold"),
+                     text_color="white").pack(anchor="w", pady=(0, 6))
+        ctk.CTkLabel(body, text=prompt, font=("Segoe UI", 11),
+                     text_color="#a0aec0", wraplength=320,
+                     justify="left").pack(anchor="w", pady=(0, 12))
+
+        self.entry = ctk.CTkEntry(body, placeholder_text=placeholder,
+                                  height=40, font=("Segoe UI", 11),
+                                  fg_color="#2d2d4e", border_color="#4a4a6e",
+                                  text_color="white")
+        self.entry.pack(fill="x", pady=(0, 16))
+        self.entry.bind("<Return>", lambda e: self._ok())
+
+        ctk.CTkFrame(body, fg_color="#2d2d4e", height=1).pack(fill="x", pady=(0, 14))
+
+        btn_row = ctk.CTkFrame(body, fg_color="transparent")
+        btn_row.pack(fill="x")
+        ctk.CTkButton(btn_row, text="Cancel", command=self._cancel,
+                      fg_color="#2d2d4e", hover_color="#3d3d5e",
+                      text_color="#a0aec0", height=38, width=110,
+                      font=("Segoe UI", 11, "bold"), corner_radius=8).pack(side="left")
+        ctk.CTkButton(btn_row, text="Confirm", command=self._ok,
+                      fg_color="#c0392b", hover_color="#a93226",
+                      text_color="white", height=38, width=160,
+                      font=("Segoe UI", 11, "bold"), corner_radius=8).pack(side="right")
+
+    def _ok(self):
+        self.result = self.entry.get().strip()
+        self.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.destroy()
 
 class UserAccessPage:
     def __init__(self, parent, user):
@@ -155,7 +322,7 @@ class UserAccessPage:
                 self.container.after(0, lambda: self._update_user_table(users))
             except Exception as e:
                 self.container.after(
-                    0, lambda err=e: messagebox.showerror("Refresh Error", str(err))
+                    0, lambda err=e: ErrorDialog(self.container, "Refresh Error", str(err))
                 )
         threading.Thread(target=worker, daemon=True).start()
 
@@ -211,8 +378,13 @@ class UserAccessPage:
     def toggle_account_status(self):
         if not self.selected_user: return
         new_status = self.status_var.get()
-        msg = "Enable this account?" if new_status else "Disable this account? User will be blocked from logging in."
-        if not messagebox.askyesno(tr("users.messages.confirm_status"), msg):
+        msg = "Enable this account?" if new_status else "Disable this account?\nUser will be blocked from logging in."
+        dlg = ConfirmDialog(
+            self.container, tr("users.messages.confirm_status"), msg,
+            confirm_text="Yes, Update", icon="🔄",
+        )
+        self.container.wait_window(dlg)
+        if not dlg.result:
             self.status_var.set(not new_status)
             return
         
@@ -221,12 +393,22 @@ class UserAccessPage:
             self.refresh_users()
             self.refresh_audit_trace(self.selected_user["id"])
         except Exception as e:
-            messagebox.showerror("Update Error", str(e))
+            ErrorDialog(self.container, "Update Error", str(e))
 
     def apply_role_change(self):
         if not self.selected_user: return
         new_role = self.role_cb.get()
-        if not messagebox.askyesno(tr("users.messages.confirm_role"), tr("users.messages.confirm_role_msg").replace("{user}", self.selected_user['username']).replace("{role}", new_role.upper())):
+        dlg = ConfirmDialog(
+            self.container,
+            tr("users.messages.confirm_role"),
+            tr("users.messages.confirm_role_msg")
+                .replace("{user}", self.selected_user['username'])
+                .replace("{role}", new_role.upper()),
+            confirm_text="Yes, Change Role",
+            icon="🛡️",
+        )
+        self.container.wait_window(dlg)
+        if not dlg.result:
             return
         
         try:
@@ -251,13 +433,29 @@ class UserAccessPage:
         if not self.selected_user: return
         
         # 1. First Confirmation
-        if not messagebox.askyesno("⚠️ PERMANENT DELETION", f"Are you absolutely sure you want to PERMANENTLY DELETE the user '{self.selected_user['full_name']}'?\n\nThis action cannot be undone and will remove all login access for this person."):
+        dlg1 = ConfirmDialog(
+            self.container,
+            "⚠️ Permanent Deletion",
+            f"Are you absolutely sure you want to permanently delete the account for '{self.selected_user['full_name']}'?\n\nThis cannot be undone.",
+            confirm_text="Yes, Delete",
+            cancel_text="Cancel",
+            danger=True,
+            icon="🗑️",
+        )
+        self.container.wait_window(dlg1)
+        if not dlg1.result:
             return
-            
-        # 2. Final Confirmation
-        confirm = simpledialog.askstring("FINAL VERIFICATION", f"Type 'DELETE' to confirm the destruction of account: {self.selected_user['username']}")
-        if confirm != "DELETE":
-            messagebox.showinfo("Cancelled", "Account deletion was cancelled.")
+
+        # 2. Final Confirmation — type DELETE
+        dlg2 = InputDialog(
+            self.container,
+            "Final Verification",
+            f"Type  DELETE  to confirm removal of account:\n{self.selected_user['username']}",
+            placeholder="Type DELETE here",
+        )
+        self.container.wait_window(dlg2)
+        if dlg2.result != "DELETE":
+            show_toast(self.container.winfo_toplevel(), "Account deletion cancelled.", type="info")
             return
             
         try:
@@ -294,89 +492,158 @@ class RegisterUserModal(ctk.CTkToplevel):
     def __init__(self, parent, callback):
         super().__init__(parent)
         self.title(tr("users.modal.title"))
-        self.geometry("450x600")
+        self.geometry("450x720")
         self.resizable(False, False)
         self.callback = callback
-        
+
         self.transient(parent.winfo_toplevel())
         self.grab_set()
         self.attributes("-topmost", True)
-        
-        # Center
+
         self.update_idletasks()
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"+{(sw-450)//2}+{(sh-600)//2}")
-        
+        self.geometry(f"+{(sw-450)//2}+{(sh-720)//2}")
+
         self.setup_ui()
 
     def setup_ui(self):
+        import re
+        self._re = re
+
         self.configure(fg_color="white")
-        
-        # Header
+
         header_fr = ctk.CTkFrame(self, fg_color=ModernTheme.PRIMARY, height=100, corner_radius=0)
         header_fr.pack(fill="x")
-        ctk.CTkLabel(header_fr, text=f"👤 {tr('users.modal.header')}", font=ModernTheme.H3, text_color="white").pack(pady=35)
+        ctk.CTkLabel(header_fr, text=f"👤 {tr('users.modal.header')}",
+                     font=ModernTheme.H3, text_color="white").pack(pady=35)
 
         form = ctk.CTkFrame(self, fg_color="transparent")
-        form.pack(fill="both", expand=True, padx=40, pady=30)
+        form.pack(fill="both", expand=True, padx=40, pady=20)
 
         # Full Name
-        ctk.CTkLabel(form, text=tr("users.modal.fields.name"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
-        self.name_ent = ctk.CTkEntry(form, placeholder_text="e.g. Juan Dela Cruz", height=40, font=ModernTheme.BODY)
-        self.name_ent.pack(fill="x", pady=(5, 15))
+        ctk.CTkLabel(form, text=tr("users.modal.fields.name"),
+                     font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
+        self.name_ent = ctk.CTkEntry(form, placeholder_text="e.g. Juan Dela Cruz",
+                                     height=40, font=ModernTheme.BODY)
+        self.name_ent.pack(fill="x", pady=(5, 12))
 
         # Username
-        ctk.CTkLabel(form, text=tr("users.modal.fields.username"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
-        self.user_ent = ctk.CTkEntry(form, placeholder_text="e.g. juandc", height=40, font=ModernTheme.BODY)
-        self.user_ent.pack(fill="x", pady=(5, 15))
+        ctk.CTkLabel(form, text=tr("users.modal.fields.username"),
+                     font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
+        self.user_ent = ctk.CTkEntry(form, placeholder_text="e.g. juandc",
+                                     height=40, font=ModernTheme.BODY)
+        self.user_ent.pack(fill="x", pady=(5, 12))
 
         # Role
-        ctk.CTkLabel(form, text=tr("users.modal.fields.role"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
-        self.role_cb = ctk.CTkComboBox(form, values=["cashier", "encoder", "viewer", "admin"], height=40, font=ModernTheme.BODY)
+        ctk.CTkLabel(form, text=tr("users.modal.fields.role"),
+                     font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
+        self.role_cb = ctk.CTkComboBox(form, values=["cashier", "encoder", "viewer", "admin"],
+                                       height=40, font=ModernTheme.BODY)
         self.role_cb.set("cashier")
-        self.role_cb.pack(fill="x", pady=(5, 15))
+        self.role_cb.pack(fill="x", pady=(5, 12))
 
-        # Initial Password
-        ctk.CTkLabel(form, text=tr("users.modal.fields.password"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
-        
-        self.pass_ent = ctk.CTkEntry(form, placeholder_text=tr("users.messages.error_password"), height=40, show="*", font=ModernTheme.BODY)
-        self.pass_ent.pack(fill="x", pady=(5, 30))
-        
-        self.peek_lbl = ctk.CTkLabel(
-            self.pass_ent, text="👁", width=30, height=30, 
-            text_color=ModernTheme.TEXT_GRAY, font=("Segoe UI", 14),
-            cursor="hand2"
-        )
-        self.peek_lbl.place(relx=0.97, rely=0.5, anchor="e")
-        
-        self.peek_lbl.bind("<ButtonPress-1>", lambda e: self.pass_ent.configure(show=""))
-        self.peek_lbl.bind("<ButtonRelease-1>", lambda e: self.pass_ent.configure(show="*"))
+        # Password
+        ctk.CTkLabel(form, text=tr("users.modal.fields.password"),
+                     font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
+        self.pass_ent = ctk.CTkEntry(form, placeholder_text="Enter password",
+                                     height=40, show="*", font=ModernTheme.BODY)
+        self.pass_ent.pack(fill="x", pady=(5, 8))
+
+        peek = ctk.CTkLabel(self.pass_ent, text="👁", width=30, height=30,
+                            text_color=ModernTheme.TEXT_GRAY, font=("Segoe UI", 14),
+                            cursor="hand2")
+        peek.place(relx=0.97, rely=0.5, anchor="e")
+        peek.bind("<ButtonPress-1>",   lambda e: self.pass_ent.configure(show=""))
+        peek.bind("<ButtonRelease-1>", lambda e: self.pass_ent.configure(show="*"))
+
+        # ── Live requirement checklist ──────────────────────────────────────
+        req_fr = ctk.CTkFrame(form, fg_color="#f8f9fa", corner_radius=6)
+        req_fr.pack(fill="x", pady=(0, 12))
+
+        ctk.CTkLabel(req_fr, text="Password requirements:",
+                     font=("Segoe UI", 9, "bold"), text_color="#555").pack(
+                     anchor="w", padx=10, pady=(8, 2))
+
+        self._req_labels = {}
+        requirements = [
+            ("length",  "At least 12 characters"),
+            ("upper",   "At least one uppercase letter (A–Z)"),
+            ("lower",   "At least one lowercase letter (a–z)"),
+            ("digit",   "At least one digit (0–9)"),
+            ("special", "At least one special character (!@#$%^&*…)"),
+        ]
+        for key, text in requirements:
+            lbl = ctk.CTkLabel(req_fr, text=f"  ✗  {text}",
+                               font=("Segoe UI", 9), text_color="#cc0000", anchor="w")
+            lbl.pack(fill="x", padx=10, pady=1)
+            self._req_labels[key] = lbl
+        ctk.CTkLabel(req_fr, text="", height=4).pack()
+
+        self.pass_ent.bind("<KeyRelease>", self._on_key)
 
         # Buttons
         btn_fr = ctk.CTkFrame(self, fg_color="transparent")
-        btn_fr.pack(fill="x", side="bottom", pady=30, padx=40)
+        btn_fr.pack(fill="x", side="bottom", pady=20, padx=40)
 
-        ctk.CTkButton(btn_fr, text=tr("users.modal.btn_cancel"), command=self.destroy, fg_color=ModernTheme.SECONDARY, height=40, width=100, font=ModernTheme.BUTTON).pack(side="left")
-        ctk.CTkButton(btn_fr, text=tr("users.modal.btn_create"), command=self.save, fg_color=ModernTheme.SUCCESS, height=40, width=250, font=ModernTheme.BUTTON).pack(side="right")
+        ctk.CTkButton(btn_fr, text=tr("users.modal.btn_cancel"), command=self.destroy,
+                      fg_color=ModernTheme.SECONDARY, height=40, width=100,
+                      font=ModernTheme.BUTTON).pack(side="left")
+        self.create_btn = ctk.CTkButton(btn_fr, text=tr("users.modal.btn_create"),
+                                        command=self.save,
+                                        fg_color=ModernTheme.SUCCESS, height=40, width=250,
+                                        font=ModernTheme.BUTTON, state="disabled")
+        self.create_btn.pack(side="right")
+
+    def _check_requirements(self, pwd: str) -> dict:
+        re = self._re
+        return {
+            "length":  len(pwd) >= 12,
+            "upper":   bool(re.search(r"[A-Z]", pwd)),
+            "lower":   bool(re.search(r"[a-z]", pwd)),
+            "digit":   bool(re.search(r"\d", pwd)),
+            "special": bool(re.search(r"[!@#$%^&*()\-_=+\[\]{}|;:',.<>?/`~\"\\]", pwd)),
+        }
+
+    def _on_key(self, event=None):
+        pwd = self.pass_ent.get()
+        results = self._check_requirements(pwd)
+        all_ok = all(results.values())
+
+        for key, ok in results.items():
+            lbl = self._req_labels[key]
+            body = lbl.cget("text")[4:]
+            lbl.configure(
+                text=f"  {'✓' if ok else '✗'}  {body}",
+                text_color="#1a7a1a" if ok else "#cc0000",
+            )
+
+        # Only enable Create when password is valid AND name/username are filled
+        name_ok = bool(self.name_ent.get().strip())
+        user_ok = bool(self.user_ent.get().strip())
+        self.create_btn.configure(state="normal" if (all_ok and name_ok and user_ok) else "disabled")
 
     def save(self):
         name = self.name_ent.get().strip()
         user = self.user_ent.get().strip().lower()
         role = self.role_cb.get()
-        pwd = self.pass_ent.get().strip()
+        pwd  = self.pass_ent.get().strip()
 
         if not name or not user or not pwd:
             ErrorDialog(self, tr("common.error"), tr("users.messages.error_fields"))
             return
-        
-        if len(pwd) < 6:
-            ErrorDialog(self, tr("common.error"), tr("users.messages.error_password"))
+
+        results = self._check_requirements(pwd)
+        if not all(results.values()):
+            ErrorDialog(self, tr("common.error"),
+                        "Password does not meet all requirements.")
             return
 
         try:
             res = auth.create_user(name, user, pwd, role)
             if res.get("status") == "created":
-                show_toast(self.master.winfo_toplevel(), tr("users.messages.success_register").replace("{user}", user), type="success")
+                show_toast(self.master.winfo_toplevel(),
+                           tr("users.messages.success_register").replace("{user}", user),
+                           type="success")
                 self.callback()
                 self.destroy()
             else:
@@ -389,75 +656,138 @@ class ResetPasswordModal(ctk.CTkToplevel):
     def __init__(self, parent, username, user_id, callback, refresh_audit_cb):
         super().__init__(parent)
         self.title(tr("users.messages.reset_title"))
-        self.geometry("450x350")
+        self.geometry("450x480")
         self.resizable(False, False)
         self.username = username
         self.user_id = user_id
         self.callback = callback
         self.refresh_audit_cb = refresh_audit_cb
-        
+
         self.transient(parent.winfo_toplevel())
         self.grab_set()
         self.attributes("-topmost", True)
-        
-        # Center
+
         self.update_idletasks()
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"+{(sw-450)//2}+{(sh-350)//2}")
-        
+        self.geometry(f"+{(sw-450)//2}+{(sh-480)//2}")
+
         self.setup_ui()
 
     def setup_ui(self):
+        import re
+        self._re = re
+
         self.configure(fg_color="white")
-        
+
         # Header
         header_fr = ctk.CTkFrame(self, fg_color=ModernTheme.WARNING, height=70, corner_radius=0)
         header_fr.pack(fill="x")
-        ctk.CTkLabel(header_fr, text=f"🔑 Reset Password: {self.username}", font=ModernTheme.H3, text_color="white").pack(pady=20)
+        ctk.CTkLabel(header_fr, text=f"🔑 Reset Password: {self.username}",
+                     font=ModernTheme.H3, text_color="white").pack(pady=20)
 
         form = ctk.CTkFrame(self, fg_color="transparent")
-        form.pack(fill="both", expand=True, padx=40, pady=20)
+        form.pack(fill="both", expand=True, padx=40, pady=15)
 
-        ctk.CTkLabel(form, text=tr("users.messages.reset_prompt").replace("{user}", self.username), font=ModernTheme.BODY, text_color=ModernTheme.TEXT_GRAY, wraplength=370, justify="left").pack(anchor="w", pady=(0, 15))
+        ctk.CTkLabel(form,
+                     text=tr("users.messages.reset_prompt").replace("{user}", self.username),
+                     font=ModernTheme.BODY, text_color=ModernTheme.TEXT_GRAY,
+                     wraplength=370, justify="left").pack(anchor="w", pady=(0, 10))
 
-        # Password Entry field with Peek Option
-        ctk.CTkLabel(form, text=tr("users.modal.fields.password"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
-        
-        self.pass_ent = ctk.CTkEntry(form, placeholder_text=tr("users.messages.error_password"), height=40, show="*", font=ModernTheme.BODY)
-        self.pass_ent.pack(fill="x", pady=(5, 20))
-        
-        self.peek_lbl = ctk.CTkLabel(
-            self.pass_ent, text="👁", width=30, height=30, 
-            text_color=ModernTheme.TEXT_GRAY, font=("Segoe UI", 14),
-            cursor="hand2"
-        )
-        self.peek_lbl.place(relx=0.97, rely=0.5, anchor="e")
-        
-        self.peek_lbl.bind("<ButtonPress-1>", lambda e: self.pass_ent.configure(show=""))
-        self.peek_lbl.bind("<ButtonRelease-1>", lambda e: self.pass_ent.configure(show="*"))
+        # Password entry with peek toggle
+        ctk.CTkLabel(form, text=tr("users.modal.fields.password"),
+                     font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
 
-        # Buttons
+        self.pass_ent = ctk.CTkEntry(form, placeholder_text="Enter new password",
+                                     height=40, show="*", font=ModernTheme.BODY)
+        self.pass_ent.pack(fill="x", pady=(5, 8))
+
+        peek = ctk.CTkLabel(self.pass_ent, text="👁", width=30, height=30,
+                            text_color=ModernTheme.TEXT_GRAY, font=("Segoe UI", 14),
+                            cursor="hand2")
+        peek.place(relx=0.97, rely=0.5, anchor="e")
+        peek.bind("<ButtonPress-1>",   lambda e: self.pass_ent.configure(show=""))
+        peek.bind("<ButtonRelease-1>", lambda e: self.pass_ent.configure(show="*"))
+
+        # ── Live requirement checklist ──────────────────────────────────────
+        req_fr = ctk.CTkFrame(form, fg_color="#f8f9fa", corner_radius=6)
+        req_fr.pack(fill="x", pady=(0, 12))
+
+        ctk.CTkLabel(req_fr, text="Password requirements:",
+                     font=("Segoe UI", 9, "bold"),
+                     text_color="#555").pack(anchor="w", padx=10, pady=(8, 2))
+
+        self._req_labels = {}
+        requirements = [
+            ("length",    "At least 12 characters"),
+            ("upper",     "At least one uppercase letter (A–Z)"),
+            ("lower",     "At least one lowercase letter (a–z)"),
+            ("digit",     "At least one digit (0–9)"),
+            ("special",   "At least one special character (!@#$%^&*…)"),
+        ]
+        for key, text in requirements:
+            lbl = ctk.CTkLabel(req_fr, text=f"  ✗  {text}",
+                               font=("Segoe UI", 9), text_color="#cc0000",
+                               anchor="w")
+            lbl.pack(fill="x", padx=10, pady=1)
+            self._req_labels[key] = lbl
+
+        ctk.CTkLabel(req_fr, text="", height=4).pack()   # bottom padding
+
+        # Wire up live validation
+        self.pass_ent.bind("<KeyRelease>", self._on_key)
+
+        # Save button — disabled until all requirements met
         btn_fr = ctk.CTkFrame(self, fg_color="transparent")
-        btn_fr.pack(fill="x", side="bottom", pady=20, padx=40)
+        btn_fr.pack(fill="x", side="bottom", pady=15, padx=40)
 
-        ctk.CTkButton(btn_fr, text=tr("users.modal.btn_cancel"), command=self.destroy, fg_color=ModernTheme.SECONDARY, height=40, width=100, font=ModernTheme.BUTTON).pack(side="left")
-        ctk.CTkButton(btn_fr, text=tr("users.messages.reset_title"), command=self.save, fg_color=ModernTheme.SUCCESS, height=40, width=250, font=ModernTheme.BUTTON).pack(side="right")
+        ctk.CTkButton(btn_fr, text=tr("users.modal.btn_cancel"),
+                      command=self.destroy,
+                      fg_color=ModernTheme.SECONDARY, height=40, width=100,
+                      font=ModernTheme.BUTTON).pack(side="left")
+
+        self.save_btn = ctk.CTkButton(btn_fr, text=tr("users.messages.reset_title"),
+                                      command=self.save,
+                                      fg_color=ModernTheme.SUCCESS, height=40, width=250,
+                                      font=ModernTheme.BUTTON, state="disabled")
+        self.save_btn.pack(side="right")
+
+    def _check_requirements(self, pwd: str) -> dict[str, bool]:
+        re = self._re
+        return {
+            "length":  len(pwd) >= 12,
+            "upper":   bool(re.search(r"[A-Z]", pwd)),
+            "lower":   bool(re.search(r"[a-z]", pwd)),
+            "digit":   bool(re.search(r"\d", pwd)),
+            "special": bool(re.search(r"[!@#$%^&*()\-_=+\[\]{}|;:',.<>?/`~\"\\]", pwd)),
+        }
+
+    def _on_key(self, event=None):
+        pwd = self.pass_ent.get()
+        results = self._check_requirements(pwd)
+        all_ok = all(results.values())
+
+        for key, ok in results.items():
+            lbl = self._req_labels[key]
+            text_body = lbl.cget("text")[4:]   # strip the icon prefix
+            if ok:
+                lbl.configure(text=f"  ✓  {text_body}", text_color="#1a7a1a")
+            else:
+                lbl.configure(text=f"  ✗  {text_body}", text_color="#cc0000")
+
+        self.save_btn.configure(state="normal" if all_ok else "disabled")
 
     def save(self):
         pwd = self.pass_ent.get().strip()
-
-        if not pwd:
-            ErrorDialog(self, tr("common.error"), tr("users.messages.error_fields"))
-            return
-        
-        if len(pwd) < 6:
-            ErrorDialog(self, tr("common.error"), tr("users.messages.error_password"))
+        results = self._check_requirements(pwd)
+        if not all(results.values()):
+            ErrorDialog(self, tr("common.error"),
+                        "Password does not meet all requirements.")
             return
 
         try:
             auth.reset_user_password(self.user_id, pwd)
-            from ui_components import show_toast
-            show_toast(self.master.winfo_toplevel(), tr("users.messages.success_reset"), type="success")
+            show_toast(self.master.winfo_toplevel(),
+                       tr("users.messages.success_reset"), type="success")
             self.refresh_audit_cb(self.user_id)
             self.callback()
             self.destroy()

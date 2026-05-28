@@ -4,22 +4,23 @@ import "./globals.css";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastProvider } from "./components/ToastProvider";
 import { OfflineBanner } from "./components/OfflineBanner";
+import { PublicShell } from "./components/PublicShell";
 
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "MTO | Public Treasury Portal",
-  description: "Securely view your property tax status and payment history.",
+  title: "Dipaculao Treasury Portal | Bayan ng Dipaculao, Aurora",
+  description: "Official property tax portal of the Municipal Treasury Office of Dipaculao, Aurora.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "MTO Portal",
+    title: "Dipaculao Treasury",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#1f4e78",
+  themeColor: "#1a3a6b",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -31,43 +32,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full bg-slate-50">
-      <body className={`${inter.className} h-full antialiased`}>
+    <html lang="en" className="h-full">
+      <body className={`${inter.className} h-full antialiased bg-[#f0f4f8]`}>
         <ToastProvider>
           <OfflineBanner />
-          <div className="min-h-full flex flex-col">
-            <header className="bg-[#1f4e78] text-white shadow-lg">
-              <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center">
-                    <span className="text-[#1f4e78] font-bold">M</span>
-                  </div>
-                  <h1 className="font-bold text-lg tracking-tight">TREASURY PORTAL</h1>
-                </div>
-                <nav className="hidden sm:flex gap-6 text-sm font-medium">
-                  <a href="/" className="hover:text-blue-200 transition-colors">Property Search</a>
-                  <a href="/help" className="hover:text-blue-200 transition-colors">Help & Support</a>
-                </nav>
-              </div>
-            </header>
-
-            <main className="flex-1">
-              <ErrorBoundary>
-                {children}
-              </ErrorBoundary>
-            </main>
-
-            <footer className="bg-white border-t border-slate-200 py-8">
-              <div className="max-w-7xl mx-auto px-4 text-center">
-                <p className="text-sm text-slate-500">
-                  &copy; {new Date().getFullYear()} Municipal Treasury Office. All Rights Reserved.
-                </p>
-                <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest">
-                  Secure Enterprise Portal
-                </p>
-              </div>
-            </footer>
-          </div>
+          <ErrorBoundary>
+            {/* PublicShell renders header+footer only on non-admin routes.
+                Admin routes (/admin/*) have their own full-screen layout. */}
+            <PublicShell>
+              {children}
+            </PublicShell>
+          </ErrorBoundary>
         </ToastProvider>
       </body>
     </html>

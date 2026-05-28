@@ -5,7 +5,8 @@ from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+import jwt as _pyjwt
+from jwt.exceptions import InvalidTokenError as JWTError  # noqa: F401 — re-exported for callers
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -22,17 +23,86 @@ ACCESS_TOKEN_EXPIRE_MINUTES = mto_config.TOKEN_EXPIRE_MINUTES
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+
+# ---------------------------------------------------------------------------
 # Rate Limiter Configuration
+# ---------------------------------------------------------------------------
+# Two limiters run independently:
+#
+#   limiter      — keyed by IP address (existing, unchanged)
+#                  Protects against unauthenticated floods and scraping.
+#
+#   user_limiter — keyed by authenticated username
+#                  Protects against a single compromised account hammering
+#                  the API from any IP (e.g. scripted abuse, credential stuffing).
+#                  Falls back to IP if the request has no valid token, so
+#                  unauthenticated endpoints are still covered.
+#
+# Usage in route handlers:
+#   @limiter.limit("20/minute")          ← IP-based (existing)
+#   @user_limiter.limit("20/minute")     ← per-user (new)
+#
+# Both decorators can be stacked on the same endpoint:
+#   @limiter.limit("30/minute")
+#   @user_limiter.limit("20/minute")
+#   async def my_endpoint(request: Request, ...):
+# ---------------------------------------------------------------------------
+
 REDIS_URL = os.getenv("REDIS_URL")
 MTO_ENV = os.getenv("MTO_ENV", "development").lower()
 
+
+def _get_user_identifier(request: Request) -> str:
+    """
+    Key function for the per-user rate limiter.
+
+    Extracts the username from the JWT (Bearer header or access_token cookie).
+    Falls back to the IP address for unauthenticated requests so the limiter
+    still applies to public endpoints.
+
+    The JWT is decoded WITHOUT signature verification here — we only need the
+    `sub` claim for the rate-limit key, not for authentication. Full signature
+    verification happens in get_current_user() as normal.
+    """
+    token: str | None = None
+
+    # 1. Try Bearer header
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+
+    # 2. Try cookie (web portal)
+    if not token:
+        token = request.cookies.get("access_token")
+
+    if token:
+        try:
+            import base64, json as _json
+            # Decode payload without verification — key extraction only
+            parts = token.split(".")
+            if len(parts) == 3:
+                padded = parts[1] + "=" * (-len(parts[1]) % 4)
+                payload = _json.loads(base64.b64decode(padded).decode("utf-8"))
+                username = payload.get("sub")
+                if username:
+                    return f"user:{username}"
+        except Exception:
+            pass
+
+    # Fallback: use IP address (same as the IP limiter)
+    return f"ip:{get_remote_address(request)}"
+
+
+# Build both limiters with the same storage backend (Redis if available)
+_limiter_kwargs: dict = {}
 if REDIS_URL:
     try:
-        limiter = Limiter(key_func=get_remote_address, storage_uri=REDIS_URL)
+        _limiter_kwargs["storage_uri"] = REDIS_URL
     except Exception:
-        limiter = Limiter(key_func=get_remote_address)
-else:
-    limiter = Limiter(key_func=get_remote_address)
+        pass
+
+limiter = Limiter(key_func=get_remote_address, **_limiter_kwargs)
+user_limiter = Limiter(key_func=_get_user_identifier, **_limiter_kwargs)
 
 
 # WebSocket Connection Manager
@@ -224,10 +294,11 @@ async def get_current_user(request: Request, token: Optional[str] = None, db_ses
         raise credentials_exception
 
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = _pyjwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: int = payload.get("id")
         username: str = payload.get("sub")
         role: str = payload.get("role")
+        iat: int | None = payload.get("iat")   # issued-at timestamp (Unix epoch)
 
         if username is None or role is None or user_id is None:
             raise credentials_exception
@@ -240,13 +311,15 @@ async def get_current_user(request: Request, token: Optional[str] = None, db_ses
         raise credentials_exception
 
     # Verify the user still exists, is active, and has not been soft-deleted.
-    # Fetches only the three columns needed — avoids loading password hash etc.
+    # Also check password_changed_at: if the token was issued before the last
+    # password change, reject it immediately — even within the 1-hour window.
     from backend.models import User
     from sqlalchemy.orm import load_only
 
     user = (
         db_session.query(User)
-        .options(load_only(User.id, User.is_active, User.deleted_at))
+        .options(load_only(User.id, User.is_active, User.deleted_at,
+                           User.password_changed_at))
         .filter(User.id == user_id)
         .first()
     )
@@ -266,6 +339,25 @@ async def get_current_user(request: Request, token: Optional[str] = None, db_ses
             detail="Account is inactive or has been removed",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Reject tokens issued before the last password change.
+    # password_changed_at is a naive MariaDB datetime — compare with naive iat.
+    if iat is not None and user.password_changed_at is not None:
+        token_issued_at = datetime.utcfromtimestamp(iat)
+        if token_issued_at < user.password_changed_at:
+            from utils.logger import mto_logger
+            mto_logger.security(
+                "Token rejected: issued before password change",
+                user_id=user_id,
+                username=username,
+                token_iat=token_issued_at.isoformat(),
+                password_changed_at=user.password_changed_at.isoformat(),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session expired due to password change. Please log in again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     return {"id": user_id, "username": username, "role": role}
 
@@ -336,10 +428,13 @@ read_only = RoleChecker(["admin", "cashier", "encoder", "viewer"])
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
+    now = datetime.now(timezone.utc)
     if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
+        expire = now + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=60)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+        expire = now + timedelta(minutes=60)
+    # Embed issued-at (iat) so get_current_user can reject tokens issued
+    # before a password change even within the 1-hour expiry window.
+    to_encode.update({"exp": expire, "iat": now})
+    encoded_jwt = _pyjwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt

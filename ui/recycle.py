@@ -105,28 +105,216 @@ class RecycleBinPage:
         if not sel: return
         vals = self.tree.item(sel[0])["values"]
         prop_id = vals[0]
-        name = vals[2]
-        
-        if messagebox.askyesno(tr("recycle.messages.confirm_restore"), tr("recycle.messages.confirm_restore_msg").replace("{name}", name)):
-            try:
-                prop_svc.restore_property(prop_id)
-                self.refresh()
-                show_toast(self.container.winfo_toplevel(), tr("recycle.messages.success_restore"), type="success")
-            except Exception as e:
-                ErrorDialog(self.container.winfo_toplevel(), tr("common.error"), str(e))
+        name = str(vals[2])
+
+        confirmed = self._confirm_dialog(
+            title="Restore Property",
+            icon="🔄",
+            icon_color="#059669",
+            border_color="#10b981",
+            message=f"Restore this property back to active records?",
+            detail=name,
+            confirm_text="RESTORE",
+            confirm_color="#059669",
+            confirm_hover="#047857",
+        )
+        if not confirmed:
+            return
+        try:
+            prop_svc.restore_property(prop_id)
+            self.refresh()
+            self._success_dialog("Property Restored", f"{name}\nhas been restored to active records.")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
 
     def purge_selected(self):
         sel = self.tree.selection()
         if not sel: return
         vals = self.tree.item(sel[0])["values"]
         prop_id = vals[0]
-        name = vals[2]
-        
-        msg = tr("recycle.messages.confirm_purge_msg").replace("{name}", name)
-        if messagebox.askyesno(tr("recycle.messages.confirm_purge"), msg, icon="warning"):
-            try:
-                prop_svc.purge_property(prop_id)
-                self.refresh()
-                show_toast(self.container.winfo_toplevel(), tr("recycle.messages.success_purge"), type="success")
-            except Exception as e:
-                ErrorDialog(self.container.winfo_toplevel(), tr("common.error"), str(e))
+        name = str(vals[2])
+
+        confirmed = self._confirm_dialog(
+            title="Permanently Delete",
+            icon="💀",
+            icon_color="#ef4444",
+            border_color="#ef4444",
+            message="This will PERMANENTLY delete the property and\nall its payment records. This cannot be undone.",
+            detail=name,
+            confirm_text="DELETE PERMANENTLY",
+            confirm_color="#dc2626",
+            confirm_hover="#b91c1c",
+        )
+        if not confirmed:
+            return
+        try:
+            prop_svc.purge_property(prop_id)
+            self.refresh()
+            self._success_dialog("Property Deleted", f"{name}\nhas been permanently removed.", success=False)
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    # ── Premium dialog helpers ─────────────────────────────────────────────────
+
+    def _confirm_dialog(self, title, icon, icon_color, border_color,
+                        message, detail, confirm_text, confirm_color, confirm_hover):
+        """
+        Borderless dark confirmation dialog.
+        Returns True if confirmed, False if cancelled.
+        """
+        result = tk.BooleanVar(value=False)
+
+        dlg = ctk.CTkToplevel(self.container)
+        dlg.title("")
+        dlg.resizable(False, False)
+        dlg.overrideredirect(True)
+        dlg.attributes("-topmost", True)
+        dlg.grab_set()
+
+        dlg.update_idletasks()
+        dw, dh = 440, 280
+        sw = dlg.winfo_screenwidth()
+        sh = dlg.winfo_screenheight()
+        dlg.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
+
+        outer = ctk.CTkFrame(
+            dlg, fg_color="#0f172a", corner_radius=16,
+            border_width=1, border_color="#1e293b",
+        )
+        outer.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Accent bar
+        ctk.CTkFrame(outer, height=5, fg_color=border_color, corner_radius=0).pack(fill="x")
+
+        # Icon
+        icon_fr = ctk.CTkFrame(
+            outer, width=56, height=56, corner_radius=28,
+            fg_color="#1e293b", border_width=2, border_color=border_color,
+        )
+        icon_fr.pack(pady=(18, 0))
+        icon_fr.pack_propagate(False)
+        ctk.CTkLabel(
+            icon_fr, text=icon,
+            font=("Segoe UI Emoji", 22), text_color=icon_color,
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        # Title
+        ctk.CTkLabel(
+            outer, text=title,
+            font=("Inter", 15, "bold"), text_color="#f1f5f9",
+        ).pack(pady=(10, 2))
+
+        # Message
+        ctk.CTkLabel(
+            outer, text=message,
+            font=("Inter", 11), text_color="#94a3b8", justify="center",
+        ).pack()
+
+        # Detail (property name)
+        ctk.CTkLabel(
+            outer, text=detail,
+            font=("Inter", 11, "bold"), text_color="#e2e8f0", justify="center",
+            wraplength=380,
+        ).pack(pady=(4, 0))
+
+        # Divider
+        ctk.CTkFrame(outer, height=1, fg_color="#1e293b").pack(fill="x", padx=20, pady=(12, 0))
+
+        # Buttons
+        btn_fr = ctk.CTkFrame(outer, fg_color="transparent")
+        btn_fr.pack(pady=12)
+
+        def on_cancel():
+            result.set(False)
+            dlg.grab_release()
+            dlg.destroy()
+
+        def on_confirm():
+            result.set(True)
+            dlg.grab_release()
+            dlg.destroy()
+
+        ctk.CTkButton(
+            btn_fr, text="CANCEL", command=on_cancel,
+            fg_color="#1e293b", hover_color="#334155",
+            text_color="#94a3b8", border_width=1, border_color="#334155",
+            font=("Inter", 12, "bold"), width=130, height=36, corner_radius=8,
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_fr, text=confirm_text, command=on_confirm,
+            fg_color=confirm_color, hover_color=confirm_hover,
+            text_color="white",
+            font=("Inter", 12, "bold"), width=170, height=36, corner_radius=8,
+        ).pack(side="left")
+
+        dlg.bind("<Return>", lambda e: on_confirm())
+        dlg.bind("<Escape>", lambda e: on_cancel())
+        dlg.focus_set()
+        dlg.wait_window()
+        return result.get()
+
+    def _success_dialog(self, title, message, success=True):
+        """Borderless dark success/info dialog."""
+        color = "#10b981" if success else "#64748b"
+        icon  = "✓" if success else "✕"
+
+        dlg = ctk.CTkToplevel(self.container)
+        dlg.title("")
+        dlg.resizable(False, False)
+        dlg.overrideredirect(True)
+        dlg.attributes("-topmost", True)
+        dlg.grab_set()
+
+        dlg.update_idletasks()
+        dw, dh = 380, 230
+        sw = dlg.winfo_screenwidth()
+        sh = dlg.winfo_screenheight()
+        dlg.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
+
+        outer = ctk.CTkFrame(
+            dlg, fg_color="#0f172a", corner_radius=16,
+            border_width=1, border_color="#1e293b",
+        )
+        outer.pack(fill="both", expand=True, padx=2, pady=2)
+
+        ctk.CTkFrame(outer, height=5, fg_color=color, corner_radius=0).pack(fill="x")
+
+        icon_fr = ctk.CTkFrame(
+            outer, width=52, height=52, corner_radius=26,
+            fg_color="#1e293b", border_width=2, border_color=color,
+        )
+        icon_fr.pack(pady=(16, 0))
+        icon_fr.pack_propagate(False)
+        ctk.CTkLabel(
+            icon_fr, text=icon,
+            font=("Inter", 22, "bold"), text_color=color,
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        ctk.CTkLabel(
+            outer, text=title,
+            font=("Inter", 14, "bold"), text_color="#f1f5f9",
+        ).pack(pady=(10, 2))
+
+        ctk.CTkLabel(
+            outer, text=message,
+            font=("Inter", 11), text_color="#94a3b8", justify="center",
+        ).pack()
+
+        ctk.CTkFrame(outer, height=1, fg_color="#1e293b").pack(fill="x", padx=20, pady=(10, 0))
+
+        def close():
+            dlg.grab_release()
+            dlg.destroy()
+
+        ctk.CTkButton(
+            outer, text="OK", command=close,
+            fg_color=color, hover_color="#047857" if success else "#475569",
+            text_color="white",
+            font=("Inter", 12, "bold"), width=120, height=34, corner_radius=8,
+        ).pack(pady=10)
+
+        dlg.bind("<Return>", lambda e: close())
+        dlg.bind("<Escape>", lambda e: close())
+        dlg.focus_set()
+        dlg.wait_window()

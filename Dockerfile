@@ -23,7 +23,6 @@ WORKDIR /app
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     libmariadb-dev-compat \
-    libmariadb-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
@@ -40,6 +39,17 @@ ENV PORT=8001
 # Copy entrypoint and make executable
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+# ---------------------------------------------------------------------------
+# WIN 5: Run as a non-root user.
+# Running as root inside a container means any RCE vulnerability gives the
+# attacker root on the host if the container runtime is misconfigured.
+# A dedicated low-privilege user limits the blast radius.
+# ---------------------------------------------------------------------------
+RUN useradd --system --create-home --shell /bin/false mto \
+    && chown -R mto:mto /app /entrypoint.sh
+
+USER mto
 
 # Expose API port
 EXPOSE 8001

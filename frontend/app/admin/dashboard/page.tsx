@@ -80,8 +80,33 @@ export default function AdminDashboard() {
     active_delinquencies: 0
   };
 
+  const lastYear = data?.last_year || {
+    total_collected: 0,
+    total_receivables: 0,
+    collection_rate: 0,
+    total_properties: 0,
+  };
+
+  // Compute % change vs last year
+  const pctChange = (current: number, previous: number): number | null => {
+    if (!previous || previous === 0) return null;
+    return ((current - previous) / previous) * 100;
+  };
+
+  const YoyBadge = ({ current, previous }: { current: number; previous: number }) => {
+    const pct = pctChange(current, previous);
+    if (pct === null) return <span className="text-[10px] text-slate-600">No prior year data</span>;
+    const positive = pct >= 0;
+    return (
+      <div className={`flex items-center gap-1 text-[10px] font-bold mt-1 ${positive ? "text-emerald-400" : "text-red-400"}`}>
+        <span>{positive ? "↑" : "↓"}</span>
+        <span>{Math.abs(pct).toFixed(1)}% vs last year</span>
+      </div>
+    );
+  };
+
   return (
-    <div className="space-y-8 max-w-[1600px] mx-auto">
+    <div className="space-y-6 max-w-[1600px] mx-auto">
       {/* Top Header Actions */}
       <div className="flex items-center justify-between">
         <div>
@@ -111,6 +136,7 @@ export default function AdminDashboard() {
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Collection Receivables</p>
           <h3 className="text-2xl font-black text-white mt-1">₱ {(summary.total_receivables || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+          <YoyBadge current={summary.total_receivables || 0} previous={lastYear.total_receivables || 0} />
         </div>
 
         <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
@@ -124,6 +150,7 @@ export default function AdminDashboard() {
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Actual Collected Revenue</p>
           <h3 className="text-2xl font-black text-green-400 mt-1">₱ {(summary.total_collected || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+          <YoyBadge current={summary.total_collected || 0} previous={lastYear.total_collected || 0} />
         </div>
 
         <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
@@ -142,6 +169,7 @@ export default function AdminDashboard() {
               : 0
             ).toFixed(2)} %
           </h3>
+          <YoyBadge current={summary.collection_rate || 0} previous={lastYear.collection_rate || 0} />
         </div>
 
         <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
@@ -155,21 +183,22 @@ export default function AdminDashboard() {
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Assessed Tax Properties</p>
           <h3 className="text-2xl font-black text-white mt-1">{(summary.total_properties || 0).toLocaleString()} Properties</h3>
+          <YoyBadge current={summary.total_properties || 0} previous={lastYear.total_properties || 0} />
         </div>
       </div>
 
       {/* Barangay distribution and trend charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Barangay Breakdown Table */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 lg:col-span-2 shadow-xl shadow-black/15">
-          <h3 className="text-base font-bold text-white uppercase tracking-wider mb-6 flex items-center gap-2">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 lg:col-span-2 shadow-xl shadow-black/15 flex flex-col" style={{height:"420px"}}>
+          <h3 className="text-base font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2 flex-shrink-0">
             <Building2 className="w-5 h-5 text-[#4ca2ff]" />
             Barangay Treasury Contribution
           </h3>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-auto flex-1 min-h-0">
             <table className="w-full text-left text-sm">
-              <thead>
+              <thead className="sticky top-0 bg-slate-900 z-10">
                 <tr className="border-b border-slate-800 text-slate-400 font-extrabold text-xs uppercase tracking-wider">
                   <th className="pb-3 font-extrabold">Barangay Name</th>
                   <th className="pb-3 text-right font-extrabold">Receivables</th>
@@ -180,17 +209,17 @@ export default function AdminDashboard() {
               <tbody className="divide-y divide-slate-800/60">
                 {(data?.barangays || []).map((b: any, i: number) => (
                   <tr key={i} className="hover:bg-slate-850/50 transition-colors">
-                    <td className="py-4 font-bold text-white">{b.name}</td>
-                    <td className="py-4 text-right text-slate-400">P {(b.value || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td className="py-4 text-right font-bold text-green-400">P {(b.collected || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td className="py-4 text-right">
+                    <td className="py-3 font-bold text-white">{b.name}</td>
+                    <td className="py-3 text-right text-slate-400">P {(b.value || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="py-3 text-right font-bold text-green-400">P {(b.collected || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="py-3 text-right">
                       <div className="flex items-center justify-end gap-3">
                         <span className="font-bold text-xs">{(b.percentage || 0).toFixed(1)}%</span>
                         <div className="w-16 h-2 bg-slate-800 rounded-full overflow-hidden">
-                          <div 
+                          <div
                             className="h-full bg-gradient-to-r from-blue-500 to-[#1f4e78] rounded-full"
                             style={{ width: `${b.percentage || 0}%` }}
-                          ></div>
+                          />
                         </div>
                       </div>
                     </td>
@@ -202,35 +231,36 @@ export default function AdminDashboard() {
         </div>
 
         {/* Monthly Trend Display */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl shadow-black/15 flex flex-col">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl shadow-black/15 flex flex-col" style={{height:"420px"}}>
           <h3 className="text-base font-bold text-white uppercase tracking-wider mb-6 flex items-center gap-2">
             <TrendingUp className="w-5 h-5 text-[#4ca2ff]" />
             Monthly Revenue Trend
           </h3>
 
-          <div className="flex-1 flex flex-col justify-between space-y-4">
-            <div className="space-y-3">
+          <div className="flex-1 overflow-auto min-h-0">
+            <div className="space-y-3 pr-1">
               {(() => {
                 const trend = data?.trend || [];
                 const maxRevenue = Math.max(...trend.map((t: any) => t.total || 0), 1);
                 return trend.map((t: any, i: number) => (
                   <div key={i} className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500 uppercase tracking-widest w-12">{t.month}</span>
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-widest w-12 flex-shrink-0">{t.month}</span>
                     <div className="flex-1 mx-4 h-6 bg-slate-800/50 border border-slate-800 rounded-lg overflow-hidden flex items-center px-1">
                       <div
                         className="h-4 bg-gradient-to-r from-emerald-500 to-teal-600 rounded"
                         style={{ width: `${Math.min(((t.total || 0) / maxRevenue) * 100, 100)}%` }}
                       ></div>
                     </div>
-                    <span className="text-xs font-black text-slate-400">
+                    <span className="text-xs font-black text-slate-400 w-14 text-right flex-shrink-0">
                       ₱{((t.total || 0) / 1000).toFixed(0)}k
                     </span>
                   </div>
                 ));
               })()}
             </div>
+          </div>
 
-            <div className="bg-slate-950 rounded-xl p-4 border border-slate-800/80">
+          <div className="bg-slate-950 rounded-xl p-4 border border-slate-800/80 flex-shrink-0 mt-3">
               <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Active System Status</p>
               <div className="flex items-center gap-2 mt-1">
                 <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
@@ -238,7 +268,6 @@ export default function AdminDashboard() {
               </div>
             </div>
           </div>
-        </div>
       </div>
     </div>
   );

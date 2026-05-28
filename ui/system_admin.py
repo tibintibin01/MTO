@@ -4,6 +4,7 @@ import api_clients.auth_service as auth
 from ui.users import UserAccessPage
 from ui.logs import AuditLogsPage
 from ui.recycle import RecycleBinPage
+from ui.batch_delete_payments import BatchDeletePaymentsModal
 from theme_manager import ModernTheme
 from utils import tr
 
@@ -165,6 +166,11 @@ class SystemAdminPage:
             tab = self.tabview.add(tr("admin.tabs.db"))
             self.setup_db_tab(tab)
 
+        # Tax Policy Tab — Admin only
+        if auth.has_permission(self.user, "manage_users"):
+            tab = self.tabview.add("Tax Policy")
+            self.setup_tax_policy_tab(tab)
+
     def setup_db_tab(self, parent):
         container = ctk.CTkFrame(parent, fg_color="transparent")
         container.pack(fill="both", expand=True, padx=40, pady=20)
@@ -231,6 +237,30 @@ class SystemAdminPage:
             hover_color="#9b59b6",
         )
         self.sync_btn.pack(side="left", padx=5)
+
+        self.td_audit_btn = ctk.CTkButton(
+            btn_fr,
+            text="🔍 AUDIT TD NUMBERS",
+            command=self.audit_td_numbers,
+            height=45,
+            width=190,
+            font=ModernTheme.BUTTON,
+            fg_color="#c0392b",
+            hover_color="#e74c3c",
+        )
+        self.td_audit_btn.pack(side="left", padx=5)
+
+        self.batch_del_btn = ctk.CTkButton(
+            btn_fr,
+            text="🗑️ BATCH DELETE PAYMENTS",
+            command=lambda: BatchDeletePaymentsModal(self.container, self.user),
+            height=45,
+            width=220,
+            font=ModernTheme.BUTTON,
+            fg_color="#7c3aed",
+            hover_color="#6d28d9",
+        )
+        self.batch_del_btn.pack(side="left", padx=5)
 
         # If a sync was running when the user navigated away, resume monitoring
         if _active_sync_job_id:
@@ -626,6 +656,778 @@ class SystemAdminPage:
                     pass
 
         threading.Thread(target=preview, daemon=True).start()
+
+    def audit_td_numbers(self):
+        """
+        Calls the backend TD number audit endpoint and shows results
+        in a tabbed dialog with three sections:
+          1. Malformed TD numbers
+          2. Duplicate TD numbers (two properties share the same TD)
+          3. Duplicate payments (same OR number + same tax year)
+        """
+        import threading
+        import tkinter as tk
+        from tkinter import ttk
+        import api_clients.system_service as system_svc
+
+        self.td_audit_btn.configure(state="disabled", text="🔍 SCANNING...")
+
+        def run():
+            try:
+                result = system_svc.audit_td_numbers()
+                self.container.after(0, lambda: show_results(result))
+            except Exception as e:
+                self.container.after(
+                    0, lambda err=e: messagebox.showerror("Audit Error", str(err))
+                )
+            finally:
+                if self.container.winfo_exists():
+                    self.container.after(
+                        0, lambda: self.td_audit_btn.configure(
+                            state="normal", text="🔍 AUDIT TD NUMBERS"
+                        )
+                    )
+
+        def show_results(result):
+            total         = result.get("total_scanned", 0)
+            total_pay     = result.get("total_payments_scanned", 0)
+            invalid       = result.get("invalid", [])
+            dup_tds       = result.get("duplicate_tds", [])
+            dup_pays      = result.get("duplicate_payments", [])
+            shadows       = result.get("shadow_duplicates", [])
+            fmt_count     = result.get("invalid_count", 0)
+            dup_td_count  = result.get("duplicate_td_count", 0)
+            dup_pay_count = result.get("duplicate_payment_count", 0)
+            shadow_count  = result.get("shadow_duplicate_count", 0)
+            total_issues  = fmt_count + dup_td_count + dup_pay_count + shadow_count
+
+            # ── Result window ─────────────────────────────────────────────
+            win = ctk.CTkToplevel(self.container)
+            win.title(f"Data Integrity Audit — {total_issues} issues found")
+            win.geometry("1020x640")
+            win.attributes("-topmost", True)
+            win.grab_set()
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            win.geometry(f"+{(sw-1020)//2}+{(sh-640)//2}")
+
+            # ── Header ────────────────────────────────────────────────────
+            hdr = ctk.CTkFrame(win, fg_color="transparent")
+            hdr.pack(fill="x", padx=20, pady=(16, 6))
+            ctk.CTkLabel(
+                hdr, text="🔍  DATA INTEGRITY AUDIT",
+                font=ModernTheme.H3, text_color=ModernTheme.PRIMARY, anchor="w",
+            ).pack(side="left")
+            summary_color = "#2ecc71" if total_issues == 0 else "#e74c3c"
+            ctk.CTkLabel(
+                hdr,
+                text=(f"Properties: {total:,}   |   Payments: {total_pay:,}   |   "
+                      f"Issues: {total_issues:,}"),
+                font=ModernTheme.BODY_BOLD, text_color=summary_color,
+            ).pack(side="right")
+
+            # ── Summary badges ────────────────────────────────────────────
+            badges = ctk.CTkFrame(win, fg_color="transparent")
+            badges.pack(fill="x", padx=20, pady=(0, 8))
+
+            def badge(parent, label, count, color):
+                f = ctk.CTkFrame(parent, fg_color=color, corner_radius=8)
+                f.pack(side="left", padx=(0, 8))
+                ctk.CTkLabel(
+                    f,
+                    text=f"  {label}: {count:,}  ",
+                    font=("Inter", 11, "bold"), text_color="white",
+                ).pack(padx=6, pady=4)
+
+            badge(badges, "Format Issues",      fmt_count,     "#c0392b" if fmt_count     else "#27ae60")
+            badge(badges, "Duplicate TDs",      dup_td_count,  "#e67e22" if dup_td_count  else "#27ae60")
+            badge(badges, "Duplicate Payments", dup_pay_count, "#8e44ad" if dup_pay_count else "#27ae60")
+            badge(badges, "Shadow Duplicates",  shadow_count,  "#c0392b" if shadow_count  else "#27ae60")
+
+            if total_issues == 0:
+                ctk.CTkLabel(
+                    win,
+                    text="✅  No issues found. All TD numbers and payments are clean.",
+                    font=("Inter", 16, "bold"), text_color="#2ecc71",
+                ).pack(expand=True)
+                ctk.CTkButton(win, text="CLOSE", command=win.destroy,
+                              fg_color=ModernTheme.SECONDARY, width=120).pack(pady=20)
+                return
+
+            # ── Shared treeview style ─────────────────────────────────────
+            style = ttk.Style()
+            style.configure(
+                "Audit.Treeview",
+                rowheight=30, font=("Inter", 11),
+                background="#1e293b", fieldbackground="#1e293b", foreground="#cbd5e1",
+            )
+            style.configure(
+                "Audit.Treeview.Heading",
+                font=("Inter", 11, "bold"), background="#0f172a", foreground="#64748b",
+            )
+            style.map("Audit.Treeview", background=[("selected", "#1d4ed8")])
+
+            # ── Tabview ───────────────────────────────────────────────────
+            tabview = ctk.CTkTabview(win)
+            tabview.pack(fill="both", expand=True, padx=20, pady=(0, 8))
+
+            def make_tree(parent, cols, col_widths):
+                """Helper: create a scrollable treeview inside a tab."""
+                fr = tk.Frame(parent, bg="#1e293b")
+                fr.pack(fill="both", expand=True, padx=4, pady=4)
+                tree = ttk.Treeview(fr, columns=cols, show="headings",
+                                    style="Audit.Treeview")
+                for col, w in zip(cols, col_widths):
+                    tree.heading(col, text=col)
+                    tree.column(col, width=w, anchor="w")
+                sy = ttk.Scrollbar(fr, orient="vertical",   command=tree.yview)
+                sx = ttk.Scrollbar(fr, orient="horizontal", command=tree.xview)
+                tree.configure(yscrollcommand=sy.set, xscrollcommand=sx.set)
+                sy.pack(side="right", fill="y")
+                sx.pack(side="bottom", fill="x")
+                tree.pack(side="left", fill="both", expand=True)
+                tree.tag_configure("oddrow",  background="#1e293b", foreground="#cbd5e1")
+                tree.tag_configure("evenrow", background="#162032", foreground="#cbd5e1")
+                tree.tag_configure("duprow",  background="#2d1b4e", foreground="#c4b5fd")
+                tree.tag_configure("paydup",  background="#1e1b4b", foreground="#a5b4fc")
+                return tree
+
+            # ── Tab 1: Format Issues ──────────────────────────────────────
+            tab1 = tabview.add(f"⚠️ Format Issues ({fmt_count})")
+            if invalid:
+                t1 = make_tree(tab1,
+                    ("ID", "TD NUMBER", "OWNER NAME", "REASON"),
+                    (60, 160, 260, 400))
+                for i, row in enumerate(invalid):
+                    tag = "evenrow" if i % 2 == 0 else "oddrow"
+                    t1.insert("", "end", tags=(tag,),
+                              values=(row["id"], row["td_number"],
+                                      row["owner_name"], row["reason"]))
+            else:
+                ctk.CTkLabel(tab1, text="✅  No format issues found.",
+                             font=("Inter", 13, "bold"), text_color="#2ecc71").pack(expand=True)
+
+            # ── Tab 2: Duplicate TDs ──────────────────────────────────────
+            tab2 = tabview.add(f"🔁 Duplicate TDs ({dup_td_count})")
+            if dup_tds:
+                t2 = make_tree(tab2,
+                    ("ID", "TD NUMBER", "OWNER NAME", "NOTE"),
+                    (60, 160, 260, 420))
+                for i, row in enumerate(dup_tds):
+                    t2.insert("", "end", tags=("duprow",),
+                              values=(row["id"], row["td_number"],
+                                      row["owner_name"], row["reason"]))
+            else:
+                ctk.CTkLabel(tab2, text="✅  No duplicate TD numbers found.",
+                             font=("Inter", 13, "bold"), text_color="#2ecc71").pack(expand=True)
+
+            # ── Tab 3: Duplicate Payments ─────────────────────────────────
+            tab3 = tabview.add(f"💳 Duplicate Payments ({dup_pay_count})")
+            if dup_pays:
+                t3 = make_tree(tab3,
+                    ("PAY ID", "OR NUMBER", "TAX YEAR", "TD NUMBER", "OWNER", "AMOUNT", "DATE", "NOTE"),
+                    (65, 110, 75, 140, 200, 90, 95, 200))
+                for i, row in enumerate(dup_pays):
+                    t3.insert("", "end", tags=("paydup",),
+                              values=(
+                                  row["payment_id"],
+                                  row["or_number"],
+                                  row["tax_year"],
+                                  row["td_number"],
+                                  row["owner_name"],
+                                  f"₱{row['amount']:,.2f}",
+                                  row["date_paid"],
+                                  row["reason"],
+                              ))
+            else:
+                ctk.CTkLabel(tab3, text="✅  No duplicate payments found.",
+                             font=("Inter", 13, "bold"), text_color="#2ecc71").pack(expand=True)
+
+            # ── Tab 4: Shadow Duplicates ──────────────────────────────────
+            tab4 = tabview.add(f"👥 Shadow Duplicates ({shadow_count})")
+            if shadows:
+                info4 = ctk.CTkFrame(
+                    tab4, fg_color=("#fff3e0", "#2d1b00"),
+                    corner_radius=8, border_width=1, border_color=("#ffcc80", "#92400e"),
+                )
+                info4.pack(fill="x", padx=4, pady=(4, 0))
+                ctk.CTkLabel(
+                    info4,
+                    text=(
+                        "⚠️  These malformed TDs cannot be auto-fixed because a correct-format version already exists.\n"
+                        "Review each pair — verify which property has the correct payments, then delete the bad one via Recycle Bin."
+                    ),
+                    font=("Inter", 10), text_color=("#92400e", "#fbbf24"),
+                    wraplength=860, justify="left",
+                ).pack(padx=12, pady=6, anchor="w")
+
+                t4 = make_tree(tab4,
+                    ("BAD ID", "BAD TD", "BAD OWNER", "CORRECT ID", "CORRECT TD", "CORRECT OWNER", "ACTION"),
+                    (65, 140, 200, 80, 140, 200, 280))
+                t4.tag_configure("shadowrow", background="#2d1b00", foreground="#fbbf24")
+                for row in shadows:
+                    t4.insert("", "end", tags=("shadowrow",),
+                              values=(
+                                  row["bad_id"],
+                                  row["bad_td"],
+                                  row["bad_owner"],
+                                  row["correct_id"],
+                                  row["correct_td"],
+                                  row["correct_owner"],
+                                  row["action"],
+                              ))
+            else:
+                ctk.CTkLabel(tab4, text="✅  No shadow duplicates found.",
+                             font=("Inter", 13, "bold"), text_color="#2ecc71").pack(expand=True)
+
+            # ── Footer ────────────────────────────────────────────────────
+            foot = ctk.CTkFrame(win, fg_color="transparent")
+            foot.pack(fill="x", padx=20, pady=(0, 14))
+
+            def run_shadow_cleanup():
+                if not shadows:
+                    return
+                bad_ids = [s["bad_id"] for s in shadows]
+                count = len(bad_ids)
+
+                # Premium confirm dialog
+                confirmed = tk.BooleanVar(value=False)
+                dlg = ctk.CTkToplevel(win)
+                dlg.title("")
+                dlg.resizable(False, False)
+                dlg.overrideredirect(True)
+                dlg.attributes("-topmost", True)
+
+                dw, dh = 460, 340
+                sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
+                dlg.geometry(f"{dw}x{dh}+{(sw-dw)//2}+{(sh-dh)//2}")
+
+                outer = ctk.CTkFrame(dlg, fg_color="#0f172a", corner_radius=16,
+                                     border_width=1, border_color="#1e293b")
+                outer.pack(fill="both", expand=True, padx=2, pady=2)
+                ctk.CTkFrame(outer, height=5, fg_color="#dc2626", corner_radius=0).pack(fill="x")
+
+                # Centered icon
+                icon_row = ctk.CTkFrame(outer, fg_color="transparent")
+                icon_row.pack(pady=(18, 0))
+                icon_fr = ctk.CTkFrame(icon_row, width=52, height=52, corner_radius=26,
+                                       fg_color="#1e293b", border_width=2, border_color="#ef4444")
+                icon_fr.pack()
+                icon_fr.pack_propagate(False)
+                ctk.CTkLabel(icon_fr, text="🗑️", font=("Segoe UI Emoji", 20),
+                             text_color="#ef4444").place(relx=0.5, rely=0.5, anchor="center")
+
+                ctk.CTkLabel(outer, text="Batch Delete Shadow Duplicates",
+                             font=("Inter", 14, "bold"), text_color="#f1f5f9").pack(pady=(10, 2))
+
+                body = ctk.CTkFrame(outer, fg_color="#161b22", corner_radius=8)
+                body.pack(fill="x", padx=20, pady=(6, 0))
+                lines = [
+                    (f"Up to {count:,} bad TD properties will be processed.", "#94a3b8"),
+                    ("✓  Properties WITH payments → SKIPPED (safe)", "#10b981"),
+                    ("✓  Deleted records go to Recycle Bin (recoverable)", "#10b981"),
+                    ("✓  All deletions logged in the Audit Trail", "#10b981"),
+                    ("✗  Properties WITHOUT payments → soft-deleted", "#f87171"),
+                ]
+                for text, color in lines:
+                    ctk.CTkLabel(body, text=text, font=("Inter", 10),
+                                 text_color=color, anchor="w").pack(anchor="w", padx=12, pady=2)
+
+                ctk.CTkFrame(outer, height=1, fg_color="#1e293b").pack(fill="x", padx=20, pady=(10, 0))
+
+                btn_fr = ctk.CTkFrame(outer, fg_color="transparent")
+                btn_fr.pack(pady=12)
+
+                def on_cancel():
+                    confirmed.set(False)
+                    dlg.grab_release()
+                    dlg.destroy()
+
+                def on_confirm():
+                    confirmed.set(True)
+                    dlg.grab_release()
+                    dlg.destroy()
+
+                ctk.CTkButton(btn_fr, text="CANCEL", command=on_cancel,
+                              fg_color="#1e293b", hover_color="#334155", text_color="#94a3b8",
+                              border_width=1, border_color="#334155",
+                              font=("Inter", 12, "bold"), width=130, height=36, corner_radius=8,
+                              ).pack(side="left", padx=(0, 10))
+                ctk.CTkButton(btn_fr, text=f"DELETE {count:,} BAD TDs", command=on_confirm,
+                              fg_color="#dc2626", hover_color="#b91c1c", text_color="white",
+                              font=("Inter", 12, "bold"), width=180, height=36, corner_radius=8,
+                              ).pack(side="left")
+
+                dlg.bind("<Return>", lambda e: on_confirm())
+                dlg.bind("<Escape>", lambda e: on_cancel())
+                dlg.update_idletasks()
+                dlg.lift()
+                dlg.focus_force()
+                dlg.grab_set()
+                dlg.wait_window()
+
+                if not confirmed.get():
+                    return
+
+                def do_cleanup():
+                    try:
+                        res = system_svc.shadow_duplicate_cleanup(bad_ids)
+                        deleted = res.get("deleted", 0)
+                        skipped = res.get("skipped", 0)
+                        skipped_list = res.get("skipped_list", [])
+
+                        # Premium result dialog
+                        def show_result():
+                            color = "#10b981" if skipped == 0 else "#f59e0b"
+                            rdlg = ctk.CTkToplevel(win)
+                            rdlg.title("")
+                            rdlg.resizable(False, False)
+                            rdlg.overrideredirect(True)
+                            rdlg.attributes("-topmost", True)
+                            dw2, dh2 = 400, 240
+                            sw2, sh2 = rdlg.winfo_screenwidth(), rdlg.winfo_screenheight()
+                            rdlg.geometry(f"{dw2}x{dh2}+{(sw2-dw2)//2}+{(sh2-dh2)//2}")
+
+                            ro = ctk.CTkFrame(rdlg, fg_color="#0f172a", corner_radius=16,
+                                             border_width=1, border_color="#1e293b")
+                            ro.pack(fill="both", expand=True, padx=2, pady=2)
+                            ctk.CTkFrame(ro, height=5, fg_color=color, corner_radius=0).pack(fill="x")
+
+                            icon2 = ctk.CTkFrame(ro, width=48, height=48, corner_radius=24,
+                                                 fg_color="#1e293b", border_width=2, border_color=color)
+                            icon2.pack(pady=(14, 0))
+                            icon2.pack_propagate(False)
+                            ctk.CTkLabel(icon2, text="✓", font=("Inter", 20, "bold"),
+                                         text_color=color).place(relx=0.5, rely=0.5, anchor="center")
+
+                            ctk.CTkLabel(ro, text="Cleanup Complete",
+                                         font=("Inter", 14, "bold"), text_color="#f1f5f9").pack(pady=(8, 2))
+                            ctk.CTkLabel(ro,
+                                         text=f"Deleted: {deleted:,} bad TD properties\n"
+                                              f"Skipped: {skipped:,} (have payments — review manually)",
+                                         font=("Inter", 11), text_color="#94a3b8", justify="center").pack()
+                            ctk.CTkFrame(ro, height=1, fg_color="#1e293b").pack(fill="x", padx=20, pady=(10, 0))
+
+                            def close_result():
+                                rdlg.grab_release()
+                                rdlg.destroy()
+
+                            ctk.CTkButton(ro, text="DONE", command=close_result,
+                                          fg_color=color,
+                                          hover_color="#047857" if skipped == 0 else "#d97706",
+                                          text_color="white", font=("Inter", 12, "bold"),
+                                          width=120, height=34, corner_radius=8).pack(pady=10)
+                            rdlg.bind("<Return>", lambda e: close_result())
+                            rdlg.update_idletasks()
+                            rdlg.lift()
+                            rdlg.focus_force()
+                            rdlg.grab_set()
+
+                        self.container.after(0, show_result)
+                    except Exception as e:
+                        self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
+
+                threading.Thread(target=do_cleanup, daemon=True).start()
+
+            if shadow_count > 0:
+                ctk.CTkButton(
+                    foot,
+                    text=f"🗑️  BATCH DELETE {shadow_count:,} BAD TDs",
+                    command=run_shadow_cleanup,
+                    fg_color="#c0392b", hover_color="#e74c3c",
+                    width=240, height=36, font=ModernTheme.BUTTON_SMALL,
+                ).pack(side="left", padx=(0, 8))
+
+            def export_csv():
+                from tkinter import filedialog
+                import csv
+                path = filedialog.asksaveasfilename(
+                    parent=win,
+                    defaultextension=".csv",
+                    filetypes=[("CSV", "*.csv")],
+                    initialfile="data_integrity_audit.csv",
+                    title="Save Audit Report",
+                )
+                if not path:
+                    win.lift()
+                    win.focus_force()
+                    return
+                with open(path, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    # Section 1
+                    writer.writerow(["=== FORMAT ISSUES ==="])
+                    writer.writerow(["ID", "TD Number", "Owner Name", "Reason"])
+                    for row in invalid:
+                        writer.writerow([row["id"], row["td_number"],
+                                         row["owner_name"], row["reason"]])
+                    writer.writerow([])
+                    # Section 2
+                    writer.writerow(["=== DUPLICATE TD NUMBERS ==="])
+                    writer.writerow(["ID", "TD Number", "Owner Name", "Note"])
+                    for row in dup_tds:
+                        writer.writerow([row["id"], row["td_number"],
+                                         row["owner_name"], row["reason"]])
+                    writer.writerow([])
+                    # Section 3
+                    writer.writerow(["=== DUPLICATE PAYMENTS ==="])
+                    writer.writerow(["Payment ID", "OR Number", "Tax Year",
+                                     "TD Number", "Owner", "Amount", "Date", "Note"])
+                    for row in dup_pays:
+                        writer.writerow([
+                            row["payment_id"], row["or_number"], row["tax_year"],
+                            row["td_number"], row["owner_name"],
+                            row["amount"], row["date_paid"], row["reason"],
+                        ])
+                    writer.writerow([])
+                    # Section 4
+                    writer.writerow(["=== SHADOW DUPLICATES (malformed TD + correct TD both exist) ==="])
+                    writer.writerow(["Bad ID", "Bad TD", "Bad Owner",
+                                     "Correct ID", "Correct TD", "Correct Owner", "Action"])
+                    for row in shadows:
+                        writer.writerow([
+                            row["bad_id"], row["bad_td"], row["bad_owner"],
+                            row["correct_id"], row["correct_td"], row["correct_owner"],
+                            row["action"],
+                        ])
+                import os
+                os.startfile(path)
+                # Bring audit window back to front after file dialog closes
+                win.lift()
+                win.focus_force()
+                win.attributes("-topmost", True)
+
+            ctk.CTkButton(
+                foot, text="📥  EXPORT CSV", command=export_csv,
+                fg_color="#059669", hover_color="#047857",
+                width=140, height=36, font=ModernTheme.BUTTON_SMALL,
+            ).pack(side="left")
+
+            def run_fix(dry: bool):
+                win.grab_release()
+                win.destroy()
+                self.td_audit_btn.configure(state="disabled", text="⚙️ FIXING...")
+
+                def do_fix():
+                    try:
+                        res = system_svc.fix_td_numbers(dry_run=dry)
+                        self.container.after(0, lambda r=res: show_fix_result(r, dry))
+                    except Exception as e:
+                        self.container.after(
+                            0, lambda err=e: messagebox.showerror("Fix Error", str(err))
+                        )
+                    finally:
+                        if self.container.winfo_exists():
+                            self.container.after(
+                                0, lambda: self.td_audit_btn.configure(
+                                    state="normal", text="🔍 AUDIT TD NUMBERS"
+                                )
+                            )
+
+                threading.Thread(target=do_fix, daemon=True).start()
+
+            def show_fix_result(res, was_dry):
+                if was_dry:
+                    will_fix  = res.get("will_fix", 0)
+                    unfixable = res.get("unfixable", 0)
+                    fixes     = res.get("fixes", [])
+                    msg = (
+                        f"DRY RUN PREVIEW\n\n"
+                        f"Will fix:   {will_fix:,} TD numbers\n"
+                        f"Unfixable:  {unfixable:,} TD numbers\n\n"
+                        f"First 5 fixes:\n"
+                    )
+                    for f in fixes[:5]:
+                        msg += f"  {f['original']}  →  {f['fixed']}  ({f['rule']})\n"
+                    msg += "\nClick OK to apply the fixes, or Cancel to abort."
+                    if messagebox.askokcancel("Preview — Apply Fixes?", msg):
+                        self.td_audit_btn.configure(state="disabled", text="⚙️ APPLYING...")
+                        def apply():
+                            try:
+                                r2 = system_svc.fix_td_numbers(dry_run=False)
+                                self.container.after(0, lambda: show_fix_result(r2, False))
+                            except Exception as e:
+                                self.container.after(0, lambda err=e: messagebox.showerror("Fix Error", str(err)))
+                            finally:
+                                if self.container.winfo_exists():
+                                    self.container.after(0, lambda: self.td_audit_btn.configure(
+                                        state="normal", text="🔍 AUDIT TD NUMBERS"))
+                        threading.Thread(target=apply, daemon=True).start()
+                else:
+                    fixed      = res.get("fixed", 0)
+                    unfixable  = res.get("unfixable", 0)
+                    collisions = res.get("collisions", 0)
+                    msg = (
+                        f"✅ TD Number Fix Complete\n\n"
+                        f"Fixed:      {fixed:,} TD numbers\n"
+                        f"Unfixable:  {unfixable:,} (need manual correction)\n"
+                    )
+                    if collisions:
+                        msg += (
+                            f"Skipped:    {collisions:,} (would create duplicates)\n\n"
+                            f"The skipped TDs already exist in the database.\n"
+                            f"Run the Audit again to see which ones remain."
+                        )
+                    else:
+                        msg += "\nAll changes are logged in the Audit Trail."
+                    messagebox.showinfo("Fix Complete", msg)
+
+            # Only show AUTO-FIX if there are format issues (fix only applies to format)
+            if fmt_count > 0:
+                ctk.CTkButton(
+                    foot, text="⚙️  AUTO-FIX FORMAT ISSUES",
+                    command=lambda: run_fix(dry=True),
+                    fg_color="#c0392b", hover_color="#e74c3c",
+                    width=200, height=36, font=ModernTheme.BUTTON_SMALL,
+                ).pack(side="left", padx=(8, 0))
+
+            ctk.CTkButton(
+                foot, text="CLOSE", command=win.destroy,
+                fg_color=ModernTheme.SECONDARY, width=100, height=36,
+                font=ModernTheme.BUTTON_SMALL,
+            ).pack(side="right")
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def setup_tax_policy_tab(self, parent):
+        """
+        Tax Policy configuration tab.
+        Allows Admin to view and update RPT rates (Basic, SEF, Penalty) per tax year.
+        Changes take effect immediately for all new computations.
+        """
+        import tkinter as tk
+        from tkinter import ttk
+        import threading
+        import api_clients.system_service as system_svc
+
+        container = ctk.CTkFrame(parent, fg_color="transparent")
+        container.pack(fill="both", expand=True, padx=20, pady=16)
+
+        # ── Header ────────────────────────────────────────────────────────────
+        hdr = ctk.CTkFrame(container, fg_color="transparent")
+        hdr.pack(fill="x", pady=(0, 12))
+
+        ctk.CTkLabel(
+            hdr,
+            text="⚙️  TAX POLICY CONFIGURATION",
+            font=ModernTheme.H3,
+            text_color=ModernTheme.PRIMARY,
+            anchor="w",
+        ).pack(side="left")
+
+        ctk.CTkButton(
+            hdr,
+            text="🔄  REFRESH",
+            command=lambda: threading.Thread(target=load_policies, daemon=True).start(),
+            width=110,
+            height=34,
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SECONDARY,
+            hover_color=ModernTheme.SECONDARY_HOVER,
+        ).pack(side="right")
+
+        # ── Info banner ───────────────────────────────────────────────────────
+        info = ctk.CTkFrame(
+            container,
+            fg_color=("#dbeafe", "#1e293b"),
+            corner_radius=8,
+            border_width=1,
+            border_color=("#93c5fd", "#334155"),
+        )
+        info.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(
+            info,
+            text=(
+                "Configure Basic Rate, SEF Rate, and Penalty Rate per tax year.  "
+                "Default: 1% Basic + 1% SEF = 2% total annual tax, 2% monthly penalty.  "
+                "Changes take effect immediately for all new computations."
+            ),
+            font=ModernTheme.BODY,
+            text_color=ModernTheme.TEXT_GRAY,
+            wraplength=700,
+            justify="left",
+        ).pack(side="left", padx=14, pady=8)
+
+        # ── Policy table ──────────────────────────────────────────────────────
+        style = ttk.Style()
+        style.configure(
+            "TaxPolicy.Treeview",
+            rowheight=34,
+            font=("Inter", 12),
+            background="#1e293b",
+            fieldbackground="#1e293b",
+            foreground="#cbd5e1",
+        )
+        style.configure(
+            "TaxPolicy.Treeview.Heading",
+            font=("Inter", 11, "bold"),
+            background="#0f172a",
+            foreground="#64748b",
+        )
+        style.map("TaxPolicy.Treeview", background=[("selected", "#1d4ed8")])
+
+        tree_fr = tk.Frame(container, bg="#1e293b")
+        tree_fr.pack(fill="both", expand=True, pady=(0, 12))
+
+        cols = ("TAX YEAR", "BASIC RATE", "SEF RATE", "PENALTY RATE/MO", "TOTAL ANNUAL")
+        self._tax_tree = ttk.Treeview(
+            tree_fr, columns=cols, show="headings", style="TaxPolicy.Treeview"
+        )
+        for col in cols:
+            self._tax_tree.heading(col, text=col)
+        self._tax_tree.column("TAX YEAR",        width=100, anchor="center")
+        self._tax_tree.column("BASIC RATE",       width=120, anchor="center")
+        self._tax_tree.column("SEF RATE",         width=120, anchor="center")
+        self._tax_tree.column("PENALTY RATE/MO",  width=150, anchor="center")
+        self._tax_tree.column("TOTAL ANNUAL",     width=130, anchor="center")
+
+        scrolly = ttk.Scrollbar(tree_fr, orient="vertical", command=self._tax_tree.yview)
+        self._tax_tree.configure(yscrollcommand=scrolly.set)
+        self._tax_tree.pack(side="left", fill="both", expand=True)
+        scrolly.pack(side="right", fill="y")
+
+        self._tax_tree.tag_configure("oddrow",  background="#1e293b", foreground="#cbd5e1")
+        self._tax_tree.tag_configure("evenrow", background="#162032", foreground="#cbd5e1")
+        self._tax_tree.bind("<<TreeviewSelect>>", self._on_tax_row_select)
+
+        # ── Edit panel ────────────────────────────────────────────────────────
+        edit_card = ctk.CTkFrame(
+            container,
+            fg_color=("#f8fafc", "#1e293b"),
+            corner_radius=10,
+            border_width=1,
+            border_color=("#cbd5e1", "#334155"),
+        )
+        edit_card.pack(fill="x")
+
+        ctk.CTkLabel(
+            edit_card,
+            text="EDIT SELECTED YEAR",
+            font=("Inter", 10, "bold"),
+            text_color=ModernTheme.TEXT_GRAY,
+            anchor="w",
+        ).pack(anchor="w", padx=16, pady=(12, 6))
+
+        fields_fr = ctk.CTkFrame(edit_card, fg_color="transparent")
+        fields_fr.pack(fill="x", padx=16, pady=(0, 12))
+
+        # Year label
+        ctk.CTkLabel(fields_fr, text="Tax Year:", font=ModernTheme.BODY_BOLD,
+                     text_color=ModernTheme.TEXT_GRAY).grid(row=0, column=0, padx=(0, 8), pady=4, sticky="e")
+        self._tax_year_lbl = ctk.CTkLabel(fields_fr, text="—", font=("Inter", 14, "bold"),
+                                           text_color=ModernTheme.PRIMARY)
+        self._tax_year_lbl.grid(row=0, column=1, padx=(0, 24), pady=4, sticky="w")
+
+        # Basic rate
+        ctk.CTkLabel(fields_fr, text="Basic Rate (%):", font=ModernTheme.BODY_BOLD,
+                     text_color=ModernTheme.TEXT_GRAY).grid(row=0, column=2, padx=(0, 8), pady=4, sticky="e")
+        self._basic_var = tk.StringVar(value="1.00")
+        ctk.CTkEntry(fields_fr, textvariable=self._basic_var, width=90, height=32,
+                     font=ModernTheme.BODY).grid(row=0, column=3, padx=(0, 24), pady=4)
+
+        # SEF rate
+        ctk.CTkLabel(fields_fr, text="SEF Rate (%):", font=ModernTheme.BODY_BOLD,
+                     text_color=ModernTheme.TEXT_GRAY).grid(row=0, column=4, padx=(0, 8), pady=4, sticky="e")
+        self._sef_var = tk.StringVar(value="1.00")
+        ctk.CTkEntry(fields_fr, textvariable=self._sef_var, width=90, height=32,
+                     font=ModernTheme.BODY).grid(row=0, column=5, padx=(0, 24), pady=4)
+
+        # Penalty rate
+        ctk.CTkLabel(fields_fr, text="Penalty Rate/mo (%):", font=ModernTheme.BODY_BOLD,
+                     text_color=ModernTheme.TEXT_GRAY).grid(row=0, column=6, padx=(0, 8), pady=4, sticky="e")
+        self._penalty_var = tk.StringVar(value="2.00")
+        ctk.CTkEntry(fields_fr, textvariable=self._penalty_var, width=90, height=32,
+                     font=ModernTheme.BODY).grid(row=0, column=7, padx=(0, 24), pady=4)
+
+        # Save button
+        self._tax_save_btn = ctk.CTkButton(
+            fields_fr,
+            text="💾  SAVE",
+            command=lambda: threading.Thread(target=save_policy, daemon=True).start(),
+            width=100,
+            height=34,
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color="#059669",
+            hover_color="#047857",
+            state="disabled",
+        )
+        self._tax_save_btn.grid(row=0, column=8, padx=(0, 8), pady=4)
+
+        self._tax_selected_year: int | None = None
+
+        # ── Data functions ────────────────────────────────────────────────────
+
+        def load_policies():
+            try:
+                policies = system_svc.get_tax_policies()
+                container.after(0, lambda: render_policies(policies))
+            except Exception as e:
+                container.after(0, lambda err=e: messagebox.showerror("Load Error", str(err)))
+
+        def render_policies(policies):
+            for item in self._tax_tree.get_children():
+                self._tax_tree.delete(item)
+            for i, p in enumerate(policies):
+                tag = "evenrow" if i % 2 == 0 else "oddrow"
+                basic = p["basic_rate"] * 100
+                sef = p["sef_rate"] * 100
+                penalty = p["penalty_rate"] * 100
+                total = (basic + sef)
+                self._tax_tree.insert(
+                    "", "end",
+                    values=(
+                        p["tax_year"],
+                        f"{basic:.2f}%",
+                        f"{sef:.2f}%",
+                        f"{penalty:.2f}%",
+                        f"{total:.2f}%",
+                    ),
+                    tags=(tag,),
+                    iid=str(p["tax_year"]),
+                )
+
+        def save_policy():
+            if self._tax_selected_year is None:
+                return
+            try:
+                basic = float(self._basic_var.get()) / 100
+                sef = float(self._sef_var.get()) / 100
+                penalty = float(self._penalty_var.get()) / 100
+            except ValueError:
+                container.after(0, lambda: messagebox.showerror(
+                    "Invalid Input", "Rates must be numbers (e.g. 1.00 for 1%)."
+                ))
+                return
+
+            try:
+                system_svc.update_tax_policy(self._tax_selected_year, basic, sef, penalty)
+                container.after(0, lambda: messagebox.showinfo(
+                    "Saved",
+                    f"Tax policy for {self._tax_selected_year} updated successfully.\n\n"
+                    f"Basic: {basic*100:.2f}%  SEF: {sef*100:.2f}%  Penalty: {penalty*100:.2f}%/mo"
+                ))
+                threading.Thread(target=load_policies, daemon=True).start()
+            except Exception as e:
+                container.after(0, lambda err=e: messagebox.showerror("Save Error", str(err)))
+
+        # Load on open
+        threading.Thread(target=load_policies, daemon=True).start()
+
+    def _on_tax_row_select(self, event=None):
+        """Populate the edit fields when a tax year row is selected."""
+        sel = self._tax_tree.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        try:
+            self._tax_selected_year = int(iid)
+            vals = self._tax_tree.item(iid)["values"]
+            # vals: (year, basic%, sef%, penalty%, total%)
+            self._tax_year_lbl.configure(text=str(vals[0]))
+            self._basic_var.set(str(float(vals[1].replace("%", ""))))
+            self._sef_var.set(str(float(vals[2].replace("%", ""))))
+            self._penalty_var.set(str(float(vals[3].replace("%", ""))))
+            self._tax_save_btn.configure(state="normal")
+        except Exception:
+            pass
 
     def _resume_sync_monitoring(self, job_id: str):
         """

@@ -1,0 +1,97 @@
+# =============================================================================
+# WIN 4: .dockerignore — prevents secrets, dev artifacts, and large directories
+# from being copied into the Docker image by "COPY . ."
+#
+# Without this file the image includes: venv/ (~500MB), node_modules/ (~300MB),
+# .git/ (history + any accidentally committed secrets), *.db (SQLite dev DB),
+# generated PDFs, and local log files.
+# =============================================================================
+
+# --- Python virtual environment (largest single item, never needed in image) ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Python cache ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# --- Test artifacts ---
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# --- Frontend build artifacts (built separately, not needed in backend image) ---
+frontend/node_modules/
+frontend/.next/
+frontend/logs/
+
+# --- Local development databases (NEVER ship to production) ---
+*.db
+*.sqlite
+*.sqlite3
+mto_local.db
+
+# --- Generated PDFs and documents (runtime output, not source) ---
+backend/receipts/
+backend/computations/
+receipts/
+statements/
+backups/
+import_cache/
+temp_docs/
+
+# --- Logs ---
+logs/
+*.log
+*.json.log
+
+# --- Secrets and credentials (CRITICAL — must never enter the image) ---
+.env
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+backend/certs/cert.pem
+backend/certs/key.pem
+
+# --- Git history ---
+.git/
+.gitignore
+
+# --- IDE and OS artifacts ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- CI/CD (not needed at runtime) ---
+.github/
+
+# --- Documentation (not needed at runtime) ---
+docs/
+*.md
+!README.md
+
+# --- Windows batch/VBS launchers (Windows-only, not used in Linux container) ---
+*.bat
+*.vbs
+*.sh
+!entrypoint.sh

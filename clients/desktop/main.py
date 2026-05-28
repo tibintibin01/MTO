@@ -112,16 +112,68 @@ class LoginApp(ctk.CTk):
             self.logo_label = ctk.CTkLabel(self.brand_frame, text="REVENUE\nSYSTEM", font=ModernTheme.H1, text_color="white")
             self.logo_label.pack(expand=True)
 
-        # --- Login Form ---
-        self.login_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        # --- Login Form (right panel) ---
+        # Premium dark panel with gradient feel, frosted card, and trust badges
+        self.login_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="#0a1628")
         self.login_frame.grid(row=0, column=1, sticky="nsew")
 
-        self.content_frame = ctk.CTkFrame(self.login_frame, fg_color="transparent")
-        self.content_frame.place(relx=0.5, rely=0.5, anchor="center")
+        # Subtle radial glow behind the form — drawn as a large dim circle
+        glow = ctk.CTkFrame(
+            self.login_frame,
+            width=420, height=420,
+            corner_radius=210,
+            fg_color="#0d2044",
+            border_width=0,
+        )
+        glow.place(relx=0.5, rely=0.45, anchor="center")
 
-        # Step 7: Use tr() for all strings
-        ctk.CTkLabel(self.content_frame, text=tr("login.title"), font=ModernTheme.H1).pack(pady=(0, 5))
-        ctk.CTkLabel(self.content_frame, text=tr("login.subtitle"), font=ModernTheme.BODY, text_color=ModernTheme.TEXT_GRAY).pack(pady=(0, 30))
+        # Thin vertical separator on the left edge — gradient feel
+        sep = ctk.CTkFrame(self.login_frame, width=1, fg_color="#1a3a5c")
+        sep.place(x=0, rely=0, relheight=1)
+
+        # Centered content card — frosted glass effect
+        card = ctk.CTkFrame(
+            self.login_frame,
+            fg_color=("#1a2744", "#1a2744"),
+            corner_radius=18,
+            border_width=1,
+            border_color="#1f4e78",
+        )
+        card.place(relx=0.5, rely=0.5, anchor="center")
+
+        self.content_frame = ctk.CTkFrame(card, fg_color="transparent")
+        self.content_frame.pack(padx=40, pady=36)
+
+        # MTO seal badge
+        badge_fr = ctk.CTkFrame(
+            self.content_frame,
+            width=56, height=56,
+            corner_radius=28,
+            fg_color="#1f4e78",
+            border_width=2,
+            border_color="#2c6ea1",
+        )
+        badge_fr.pack(pady=(0, 14))
+        badge_fr.pack_propagate(False)
+        ctk.CTkLabel(
+            badge_fr, text="🏛",
+            font=("Segoe UI Emoji", 24),
+            text_color="white",
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        # Title and subtitle
+        ctk.CTkLabel(
+            self.content_frame,
+            text=tr("login.title"),
+            font=("Inter", 22, "bold"),
+            text_color="#e2e8f0",
+        ).pack(pady=(0, 4))
+        ctk.CTkLabel(
+            self.content_frame,
+            text=tr("login.subtitle"),
+            font=ModernTheme.BODY,
+            text_color="#64748b",
+        ).pack(pady=(0, 24))
 
         # Fields
         self.ue = ctk.CTkEntry(self.content_frame, width=320, height=50, placeholder_text=tr("login.username"), font=ModernTheme.BODY)
@@ -168,12 +220,41 @@ class LoginApp(ctk.CTk):
 
         self.login_btn = ctk.CTkButton(
             self.content_frame, text=tr("login.button"), command=self.start_login_thread,
-            width=320, height=50, font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY, hover_color=ModernTheme.PRIMARY_HOVER
+            width=320, height=50, font=ModernTheme.BUTTON,
+            fg_color="#1565c0", hover_color="#1976d2",
+            corner_radius=10,
         )
         self.login_btn.pack(pady=(20, 10))
-        
-        self.theme_btn = ctk.CTkButton(self.content_frame, text=tr("login.toggle_theme"), command=self.toggle_theme, width=120, height=30, fg_color="transparent", text_color=ModernTheme.TEXT_GRAY)
-        self.theme_btn.pack()
+
+        self.theme_btn = ctk.CTkButton(
+            self.content_frame, text=tr("login.toggle_theme"),
+            command=self.toggle_theme, width=120, height=30,
+            fg_color="transparent", text_color="#475569",
+            hover_color="#1e293b",
+        )
+        self.theme_btn.pack(pady=(0, 4))
+
+        # Trust badges row
+        badges_fr = ctk.CTkFrame(self.content_frame, fg_color="transparent")
+        badges_fr.pack(pady=(12, 0))
+        for badge_text in ("🔒 Encrypted", "📋 Audit Logged", "✅ COA Compliant"):
+            ctk.CTkLabel(
+                badges_fr,
+                text=badge_text,
+                font=("Inter", 9, "bold"),
+                text_color="#334155",
+                fg_color="#0f172a",
+                corner_radius=6,
+                padx=8, pady=3,
+            ).pack(side="left", padx=4)
+
+        # Version watermark at bottom of right panel
+        ctk.CTkLabel(
+            self.login_frame,
+            text="Municipal Treasury Office  ·  v2.1.0",
+            font=("Inter", 8),
+            text_color="#1e3a5f",
+        ).place(relx=0.5, rely=0.97, anchor="center")
 
         # Step 6: Keyboard shortcuts
         self.bind("<Return>", lambda e: self.start_login_thread())

@@ -1,15 +1,10 @@
 from datetime import datetime, timezone
 import re
-from sqlalchemy import or_, and_, func, case, cast
-from sqlalchemy.types import Date
+from sqlalchemy import or_, and_, func, case
 from sqlalchemy.orm import Session
 from backend.models import Property, PropertyBilling, PaymentBilling, Payment, TaxPolicy
-from backend.database import SessionLocal
 from decimal import Decimal, ROUND_HALF_UP
 from utils.db_compat import greatest, year_of, month_of
-
-
-from utils.logger import mto_logger
 
 def sync_property_billing(
 
@@ -469,6 +464,245 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
     }
 
 
+def get_compliant_accounts(
+    barangay: str = None,
+    limit: int = 50,
+    cursor: int = None,
+    db_session: Session = None,
+):
+    """
+    Fetches properties that are fully paid — zero outstanding balance
+    across ALL their billing years.
+
+    Definition of compliant:
+        SUM(amount_paid) >= SUM(assessed_value * TOTAL_RATE + penalty - discount)
+        across all PropertyBilling rows for that property.
+
+    Only properties that HAVE at least one billing record are included.
+    Properties with no billing records at all are excluded — they have
+    not been billed yet and cannot be considered compliant.
+
+    Supports:
+      - Optional barangay filter for per-barangay reporting
+      - Cursor-based pagination (cursor = last seen Property.id)
+    """
+    safe_limit = min(max(1, int(limit)), 200)
+
+    # Use per-year rate from TaxPolicy via correlated subquery.
+    # Falls back to 0.02 (1% basic + 1% SEF) if no policy row exists for that year.
+    rate_expr = func.coalesce(
+        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
+        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .correlate(PropertyBilling)
+        .scalar_subquery(),
+        0.02
+    )
+
+    total_due_expr = func.sum(
+        (PropertyBilling.assessed_value * rate_expr)
+        + PropertyBilling.penalty
+        - PropertyBilling.discount
+    )
+    total_paid_expr = func.sum(PropertyBilling.amount_paid)
+
+    # Last payment date for this property — used for "last paid" display column
+    last_payment_subq = (
+        db_session.query(
+            Payment.property_id,
+            func.max(Payment.date_paid).label("last_paid"),
+            func.max(Payment.or_number).label("last_or"),
+        )
+        .group_by(Payment.property_id)
+        .subquery()
+    )
+
+    query = (
+        db_session.query(
+            Property.id,
+            Property.td_number,
+            Property.owner_name,
+            Property.location,
+            func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
+            Property.kind_of_property,
+            total_due_expr.label("total_due"),
+            total_paid_expr.label("total_paid"),
+            last_payment_subq.c.last_paid,
+            last_payment_subq.c.last_or,
+            func.count(PropertyBilling.id).label("years_covered"),
+        )
+        .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+        .outerjoin(last_payment_subq, last_payment_subq.c.property_id == Property.id)
+        .filter(Property.deleted_at == None)
+        .group_by(
+            Property.id,
+            Property.td_number,
+            Property.owner_name,
+            Property.location,
+            Property.barangay,
+            Property.kind_of_property,
+            last_payment_subq.c.last_paid,
+            last_payment_subq.c.last_or,
+        )
+        # Compliant = total paid >= total due AND total due > 0 AND total paid > 0
+        # Without the > 0 guards, properties with zero assessed value pass as
+        # compliant because 0.00 >= 0.00 is true — even if nothing was ever paid.
+        .having(
+            and_(
+                total_due_expr > 0,          # must have something due
+                total_paid_expr > 0,         # must have actually paid something
+                total_paid_expr >= total_due_expr,  # must be fully paid
+            )
+        )
+    )
+
+    if barangay and barangay.upper() != "ALL":
+        query = query.filter(
+            func.coalesce(Property.barangay, "UNSPECIFIED") == barangay
+        )
+
+    if cursor:
+        query = query.filter(Property.id > int(cursor))
+
+    rows = query.order_by(Property.id.asc()).limit(safe_limit + 1).all()
+
+    has_more = len(rows) > safe_limit
+    items = rows[:safe_limit]
+    next_cursor = items[-1][0] if has_more and items else None
+
+    return {
+        "items": [
+            {
+                "id": r[0],
+                "td_number": r[1],
+                "owner_name": r[2],
+                "location": r[3],
+                "barangay": r[4],
+                "kind_of_property": r[5] or "—",
+                "total_due": float(r[6] or 0),
+                "total_paid": float(r[7] or 0),
+                "last_paid": r[8].strftime("%Y-%m-%d") if r[8] else None,
+                "last_or": r[9],
+                "years_covered": int(r[10] or 0),
+            }
+            for r in items
+        ],
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "count": len(items),
+    }
+
+
+def get_compliant_summary_by_barangay(db_session: Session = None):
+    """
+    Returns a per-barangay summary of compliant vs total properties.
+
+    Used for the summary cards at the top of the Compliant Properties dashboard.
+    Each row contains:
+      - barangay name
+      - total properties in that barangay (with billing records)
+      - compliant count (fully paid)
+      - delinquent count
+      - compliance rate (%)
+      - total amount collected from compliant properties
+    """
+    # Use per-year rate from TaxPolicy via correlated subquery.
+    rate_expr = func.coalesce(
+        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
+        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .correlate(PropertyBilling)
+        .scalar_subquery(),
+        0.02
+    )
+
+    total_due_expr = func.sum(
+        (PropertyBilling.assessed_value * rate_expr)
+        + PropertyBilling.penalty
+        - PropertyBilling.discount
+    )
+    total_paid_expr = func.sum(PropertyBilling.amount_paid)
+
+    # All properties with billing records, grouped by property + barangay
+    # to determine per-property compliance status
+    per_property = (
+        db_session.query(
+            Property.id,
+            func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
+            total_due_expr.label("total_due"),
+            total_paid_expr.label("total_paid"),
+        )
+        .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+        .filter(Property.deleted_at == None)
+        .group_by(Property.id, Property.barangay)
+        .subquery()
+    )
+
+    # Aggregate per barangay
+    rows = (
+        db_session.query(
+            per_property.c.barangay,
+            func.count(per_property.c.id).label("total"),
+            func.sum(
+                case(
+                    (
+                        and_(
+                            per_property.c.total_due > 0,
+                            per_property.c.total_paid > 0,
+                            per_property.c.total_paid >= per_property.c.total_due,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("compliant"),
+            func.sum(
+                case(
+                    (
+                        or_(
+                            per_property.c.total_due <= 0,
+                            per_property.c.total_paid <= 0,
+                            per_property.c.total_paid < per_property.c.total_due,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("delinquent"),
+            func.sum(
+                case(
+                    (
+                        and_(
+                            per_property.c.total_due > 0,
+                            per_property.c.total_paid > 0,
+                            per_property.c.total_paid >= per_property.c.total_due,
+                        ),
+                        per_property.c.total_paid,
+                    ),
+                    else_=0,
+                )
+            ).label("collected_from_compliant"),
+        )
+        .group_by(per_property.c.barangay)
+        .order_by(per_property.c.barangay.asc())
+        .all()
+    )
+
+    result = []
+    for r in rows:
+        total = int(r[1] or 0)
+        compliant = int(r[2] or 0)
+        rate = round((compliant / total * 100), 1) if total > 0 else 0.0
+        result.append({
+            "barangay": r[0],
+            "total_properties": total,
+            "compliant_count": compliant,
+            "delinquent_count": int(r[3] or 0),
+            "compliance_rate": rate,
+            "collected_from_compliant": float(r[4] or 0),
+        })
+
+    return result
+
+
 def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
     """
     Fetches properties with outstanding balances using cursor-based pagination.
@@ -485,13 +719,18 @@ def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
     """
     safe_limit = min(max(1, int(limit)), 200)  # hard cap at 200
 
-    # 2% total rate (1% basic + 1% SEF) — matches the default in TaxPolicy.
-    # Properties with custom rates already have the correct assessed_value stored
-    # in PropertyBilling from when sync_property_billing ran.
-    TOTAL_RATE = 0.02
+    # Use per-year rate from TaxPolicy via correlated subquery.
+    # Falls back to 0.02 if no policy row exists for that year.
+    rate_expr = func.coalesce(
+        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
+        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .correlate(PropertyBilling)
+        .scalar_subquery(),
+        0.02
+    )
 
     balance_expr = func.sum(
-        (PropertyBilling.assessed_value * TOTAL_RATE)
+        (PropertyBilling.assessed_value * rate_expr)
         + PropertyBilling.penalty
         - PropertyBilling.discount
         - PropertyBilling.amount_paid
@@ -503,7 +742,7 @@ def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
         Property.owner_name,
         Property.location,
         func.sum(
-            (PropertyBilling.assessed_value * TOTAL_RATE)
+            (PropertyBilling.assessed_value * rate_expr)
             + PropertyBilling.penalty
             - PropertyBilling.discount
         ).label("total_due"),
@@ -544,9 +783,29 @@ def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
     }
 
 
-def calculate_penalty(principal, months_late):
-    """Calculates penalty at 2% per month of delay."""
-    return float(principal) * 0.02 * int(months_late)
+def calculate_penalty(principal, months_late, tax_year=None, db_session=None):
+    """
+    Calculates penalty at the configured rate per month of delay.
+
+    Uses the penalty_rate from TaxPolicy for the given tax_year if available.
+    Falls back to 2% per month (0.02) — the default in TaxPolicy — if no
+    policy is configured for that year or no db_session is provided.
+    """
+    from decimal import Decimal, ROUND_HALF_UP
+    DEFAULT_PENALTY_RATE = Decimal("0.02")
+
+    rate = DEFAULT_PENALTY_RATE
+    if db_session and tax_year:
+        try:
+            policy = db_session.query(TaxPolicy).filter(
+                TaxPolicy.tax_year == int(tax_year)
+            ).first()
+            if policy:
+                rate = Decimal(str(policy.penalty_rate))
+        except Exception:
+            pass  # Fall back to default on any DB error
+
+    return float(Decimal(str(principal)) * rate * int(months_late))
 
 
 def get_total_due(property_id, db_session: Session = None):

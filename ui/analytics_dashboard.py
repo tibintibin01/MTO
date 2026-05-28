@@ -125,6 +125,15 @@ class AnalyticsDashboardPage:
         
         ax.set_title("")
         ax.set_ylabel("Revenue (PHP)")
+
+        # Format Y-axis as ₱1.2M instead of 1e6 scientific notation
+        import matplotlib.ticker as mticker
+        ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+            lambda x, _: f"₱{x/1_000_000:.1f}M" if x >= 1_000_000
+                    else f"₱{x/1_000:.0f}K" if x >= 1_000
+                    else f"₱{x:.0f}"
+        ))
+
         fig.autofmt_xdate()
         fig.tight_layout()
 
@@ -148,6 +157,15 @@ class AnalyticsDashboardPage:
         
         ax.set_title("")
         ax.set_ylabel("Total Collection (PHP)")
+
+        # Format Y-axis as ₱1.2M instead of 1e6 scientific notation
+        import matplotlib.ticker as mticker
+        ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+            lambda x, _: f"₱{x/1_000_000:.1f}M" if x >= 1_000_000
+                    else f"₱{x/1_000:.0f}K" if x >= 1_000
+                    else f"₱{x:.0f}"
+        ))
+
         fig.autofmt_xdate()
         fig.tight_layout()
 

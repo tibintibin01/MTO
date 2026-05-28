@@ -8,9 +8,10 @@ from utils import tr, LocalizationManager
 # ---------------------------------------------------------------------------
 NAV_ICONS = {
     "dashboard":     "🏠",
-    "property":      "🏘️",
+    "property":      "🏢",
     "ledger":        "📋",
     "delinquencies": "⚠️",
+    "compliant":     "✅",
     "reports":       "📊",
     "analytics":     "📈",
     "assessment":    "📜",
@@ -171,6 +172,7 @@ class NavigationSidebar(ctk.CTkFrame):
         from ui.dashboard_home import DashboardHomePage
         from ui.help_page import SystemHelpPage
         from ui.delinquency_dashboard import DelinquencyDashboardPage
+        from ui.compliant_dashboard import CompliantDashboardPage
 
         self._add_nav("dashboard", tr("dashboard.nav.dashboard"),
                       lambda: self._navigate("dashboard", DashboardHomePage))
@@ -185,6 +187,11 @@ class NavigationSidebar(ctk.CTkFrame):
 
         self._add_nav("delinquencies", tr("dashboard.nav.delinquencies"),
                       lambda: self._navigate("delinquencies", DelinquencyDashboardPage))
+
+        # Compliant Properties — visible to all roles with property_view permission
+        if auth.has_permission(self.user_data, "property_view"):
+            self._add_nav("compliant", "Compliant Properties",
+                          lambda: self._navigate("compliant", CompliantDashboardPage))
 
         # ── Section label ────────────────────────────────────────────────────
         self._section_label("COLLECTION")
