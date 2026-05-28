@@ -161,7 +161,7 @@ export default function AdminDashboard() {
       {/* Barangay distribution and trend charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Barangay Breakdown Table */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 lg:col-span-2 shadow-xl shadow-black/15 flex flex-col" style={{maxHeight:"420px"}}>
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 lg:col-span-2 shadow-xl shadow-black/15 flex flex-col" style={{height:"420px"}}>
           <h3 className="text-base font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2 flex-shrink-0">
             <Building2 className="w-5 h-5 text-[#4ca2ff]" />
             Barangay Treasury Contribution
@@ -202,7 +202,7 @@ export default function AdminDashboard() {
         </div>
 
         {/* Monthly Trend Display */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl shadow-black/15 flex flex-col">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl shadow-black/15 flex flex-col" style={{height:"420px"}}>
           <h3 className="text-base font-bold text-white uppercase tracking-wider mb-6 flex items-center gap-2">
             <TrendingUp className="w-5 h-5 text-[#4ca2ff]" />
             Monthly Revenue Trend
