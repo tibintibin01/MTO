@@ -52,18 +52,37 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
           </a>
 
           <nav className="hidden sm:flex items-center gap-6 text-sm font-semibold">
-            <a href="/" className="hover:text-yellow-300 transition-colors">
-              Property Search
-            </a>
-            <a href="/help" className="hover:text-yellow-300 transition-colors">
-              Help &amp; Support
-            </a>
-            <a
-              href="/admin/login"
-              className="bg-yellow-400 text-[#0f2a5e] px-4 py-2 rounded-lg font-bold hover:bg-yellow-300 transition-colors text-xs tracking-wide"
-            >
-              STAFF LOGIN
-            </a>
+            <div className="flex items-center gap-1 px-5 py-2.5 rounded-2xl"
+              style={{
+                background:"rgba(255,255,255,0.1)",
+                backdropFilter:"blur(12px)",
+                WebkitBackdropFilter:"blur(12px)",
+                border:"1px solid rgba(255,255,255,0.15)",
+              }}>
+              <a href="/" className="flex items-center gap-2 text-white/80 hover:text-white transition-colors px-3 py-1">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                </svg>
+                Property Search
+              </a>
+              <div className="w-px h-4 bg-white/20 mx-1" />
+              <a href="/help" className="flex items-center gap-2 text-white/80 hover:text-white transition-colors px-3 py-1">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>
+                </svg>
+                Help &amp; Support
+              </a>
+              <div className="w-px h-4 bg-white/20 mx-1" />
+              <a
+                href="/admin/login"
+                className="flex items-center gap-2 font-bold px-4 py-2 rounded-xl transition-colors text-sm"
+                style={{background:"#f5c518", color:"#1a1a2e"}}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+                Staff Login
+              </a>
+            </div>
           </nav>
         </div>
       </header>
