@@ -66,11 +66,22 @@ export default function PropertyDetail() {
       if (r.status === 404) { setError("Property not found. Check your TDN or PIN."); return; }
       if (r.status === 429) { setError("Too many requests. Please wait and try again."); return; }
       if (!r.ok)            { setError("Unable to load property data. Please try again."); return; }
-      setData(await r.json());
+
+      const text = await r.text();
+      if (!text || !text.trim()) { setError("Server returned an empty response. Please try again."); return; }
+      let json: any;
+      try { json = JSON.parse(text); }
+      catch { setError("Invalid response from server. Please try again."); return; }
+      setData(json);
+
       try {
         const h = await fetch(`/api/v1/public/property/${id}/history`);
-        if (h.ok) setHistory(await h.json());
-        else toast("Payment history could not be loaded.", "info");
+        if (h.ok) {
+          const ht = await h.text();
+          if (ht && ht.trim()) setHistory(JSON.parse(ht));
+        } else {
+          toast("Payment history could not be loaded.", "info");
+        }
       } catch { toast("Payment history temporarily unavailable.", "info"); }
     } catch { setError("Network error. Check your connection and try again."); }
     finally  { setLoading(false); setRetrying(false); }
