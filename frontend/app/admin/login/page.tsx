@@ -54,6 +54,7 @@ export default function AdminLogin() {
               alt="Dipaculao Municipal Hall"
               fill
               className="object-cover object-center"
+              style={{filter:"grayscale(60%) brightness(0.35) blur(1px)"}}
               priority
             />
             {/* Fade right edge into dark */}
