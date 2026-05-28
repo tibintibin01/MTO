@@ -1,4 +1,4 @@
 {
-    "server_url": "https://localhost:8001",
+    "server_url": "http://localhost:8001",
     "note": "Change 'localhost' to your Windows Server IP Address (e.g., 192.168.1.10) for office-wide deployment. The server runs on port 8001 with HTTPS when SSL certificates are present, or HTTP on port 8001 without certs."
 }

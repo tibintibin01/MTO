@@ -165,10 +165,14 @@ ERROR_LOG_PATH = os.path.join(LOGS_DIR, "system.log")
 # Setup professional rotating JSON logger
 sys_logger = logging.getLogger("MTOSystem")
 sys_logger.setLevel(logging.INFO)
-handler = RotatingFileHandler(ERROR_LOG_PATH, maxBytes=5*1024*1024, backupCount=5, encoding="utf-8")
-handler.addFilter(ContextFilter())
-handler.setFormatter(JSONFormatter(datefmt='%Y-%m-%d %H:%M:%S'))
-sys_logger.addHandler(handler)
+try:
+    handler = RotatingFileHandler(ERROR_LOG_PATH, maxBytes=5*1024*1024, backupCount=5, encoding="utf-8")
+    handler.addFilter(ContextFilter())
+    handler.setFormatter(JSONFormatter(datefmt='%Y-%m-%d %H:%M:%S'))
+    sys_logger.addHandler(handler)
+except PermissionError as exc:
+    # A locked log file should not prevent the API server from starting.
+    sys_logger.warning("Could not open system.log; continuing with console logging only: %s", exc)
 
 # Also log to console for development visibility
 console = logging.StreamHandler()

@@ -48,10 +48,14 @@ class MTOLogger:
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
             
-        # File Handler (JSON)
-        file_handler = logging.FileHandler(f"logs/mto_audit_{datetime.now().strftime('%Y%m%d')}.json")
-        file_handler.setFormatter(JSONFormatter())
-        self.logger.addHandler(file_handler)
+        # File Handler (JSON). If the log file is locked or unavailable,
+        # keep the application running with console logging.
+        try:
+            file_handler = logging.FileHandler(f"logs/mto_audit_{datetime.now().strftime('%Y%m%d')}.json")
+            file_handler.setFormatter(JSONFormatter())
+            self.logger.addHandler(file_handler)
+        except PermissionError as exc:
+            self.logger.warning(f"Could not open audit log file; continuing with console logging only: {exc}")
         
         # Stream Handler (For console visibility)
         stream_handler = logging.StreamHandler()
