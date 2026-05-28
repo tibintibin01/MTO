@@ -46,19 +46,24 @@ export default function AdminLogin() {
   return (
     <div className="min-h-screen relative overflow-hidden flex flex-col" style={{background:"#0a1628"}}>
 
-      {/* ── Background: municipal hall photo ── */}
-      <div className="absolute inset-0">
-        <Image
-          src="/municipal-hall.png"
-          alt="Dipaculao Municipal Hall"
-          fill
-          className="object-cover object-center"
-          priority
-        />
-        {/* Dark overlay — heavier, photo more subtle */}
-        <div className="absolute inset-0" style={{background:"linear-gradient(to right,rgba(10,22,40,0.88) 0%,rgba(10,22,40,0.75) 50%,rgba(10,22,40,0.92) 100%)"}} />
-        {/* Extra dimming layer */}
-        <div className="absolute inset-0" style={{background:"rgba(10,22,40,0.45)"}} />
+      {/* ── Background ── */}
+      <div className="absolute inset-0" style={{background:"#0a1628"}}>
+        {/* Photo — left half only, very subtle */}
+        <div className="absolute left-0 top-0 bottom-0 w-1/2 opacity-30">
+          <Image
+            src="/municipal-hall.png"
+            alt=""
+            fill
+            className="object-cover object-center"
+            priority
+          />
+          {/* Fade to right */}
+          <div className="absolute inset-0" style={{background:"linear-gradient(to right,transparent 30%,#0a1628 100%)"}} />
+          {/* Fade to bottom */}
+          <div className="absolute inset-0" style={{background:"linear-gradient(to bottom,transparent 60%,#0a1628 100%)"}} />
+        </div>
+        {/* Overall dark tint */}
+        <div className="absolute inset-0" style={{background:"rgba(10,22,40,0.5)"}} />
       </div>
 
       {/* ── Header ── */}
