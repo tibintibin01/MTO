@@ -137,7 +137,7 @@ export default function PropertyDetail() {
         {/* Municipal Hall photo — right side, faded behind cards */}
         <div className="absolute inset-0 flex justify-end pointer-events-none">
           <div className="relative w-2/3 h-full">
-            <Image src="/municipal-hall.jpg" alt="" fill className="object-cover object-center" priority />
+            <Image src="/municipal-hall.png" alt="" fill className="object-cover object-center" priority />
             <div className="absolute inset-0" style={{background:"linear-gradient(to right,#0a1628 0%,#0a162870 40%,transparent 100%)"}} />
           </div>
         </div>
