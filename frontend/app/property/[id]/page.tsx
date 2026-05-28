@@ -134,11 +134,11 @@ export default function PropertyDetail() {
       {/* ── HERO ─────────────────────────────────────────────────────────── */}
       <div className="relative overflow-hidden" style={{background:C.heroBg}}>
 
-        {/* Municipal Hall photo — right side, faded behind cards */}
+        {/* Municipal Hall photo — far right, very subtle */}
         <div className="absolute inset-0 flex justify-end pointer-events-none">
-          <div className="relative w-2/3 h-full">
+          <div className="relative w-1/3 h-full opacity-20">
             <Image src="/municipal-hall.png" alt="" fill className="object-cover object-center" priority />
-            <div className="absolute inset-0" style={{background:"linear-gradient(to right,#0a1628 0%,#0a162870 40%,transparent 100%)"}} />
+            <div className="absolute inset-0" style={{background:"linear-gradient(to right,#0a1628 0%,transparent 60%)"}} />
           </div>
         </div>
 
