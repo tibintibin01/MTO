@@ -80,6 +80,31 @@ export default function AdminDashboard() {
     active_delinquencies: 0
   };
 
+  const lastYear = data?.last_year || {
+    total_collected: 0,
+    total_receivables: 0,
+    collection_rate: 0,
+    total_properties: 0,
+  };
+
+  // Compute % change vs last year
+  const pctChange = (current: number, previous: number): number | null => {
+    if (!previous || previous === 0) return null;
+    return ((current - previous) / previous) * 100;
+  };
+
+  const YoyBadge = ({ current, previous }: { current: number; previous: number }) => {
+    const pct = pctChange(current, previous);
+    if (pct === null) return <span className="text-[10px] text-slate-600">No prior year data</span>;
+    const positive = pct >= 0;
+    return (
+      <div className={`flex items-center gap-1 text-[10px] font-bold mt-1 ${positive ? "text-emerald-400" : "text-red-400"}`}>
+        <span>{positive ? "↑" : "↓"}</span>
+        <span>{Math.abs(pct).toFixed(1)}% vs last year</span>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto">
       {/* Top Header Actions */}
@@ -111,6 +136,7 @@ export default function AdminDashboard() {
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Collection Receivables</p>
           <h3 className="text-2xl font-black text-white mt-1">₱ {(summary.total_receivables || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+          <YoyBadge current={summary.total_receivables || 0} previous={lastYear.total_receivables || 0} />
         </div>
 
         <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
@@ -124,6 +150,7 @@ export default function AdminDashboard() {
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Actual Collected Revenue</p>
           <h3 className="text-2xl font-black text-green-400 mt-1">₱ {(summary.total_collected || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</h3>
+          <YoyBadge current={summary.total_collected || 0} previous={lastYear.total_collected || 0} />
         </div>
 
         <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
@@ -142,6 +169,7 @@ export default function AdminDashboard() {
               : 0
             ).toFixed(2)} %
           </h3>
+          <YoyBadge current={summary.collection_rate || 0} previous={lastYear.collection_rate || 0} />
         </div>
 
         <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
@@ -155,6 +183,7 @@ export default function AdminDashboard() {
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Assessed Tax Properties</p>
           <h3 className="text-2xl font-black text-white mt-1">{(summary.total_properties || 0).toLocaleString()} Properties</h3>
+          <YoyBadge current={summary.total_properties || 0} previous={lastYear.total_properties || 0} />
         </div>
       </div>
 

@@ -76,7 +76,66 @@ def get_collection_summary(db_session: Session = None):
     }
 
 
-def get_monthly_revenue_trend(db_session: Session = None):
+def get_last_year_summary(db_session: Session = None):
+    """
+    Returns the same key metrics as get_collection_summary but for the
+    previous calendar year — used to compute year-over-year % change.
+    """
+    if not db_session:
+        with SessionLocal() as session:
+            return get_last_year_summary(db_session=session)
+
+    from datetime import date
+    current_year = datetime.now(timezone.utc).year
+    last_year = current_year - 1
+    last_year_start = date(last_year, 1, 1)
+    last_year_end   = date(last_year, 12, 31)
+
+    # Total collected in last year
+    last_year_collected = db_session.query(
+        func.coalesce(func.sum(Payment.amount), 0)
+    ).filter(
+        cast(Payment.date_paid, Date) >= last_year_start,
+        cast(Payment.date_paid, Date) <= last_year_end,
+    ).scalar()
+
+    # Total receivables as of end of last year (billing records up to last year)
+    last_year_receivables = db_session.query(
+        func.coalesce(
+            func.sum(
+                (PropertyBilling.assessed_value * 0.02)
+                + PropertyBilling.penalty
+                - PropertyBilling.discount
+            ), 0
+        )
+    ).join(Property, Property.id == PropertyBilling.property_id).filter(
+        Property.deleted_at == None,
+        PropertyBilling.tax_year <= last_year,
+    ).scalar()
+
+    last_year_rate = (
+        float(float(last_year_collected) / float(last_year_receivables) * 100)
+        if float(last_year_receivables or 0) > 0 else 0.0
+    )
+
+    # Total properties registered as of last year
+    last_year_properties = db_session.query(
+        func.count(Property.id)
+    ).filter(
+        Property.deleted_at == None,
+        func.year(Property.created_at) <= last_year,
+    ).scalar()
+
+    return {
+        "year":               last_year,
+        "total_collected":    float(last_year_collected or 0),
+        "total_receivables":  float(last_year_receivables or 0),
+        "collection_rate":    float(last_year_rate),
+        "total_properties":   int(last_year_properties or 0),
+    }
+
+
+
     """Returns the last 12 months of revenue for trend analysis."""
     if not db_session:
         with SessionLocal() as session:

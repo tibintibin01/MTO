@@ -119,12 +119,13 @@ async def get_analytics_kpis(current_user: dict = Depends(get_current_user), db_
 
 @router.get("/api/analytics/dashboard")
 async def get_analytics_dashboard(user: str = Depends(get_current_user), db_session: Session = Depends(get_db)):
-    """Returns a comprehensive set of treasury analytics data."""
+    """Returns a comprehensive set of treasury analytics data including year-over-year comparison."""
     return {
-        "summary": analytics.get_collection_summary(db_session=db_session),
-        "trend": analytics.get_monthly_revenue_trend(db_session=db_session),
+        "summary":   analytics.get_collection_summary(db_session=db_session),
+        "last_year": analytics.get_last_year_summary(db_session=db_session),
+        "trend":     analytics.get_monthly_revenue_trend(db_session=db_session),
         "barangays": analytics.get_barangay_distribution(db_session=db_session),
-        "years": analytics.get_tax_year_distribution(db_session=db_session)
+        "years":     analytics.get_tax_year_distribution(db_session=db_session),
     }
 
 
