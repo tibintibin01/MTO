@@ -147,12 +147,22 @@ export default function PropertyDetail() {
           style={{backgroundImage:"radial-gradient(circle,#ffffff 1px,transparent 1px)",backgroundSize:"28px 28px"}} />
 
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-6">
-          <Link href="/" className="inline-flex items-center gap-1.5 text-sm mb-5 transition-colors px-4 py-2 rounded-full"
+          {/* Back to Search — above the glass panel */}
+          <Link href="/" className="inline-flex items-center gap-1.5 text-sm mb-4 transition-colors px-4 py-2 rounded-full"
             style={{background:"rgba(255,255,255,0.15)", color:"rgba(255,255,255,0.85)", backdropFilter:"blur(8px)"}}>
             <ArrowLeft className="w-4 h-4" /> Back to Search
           </Link>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+          {/* ── BIG GLASS PANEL ── */}
+          <div className="rounded-3xl p-6"
+            style={{
+              background:"rgba(255,255,255,0.08)",
+              backdropFilter:"blur(20px)",
+              WebkitBackdropFilter:"blur(20px)",
+              border:"1px solid rgba(255,255,255,0.15)",
+              boxShadow:"0 8px 32px rgba(0,0,0,0.3)",
+            }}>
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
 
             {/* TD + status */}
             <div className="lg:col-span-5">
@@ -189,13 +199,11 @@ export default function PropertyDetail() {
               </p>
             </div>
 
-            {/* Property Details card — GLASS */}
-            <div className="lg:col-span-4 rounded-2xl p-5 shadow-xl"
+            {/* Property Details card — inside glass panel, semi-transparent */}
+            <div className="lg:col-span-4 rounded-2xl p-5"
               style={{
                 background:"rgba(255,255,255,0.12)",
-                backdropFilter:"blur(16px)",
-                WebkitBackdropFilter:"blur(16px)",
-                border:"1px solid rgba(255,255,255,0.2)",
+                border:"1px solid rgba(255,255,255,0.18)",
               }}>
               <div className="flex items-center gap-2 mb-4">
                 <FileText className="w-4 h-4 text-white/70" />
@@ -245,6 +253,7 @@ export default function PropertyDetail() {
             </div>
 
           </div>
+          </div>{/* end glass panel */}
         </div>
       </div>
 
