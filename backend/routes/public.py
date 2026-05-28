@@ -63,6 +63,8 @@ def search_property_public(query: str, request: Request, db_session: Session = D
     # Business rule: if the property has a payment for the current year,
     # it is considered UPDATED — you cannot pay the current year without
     # settling prior years first (municipal treasury policy).
+    # If no current year payment exists, check the most recent payment year
+    # against the most recent billing year to determine status.
     from backend.models import PropertyBilling, Payment
     from sqlalchemy import func
     from datetime import datetime, timezone
@@ -78,36 +80,48 @@ def search_property_public(query: str, request: Request, db_session: Session = D
     ).first() is not None
 
     if has_current_year_payment:
+        # Paid current year = settled all arrears per municipal policy
         status = "UPDATED"
     else:
-        # Fall back to billing balance check (from 2023 onwards only)
-        billing_summary = db_session.query(
-            func.coalesce(func.sum(
-                (PropertyBilling.assessed_value * TOTAL_RATE)
-                + PropertyBilling.penalty
-                - PropertyBilling.discount
-            ), 0).label("total_due"),
-            func.coalesce(func.sum(PropertyBilling.amount_paid), 0).label("total_paid_billing"),
+        # Check most recent payment year
+        latest_payment_year = db_session.query(
+            func.max(Payment.tax_year)
         ).filter(
-            PropertyBilling.property_id == prop.id,
-            PropertyBilling.tax_year >= DATA_START_YEAR,
-        ).first()
+            Payment.property_id == prop.id,
+            Payment.tax_year != None,
+            Payment.tax_year != "",
+        ).scalar()
 
-        total_due = float(billing_summary.total_due or 0)
-        total_paid_billing = float(billing_summary.total_paid_billing or 0)
-        total_paid_actual = float(
-            db_session.query(func.coalesce(func.sum(Payment.amount), 0))
-            .filter(Payment.property_id == prop.id)
-            .scalar() or 0
-        )
-        total_paid = max(total_paid_billing, total_paid_actual)
-
-        if total_due > 0 and total_paid >= total_due:
-            status = "UPDATED"
-        elif total_due == 0:
-            status = "PENDING"
+        if latest_payment_year:
+            try:
+                latest_yr = int(str(latest_payment_year).strip())
+                # If paid last year and no billing data uploaded for current year yet
+                # treat as updated — data may not be uploaded yet
+                if latest_yr >= current_year - 1:
+                    status = "UPDATED"
+                else:
+                    status = "DELINQUENT"
+            except (ValueError, TypeError):
+                status = "DELINQUENT"
         else:
-            status = "DELINQUENT"
+            # No payments at all — check billing records
+            billing_summary = db_session.query(
+                func.coalesce(func.sum(
+                    (PropertyBilling.assessed_value * TOTAL_RATE)
+                    + PropertyBilling.penalty
+                    - PropertyBilling.discount
+                ), 0).label("total_due"),
+                func.coalesce(func.sum(PropertyBilling.amount_paid), 0).label("total_paid_billing"),
+            ).filter(
+                PropertyBilling.property_id == prop.id,
+                PropertyBilling.tax_year >= DATA_START_YEAR,
+            ).first()
+
+            total_due = float(billing_summary.total_due or 0)
+            if total_due == 0:
+                status = "PENDING"
+            else:
+                status = "DELINQUENT"
     
     # Securely mask PIN and Owner Name to protect citizen privacy
     masked_pin = prop.pin[:4] + "****" + prop.pin[-4:] if prop.pin and len(prop.pin) > 8 else "PIN-****"
