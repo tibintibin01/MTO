@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from backend.models import User, RefreshToken, AuditLog
+from sqlalchemy.orm import Session
 from utils import log_error_to_file, hash_password, verify_password, needs_rehash
 from datetime import datetime, timedelta, timezone
 
