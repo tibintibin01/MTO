@@ -62,5 +62,5 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Start the API server
 # ---------------------------------------------------------------------------
-echo "[3/3] Starting API server on port 8001..."
-exec uvicorn backend.main:app --host 0.0.0.0 --port 8001
+echo "[3/3] Starting API server on port ${PORT:-8001}..."
+exec uvicorn backend.main:app --host 0.0.0.0 --port "${PORT:-8001}"

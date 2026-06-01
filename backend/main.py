@@ -552,7 +552,6 @@ async def maintenance_mode_middleware(request: Request, call_next):
 # Restricting to the actual methods and headers the API uses closes that gap.
 # ---------------------------------------------------------------------------
 import os as _os
-_extra_origin = _os.getenv("CORS_ORIGIN", "").strip()
 
 origins = [
     "http://localhost",
@@ -560,11 +559,15 @@ origins = [
     "http://localhost:8001",
     "https://localhost:8001",
     "http://localhost:3000",
+    "https://mto-portal-dipaculao.vercel.app",
 ]
 
-# Allow an extra origin configured via .env (written automatically by run_system.bat)
-if _extra_origin and _extra_origin not in origins:
-    origins.append(_extra_origin)
+# Allow extra origins configured via .env or hosting provider variables.
+for _origin_var in ("CORS_ORIGIN", "MTO_CORS_ORIGINS"):
+    for _extra_origin in _os.getenv(_origin_var, "").split(","):
+        _extra_origin = _extra_origin.strip()
+        if _extra_origin and _extra_origin not in origins:
+            origins.append(_extra_origin)
 
 app.add_middleware(
     CORSMiddleware,
