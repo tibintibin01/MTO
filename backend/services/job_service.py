@@ -191,7 +191,8 @@ def _try_claim_job(worker_id: str, job_types: frozenset) -> Job | None:
             return None
 
         candidate_id = row[0]
-        now = datetime.now(timezone.utc).isoformat()
+        # Use naive UTC datetime — MariaDB DATETIME columns don't accept timezone-aware strings
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
         # Step 2: atomic claim — only one thread wins
         result = db.execute(text(
