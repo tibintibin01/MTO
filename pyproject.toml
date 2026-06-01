@@ -41,3 +41,5 @@ env = [
     "MTO_ENVIRONMENT=test",
     "ENVIRONMENT=test",
 ]
+[tool.vercel]
+entrypoint = "backend.main:app"
