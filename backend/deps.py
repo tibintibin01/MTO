@@ -388,8 +388,14 @@ async def verify_csrf_token(request: Request):
 
     # Bearer token clients are not cookie-authenticated — CSRF does not apply.
     # But only if the token is actually present and structurally valid (3 parts).
+    # Bearer token clients are not cookie-authenticated — CSRF does not apply.
+    # But only if the token is actually present and structurally valid (3 parts)
+    # AND there is no session cookie present. If a session cookie is present,
+    # we must enforce CSRF protection since cookie authentication will be used.
+    has_session_cookie = bool(request.cookies.get("access_token"))
+
     auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
+    if auth_header.startswith("Bearer ") and not has_session_cookie:
         token_value = auth_header[7:].strip()
         # A valid JWT has exactly 3 dot-separated base64 segments
         if token_value and token_value.count(".") == 2 and len(token_value) > 20:

@@ -85,9 +85,9 @@ class PropertyBilling(Base):
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
-    # Composite index: billing reconciliation always filters by (property_id, tax_year)
+    # Composite unique index constraint: billing reconciliation filters by (property_id, tax_year) and duplicates are forbidden
     __table_args__ = (
-        Index("ix_property_billings_property_id_tax_year", "property_id", "tax_year"),
+        Index("ix_property_billings_property_id_tax_year", "property_id", "tax_year", unique=True),
     )
 
     property = relationship("Property", back_populates="billings")

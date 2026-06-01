@@ -54,7 +54,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         setUser(data);
         // Store non-sensitive display data in sessionStorage (cleared on tab close).
         // Never store tokens here — they live in the httpOnly cookie only.
-        sessionStorage.setItem("mto_user", JSON.stringify({ username: data.username, role: data.role }));
+        // We preserve the existing refresh_token (stored during login) so it remains
+        // available for logout revocation.
+        const storedUser = sessionStorage.getItem("mto_user");
+        const existingToken = storedUser ? (JSON.parse(storedUser).refresh_token || "") : "";
+        sessionStorage.setItem("mto_user", JSON.stringify({
+          username: data.username,
+          role: data.role,
+          refresh_token: existingToken,
+        }));
         setLoading(false);
       } catch {
         router.push("/admin/login");

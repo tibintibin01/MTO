@@ -154,6 +154,13 @@ MIGRATIONS = [
             # expand jobs.payload to MEDIUMTEXT for large import payloads
             "ALTER TABLE jobs MODIFY COLUMN IF EXISTS payload MEDIUMTEXT;"
         )
+    },
+    {
+        "id": "add_composite_unique_constraint_on_property_billings",
+        "sql": (
+            # Enforce database-level data integrity preventing duplicate billing records per property and tax year
+            "ALTER TABLE property_billings ADD UNIQUE KEY IF NOT EXISTS uq_property_billings_property_tax_year (property_id, tax_year);"
+        )
     }
 
 ]
@@ -188,7 +195,23 @@ def run_migrations(db_session: Session = None):
             print(f"Applying Migration: [{m_id}]...")
             try:
                 # Support multi-statement migrations by splitting by semicolon
-                statements = [s.strip() for s in m["sql"].split(";") if s.strip()]
+                # Support multi-statement migrations by splitting by semicolon (ignoring semicolons inside single quotes)
+                statements = []
+                current = []
+                in_quote = False
+                for char in m["sql"]:
+                    if char == "'":
+                        in_quote = not in_quote
+                        current.append(char)
+                    elif char == ";" and not in_quote:
+                        statements.append("".join(current).strip())
+                        current = []
+                    else:
+                        current.append(char)
+                if current:
+                    stmt = "".join(current).strip()
+                    if stmt:
+                        statements.append(stmt)
                 for statement in statements:
                     db_session.execute(text(statement))
                 
