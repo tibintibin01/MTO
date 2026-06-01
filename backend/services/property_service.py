@@ -4,11 +4,58 @@ from datetime import datetime, timezone
 from sqlalchemy import text, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment, AuditLog
+from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment, AuditLog, TaxPolicy
 from backend.services.auth_service import get_username, require_permission
 import backend.services.billing_service as billing
 import backend.services.payment_service as payment
 from fastapi import HTTPException
+
+
+# ---------------------------------------------------------------------------
+# Tax rate helpers for Python-side calculations (search result formatting).
+# These cache the policy lookup per-session to avoid N+1 queries.
+# ---------------------------------------------------------------------------
+_rate_cache: dict = {}
+
+
+def _get_policy_rates(tax_year_str, db_session: Session):
+    """Returns (basic_rate, sef_rate) for a given tax year, with caching."""
+    if not tax_year_str or not db_session:
+        return (0.01, 0.01)
+    # Parse the first year from multi-year strings like "2023, 2024"
+    try:
+        year_val = int(str(tax_year_str).strip().split(",")[0].split("-")[0].strip())
+    except (ValueError, TypeError):
+        return (0.01, 0.01)
+
+    cache_key = id(db_session)
+    if cache_key not in _rate_cache:
+        _rate_cache[cache_key] = {}
+    if year_val in _rate_cache[cache_key]:
+        return _rate_cache[cache_key][year_val]
+
+    policy = db_session.query(TaxPolicy).filter(TaxPolicy.tax_year == year_val).first()
+    if policy:
+        rates = (float(policy.basic_rate), float(policy.sef_rate))
+    else:
+        rates = (0.01, 0.01)
+    _rate_cache[cache_key][year_val] = rates
+    return rates
+
+
+def _get_basic_rate(prop, db_session):
+    basic, _ = _get_policy_rates(prop.tax_year, db_session)
+    return basic
+
+
+def _get_sef_rate(prop, db_session):
+    _, sef = _get_policy_rates(prop.tax_year, db_session)
+    return sef
+
+
+def _get_total_rate(prop, db_session):
+    basic, sef = _get_policy_rates(prop.tax_year, db_session)
+    return basic + sef
 
 class SyncConflictError(Exception):
     """Custom exception raised when a version mismatch is detected during save."""
@@ -137,8 +184,11 @@ def search_properties(
     return [
         (
             p.id, p.td_number, p.owner_name, p.payor_name, p.lot_number, p.area, p.location, p.kind_of_property,
-            p.accountable_officer, float(p.assessed_value or 0), float(p.assessed_value or 0) * 0.01, float(p.assessed_value or 0) * 0.01,
-            float(p.penalty or 0), float(p.discount or 0), float(p.assessed_value or 0) * 0.02 + float(p.penalty or 0) - float(p.discount or 0),
+            p.accountable_officer, float(p.assessed_value or 0),
+            float(p.assessed_value or 0) * _get_basic_rate(p, db_session),
+            float(p.assessed_value or 0) * _get_sef_rate(p, db_session),
+            float(p.penalty or 0), float(p.discount or 0),
+            float(p.assessed_value or 0) * _get_total_rate(p, db_session) + float(p.penalty or 0) - float(p.discount or 0),
             p.or_number, p.or_date, p.tax_year, p.pin, p.block_number, p.prev_td_number, p.effectivity_date, p.barangay
         )
         for p in results
@@ -153,11 +203,6 @@ def get_barangays(db_session: Session):
 
 def get_property_by_id(property_id, db_session: Session):
     return db_session.query(Property).filter(Property.id == property_id, Property.deleted_at == None).first()
-
-
-def release_all_property_locks(username, db_session: Session = None):
-    """No-op. Deprecated in favor of native Optimistic Concurrency Control (OCC)."""
-    pass
 
 
 def save_property(data, editing_id=None, user=None, db_session: Session = None):
@@ -287,7 +332,7 @@ def _sync_financial_records(prop_id, data, db_session: Session):
     
     for year, a_s, p_s, d_s in zip(tax_years, av_shares, pen_shares, disc_shares):
         billing_rows.append(
-            billing.sync_property_billing(None, prop_id, year, a_s, p_s, d_s, has_payment=should_pay, db_session=db_session)
+            billing.sync_property_billing(prop_id, year, a_s, p_s, d_s, has_payment=should_pay, db_session=db_session)
         )
         
     if should_pay:
@@ -335,7 +380,7 @@ def _sync_financial_records(prop_id, data, db_session: Session):
         pay_obj.discount = disc  # store discount on Payment record
         
         db_session.flush() # Get payment_id
-        billing.sync_payment_billings(None, pay_obj.id, allocated, db_session=db_session)
+        billing.sync_payment_billings(pay_obj.id, allocated, db_session=db_session)
 
 
 

@@ -6,9 +6,59 @@ from backend.models import Property, PropertyBilling, PaymentBilling, Payment, T
 from decimal import Decimal, ROUND_HALF_UP
 from utils.db_compat import greatest, year_of, month_of
 
-def sync_property_billing(
 
-    cur, property_id, tax_year, assessed_value, penalty, discount=0.0, has_payment=False, db_session: Session = None
+# ---------------------------------------------------------------------------
+# Shared tax rate expression builders
+# ---------------------------------------------------------------------------
+# These produce SQLAlchemy column expressions that resolve the correct rate
+# from TaxPolicy for each billing row's tax_year. If no policy exists for a
+# given year, they fall back to the statutory default (1% basic + 1% SEF).
+#
+# Usage: join/outerjoin TaxPolicy on tax_year, then use these expressions
+# in .query() or .filter() clauses.
+#
+# For queries that already join TaxPolicy:
+#   basic_rate_expr()  → per-row basic rate
+#   sef_rate_expr()    → per-row SEF rate
+#   total_rate_expr()  → basic + SEF combined
+#
+# For queries that need a correlated subquery (no explicit join):
+#   tax_rate_subquery(db_session, billing_tax_year_col) → scalar subquery
+# ---------------------------------------------------------------------------
+
+def basic_rate_expr():
+    """Basic tax rate expression — requires TaxPolicy to be joined/outerjoined."""
+    return func.coalesce(TaxPolicy.basic_rate, 0.0100)
+
+
+def sef_rate_expr():
+    """SEF tax rate expression — requires TaxPolicy to be joined/outerjoined."""
+    return func.coalesce(TaxPolicy.sef_rate, 0.0100)
+
+
+def total_rate_expr():
+    """Combined basic + SEF rate — requires TaxPolicy to be joined/outerjoined."""
+    return basic_rate_expr() + sef_rate_expr()
+
+
+def tax_rate_subquery(db_session: Session, billing_tax_year_col):
+    """
+    Correlated scalar subquery that resolves the total rate for a billing row.
+    Use when TaxPolicy is NOT already joined in the outer query.
+
+    Returns a scalar expression: basic_rate + sef_rate for the matching year,
+    or 0.02 if no policy row exists.
+    """
+    return func.coalesce(
+        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
+        .filter(TaxPolicy.tax_year == billing_tax_year_col)
+        .correlate(PropertyBilling)
+        .scalar_subquery(),
+        0.02
+    )
+
+def sync_property_billing(
+    property_id, tax_year, assessed_value, penalty, discount=0.0, has_payment=False, db_session: Session = None
 ):
     """Creates or updates the billing snapshot for one property and one tax year."""
     normalized_tax_year = (
@@ -236,7 +286,7 @@ def looks_like_valid_or_number(value):
     return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 /.-]*", text))
 
 
-def recalculate_billing_balances(cur, billing_ids, db_session: Session = None):
+def recalculate_billing_balances(billing_ids, db_session: Session = None):
     seen = []
     for billing_id in billing_ids:
         if billing_id and billing_id not in seen:
@@ -252,7 +302,7 @@ def recalculate_billing_balances(cur, billing_ids, db_session: Session = None):
         }, synchronize_session=False)
 
 
-def sync_payment_billings(cur, payment_id, billing_rows, db_session: Session = None):
+def sync_payment_billings(payment_id, billing_rows, db_session: Session = None):
     if not payment_id:
         return
 
@@ -278,7 +328,7 @@ def sync_payment_billings(cur, payment_id, billing_rows, db_session: Session = N
         affected_billing_ids.append(billing_row["billing_id"])
         
     db_session.flush()
-    recalculate_billing_balances(None, affected_billing_ids, db_session=db_session)
+    recalculate_billing_balances(affected_billing_ids, db_session=db_session)
 
 
 def get_property_billing_history(property_id=None, term=None, limit=50, db_session: Session = None):
@@ -780,6 +830,145 @@ def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
         "next_cursor": next_cursor,
         "has_more": has_more,
         "count": len(items),
+    }
+
+
+def get_collections_worklist(
+    barangay: str = None,
+    min_age_days: int = 0,
+    limit: int = 50,
+    offset: int = 0,
+    db_session: Session = None,
+):
+    """
+    Collections worklist: delinquent properties prioritised by balance (largest
+    first) with aging metadata so staff can chase the highest-value, oldest
+    arrears first.
+
+    Aging is derived from the EARLIEST billed tax year that still contributes to
+    the outstanding balance. Penalties accrue from Feb 1 of the tax year
+    (RA 7160), so age_days = today − Feb 1 of the earliest delinquent year.
+
+    Params:
+      barangay     — optional filter
+      min_age_days — only include accounts at least this old (0/30/60/90/120)
+      limit/offset — pagination (offset is acceptable here: the delinquent set
+                     is bounded and this is an admin worklist, not a public feed)
+
+    Returns aging buckets per row:
+      CURRENT (<30d), 30, 60, 90, 120+  with a label and the computed age_days.
+    """
+    from datetime import date
+
+    safe_limit = min(max(1, int(limit)), 200)
+    safe_offset = max(0, int(offset))
+
+    rate_expr = func.coalesce(
+        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
+        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .correlate(PropertyBilling)
+        .scalar_subquery(),
+        0.02
+    )
+
+    balance_expr = func.sum(
+        (PropertyBilling.assessed_value * rate_expr)
+        + PropertyBilling.penalty
+        - PropertyBilling.discount
+        - PropertyBilling.amount_paid
+    )
+
+    query = db_session.query(
+        Property.id,
+        Property.td_number,
+        Property.owner_name,
+        Property.location,
+        func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
+        func.sum(
+            (PropertyBilling.assessed_value * rate_expr)
+            + PropertyBilling.penalty
+            - PropertyBilling.discount
+        ).label("total_due"),
+        func.sum(PropertyBilling.amount_paid).label("total_paid"),
+        balance_expr.label("balance"),
+        func.min(PropertyBilling.tax_year).label("earliest_year"),
+        func.count(PropertyBilling.id).label("years_billed"),
+    ).join(
+        PropertyBilling, PropertyBilling.property_id == Property.id
+    ).filter(
+        Property.deleted_at == None
+    )
+
+    if barangay and barangay.strip() and barangay.upper() != "ALL":
+        query = query.filter(Property.barangay == barangay.strip())
+
+    query = query.group_by(Property.id).having(balance_expr > 0)
+
+    # Order by balance DESC — collections priority is biggest arrears first
+    rows = query.order_by(balance_expr.desc(), Property.id.asc()).all()
+
+    today = date.today()
+
+    def _age_days(earliest_year) -> int:
+        try:
+            yr = int(earliest_year)
+        except (ValueError, TypeError):
+            return 0
+        # Penalty accrual begins Feb 1 of the tax year
+        start = date(yr, 2, 1)
+        return max(0, (today - start).days)
+
+    def _bucket(days: int) -> str:
+        if days >= 120:
+            return "120+"
+        if days >= 90:
+            return "90"
+        if days >= 60:
+            return "60"
+        if days >= 30:
+            return "30"
+        return "CURRENT"
+
+    enriched = []
+    for r in rows:
+        age = _age_days(r.earliest_year)
+        if age < min_age_days:
+            continue
+        enriched.append({
+            "id": r.id,
+            "td_number": r.td_number,
+            "owner_name": r.owner_name,
+            "location": r.location,
+            "barangay": r.barangay,
+            "total_due": float(r.total_due or 0),
+            "total_paid": float(r.total_paid or 0),
+            "balance": float(r.balance or 0),
+            "earliest_year": int(r.earliest_year) if r.earliest_year else None,
+            "years_billed": int(r.years_billed or 0),
+            "age_days": age,
+            "aging_bucket": _bucket(age),
+        })
+
+    total_matching = len(enriched)
+    page = enriched[safe_offset:safe_offset + safe_limit]
+
+    # Summary totals across the full matching set (not just the page)
+    total_balance = sum(e["balance"] for e in enriched)
+    bucket_totals = {"CURRENT": 0.0, "30": 0.0, "60": 0.0, "90": 0.0, "120+": 0.0}
+    for e in enriched:
+        bucket_totals[e["aging_bucket"]] += e["balance"]
+
+    return {
+        "items": page,
+        "count": len(page),
+        "total_matching": total_matching,
+        "has_more": (safe_offset + safe_limit) < total_matching,
+        "next_offset": safe_offset + safe_limit if (safe_offset + safe_limit) < total_matching else None,
+        "summary": {
+            "delinquent_count": total_matching,
+            "total_balance": round(total_balance, 2),
+            "aging_totals": {k: round(v, 2) for k, v in bucket_totals.items()},
+        },
     }
 
 

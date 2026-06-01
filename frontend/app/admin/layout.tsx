@@ -14,6 +14,8 @@ import {
   Menu,
   X,
   CheckCircle2,
+  AlertTriangle,
+  FileBarChart,
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -32,6 +34,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       setLoading(false);
       return;
     }
+
+    // Fetch a CSRF token on mount so state-changing requests are protected.
+    fetch("/api/v1/api/auth/csrf", { credentials: "include" }).catch(() => {});
 
     // The Edge middleware (middleware.ts) already guards all /admin/* routes
     // and redirects unauthenticated users to /admin/login before React renders.
@@ -96,7 +101,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { name: "Dashboard", path: "/admin/dashboard", icon: LayoutDashboard },
     { name: "Property Registry", path: "/admin/properties", icon: Building2 },
     { name: "Cashier Ledger", path: "/admin/cashier", icon: CreditCard },
+    { name: "Collections", path: "/admin/collections", icon: AlertTriangle },
     { name: "Compliant Properties", path: "/admin/compliant", icon: CheckCircle2 },
+    { name: "Reports", path: "/admin/reports", icon: FileBarChart },
     { name: "DB & Maintenance", path: "/admin/system", icon: Database },
   ];
 

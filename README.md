@@ -2,53 +2,88 @@
 
 An enterprise-grade, security-hardened treasury management solution for municipal governments. Built with a focus on data integrity, audit-readiness, and performance.
 
+## Architecture
+
+The system consists of three components:
+
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| **Backend API** | FastAPI (Python 3.11+) | REST API, business logic, PDF generation, job queue |
+| **Web Portal** | Next.js 14 (React 18, TypeScript) | Public taxpayer lookup + admin dashboard (PWA) |
+| **Desktop Client** | CustomTkinter (Python) | Full-featured cashier/admin workstation |
+
+**Database:** MariaDB 10.11 (production) / SQLite (tests)
+**Auth:** JWT (HS256) with httpOnly cookies, refresh tokens, RBAC
+**Observability:** Prometheus + Grafana, Sentry, structured JSON logging
+
+See [docs/architecture.md](docs/architecture.md) for the full component diagram.
+
 ## 🚀 Quick Start (Local Development)
 
-### 1. Prerequisites
+### Prerequisites
 - Python 3.9+
-- SQLite (Built-in)
+- Node.js 20+ (for the web portal)
+- MariaDB/MySQL (or XAMPP on Windows)
 
-### 2. Setup Environment
+### Backend Setup
 ```bash
 # Create and activate virtual environment
 python -m venv venv
-source venv/Scripts/activate  # On Windows: venv\Scripts\activate
+source venv/Scripts/activate  # Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
-```
 
-### 3. Initialize Security (HTTPS)
-The system requires SSL certificates for secure communication.
-```bash
+# Copy environment template and fill in values
+cp .env.template .env
+
+# Generate HTTPS certificates (required)
 python backend/generate_certs.py
-```
 
-### 4. Run the System
-```bash
 # Start the Backend Server (Port 8001)
 python backend/main.py
+```
 
-# Launch the Desktop Dashboard (Separate Terminal)
-python dashboard.py
+### Frontend Setup
+```bash
+cd frontend
+npm install
+npm run dev    # Development server on port 3000
+```
+
+### Docker (Production)
+```bash
+# Fill in .env first, then:
+docker compose up -d
 ```
 
 ## 🛡️ Security Features
-- **End-to-End Encryption:** Enforced HTTPS with self-signed certificate management.
-- **Role-Based Access Control (RBAC):** Granular permissions via signed JWT tokens.
-- **CORS Protection:** Whitelisted local origins to prevent unauthorized web access.
-- **Rate Limiting:** Built-in defense against brute-force and DoS attacks.
-- **Audit Logging:** Centralized, rotating logs for all administrative actions.
+- **End-to-End Encryption:** Enforced HTTPS with self-signed certificate management
+- **Role-Based Access Control (RBAC):** Granular permissions via signed JWT tokens
+- **CSRF Protection:** Double-submit cookie pattern on the web portal
+- **CORS Protection:** Whitelisted origins with explicit methods/headers
+- **Rate Limiting:** Per-IP and per-user limits (Redis-backed in production)
+- **HSTS:** Strict Transport Security headers on all responses
+- **Audit Logging:** Immutable, append-only audit trail for all admin actions
+- **Account Lockout:** 5 failed attempts → 5-minute lockout
+- **Password Policy:** 12+ chars, mixed case, digits, special characters, bcrypt cost 12
 
 ## 🧬 Disaster Recovery
-- **Hybrid Backups:** Automated Local, USB, and Cloud synchronization.
-- **Data Integrity:** SHA256 checksum generation for every backup to detect corruption.
-- **Verification API:** Real-time health monitoring of the backup ecosystem.
+- **Hybrid Backups:** Automated Local, USB, and S3-compatible cloud sync
+- **Data Integrity:** SHA256 checksum verification for every backup
+- **Scheduled Automation:** Configurable daily/weekly backup schedule
+- **Pre-Restore Safety:** Automatic safety backup before any restore operation
 
 ## 🧪 Quality Assurance
-To run the automated test suite:
 ```bash
-pytest tests/test_api.py
+# Run the full test suite (113 tests)
+pytest tests/ --ignore=tests/test_ui_modules.py --ignore=tests/load
+
+# Run with coverage
+pytest tests/ --ignore=tests/test_ui_modules.py --ignore=tests/load --cov=backend
+
+# Frontend lint
+cd frontend && npm run lint
 ```
 
 ## 🗺️ Documentation
@@ -56,5 +91,16 @@ pytest tests/test_api.py
 - **API Reference:** [https://127.0.0.1:8001/docs](https://127.0.0.1:8001/docs) (Server must be running)
 - **Client Setup:** [CLIENT_SETUP.md](CLIENT_SETUP.md)
 
+## Deployment
+
+The CI/CD pipeline (`.github/workflows/`) runs:
+1. Lint (Black, Flake8, Mypy) + Security scan (Bandit, pip-audit)
+2. Full test suite with coverage
+3. Docker image build (SHA-tagged, never `:latest`)
+4. Trivy container scan (blocks on HIGH/CRITICAL CVEs)
+5. Staging deploy → health check → manual approval → production deploy
+
+See `k8s/` for Kubernetes manifests and `infra/` for Prometheus/nginx configs.
+
 ---
-*Built with ❤️ for Municipal Transparency and Efficiency.*
+*Built for Municipal Transparency and Efficiency.*

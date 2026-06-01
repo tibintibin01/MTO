@@ -103,11 +103,27 @@ async def restore_system_backup(
     current_user: dict = Depends(get_current_user),
 ):
     from backend.services.system_service import restore_database
+    from backend.services.backup_service import BACKUP_BASE_DIR
     import traceback
     try:
         file_path = request.file_path.replace("\\", "/").strip()
+
+        # Security: constrain restore paths to the configured backup directory.
+        # Without this, an admin could read arbitrary files on the server via
+        # path traversal (e.g. "../../etc/passwd" fed to mysql stdin).
+        import os
+        resolved = os.path.realpath(file_path)
+        allowed_base = os.path.realpath(BACKUP_BASE_DIR)
+        if not resolved.startswith(allowed_base + os.sep) and resolved != allowed_base:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Restore path must be inside the backup directory ({BACKUP_BASE_DIR})."
+            )
+
         result = restore_database(file_path)
         return {"status": "success", "data": result}
+    except HTTPException:
+        raise
     except Exception as e:
         error_detail = traceback.format_exc()
         try:

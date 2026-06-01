@@ -14,6 +14,33 @@ spec:
       labels:
         app: mto-treasury
     spec:
+      # ---------------------------------------------------------------------------
+      # Init Container: Run Alembic migrations ONCE before any app pod starts.
+      #
+      # Without this, all 3 replicas race `alembic upgrade head` simultaneously
+      # on rollout. Alembic is NOT concurrency-safe — concurrent runs can
+      # deadlock or partially apply migrations, corrupting the schema.
+      #
+      # The initContainer runs to completion before any app container starts.
+      # If it fails, the pod stays in Init:Error and no traffic is served.
+      # ---------------------------------------------------------------------------
+      initContainers:
+      - name: run-migrations
+        image: mto-treasury:latest
+        command: ["alembic", "upgrade", "head"]
+        envFrom:
+        - configMapRef:
+            name: mto-config
+        - secretRef:
+            name: mto-secrets
+        resources:
+          limits:
+            cpu: "200m"
+            memory: "256Mi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+
       containers:
       - name: mto-backend
         # Pin to a specific digest in production — the CI pipeline substitutes
@@ -39,6 +66,11 @@ spec:
             name: mto-config
         - secretRef:
             name: mto-secrets
+
+        # Tell the app NOT to run migrations on startup — initContainer handles it
+        env:
+        - name: SKIP_MIGRATIONS
+          value: "true"
 
         resources:
           limits:

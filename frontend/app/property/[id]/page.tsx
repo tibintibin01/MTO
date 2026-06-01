@@ -128,6 +128,11 @@ export default function PropertyDetail() {
   const sorted       = [...history].sort((a,b) =>
     parseInt(String(b.period||"0")) - parseInt(String(a.period||"0")));
 
+  // Phase 1: real computed figures from the backend (PropertyBilling-derived)
+  const balance      = typeof data.balance === "number" ? data.balance : 0;
+  const breakdown    = Array.isArray(data.billing_breakdown) ? data.billing_breakdown : [];
+  const peso = (n: number) => "₱" + (n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 });
+
   return (
     <div style={{background:C.pageBg}} className="min-h-screen">
 
@@ -257,7 +262,56 @@ export default function PropertyDetail() {
         </div>
       </div>
 
-      {/* ── STAT CARDS ───────────────────────────────────────────────────── */}
+      {/* ── AMOUNT DUE — the answer to "how much do I owe?" ──────────────── */}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 -mt-3 relative z-20">
+        <div className="rounded-2xl shadow-lg p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5"
+          style={{
+            background: isDelinquent ? "linear-gradient(135deg,#fff5f2 0%,#ffffff 60%)" : "linear-gradient(135deg,#f0fdf4 0%,#ffffff 60%)",
+            border: `2px solid ${isDelinquent ? C.delinqBorder : C.paidBorder}`,
+          }}>
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
+              style={{background: isDelinquent ? "#ffe4dc" : C.paidBg}}>
+              {isDelinquent
+                ? <AlertCircle className="w-7 h-7" style={{color:C.delinqText}} />
+                : <CheckCircle2 className="w-7 h-7" style={{color:C.paidGreen}} />}
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest"
+                style={{color: isDelinquent ? C.delinqText : C.paidGreen}}>
+                {isDelinquent ? "Amount Due" : isPending ? "Not Yet Billed" : "Fully Paid"}
+              </p>
+              <p className="text-4xl sm:text-5xl font-black leading-none mt-1"
+                style={{color: isDelinquent ? C.delinqText : C.paidGreen}}>
+                {isPending ? "—" : peso(balance)}
+              </p>
+              <p className="text-xs text-slate-400 mt-1.5">
+                {isDelinquent
+                  ? `Outstanding across ${breakdown.length} tax year(s) · as of ${data.as_of ?? ""}`
+                  : isPending
+                  ? "No billing records for this property yet"
+                  : "No outstanding balance — your account is updated"}
+              </p>
+            </div>
+          </div>
+
+          {/* CTAs */}
+          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+            <Link href="/pay-guide"
+              className="flex items-center justify-center gap-2 font-bold text-sm px-5 py-3 rounded-xl transition-opacity hover:opacity-90 whitespace-nowrap"
+              style={{background:"#f5c518", color:"#1a1a2e"}}>
+              How to Pay <ChevronRight className="w-4 h-4" />
+            </Link>
+            <a href={`/api/v1/public/property/${encodeURIComponent(id)}/soa`} target="_blank" rel="noopener noreferrer"
+              className="flex items-center justify-center gap-2 font-bold text-sm px-5 py-3 rounded-xl border transition-colors whitespace-nowrap"
+              style={{background:"#ffffff", color:C.teal, borderColor:C.teal}}>
+              <FileText className="w-4 h-4" /> Download SOA
+            </a>
+          </div>
+        </div>
+      </div>
+
+      {/* ── SECONDARY STATS ──────────────────────────────────────────────── */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
 
@@ -269,27 +323,23 @@ export default function PropertyDetail() {
             <div>
               <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Total Paid</p>
               <p className="text-xl font-black" style={{color:C.totalPaidTxt}}>
-                ₱{totalPaid.toLocaleString("en-PH",{minimumFractionDigits:2})}
+                {peso(data.total_paid ?? totalPaid)}
               </p>
               <p className="text-xs text-slate-400">{history.length} payment(s) on record</p>
             </div>
           </div>
 
-          {/* Status */}
-          <div className="rounded-2xl shadow-sm p-5 flex items-center gap-4"
-            style={{background:isDelinquent?C.delinqBg:C.paidBg, border:`1px solid ${isDelinquent?C.delinqBorder:C.paidBorder}`}}>
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
-              style={{background:isDelinquent?"#ffe4dc":C.paidBg}}>
-              {isDelinquent
-                ? <AlertCircle className="w-6 h-6" style={{color:C.delinqText}} />
-                : <CheckCircle2 className="w-6 h-6" style={{color:C.paidGreen}} />}
+          {/* Total Billed */}
+          <div className="rounded-2xl shadow-sm border border-slate-100 p-5 flex items-center gap-4" style={{background:C.statBg}}>
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{background:"#eff6ff"}}>
+              <FileText className="w-6 h-6" style={{color:"#2563eb"}} />
             </div>
             <div>
-              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Status</p>
-              <p className="text-xl font-black" style={{color:isDelinquent?C.delinqText:C.paidGreen}}>
-                {isDelinquent ? "Delinquent" : isCompliant ? "Compliant" : "Pending"}
+              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Total Billed</p>
+              <p className="text-xl font-black" style={{color:C.totalPaidTxt}}>
+                {peso(data.total_due ?? 0)}
               </p>
-              <p className="text-xs text-slate-400">{isDelinquent?"Outstanding balance exists":"No outstanding balance"}</p>
+              <p className="text-xs text-slate-400">{breakdown.length} tax year(s)</p>
             </div>
           </div>
 
@@ -300,13 +350,79 @@ export default function PropertyDetail() {
             </div>
             <div>
               <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Last Payment</p>
-              <p className="text-xl font-black" style={{color:C.lastPayTxt}}>{sorted[0]?.period ?? "—"}</p>
-              <p className="text-xs text-slate-400">{sorted[0]?.date_paid ?? "No payments recorded"}</p>
+              <p className="text-xl font-black" style={{color:C.lastPayTxt}}>{data.last_payment?.period ?? sorted[0]?.period ?? "—"}</p>
+              <p className="text-xs text-slate-400">{data.last_payment?.date_paid ?? sorted[0]?.date_paid ?? "No payments recorded"}</p>
             </div>
           </div>
 
         </div>
       </div>
+
+      {/* ── BILLING BREAKDOWN (per-year) ─────────────────────────────────── */}
+      {breakdown.length > 0 && (
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 pb-2">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="px-6 py-4 flex items-center gap-2 border-b border-slate-100">
+              <FileText className="w-4 h-4" style={{color:C.teal}} />
+              <h2 className="font-bold text-slate-800">Billing Breakdown</h2>
+              <span className="ml-auto text-xs text-slate-400">Basic + SEF + Penalty − Discount</span>
+            </div>
+
+            {/* Desktop table */}
+            <div className="hidden sm:block overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-100" style={{background:"#f8fafc"}}>
+                    {["Year","Assessed","Basic","SEF","Penalty","Discount","Due","Paid","Balance"].map((h,i) => (
+                      <th key={h} className={`px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider ${i===0?"text-left":"text-right"}`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {breakdown.map((y:any) => (
+                    <tr key={y.tax_year} className="border-b border-slate-50">
+                      <td className="px-4 py-3 font-bold text-slate-800">{y.tax_year}</td>
+                      <td className="px-4 py-3 text-right text-slate-500">{peso(y.assessed_value)}</td>
+                      <td className="px-4 py-3 text-right text-slate-500">{peso(y.basic)}</td>
+                      <td className="px-4 py-3 text-right text-slate-500">{peso(y.sef)}</td>
+                      <td className="px-4 py-3 text-right text-slate-500">{peso(y.penalty)}</td>
+                      <td className="px-4 py-3 text-right text-slate-500">{peso(y.discount)}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-slate-700">{peso(y.total_due)}</td>
+                      <td className="px-4 py-3 text-right text-slate-500">{peso(y.amount_paid)}</td>
+                      <td className="px-4 py-3 text-right font-black"
+                        style={{color: y.balance > 0 ? C.delinqText : C.paidGreen}}>
+                        {peso(y.balance)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile cards */}
+            <div className="sm:hidden divide-y divide-slate-100">
+              {breakdown.map((y:any) => (
+                <div key={y.tax_year} className="px-5 py-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-bold text-slate-800">{y.tax_year}</span>
+                    <span className="font-black text-base" style={{color: y.balance > 0 ? C.delinqText : C.paidGreen}}>
+                      {y.balance > 0 ? peso(y.balance) : "Paid"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-500">
+                    <span>Basic: {peso(y.basic)}</span>
+                    <span>SEF: {peso(y.sef)}</span>
+                    <span>Penalty: {peso(y.penalty)}</span>
+                    <span>Discount: {peso(y.discount)}</span>
+                    <span className="text-slate-700 font-semibold">Due: {peso(y.total_due)}</span>
+                    <span>Paid: {peso(y.amount_paid)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── MAIN CONTENT ─────────────────────────────────────────────────── */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 pb-10">

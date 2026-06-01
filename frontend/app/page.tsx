@@ -12,6 +12,55 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // "Find my TDN" by owner name + barangay
+  const [showFind, setShowFind] = useState(false);
+  const [findName, setFindName] = useState("");
+  const [findBarangay, setFindBarangay] = useState("");
+  const [findResults, setFindResults] = useState<any[]>([]);
+  const [findError, setFindError] = useState("");
+  const [findLoading, setFindLoading] = useState(false);
+  const [findMessage, setFindMessage] = useState("");
+
+  const handleFind = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFindError("");
+    setFindMessage("");
+    setFindResults([]);
+    if (findName.trim().length < 3) {
+      setFindError("Please enter at least 3 characters of the owner's name.");
+      return;
+    }
+    setFindLoading(true);
+    try {
+      const params = new URLSearchParams({ name: findName.trim() });
+      if (findBarangay.trim()) params.set("barangay", findBarangay.trim());
+      const res = await fetch(`/api/v1/public/find?${params}`);
+      if (res.status === 400) {
+        const j = await res.json();
+        setFindError(j.detail || "Invalid search.");
+        return;
+      }
+      if (!res.ok) {
+        setFindError("Unable to search right now. Please try again.");
+        return;
+      }
+      const data = await res.json();
+      if (data.too_many) {
+        setFindMessage(data.message || "Too many matches. Add your barangay or more of your name.");
+        return;
+      }
+      if (!data.results || data.results.length === 0) {
+        setFindMessage("No matching properties found. Check the spelling or visit the office.");
+        return;
+      }
+      setFindResults(data.results);
+    } catch {
+      setFindError("Network error. Please try again.");
+    } finally {
+      setFindLoading(false);
+    }
+  };
+
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -109,8 +158,78 @@ export default function Home() {
           </form>
 
           <p className="text-blue-300 text-xs mt-5">
-            Don&apos;t know your TDN? Visit the Municipal Treasury Office or contact us below.
+            Don&apos;t know your TDN?{" "}
+            <button
+              type="button"
+              onClick={() => setShowFind((v) => !v)}
+              className="text-yellow-300 font-semibold underline hover:text-yellow-200"
+            >
+              Find it by owner name
+            </button>
           </p>
+
+          {/* ── Find my TDN panel ── */}
+          {showFind && (
+            <div className="max-w-2xl mx-auto mt-5 bg-white rounded-2xl p-5 shadow-2xl text-left">
+              <form onSubmit={handleFind} className="flex flex-col sm:flex-row gap-3">
+                <input
+                  type="text"
+                  className="flex-1 px-4 py-3 border border-slate-200 rounded-xl text-slate-800 text-sm outline-none focus:ring-2 focus:ring-[#1a3a6b]"
+                  placeholder="Owner name (min 3 letters)"
+                  value={findName}
+                  onChange={(e) => { setFindName(e.target.value); setFindError(""); }}
+                  aria-label="Owner name"
+                />
+                <input
+                  type="text"
+                  className="sm:w-40 px-4 py-3 border border-slate-200 rounded-xl text-slate-800 text-sm outline-none focus:ring-2 focus:ring-[#1a3a6b]"
+                  placeholder="Barangay (optional)"
+                  value={findBarangay}
+                  onChange={(e) => setFindBarangay(e.target.value)}
+                  aria-label="Barangay"
+                />
+                <button
+                  type="submit"
+                  disabled={findLoading}
+                  className="bg-[#1a3a6b] text-white px-6 py-3 rounded-xl font-bold text-sm hover:bg-[#0f2a5e] transition-colors disabled:opacity-50 whitespace-nowrap"
+                >
+                  {findLoading ? "Finding…" : "Find"}
+                </button>
+              </form>
+
+              {findError && (
+                <p className="text-sm text-red-600 mt-3 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" /> {findError}
+                </p>
+              )}
+              {findMessage && (
+                <p className="text-sm text-slate-500 mt-3">{findMessage}</p>
+              )}
+
+              {findResults.length > 0 && (
+                <div className="mt-4 divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
+                  {findResults.map((r, i) => (
+                    <button
+                      key={i}
+                      onClick={() => router.push(`/property/${encodeURIComponent(r.td_number)}`)}
+                      className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors text-left"
+                    >
+                      <div>
+                        <p className="font-bold text-slate-800 text-sm">{r.owner_name}</p>
+                        <p className="text-xs text-slate-400">
+                          {r.barangay || "—"} · {r.kind || "Property"} · TD {r.td_tail}
+                        </p>
+                      </div>
+                      <span className="text-[#1a3a6b] text-sm font-semibold">View →</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-slate-400 mt-3">
+                Results are masked for privacy. Only you can recognize your own record.
+              </p>
+            </div>
+          )}
         </div>
       </section>
 

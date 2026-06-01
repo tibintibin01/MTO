@@ -2,8 +2,9 @@
 from sqlalchemy import func, cast
 from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
-from backend.models import Payment, Property, PropertyBilling
+from backend.models import Payment, Property, PropertyBilling, TaxPolicy
 from backend.database import SessionLocal
+from backend.services.billing_service import tax_rate_subquery
 from datetime import datetime, timezone
 from utils.db_compat import year_of, month_of, today, this_month_start, this_year_start
 
@@ -31,11 +32,12 @@ def get_collection_summary(db_session: Session = None):
     ).filter(cast(Payment.date_paid, Date) >= year_start).scalar()
 
     # Total receivables = sum of all outstanding balances in property_billings
-    # (not from properties table directly — that ignores multi-year billing)
+    # Uses TaxPolicy rates via correlated subquery (no hardcoded 0.02)
+    rate_expr = tax_rate_subquery(db_session, PropertyBilling.tax_year)
     total_receivables = db_session.query(
         func.coalesce(
             func.sum(
-                (PropertyBilling.assessed_value * 0.02)
+                (PropertyBilling.assessed_value * rate_expr)
                 + PropertyBilling.penalty
                 - PropertyBilling.discount
             ), 0
@@ -55,7 +57,12 @@ def get_collection_summary(db_session: Session = None):
     ).filter(Property.deleted_at == None).scalar()
 
     # Calculate active delinquencies (where outstanding balance > 0)
-    balance_expr = func.sum((PropertyBilling.assessed_value * 0.02) + PropertyBilling.penalty - PropertyBilling.discount - PropertyBilling.amount_paid)
+    balance_expr = func.sum(
+        (PropertyBilling.assessed_value * rate_expr)
+        + PropertyBilling.penalty
+        - PropertyBilling.discount
+        - PropertyBilling.amount_paid
+    )
     try:
         active_delinquencies = db_session.query(Property.id).join(
             PropertyBilling, PropertyBilling.property_id == Property.id
@@ -100,10 +107,12 @@ def get_last_year_summary(db_session: Session = None):
     ).scalar()
 
     # Total receivables as of end of last year (billing records up to last year)
+    # Uses TaxPolicy rates via correlated subquery
+    rate_expr = tax_rate_subquery(db_session, PropertyBilling.tax_year)
     last_year_receivables = db_session.query(
         func.coalesce(
             func.sum(
-                (PropertyBilling.assessed_value * 0.02)
+                (PropertyBilling.assessed_value * rate_expr)
                 + PropertyBilling.penalty
                 - PropertyBilling.discount
             ), 0
@@ -135,7 +144,7 @@ def get_last_year_summary(db_session: Session = None):
     }
 
 
-
+def get_monthly_revenue_trend(db_session: Session = None):
     """Returns the last 12 months of revenue for trend analysis."""
     if not db_session:
         with SessionLocal() as session:
@@ -163,11 +172,13 @@ def get_barangay_distribution(db_session: Session = None):
             return get_barangay_distribution(db_session=session)
 
     # 1. Get receivables per barangay from property_billings (accurate after sync)
+    # Uses TaxPolicy rates via correlated subquery
+    rate_expr = tax_rate_subquery(db_session, PropertyBilling.tax_year)
     receivables_query = db_session.query(
         Property.barangay,
         func.coalesce(
             func.sum(
-                (PropertyBilling.assessed_value * 0.02)
+                (PropertyBilling.assessed_value * rate_expr)
                 + PropertyBilling.penalty
                 - PropertyBilling.discount
             ), 0

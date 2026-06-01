@@ -25,9 +25,9 @@ export default function AdminSystem() {
     setLoading(true);
     setError("");
     try {
-      const token = localStorage.getItem("mto_token");
       const res = await fetch("/api/v1/system/audit-logs", {
-        headers: { "Authorization": `Bearer ${token}` }
+        credentials: "include",
+        headers: { "X-Requested-With": "XMLHttpRequest" }
       });
 
       if (!res.ok) throw new Error("Failed to load audit logs.");
@@ -35,12 +35,7 @@ export default function AdminSystem() {
       setLogs(Array.isArray(json) ? json : []);
     } catch (err: any) {
       setError(err.message);
-      // Fallback fallback mockup so user can immediately inspect audit trails!
-      setLogs([
-        { id: 1, action: "User authenticated successfully", user_name: "admin", ip_address: "127.0.0.1", created_at: "2026-05-18T09:30:00" },
-        { id: 2, action: "Pessimistic row lock acquired on property assessment", user_name: "cashier1", ip_address: "127.0.0.1", created_at: "2026-05-18T09:28:15" },
-        { id: 3, action: "Triggered database backup operation", user_name: "admin", ip_address: "127.0.0.1", created_at: "2026-05-18T09:15:30" }
-      ]);
+      setLogs([]);
     } finally {
       setLoading(false);
     }
@@ -55,13 +50,10 @@ export default function AdminSystem() {
     setError("");
     setSuccess("");
     try {
-      const token = localStorage.getItem("mto_token");
       const res = await fetch("/api/v1/system/backup/trigger", {
         method: "POST",
-        headers: { 
-          "Authorization": `Bearer ${token}`,
-          "X-Requested-With": "XMLHttpRequest"
-        }
+        credentials: "include",
+        headers: { "X-Requested-With": "XMLHttpRequest" }
       });
 
       if (!res.ok) throw new Error("Failed to trigger automated database backup.");
@@ -84,12 +76,11 @@ export default function AdminSystem() {
     setError("");
     setSuccess("");
     try {
-      const token = localStorage.getItem("mto_token");
       const res = await fetch("/api/v1/system/restore", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
           "X-Requested-With": "XMLHttpRequest"
         },
         body: JSON.stringify({ file_path: restorePath })

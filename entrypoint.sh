@@ -47,10 +47,17 @@ echo "  Database is ready."
 #    alembic upgrade head is idempotent — safe to run on every startup.
 #    env.py reads the DB URL from utils.config + secrets_manager so no
 #    credentials are stored in alembic.ini.
+#
+#    In Kubernetes, migrations are handled by the initContainer (see
+#    k8s/deployment.yaml). Set SKIP_MIGRATIONS=true to skip this step.
 # ---------------------------------------------------------------------------
-echo "[2/3] Running Alembic database migrations..."
-alembic upgrade head
-echo "  Migrations complete."
+if [ "${SKIP_MIGRATIONS:-false}" = "true" ]; then
+    echo "[2/3] Skipping migrations (SKIP_MIGRATIONS=true — handled by initContainer)."
+else
+    echo "[2/3] Running Alembic database migrations..."
+    alembic upgrade head
+    echo "  Migrations complete."
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Start the API server

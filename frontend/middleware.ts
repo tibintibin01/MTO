@@ -30,7 +30,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 // Routes that require authentication
-const PROTECTED_PREFIXES = ["/admin/dashboard", "/admin/properties", "/admin/cashier", "/admin/system", "/admin/users"];
+const PROTECTED_PREFIXES = ["/admin/dashboard", "/admin/properties", "/admin/cashier", "/admin/collections", "/admin/compliant", "/admin/reports", "/admin/system", "/admin/users"];
 
 // Routes that are always public (no redirect)
 const PUBLIC_PATHS = ["/admin/login"];

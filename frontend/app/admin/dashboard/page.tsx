@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { 
   DollarSign, 
   Building2, 
@@ -9,14 +10,18 @@ import {
   Activity,
   ArrowRight,
   RefreshCw,
-  Percent
+  Percent,
+  AlertTriangle
 } from "lucide-react";
+import { RevenueTrendChart } from "../../components/RevenueTrendChart";
 
 export default function AdminDashboard() {
+  const router = useRouter();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
 
   const fetchDashboard = async () => {
     try {
@@ -43,9 +48,11 @@ export default function AdminDashboard() {
 
       const json = await res.json();
       setData(json);
+      setBackendOnline(true);
     } catch (err: any) {
       setError(err.message);
       setData(null);
+      setBackendOnline(false);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -68,6 +75,30 @@ export default function AdminDashboard() {
           <div key={i} className="h-32 bg-slate-900 border border-slate-800 rounded-2xl"></div>
         ))}
         <div className="col-span-full h-96 bg-slate-900 border border-slate-800 rounded-2xl"></div>
+      </div>
+    );
+  }
+
+  if (error && !data) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center gap-4">
+        <div className="w-14 h-14 bg-red-500/10 rounded-2xl flex items-center justify-center border border-red-500/20">
+          <Activity className="w-7 h-7 text-red-400" />
+        </div>
+        <div>
+          <p className="text-lg font-black text-white">Backend Unreachable</p>
+          <p className="text-slate-400 text-sm mt-1 max-w-sm">
+            The API server is not responding. Start the backend with{" "}
+            <code className="text-slate-300 bg-slate-800 px-1.5 py-0.5 rounded text-xs">run_system.bat</code>{" "}
+            then refresh this page.
+          </p>
+        </div>
+        <button
+          onClick={handleRefresh}
+          className="flex items-center gap-2 px-5 py-2.5 bg-[#1f4e78] hover:bg-[#2c6ea1] text-white font-bold text-sm rounded-xl transition-colors"
+        >
+          <RefreshCw className="w-4 h-4" /> Retry
+        </button>
       </div>
     );
   }
@@ -172,19 +203,27 @@ export default function AdminDashboard() {
           <YoyBadge current={summary.collection_rate || 0} previous={lastYear.collection_rate || 0} />
         </div>
 
-        <div className="bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-[#1f4e78]/60 transition-all shadow-lg shadow-black/10">
+        <button
+          type="button"
+          onClick={() => router.push("/admin/collections")}
+          className="text-left bg-slate-900 border border-slate-800/80 rounded-2xl p-6 relative overflow-hidden group hover:border-orange-500/60 transition-all shadow-lg shadow-black/10 cursor-pointer focus:outline-none focus:ring-2 focus:ring-orange-500/50"
+          title="View the collections worklist"
+        >
           <div className="flex items-center justify-between mb-4">
-            <div className="w-10 h-10 bg-orange-500/10 text-orange-450 rounded-xl flex items-center justify-center border border-orange-500/20">
-              <Building2 className="w-5 h-5" />
+            <div className="w-10 h-10 bg-orange-500/10 text-orange-400 rounded-xl flex items-center justify-center border border-orange-500/20">
+              <AlertTriangle className="w-5 h-5" />
             </div>
             <span className="text-[10px] font-extrabold text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-              <Activity className="w-3 h-3" /> ACTIVE
+              <Activity className="w-3 h-3" /> ACTION
             </span>
           </div>
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Assessed Tax Properties</p>
-          <h3 className="text-2xl font-black text-white mt-1">{(summary.total_properties || 0).toLocaleString()} Properties</h3>
-          <YoyBadge current={summary.total_properties || 0} previous={lastYear.total_properties || 0} />
-        </div>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Active Delinquencies</p>
+          <h3 className="text-2xl font-black text-white mt-1">{(summary.active_delinquencies || 0).toLocaleString()} Accounts</h3>
+          <div className="flex items-center gap-1 text-[10px] font-bold mt-1 text-orange-400">
+            <span>{(summary.total_properties || 0).toLocaleString()} total properties</span>
+            <ArrowRight className="w-3 h-3" />
+          </div>
+        </button>
       </div>
 
       {/* Barangay distribution and trend charts */}
@@ -208,7 +247,20 @@ export default function AdminDashboard() {
               </thead>
               <tbody className="divide-y divide-slate-800/60">
                 {(data?.barangays || []).map((b: any, i: number) => (
-                  <tr key={i} className="hover:bg-slate-850/50 transition-colors">
+                  <tr
+                    key={i}
+                    onClick={() => router.push(`/admin/collections?barangay=${encodeURIComponent(b.name)}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        router.push(`/admin/collections?barangay=${encodeURIComponent(b.name)}`);
+                      }
+                    }}
+                    tabIndex={0}
+                    role="button"
+                    title={`View delinquents in ${b.name}`}
+                    className="hover:bg-slate-850/50 transition-colors cursor-pointer focus:outline-none focus:bg-slate-800/60"
+                  >
                     <td className="py-3 font-bold text-white">{b.name}</td>
                     <td className="py-3 text-right text-slate-400">P {(b.value || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                     <td className="py-3 text-right font-bold text-green-400">P {(b.collected || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
@@ -237,34 +289,24 @@ export default function AdminDashboard() {
             Monthly Revenue Trend
           </h3>
 
-          <div className="flex-1 overflow-auto min-h-0">
-            <div className="space-y-3 pr-1">
-              {(() => {
-                const trend = data?.trend || [];
-                const maxRevenue = Math.max(...trend.map((t: any) => t.total || 0), 1);
-                return trend.map((t: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-500 uppercase tracking-widest w-12 flex-shrink-0">{t.month}</span>
-                    <div className="flex-1 mx-4 h-6 bg-slate-800/50 border border-slate-800 rounded-lg overflow-hidden flex items-center px-1">
-                      <div
-                        className="h-4 bg-gradient-to-r from-emerald-500 to-teal-600 rounded"
-                        style={{ width: `${Math.min(((t.total || 0) / maxRevenue) * 100, 100)}%` }}
-                      ></div>
-                    </div>
-                    <span className="text-xs font-black text-slate-400 w-14 text-right flex-shrink-0">
-                      ₱{((t.total || 0) / 1000).toFixed(0)}k
-                    </span>
-                  </div>
-                ));
-              })()}
-            </div>
+          <div className="flex-1 min-h-0">
+            <RevenueTrendChart data={data?.trend || []} />
           </div>
 
           <div className="bg-slate-950 rounded-xl p-4 border border-slate-800/80 flex-shrink-0 mt-3">
               <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Active System Status</p>
               <div className="flex items-center gap-2 mt-1">
-                <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
-                <span className="text-xs font-bold text-white">System fully synced with database</span>
+                {error ? (
+                  <>
+                    <div className="w-2.5 h-2.5 rounded-full bg-red-500"></div>
+                    <span className="text-xs font-bold text-red-400">Backend unreachable — data may be stale</span>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
+                    <span className="text-xs font-bold text-white">Live — synced with database</span>
+                  </>
+                )}
               </div>
             </div>
           </div>

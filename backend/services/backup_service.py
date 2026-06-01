@@ -337,10 +337,14 @@ def _create_local_dump(dest_path):
                 "--single-transaction",
                 db_name,
             ]
+            # Pass the password via MYSQL_PWD environment variable instead of
+            # the command line. Command-line passwords are visible in the process
+            # list (ps aux / tasklist) and in Docker inspect output.
+            env = dict(os.environ)
             if db_pass:
-                cmd.insert(2, f"-p{db_pass}")
+                env["MYSQL_PWD"] = db_pass
 
-            subprocess.run(cmd, stdout=f, check=True, timeout=300)
+            subprocess.run(cmd, stdout=f, check=True, timeout=300, env=env)
         return True
 
     except subprocess.TimeoutExpired:

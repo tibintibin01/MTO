@@ -54,8 +54,7 @@ def test_tax_policy_custom_rates_and_fallbacks(db):
 
     # 1. Test fallback behavior (no TaxPolicy configured)
     res_fallback = sync_property_billing(
-        cur=None,
-        property_id=prop.id,
+                property_id=prop.id,
         tax_year=2026,
         assessed_value=100000.00,
         penalty=50.00,
@@ -78,8 +77,7 @@ def test_tax_policy_custom_rates_and_fallbacks(db):
     db.commit()
 
     res_custom = sync_property_billing(
-        cur=None,
-        property_id=prop.id,
+                property_id=prop.id,
         tax_year=2026,
         assessed_value=100000.00,
         penalty=50.00,

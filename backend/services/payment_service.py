@@ -23,7 +23,7 @@ def _d(value) -> Decimal:
 
 
 def find_duplicate_payment(
-    property_id, or_number, tax_year_text, exclude_payment_id=None, cur=None, db_session: Session = None
+    property_id, or_number, tax_year_text, exclude_payment_id=None, db_session: Session = None
 ):
     normalized_years = format_tax_years(tax_year_text)
     if not property_id or not or_number or not normalized_years:
@@ -50,7 +50,7 @@ def find_duplicate_payment(
 
 
 def find_duplicate_payment_entry(
-    td_number, or_number, or_date, tax_year_text, exclude_payment_id=None, cur=None, db_session: Session = None
+    td_number, or_number, or_date, tax_year_text, exclude_payment_id=None, db_session: Session = None
 ):
     td_text = str(td_number or "").strip()
     or_text = str(or_number or "").strip()
@@ -98,18 +98,6 @@ def get_existing_payment_amount(property_id, or_number, or_date, tax_year_text, 
         func.coalesce(Payment.tax_year, '') == normalized_years
     ).order_by(Payment.id.desc()).first()
     return float(_d(row[0])) if row else None
-
-
-def acquire_payment_post_lock(property_id, user_name, stale_minutes=30):
-    return {"ok": True, "locked_by": user_name}
-
-
-def release_payment_post_lock(property_id, user_name):
-    pass
-
-
-def release_all_payment_post_locks(user_name):
-    pass
 
 
 def get_next_or_number(default_prefix="OR-", db_session: Session = None):
@@ -247,9 +235,15 @@ def get_unified_payment_history(term, db_session: Session = None):
     """
     Unified query for the Integrated Ledger & Receipt History.
     Returns payment details combined with receipt audit info using SQLAlchemy.
+
+    Basic/SEF amounts are derived from the TaxPolicy rate for the billing year.
+    Falls back to 1% each if no policy is configured for that year.
     """
     if not term:
         return []
+
+    from backend.models import TaxPolicy
+    from backend.services.billing_service import basic_rate_expr, sef_rate_expr
 
     like_term = f"%{term}%"
     results = db_session.query(
@@ -257,11 +251,9 @@ def get_unified_payment_history(term, db_session: Session = None):
         Payment.date_paid,
         Payment.or_number,
         Payment.tax_year,
-        # Basic and SEF are derived from assessed_value at the default 1% each.
-        # These are display-only columns on the ledger — the authoritative
-        # amounts are in PropertyBilling. Using 0.01 matches the TaxPolicy default.
-        (Property.assessed_value * 0.01).label('basic'),
-        (Property.assessed_value * 0.01).label('sef'),
+        # Use TaxPolicy rates instead of hardcoded 0.01
+        (Property.assessed_value * basic_rate_expr()).label('basic'),
+        (Property.assessed_value * sef_rate_expr()).label('sef'),
         Payment.penalty,
         Payment.discount,
         Payment.amount,
@@ -272,6 +264,8 @@ def get_unified_payment_history(term, db_session: Session = None):
         Property.owner_name
     ).join(Property, Property.id == Payment.property_id).outerjoin(
         ReceiptHistory, ReceiptHistory.payment_id == Payment.id
+    ).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == Property.tax_year
     ).filter(
         Property.deleted_at == None,
         or_(
@@ -287,19 +281,23 @@ def get_unified_payment_history(term, db_session: Session = None):
 def get_payment_ledger(td_number, db_session: Session = None):
     """
     Specific ledger query for the Dossier UI using SQLAlchemy.
+    Uses TaxPolicy rates for the basic/SEF split display.
     """
+    from backend.models import TaxPolicy
+    from backend.services.billing_service import basic_rate_expr, sef_rate_expr
+
     results = db_session.query(
         Payment.date_paid,
         Payment.or_number,
         Payment.tax_year,
-        # Display-only basic/SEF split at default 1% each.
-        # Authoritative amounts are in PropertyBilling.
-        (Property.assessed_value * 0.01).label('basic'),
-        (Property.assessed_value * 0.01).label('sef'),
+        (Property.assessed_value * basic_rate_expr()).label('basic'),
+        (Property.assessed_value * sef_rate_expr()).label('sef'),
         Payment.penalty,
         Payment.discount,
         Payment.amount
-    ).join(Property, Property.id == Payment.property_id).filter(
+    ).join(Property, Property.id == Payment.property_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == Property.tax_year
+    ).filter(
         Property.td_number == td_number,
         Property.deleted_at == None
     ).order_by(Payment.date_paid.desc(), Payment.id.desc()).all()

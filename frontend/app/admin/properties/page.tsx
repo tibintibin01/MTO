@@ -11,8 +11,24 @@ import {
   Square,
   AlertCircle,
   X,
-  Sparkles
+  Sparkles,
+  Info
 } from "lucide-react";
+
+// Shared input styling for the property form
+const inputCls = "w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-2 focus:ring-[#1f4e78]";
+
+// Labelled field wrapper for the property form
+function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">
+        {label}{required && <span className="text-red-400 ml-0.5">*</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
 
 export default function AdminProperties() {
   const [query, setQuery] = useState("");
@@ -24,16 +40,32 @@ export default function AdminProperties() {
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState<"create" | "edit">("create");
   const [editingId, setEditingId] = useState<any>(null);
-  
-  // Form values
-  const [tdNumber, setTdNumber] = useState("");
-  const [pin, setPin] = useState("");
-  const [ownerName, setOwnerName] = useState("");
-  const [assessedValue, setAssessedValue] = useState("");
-  const [barangay, setBarangay] = useState("Poblacion");
-  const [kind, setKind] = useState("Residential");
-  const [taxYear, setTaxYear] = useState("2024");
-  
+  const [saving, setSaving] = useState(false);
+
+  // Full property form — mirrors PropertySaveSchema (snake_case accepted by the API)
+  const EMPTY_FORM = {
+    td_number: "",
+    pin: "",
+    prev_td_number: "",
+    owner_name: "",
+    payor_name: "",
+    lot_number: "",
+    block_number: "",
+    area: "",
+    location: "",
+    barangay: "Poblacion",
+    kind_of_property: "Residential",
+    accountable_officer: "",
+    assessed_value: "",
+    penalty: "0",
+    discount: "0",
+    tax_year: "2024",
+    effectivity_date: "",
+    version: 0,
+  };
+  const [form, setForm] = useState<any>({ ...EMPTY_FORM });
+  const setField = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
+
   // Selection & Bulk Actions
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkBarangay, setBulkBarangay] = useState("Poblacion");
@@ -43,14 +75,13 @@ export default function AdminProperties() {
     setLoading(true);
     setError("");
     try {
-      const token = localStorage.getItem("mto_token");
-      // GET request with search query
       const url = query 
         ? `/api/v1/properties?search=${encodeURIComponent(query)}`
         : "/api/v1/properties";
       
       const res = await fetch(url, {
-        headers: { "Authorization": `Bearer ${token}` }
+        credentials: "include",
+        headers: { "X-Requested-With": "XMLHttpRequest" }
       });
       
       if (!res.ok) throw new Error("Failed to retrieve property records.");
@@ -98,77 +129,132 @@ export default function AdminProperties() {
   const handleCreateOrEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setSaving(true);
     try {
-      const token = localStorage.getItem("mto_token");
       const url = modalMode === "create" 
         ? "/api/v1/properties" 
         : `/api/v1/properties/${editingId}`;
       
       const method = modalMode === "create" ? "POST" : "PUT";
-      
+
+      // Build payload from the full form. Empty strings are sent as-is;
+      // the backend coerces numerics and treats blanks as null/zero.
+      const payload: any = {
+        td_number: form.td_number,
+        pin: form.pin,
+        prev_td_number: form.prev_td_number,
+        owner_name: form.owner_name,
+        payor_name: form.payor_name,
+        lot_number: form.lot_number,
+        block_number: form.block_number,
+        area: form.area,
+        location: form.location,
+        barangay: form.barangay,
+        kind_of_property: form.kind_of_property,
+        accountable_officer: form.accountable_officer,
+        assessed_value: form.assessed_value === "" ? 0 : parseFloat(form.assessed_value),
+        penalty: form.penalty === "" ? 0 : parseFloat(form.penalty),
+        discount: form.discount === "" ? 0 : parseFloat(form.discount),
+        tax_year: form.tax_year,
+        effectivity_date: form.effectivity_date,
+      };
+      // Send version only on edit so the backend can detect sync conflicts
+      if (modalMode === "edit") payload.version = form.version ?? 0;
+
       const res = await fetch(url, {
         method,
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
           "X-Requested-With": "XMLHttpRequest"
         },
-        body: JSON.stringify({
-          td_number: tdNumber,
-          pin,
-          owner_name: ownerName,
-          assessed_value: parseFloat(assessedValue),
-          barangay,
-          kind,
-          tax_year: taxYear
-        })
+        body: JSON.stringify(payload)
       });
 
-      if (!res.ok) throw new Error("Failed to save property registry.");
+      if (res.status === 409) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.detail || "This record changed since you opened it. Reload and try again.");
+      }
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.detail || "Failed to save property registry.");
+      }
       
       setShowModal(false);
       fetchProperties();
     } catch (err: any) {
       setError(err.message);
+    } finally {
+      setSaving(false);
     }
   };
 
   const openCreateModal = () => {
     setModalMode("create");
     setEditingId(null);
-    setTdNumber("");
-    setPin("");
-    setOwnerName("");
-    setAssessedValue("");
-    setBarangay("Poblacion");
-    setKind("Residential");
-    setTaxYear("2024");
+    setForm({ ...EMPTY_FORM });
+    setError("");
     setShowModal(true);
   };
 
-  const openEditModal = (p: any) => {
+  const openEditModal = async (p: any) => {
     setModalMode("edit");
     setEditingId(p.id);
-    setTdNumber(p.td_number || "");
-    setPin(p.pin || "");
-    setOwnerName(p.owner_name || "");
-    setAssessedValue(p.assessed_value?.toString() || "");
-    setBarangay(p.barangay || "Poblacion");
-    setKind(p.kind || "Residential");
-    setTaxYear(p.tax_year || "2024");
+    setError("");
+    // Pull the full record so every field is editable (the list row is partial)
+    try {
+      const res = await fetch(`/api/v1/properties/${p.id}`, {
+        credentials: "include",
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+      });
+      if (res.ok) {
+        const full = await res.json();
+        setForm({
+          td_number: full.td_number ?? "",
+          pin: full.pin ?? "",
+          prev_td_number: full.prev_td_number ?? "",
+          owner_name: full.owner_name ?? "",
+          payor_name: full.payor_name ?? "",
+          lot_number: full.lot_number ?? "",
+          block_number: full.block_number ?? "",
+          area: full.area ?? "",
+          location: full.location ?? "",
+          barangay: full.barangay ?? "Poblacion",
+          kind_of_property: full.kind_of_property ?? "Residential",
+          accountable_officer: full.accountable_officer ?? "",
+          assessed_value: full.assessed_value?.toString() ?? "",
+          penalty: full.penalty?.toString() ?? "0",
+          discount: full.discount?.toString() ?? "0",
+          tax_year: full.tax_year ?? "2024",
+          effectivity_date: full.effectivity_date ?? "",
+          version: full.version ?? 0,
+        });
+      } else {
+        // Fall back to the partial row data if the detail fetch fails
+        setForm({
+          ...EMPTY_FORM,
+          td_number: p.td_number || "",
+          pin: p.pin || "",
+          owner_name: p.owner_name || "",
+          assessed_value: p.assessed_value?.toString() || "",
+          barangay: p.barangay || "Poblacion",
+          kind_of_property: p.kind || "Residential",
+          tax_year: p.tax_year || "2024",
+        });
+      }
+    } catch {
+      setForm({ ...EMPTY_FORM, td_number: p.td_number || "" });
+    }
     setShowModal(true);
   };
 
   const handleDelete = async (id: number) => {
     if (!confirm("Are you sure you want to delete this property assessment?")) return;
     try {
-      const token = localStorage.getItem("mto_token");
       const res = await fetch(`/api/v1/properties/${id}`, {
         method: "DELETE",
-        headers: { 
-          "Authorization": `Bearer ${token}`,
-          "X-Requested-With": "XMLHttpRequest"
-        }
+        credentials: "include",
+        headers: { "X-Requested-With": "XMLHttpRequest" }
       });
       if (!res.ok) throw new Error("Failed to delete property registry.");
       fetchProperties();
@@ -198,12 +284,11 @@ export default function AdminProperties() {
     setBulkUpdating(true);
     setError("");
     try {
-      const token = localStorage.getItem("mto_token");
       const res = await fetch("/api/v1/properties/bulk-update-barangay", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
           "X-Requested-With": "XMLHttpRequest"
         },
         body: JSON.stringify({
@@ -396,8 +481,8 @@ export default function AdminProperties() {
       {/* Create / Edit Modal Form Overlay */}
       {showModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="max-w-xl w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden animate-zoom-in">
-            <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+          <div className="max-w-3xl w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden animate-zoom-in max-h-[92vh] flex flex-col">
+            <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between flex-shrink-0">
               <h3 className="font-bold text-base text-white uppercase tracking-wider flex items-center gap-2">
                 <Building2 className="w-5 h-5 text-[#4ca2ff]" />
                 {modalMode === "create" ? "Register New Assessment" : "Modify Property Assessment"}
@@ -407,112 +492,132 @@ export default function AdminProperties() {
               </button>
             </div>
 
-            <form onSubmit={handleCreateOrEditSubmit} className="p-6 space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">TD Number</label>
-                  <input
-                    type="text"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-2 focus:ring-[#1f4e78]"
-                    placeholder="e.g. TD-2023-001"
-                    value={tdNumber}
-                    onChange={(e) => setTdNumber(e.target.value)}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">PIN</label>
-                  <input
-                    type="text"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-2 focus:ring-[#1f4e78]"
-                    placeholder="e.g. PIN-001"
-                    value={pin}
-                    onChange={(e) => setPin(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-
+            <form onSubmit={handleCreateOrEditSubmit} className="p-6 space-y-6 overflow-y-auto">
+              {/* ── Identification ── */}
               <div>
-                <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">Owner Name</label>
-                <input
-                  type="text"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-2 focus:ring-[#1f4e78]"
-                  placeholder="Full owner name"
-                  value={ownerName}
-                  onChange={(e) => setOwnerName(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">Assessed Value (P)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-2 focus:ring-[#1f4e78]"
-                    placeholder="0.00"
-                    value={assessedValue}
-                    onChange={(e) => setAssessedValue(e.target.value)}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">Barangay</label>
-                  <select
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-2 focus:ring-[#1f4e78]"
-                    value={barangay}
-                    onChange={(e) => setBarangay(e.target.value)}
-                  >
-                    <option value="Poblacion">Poblacion</option>
-                    <option value="San Jose">San Jose</option>
-                    <option value="Santo Tomas">Santo Tomas</option>
-                    <option value="Santa Cruz">Santa Cruz</option>
-                    <option value="San Vicente">San Vicente</option>
-                  </select>
+                <p className="text-[11px] font-black text-[#4ca2ff] uppercase tracking-widest mb-3">Identification</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <Field label="TD Number" required>
+                    <input className={inputCls} placeholder="e.g. 06-0012-01379"
+                      value={form.td_number} onChange={(e) => setField("td_number", e.target.value)} required />
+                  </Field>
+                  <Field label="PIN">
+                    <input className={inputCls} placeholder="e.g. 123-45-678-00-001"
+                      value={form.pin} onChange={(e) => setField("pin", e.target.value)} />
+                  </Field>
+                  <Field label="Previous TD Number">
+                    <input className={inputCls} placeholder="Prior TDN (if reissued)"
+                      value={form.prev_td_number} onChange={(e) => setField("prev_td_number", e.target.value)} />
+                  </Field>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 col-span-2">
-                <div>
-                  <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">Property Kind</label>
-                  <select
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-2 focus:ring-[#1f4e78]"
-                    value={kind}
-                    onChange={(e) => setKind(e.target.value)}
-                  >
-                    <option value="Residential">Residential</option>
-                    <option value="Commercial">Commercial</option>
-                    <option value="Industrial">Industrial</option>
-                    <option value="Agricultural">Agricultural</option>
-                  </select>
+              {/* ── Ownership ── */}
+              <div>
+                <p className="text-[11px] font-black text-[#4ca2ff] uppercase tracking-widest mb-3">Ownership</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Field label="Owner Name" required>
+                    <input className={inputCls} placeholder="Registered owner"
+                      value={form.owner_name} onChange={(e) => setField("owner_name", e.target.value)} required />
+                  </Field>
+                  <Field label="Payor">
+                    <input className={inputCls} placeholder="Defaults to owner if blank"
+                      value={form.payor_name} onChange={(e) => setField("payor_name", e.target.value)} />
+                  </Field>
+                  <Field label="Accountable Officer">
+                    <input className={inputCls} placeholder="Assessing/collecting officer"
+                      value={form.accountable_officer} onChange={(e) => setField("accountable_officer", e.target.value)} />
+                  </Field>
                 </div>
-                <div>
-                  <label className="block text-xs font-extrabold uppercase tracking-wider text-slate-500 mb-2">Tax Year</label>
-                  <input
-                    type="text"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white text-sm outline-none focus:ring-2 focus:ring-[#1f4e78]"
-                    value={taxYear}
-                    onChange={(e) => setTaxYear(e.target.value)}
-                    required
-                  />
+              </div>
+
+              {/* ── Location ── */}
+              <div>
+                <p className="text-[11px] font-black text-[#4ca2ff] uppercase tracking-widest mb-3">Location &amp; Land</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <Field label="Lot Number">
+                    <input className={inputCls} value={form.lot_number} onChange={(e) => setField("lot_number", e.target.value)} />
+                  </Field>
+                  <Field label="Block Number">
+                    <input className={inputCls} value={form.block_number} onChange={(e) => setField("block_number", e.target.value)} />
+                  </Field>
+                  <Field label="Area">
+                    <input className={inputCls} placeholder="e.g. 250 sqm" value={form.area} onChange={(e) => setField("area", e.target.value)} />
+                  </Field>
+                  <Field label="Location">
+                    <input className={inputCls} placeholder="Street / sitio" value={form.location} onChange={(e) => setField("location", e.target.value)} />
+                  </Field>
+                  <Field label="Barangay">
+                    <select className={inputCls} value={form.barangay} onChange={(e) => setField("barangay", e.target.value)}>
+                      <option value="Poblacion">Poblacion</option>
+                      <option value="San Jose">San Jose</option>
+                      <option value="Santo Tomas">Santo Tomas</option>
+                      <option value="Santa Cruz">Santa Cruz</option>
+                      <option value="San Vicente">San Vicente</option>
+                    </select>
+                  </Field>
+                  <Field label="Property Kind">
+                    <select className={inputCls} value={form.kind_of_property} onChange={(e) => setField("kind_of_property", e.target.value)}>
+                      <option value="Residential">Residential</option>
+                      <option value="Commercial">Commercial</option>
+                      <option value="Industrial">Industrial</option>
+                      <option value="Agricultural">Agricultural</option>
+                    </select>
+                  </Field>
                 </div>
+              </div>
+
+              {/* ── Assessment & Tax ── */}
+              <div>
+                <p className="text-[11px] font-black text-[#4ca2ff] uppercase tracking-widest mb-3">Assessment &amp; Tax</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <Field label="Assessed Value (₱)" required>
+                    <input type="number" step="0.01" className={inputCls} placeholder="0.00"
+                      value={form.assessed_value} onChange={(e) => setField("assessed_value", e.target.value)} required />
+                  </Field>
+                  <Field label="Tax Year(s)" required>
+                    <input className={inputCls} placeholder="2024 or 2022-2024"
+                      value={form.tax_year} onChange={(e) => setField("tax_year", e.target.value)} required />
+                  </Field>
+                  <Field label="Effectivity Date">
+                    <input type="date" className={inputCls}
+                      value={form.effectivity_date} onChange={(e) => setField("effectivity_date", e.target.value)} />
+                  </Field>
+                  <Field label="Penalty (₱)">
+                    <input type="number" step="0.01" className={inputCls}
+                      value={form.penalty} onChange={(e) => setField("penalty", e.target.value)} />
+                  </Field>
+                  <Field label="Discount (₱)">
+                    <input type="number" step="0.01" className={inputCls}
+                      value={form.discount} onChange={(e) => setField("discount", e.target.value)} />
+                  </Field>
+                </div>
+              </div>
+
+              {/* ── Posting note ── */}
+              <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-4 py-3 flex items-start gap-3">
+                <Info className="w-4 h-4 text-[#4ca2ff] flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  This form manages the property <span className="text-slate-300 font-semibold">assessment record only</span>.
+                  To post a payment and issue an Official Receipt, use the Cashier
+                  workstation (desktop app).
+                </p>
               </div>
 
               <div className="pt-4 border-t border-slate-800 flex justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
-                  className="bg-slate-800 hover:bg-slate-750 text-slate-350 px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-wider border border-slate-750 transition-colors"
+                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-5 py-3 rounded-xl font-bold text-xs uppercase tracking-wider border border-slate-700 transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="bg-[#1f4e78] hover:bg-[#2c6ea1] text-white px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
+                  disabled={saving}
+                  className="bg-[#1f4e78] hover:bg-[#2c6ea1] disabled:opacity-50 text-white px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-colors"
                 >
-                  {modalMode === "create" ? "Save Assessment" : "Save Changes"}
+                  {saving ? "Saving…" : modalMode === "create" ? "Save Assessment" : "Save Changes"}
                 </button>
               </div>
             </form>

@@ -19,12 +19,16 @@ build/
 dist/
 
 # Database
-# Keep the local db if you want, but usually it's excluded
-# mto_local.db
+mto_local.db
 
-# Local config
-# config.json
-# server_config.json
+# Local config — contains user-specific settings, never commit
+config.json
+server_config.json
+
+# TLS certificates — NEVER commit private keys to version control.
+# Generate fresh certs per environment: python backend/generate_certs.py
+backend/certs/*.pem
+backend/certs/*.key
 
 # IDEs
 .vscode/
@@ -39,10 +43,9 @@ receipt_generator.py
 query_pb.py
 utils_legacy.py_bak
 
-# Generated files
-logs/*.json
+# Generated files — logs contain PII (taxpayer names, IPs, audit trails)
+logs/
 *.log
-mto_local.db
 coverage.xml
 .coverage
 
@@ -55,6 +58,10 @@ statements/
 
 # Import validation cache — contains taxpayer data, must never be committed
 import_cache/
+
+# Archived raw SQL migrations — superseded by Alembic, kept for reference only
+# These must never be run against the live DB
+migrations/archive/*.sql
 
 # Local frontend environment — contains server IP, varies per deployment
 frontend/.env.local

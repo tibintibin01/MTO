@@ -56,10 +56,12 @@ def backup_database(destination_path):
                 "--single-transaction",
                 db_name
             ]
+            # Pass password via environment variable, not command line
+            env = dict(os.environ)
             if db_pass:
-                cmd.insert(2, f"-p{db_pass}")
+                env["MYSQL_PWD"] = db_pass
             
-            subprocess.run(cmd, stdout=f, check=True, timeout=300)
+            subprocess.run(cmd, stdout=f, check=True, timeout=300, env=env)
         return True
     except Exception as e:
         print(f"Backup Error: {e}")
@@ -94,8 +96,11 @@ def restore_database(sql_file_path):
         f"-P{db_port}",
         db_name
     ]
+    # Pass the password via MYSQL_PWD environment variable instead of the
+    # command line. Command-line passwords are visible in the process list.
+    env = dict(os.environ)
     if db_pass:
-        cmd.insert(2, f"-p{db_pass}")
+        env["MYSQL_PWD"] = db_pass
 
     try:
         # Proceed with restore without explicit close (handled by process isolation)
@@ -106,7 +111,8 @@ def restore_database(sql_file_path):
                 check=True, 
                 capture_output=True, 
                 text=True,
-                timeout=600
+                timeout=600,
+                env=env
             )
             print(f"Restore Output: {result.stdout}")
     except subprocess.CalledProcessError as cpe:

@@ -36,3 +36,24 @@ def sanitize_numeric_string(value: Any) -> Optional[str]:
     text = str(value).strip()
     # Keep digits, hyphens, periods, slashes, spaces, and alphanumeric chars for municipal IDs
     return re.sub(r"[^0-9a-zA-Z\-\./ #:]", "", text)
+
+
+def csv_safe_cell(value: Any) -> str:
+    """
+    Neutralises CSV/spreadsheet formula injection.
+
+    Spreadsheet apps (Excel, LibreOffice, Google Sheets) interpret a cell whose
+    value begins with '=', '+', '-', '@', a tab, or a carriage return as a
+    formula. A malicious value like '=HYPERLINK(...)' or '=cmd|...' in an
+    exported report can execute when the file is opened. We prefix such values
+    with a single quote so they are treated as literal text.
+
+    Safe values are returned unchanged (stringified). None becomes an empty
+    string so it serialises cleanly into a CSV cell.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    if text and text[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text

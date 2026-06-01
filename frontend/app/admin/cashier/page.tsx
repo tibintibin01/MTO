@@ -23,13 +23,13 @@ export default function AdminCashier() {
     setLoading(true);
     setError("");
     try {
-      const token = localStorage.getItem("mto_token");
       const url = term 
         ? `/api/v1/payments/records?term=${encodeURIComponent(term)}`
         : "/api/v1/payments/recent";
       
       const res = await fetch(url, {
-        headers: { "Authorization": `Bearer ${token}` }
+        credentials: "include",
+        headers: { "X-Requested-With": "XMLHttpRequest" }
       });
 
       if (!res.ok) throw new Error("Failed to load cashier payment records.");
@@ -71,12 +71,7 @@ export default function AdminCashier() {
       setPayments(mapped);
     } catch (err: any) {
       setError(err.message);
-      // Fallback fallback mockup so user can immediately test ledger features!
-      setPayments([
-        { id: 101, or_number: "OR-2024-9182", td_number: "TD-2023-001", amount: 24000.00, date_paid: "2026-05-18", generated_by: "cashier1" },
-        { id: 102, or_number: "OR-2024-9183", td_number: "TD-2023-002", amount: 48000.00, date_paid: "2026-05-17", generated_by: "cashier1" },
-        { id: 103, or_number: "OR-2024-9184", td_number: "TD-2023-003", amount: 19000.00, date_paid: "2026-05-16", generated_by: "cashier2" }
-      ]);
+      setPayments([]);
     } finally {
       setLoading(false);
     }
@@ -95,13 +90,10 @@ export default function AdminCashier() {
     setPrintingId(paymentId);
     setError("");
     try {
-      const token = localStorage.getItem("mto_token");
       const res = await fetch(`/api/v1/payments/${paymentId}/receipt-pdf`, {
         method: "POST",
-        headers: { 
-          "Authorization": `Bearer ${token}`,
-          "X-Requested-With": "XMLHttpRequest"
-        }
+        credentials: "include",
+        headers: { "X-Requested-With": "XMLHttpRequest" }
       });
 
       if (!res.ok) throw new Error("Failed to compile receipt PDF.");
@@ -125,13 +117,10 @@ export default function AdminCashier() {
     if (!confirm("Are you sure you want to void this payment record? This action will reverse all allocation statements and restore the delinquency balances.")) return;
     setError("");
     try {
-      const token = localStorage.getItem("mto_token");
       const res = await fetch(`/api/v1/payments/${paymentId}`, {
         method: "DELETE",
-        headers: { 
-          "Authorization": `Bearer ${token}`,
-          "X-Requested-With": "XMLHttpRequest"
-        }
+        credentials: "include",
+        headers: { "X-Requested-With": "XMLHttpRequest" }
       });
 
       if (!res.ok) throw new Error("Failed to delete payment record.");

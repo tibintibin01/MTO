@@ -167,6 +167,13 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["Permissions-Policy"] = (
         "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
     )
+    # HSTS: instruct browsers to only connect via HTTPS for 1 year.
+    # includeSubDomains ensures subdomains are also HTTPS-only.
+    # Only set when the request arrived over TLS to avoid breaking HTTP dev setups.
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
     return response
 
 

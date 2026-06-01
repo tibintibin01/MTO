@@ -138,7 +138,7 @@ class TestTaxRateCalculations:
     def test_basic_rate_one_percent(self, db):
         prop = make_property(db, assessed_value=100_000.0)
         result = sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         assert result["basic_amount"] == pytest.approx(1_000.0)
@@ -146,7 +146,7 @@ class TestTaxRateCalculations:
     def test_sef_rate_one_percent(self, db):
         prop = make_property(db, assessed_value=100_000.0)
         result = sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         assert result["sef_amount"] == pytest.approx(1_000.0)
@@ -154,7 +154,7 @@ class TestTaxRateCalculations:
     def test_total_tax_two_percent(self, db):
         prop = make_property(db, assessed_value=100_000.0)
         result = sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         assert result["total_amount"] == pytest.approx(2_000.0)
@@ -163,7 +163,7 @@ class TestTaxRateCalculations:
         # 333,333.33 * 0.01 = 3,333.3333 → rounds to 3,333.33
         prop = make_property(db, assessed_value=333_333.33)
         result = sync_property_billing(
-            None, prop.id, "2024", 333_333.33, 0.0, 0.0,
+            prop.id, "2024", 333_333.33, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         basic = Decimal(str(result["basic_amount"]))
@@ -172,7 +172,7 @@ class TestTaxRateCalculations:
     def test_zero_assessed_value(self, db):
         prop = make_property(db, assessed_value=0.0)
         result = sync_property_billing(
-            None, prop.id, "2024", 0.0, 0.0, 0.0,
+            prop.id, "2024", 0.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         assert result["total_amount"] == pytest.approx(0.0)
@@ -201,7 +201,7 @@ class TestPenaltyCalculation:
         prop = make_property(db, assessed_value=100_000.0)
         penalty = 500.0
         result = sync_property_billing(
-            None, prop.id, "2024", 100_000.0, penalty, 0.0,
+            prop.id, "2024", 100_000.0, penalty, 0.0,
             has_payment=False, db_session=db
         )
         # total = basic(1000) + sef(1000) + penalty(500) = 2500
@@ -211,7 +211,7 @@ class TestPenaltyCalculation:
     def test_penalty_stored_in_billing_record(self, db):
         prop = make_property(db, assessed_value=100_000.0)
         sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 750.0, 0.0,
+            prop.id, "2024", 100_000.0, 750.0, 0.0,
             has_payment=False, db_session=db
         )
         db.commit()
@@ -229,7 +229,7 @@ class TestDiscountApplication:
     def test_discount_reduces_total(self, db):
         prop = make_property(db, assessed_value=100_000.0)
         result = sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 200.0,
+            prop.id, "2024", 100_000.0, 0.0, 200.0,
             has_payment=False, db_session=db
         )
         # total = basic(1000) + sef(1000) - discount(200) = 1800
@@ -239,7 +239,7 @@ class TestDiscountApplication:
         # Discount larger than total due — total should floor at 0
         prop = make_property(db, assessed_value=10_000.0)
         result = sync_property_billing(
-            None, prop.id, "2024", 10_000.0, 0.0, 9_999.0,
+            prop.id, "2024", 10_000.0, 0.0, 9_999.0,
             has_payment=False, db_session=db
         )
         # basic(100) + sef(100) - discount(9999) = -9799 — service returns raw
@@ -249,7 +249,7 @@ class TestDiscountApplication:
     def test_penalty_and_discount_combined(self, db):
         prop = make_property(db, assessed_value=100_000.0)
         result = sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 500.0, 300.0,
+            prop.id, "2024", 100_000.0, 500.0, 300.0,
             has_payment=False, db_session=db
         )
         # basic(1000) + sef(1000) + penalty(500) - discount(300) = 2200
@@ -264,7 +264,7 @@ class TestBillingStatus:
     def test_status_pending_when_nothing_paid(self, db):
         prop = make_property(db, assessed_value=100_000.0)
         result = sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         assert result["billing_status"] == "Pending"
@@ -272,7 +272,7 @@ class TestBillingStatus:
     def test_status_paid_when_fully_paid(self, db):
         prop = make_property(db, assessed_value=100_000.0)
         result = sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=True, db_session=db
         )
         assert result["billing_status"] == "Paid"
@@ -281,7 +281,7 @@ class TestBillingStatus:
         prop = make_property(db, assessed_value=100_000.0)
         # Create billing first
         sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         # Manually set partial payment
@@ -293,7 +293,7 @@ class TestBillingStatus:
 
         # Re-sync to get updated status
         result = sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         assert result["billing_status"] == "Partial"
@@ -301,7 +301,7 @@ class TestBillingStatus:
     def test_balance_is_zero_when_fully_paid(self, db):
         prop = make_property(db, assessed_value=100_000.0)
         result = sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=True, db_session=db
         )
         assert result["balance_amount"] == pytest.approx(0.0)
@@ -309,7 +309,7 @@ class TestBillingStatus:
     def test_balance_equals_total_when_unpaid(self, db):
         prop = make_property(db, assessed_value=100_000.0)
         result = sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         assert result["balance_amount"] == pytest.approx(result["total_amount"])
@@ -459,7 +459,7 @@ class TestDelinquencyDetermination:
     def test_unpaid_property_is_delinquent(self, db):
         prop = make_property(db, td="TD-DELINQ-001", assessed_value=100_000.0)
         sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         db.commit()
@@ -471,7 +471,7 @@ class TestDelinquencyDetermination:
     def test_fully_paid_property_not_delinquent(self, db):
         prop = make_property(db, td="TD-PAID-001", assessed_value=100_000.0)
         sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=True, db_session=db
         )
         db.commit()
@@ -483,7 +483,7 @@ class TestDelinquencyDetermination:
     def test_partially_paid_property_is_delinquent(self, db):
         prop = make_property(db, td="TD-PARTIAL-001", assessed_value=100_000.0)
         sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         billing = db.query(PropertyBilling).filter(
@@ -499,7 +499,7 @@ class TestDelinquencyDetermination:
     def test_delinquent_balance_is_correct(self, db):
         prop = make_property(db, td="TD-BAL-001", assessed_value=100_000.0)
         sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         db.commit()
@@ -512,7 +512,7 @@ class TestDelinquencyDetermination:
     def test_soft_deleted_property_excluded_from_delinquents(self, db):
         prop = make_property(db, td="TD-SOFTDEL-001", assessed_value=100_000.0)
         sync_property_billing(
-            None, prop.id, "2024", 100_000.0, 0.0, 0.0,
+            prop.id, "2024", 100_000.0, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         prop.deleted_at = datetime.now(timezone.utc)
@@ -694,7 +694,7 @@ class TestFullPaymentLifecycle:
 
         # Step 1: Create billing (no payment yet)
         billing_result = sync_property_billing(
-            None, prop.id, "2024", assessed, 0.0, 0.0,
+            prop.id, "2024", assessed, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         assert billing_result["billing_status"] == "Pending"
@@ -724,7 +724,7 @@ class TestFullPaymentLifecycle:
 
         # Step 3: Verify billing is now Paid with zero balance
         updated = sync_property_billing(
-            None, prop.id, "2024", assessed, 0.0, 0.0,
+            prop.id, "2024", assessed, 0.0, 0.0,
             has_payment=False, db_session=db
         )
         assert updated["billing_status"] == "Paid"
@@ -745,7 +745,7 @@ class TestFullPaymentLifecycle:
         # Create billings for 3 years
         for year in ["2022", "2023", "2024"]:
             sync_property_billing(
-                None, prop.id, year, assessed, 0.0, 0.0,
+            prop.id, year, assessed, 0.0, 0.0,
                 has_payment=False, db_session=db
             )
         db.commit()

@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from backend.database import get_db
-from backend.models import Property, Payment
-from datetime import datetime
+from backend.models import Property, Payment, PropertyBilling, TaxPolicy
+from datetime import datetime, timezone
 from backend.deps import limiter
 import re
 
@@ -22,6 +23,10 @@ router = APIRouter(prefix="/public", tags=["Public Portal"])
 _QUERY_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9\-./# ]{0,49}$')
 _MAX_QUERY_LEN = 50
 
+# Earliest year for which billing data exists. Records before this were
+# back-filled from legacy effectivity dates and are excluded from balances.
+DATA_START_YEAR = 2023
+
 
 def _validate_public_query(query: str) -> None:
     """
@@ -40,12 +45,135 @@ def _validate_public_query(query: str) -> None:
         )
 
 
+def _mask_owner_name(name: str) -> str:
+    """
+    Masks an owner name to protect privacy while remaining recognisable to
+    the rightful owner. Shows the first character of each word, masks the rest.
+
+    "JUAN DELA CRUZ" -> "J*** D*** C***"
+    Short or empty names fall back to a generic placeholder so a 3-character
+    name is never substantially revealed.
+    """
+    if not name or not name.strip():
+        return "Taxpayer"
+    parts = [p for p in str(name).strip().split() if p]
+    masked_parts = []
+    for p in parts:
+        if len(p) <= 1:
+            masked_parts.append(p)
+        else:
+            masked_parts.append(p[0] + "*" * 3)
+    return " ".join(masked_parts) if masked_parts else "Taxpayer"
+
+
+def _mask_pin(pin: str) -> str:
+    """Masks a PIN, showing only the first and last 4 characters when long enough."""
+    if pin and len(pin) > 8:
+        return pin[:4] + "****" + pin[-4:]
+    return "PIN-****"
+
+
+def _compute_billing_breakdown(property_id: int, db_session: Session):
+    """
+    Computes the per-year billing breakdown and totals for a property using
+    the configured TaxPolicy rate for each year (falling back to 1%+1%).
+
+    Returns a dict:
+      {
+        "years": [ {tax_year, assessed_value, basic, sef, penalty,
+                    discount, total_due, amount_paid, balance, status}, ... ],
+        "total_due": float,
+        "total_paid": float,
+        "balance": float,
+      }
+
+    This is the authoritative source for "how much do I owe" — derived from
+    PropertyBilling, not from a payment-year heuristic.
+    """
+    rows = (
+        db_session.query(
+            PropertyBilling.tax_year,
+            PropertyBilling.assessed_value,
+            PropertyBilling.penalty,
+            PropertyBilling.discount,
+            PropertyBilling.amount_paid,
+            func.coalesce(TaxPolicy.basic_rate, 0.0100).label("basic_rate"),
+            func.coalesce(TaxPolicy.sef_rate, 0.0100).label("sef_rate"),
+        )
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            PropertyBilling.property_id == property_id,
+            PropertyBilling.tax_year >= DATA_START_YEAR,
+        )
+        .order_by(PropertyBilling.tax_year.asc())
+        .all()
+    )
+
+    years = []
+    total_due = 0.0
+    total_paid = 0.0
+
+    for r in rows:
+        assessed = float(r.assessed_value or 0)
+        basic = round(assessed * float(r.basic_rate or 0.01), 2)
+        sef = round(assessed * float(r.sef_rate or 0.01), 2)
+        penalty = float(r.penalty or 0)
+        discount = float(r.discount or 0)
+        paid = float(r.amount_paid or 0)
+        due = round(basic + sef + penalty - discount, 2)
+        balance = round(max(0.0, due - paid), 2)
+
+        total_due += due
+        total_paid += paid
+
+        years.append({
+            "tax_year": int(r.tax_year),
+            "assessed_value": assessed,
+            "basic": basic,
+            "sef": sef,
+            "penalty": penalty,
+            "discount": discount,
+            "total_due": due,
+            "amount_paid": paid,
+            "balance": balance,
+            "status": "Paid" if paid >= due and due > 0 else "Partial" if paid > 0 else "Unpaid",
+        })
+
+    balance = round(max(0.0, total_due - total_paid), 2)
+    return {
+        "years": years,
+        "total_due": round(total_due, 2),
+        "total_paid": round(total_paid, 2),
+        "balance": balance,
+    }
+
+
+def _derive_status(breakdown: dict) -> str:
+    """
+    Derives the public status label from the COMPUTED balance, not from a
+    payment-year heuristic.
+
+      DELINQUENT — outstanding balance > 0
+      UPDATED    — has billing, fully paid (balance == 0)
+      PENDING    — no billing records yet (not assessed for the data period)
+    """
+    if not breakdown["years"]:
+        return "PENDING"
+    if breakdown["balance"] > 0:
+        return "DELINQUENT"
+    return "UPDATED"
+
+
 @router.get("/property/{query}")
 @limiter.limit("10/minute")
 def search_property_public(query: str, request: Request, db_session: Session = Depends(get_db)):
     """
-    Publicly accessible endpoint for the web portal.
-    Exposes limited information for privacy.
+    Publicly accessible property inquiry endpoint for the web portal.
+
+    Returns the property's COMPUTED outstanding balance and a per-year billing
+    breakdown so a taxpayer can see exactly how much they owe without visiting
+    the office. Limited fields are exposed and PII is masked for privacy.
+
     Rate-limited to 10 requests/minute per IP.
     """
     _validate_public_query(query)
@@ -58,83 +186,41 @@ def search_property_public(query: str, request: Request, db_session: Session = D
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found.")
 
-    # Business rule: if the property has a payment for the current year,
-    # it is considered UPDATED — you cannot pay the current year without
-    # settling prior years first (municipal treasury policy).
-    # If no current year payment exists, check the most recent payment year
-    # against the most recent billing year to determine status.
-    from backend.models import PropertyBilling, Payment
-    from sqlalchemy import func
-    from datetime import datetime, timezone
+    breakdown = _compute_billing_breakdown(prop.id, db_session)
+    status = _derive_status(breakdown)
 
-    current_year = datetime.now(timezone.utc).year
-    DATA_START_YEAR = 2023
-    TOTAL_RATE = 0.02
-
-    # Check if there is a payment for the current year
-    has_current_year_payment = db_session.query(Payment.id).filter(
-        Payment.property_id == prop.id,
-        Payment.tax_year == str(current_year),
-    ).first() is not None
-
-    if has_current_year_payment:
-        # Paid current year = settled all arrears per municipal policy
-        status = "UPDATED"
-    else:
-        # Check most recent payment year
-        latest_payment_year = db_session.query(
-            func.max(Payment.tax_year)
-        ).filter(
-            Payment.property_id == prop.id,
-            Payment.tax_year != None,
-            Payment.tax_year != "",
-        ).scalar()
-
-        if latest_payment_year:
-            try:
-                latest_yr = int(str(latest_payment_year).strip())
-                # If paid last year and no billing data uploaded for current year yet
-                # treat as updated — data may not be uploaded yet
-                if latest_yr >= current_year - 1:
-                    status = "UPDATED"
-                else:
-                    status = "DELINQUENT"
-            except (ValueError, TypeError):
-                status = "DELINQUENT"
-        else:
-            # No payments at all — check billing records
-            billing_summary = db_session.query(
-                func.coalesce(func.sum(
-                    (PropertyBilling.assessed_value * TOTAL_RATE)
-                    + PropertyBilling.penalty
-                    - PropertyBilling.discount
-                ), 0).label("total_due"),
-                func.coalesce(func.sum(PropertyBilling.amount_paid), 0).label("total_paid_billing"),
-            ).filter(
-                PropertyBilling.property_id == prop.id,
-                PropertyBilling.tax_year >= DATA_START_YEAR,
-            ).first()
-
-            total_due = float(billing_summary.total_due or 0)
-            if total_due == 0:
-                status = "PENDING"
-            else:
-                status = "DELINQUENT"
-    
-    # Securely mask PIN and Owner Name to protect citizen privacy
-    masked_pin = prop.pin[:4] + "****" + prop.pin[-4:] if prop.pin and len(prop.pin) > 8 else "PIN-****"
-    masked_owner = f"{prop.owner_name[:3]}*******" if prop.owner_name else "Taxpayer*******"
+    # Most recent payment for the "last payment" summary line
+    last_pay = (
+        db_session.query(Payment.date_paid, Payment.tax_year, Payment.amount)
+        .filter(Payment.property_id == prop.id, Payment.date_paid != None)
+        .order_by(Payment.date_paid.desc())
+        .first()
+    )
+    last_payment = None
+    if last_pay:
+        last_payment = {
+            "date_paid": last_pay.date_paid.strftime("%Y-%m-%d") if last_pay.date_paid else None,
+            "period": last_pay.tax_year,
+            "amount": float(last_pay.amount or 0),
+        }
 
     return {
         "td_number": prop.td_number,
-        "pin": masked_pin,
-        "owner_name": masked_owner,
+        "pin": _mask_pin(prop.pin),
+        "owner_name": _mask_owner_name(prop.owner_name),
         "location": prop.location,
         "kind": prop.kind_of_property,
         "assessed_value": float(prop.assessed_value or 0),
         "status": status,
-        "last_payment": None
+        # Real computed figures — the answer to "how much do I owe?"
+        "balance": breakdown["balance"],
+        "total_due": breakdown["total_due"],
+        "total_paid": breakdown["total_paid"],
+        "billing_breakdown": breakdown["years"],
+        "last_payment": last_payment,
+        "as_of": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     }
+
 
 @router.get("/property/{query}/history")
 @limiter.limit("10/minute")
@@ -154,7 +240,7 @@ def get_property_history_public(query: str, request: Request, db_session: Sessio
         raise HTTPException(status_code=404, detail="Property not found.")
 
     payments = db_session.query(Payment).filter(Payment.property_id == prop.id).order_by(Payment.date_paid.desc()).all()
-    
+
     return [
         {
             "or_number": p.or_number[:3] + "****" if p.or_number else None,
@@ -164,3 +250,158 @@ def get_property_history_public(query: str, request: Request, db_session: Sessio
         }
         for p in payments
     ]
+
+
+# ---------------------------------------------------------------------------
+# "Find my TDN" — owner-name + barangay lookup
+# ---------------------------------------------------------------------------
+# Lets a taxpayer who doesn't know their TDN find candidate properties by
+# owner name within a barangay. Returns MASKED results (partial owner name +
+# last 4 of the TDN) so the portal never exposes a full registry listing.
+# The taxpayer recognises their own record and taps through; a scraper learns
+# nothing useful.
+
+_BARANGAY_RE = re.compile(r'^[A-Za-z0-9 .\-ñÑ]{1,60}$')
+
+
+def _mask_td_tail(td: str) -> str:
+    """Shows only the last 4 characters of a TDN: '06-0012-01379' -> '…1379'."""
+    if not td:
+        return "…"
+    tail = td[-4:]
+    return f"…{tail}"
+
+
+@router.get("/find")
+@limiter.limit("10/minute")
+def find_property_by_owner(
+    request: Request,
+    name: str,
+    barangay: str = None,
+    db_session: Session = Depends(get_db),
+):
+    """
+    Finds candidate properties by partial owner name, optionally scoped to a
+    barangay. Returns up to 10 masked results.
+
+    Privacy controls:
+      - Requires at least 3 characters of name to prevent enumeration.
+      - Results are masked (owner first-initials + TDN tail only).
+      - Capped at 10 results; never paginated (no bulk extraction).
+    Rate-limited to 10 requests/minute per IP.
+    """
+    clean_name = (name or "").strip()
+    if len(clean_name) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Please enter at least 3 characters of the owner's name.",
+        )
+    if len(clean_name) > 60 or not _BARANGAY_RE.match(clean_name.replace("'", "")):
+        raise HTTPException(status_code=400, detail="Invalid name format.")
+
+    query = db_session.query(
+        Property.td_number,
+        Property.owner_name,
+        Property.barangay,
+        Property.kind_of_property,
+    ).filter(
+        Property.deleted_at == None,
+        Property.owner_name.like(f"%{clean_name}%"),
+    )
+
+    if barangay and barangay.strip() and barangay.upper() != "ALL":
+        clean_brgy = barangay.strip()
+        if not _BARANGAY_RE.match(clean_brgy):
+            raise HTTPException(status_code=400, detail="Invalid barangay format.")
+        query = query.filter(Property.barangay == clean_brgy)
+
+    rows = query.order_by(Property.owner_name.asc()).limit(11).all()
+
+    # If more than 10 match, ask the user to refine rather than dumping results
+    if len(rows) > 10:
+        return {
+            "results": [],
+            "too_many": True,
+            "message": "Too many matches. Add your barangay or more of your name.",
+        }
+
+    return {
+        "results": [
+            {
+                "owner_name": _mask_owner_name(r.owner_name),
+                "td_tail": _mask_td_tail(r.td_number),
+                "td_number": r.td_number,  # full TDN — needed to navigate to detail
+                "barangay": r.barangay,
+                "kind": r.kind_of_property,
+            }
+            for r in rows
+        ],
+        "too_many": False,
+        "count": len(rows),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Public Statement of Account (PDF)
+# ---------------------------------------------------------------------------
+# Lets a taxpayer download a printable SOA showing their per-year balance.
+# PII is masked (owner/payor) to stay consistent with the inquiry view's
+# privacy policy — the financial breakdown is the value, and the rightful
+# owner already knows their own name.
+
+@router.get("/property/{query}/soa")
+@limiter.limit("5/minute")
+def download_soa_public(query: str, request: Request, db_session: Session = Depends(get_db)):
+    """
+    Generates and returns a Statement of Account PDF for the given property.
+    Rate-limited to 5 requests/minute per IP (PDF generation is heavier).
+    """
+    import os
+    import asyncio  # noqa: F401 — kept for parity; generation runs sync here
+    from fastapi.responses import FileResponse
+
+    _validate_public_query(query)
+
+    prop = db_session.query(Property).filter(
+        (Property.td_number == query) | (Property.pin == query),
+        Property.deleted_at == None
+    ).first()
+
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found.")
+
+    breakdown = _compute_billing_breakdown(prop.id, db_session)
+    if not breakdown["years"]:
+        raise HTTPException(status_code=404, detail="No billing records to generate a statement.")
+
+    # Map the computed breakdown to the SOA generator's expected row shape,
+    # using MASKED owner/payor to match the public inquiry privacy policy.
+    statement_data = {
+        "td_number": prop.td_number,
+        "owner_name": _mask_owner_name(prop.owner_name),
+        "payor_name": _mask_owner_name(prop.payor_name) if prop.payor_name else _mask_owner_name(prop.owner_name),
+        "location": prop.location,
+        "kind_of_property": prop.kind_of_property,
+        "accountable_officer": "—",  # not exposed publicly
+        "grand_total": breakdown["balance"],
+        "billing_rows": [
+            {
+                "tax_year": y["tax_year"],
+                "assessed_value": y["assessed_value"],
+                "basic_amount": y["basic"],
+                "sef_amount": y["sef"],
+                "penalty": y["penalty"],
+                "total_amount": y["total_due"],
+                "amount_paid": y["amount_paid"],
+                "balance_amount": y["balance"],
+            }
+            for y in breakdown["years"]
+        ],
+    }
+
+    from backend.generators import soa_gen
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pdf_path = soa_gen.generate_statement_of_account(statement_data, base_dir)
+    file_name = os.path.basename(pdf_path)
+
+    return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)

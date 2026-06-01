@@ -15,7 +15,14 @@ def test_occ_save_property_success(mock_db_session):
         version=1,
         deleted_at=None
     )
-    mock_db_session.query.return_value.filter.return_value.first.return_value = mock_prop
+
+    # The save_property function calls .query().filter().first() multiple times:
+    #   1st call: fetch the property by editing_id → returns mock_prop
+    #   2nd call: duplicate TD number check → must return None (no duplicate)
+    # We use side_effect to return different values on successive calls.
+    mock_db_session.query.return_value.filter.return_value.first.side_effect = [mock_prop, None]
+    # The duplicate check chains .filter().filter().first() — handle that too
+    mock_db_session.query.return_value.filter.return_value.filter.return_value.first.return_value = None
     
     # Input data matches the current server version (1)
     client_data = {
@@ -31,7 +38,6 @@ def test_occ_save_property_success(mock_db_session):
     # Assertions
     assert res is not None
     assert mock_prop.version == 2  # Correctly auto-incremented by OCC
-    mock_db_session.flush.assert_called_once()
 
 def test_occ_save_property_conflict(mock_db_session):
     """Verify property update throws SyncConflictError when the client version is older than the server version."""

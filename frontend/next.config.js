@@ -86,6 +86,8 @@ const securityHeaders = [
   { key: 'X-XSS-Protection', value: '0' },
   // Don't leak TD numbers in referrer headers to third-party sites
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  // HSTS: force HTTPS for 1 year (only effective when served over HTTPS)
+  { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
   // Disable unused browser features
   {
     key: 'Permissions-Policy',

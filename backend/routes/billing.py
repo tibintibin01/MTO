@@ -63,6 +63,29 @@ async def get_delinquent_list(
     return bill_svc.get_delinquent_accounts(limit=limit, cursor=cursor, db_session=db_session)
 
 
+@router.get("/billing/collections", dependencies=[Depends(read_only)])
+async def get_collections_worklist(
+    barangay: Optional[str] = None,
+    min_age_days: int = 0,
+    limit: int = 50,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Collections worklist — delinquent accounts prioritised by balance with
+    aging buckets (CURRENT / 30 / 60 / 90 / 120+). Drives the staff
+    collections dashboard. Returns per-page items plus full-set summary totals.
+    """
+    return bill_svc.get_collections_worklist(
+        barangay=barangay,
+        min_age_days=min_age_days,
+        limit=limit,
+        offset=offset,
+        db_session=db_session,
+    )
+
+
 @router.get("/billing/compliant")
 async def get_compliant_list(
     barangay: Optional[str] = None,
@@ -334,7 +357,7 @@ async def serve_analytics_dashboard():
 class ExportReportRequest(BaseModel):
     month: str = "All"
     year: str = "All"
-    report_type: str = "collections"   # collections | delinquents | assessment_roll
+    report_type: str = "collections"   # collections | delinquents | assessment_roll | receivables
 
 
 @router.post("/billing/export/excel", tags=["Reports"])
@@ -502,6 +525,48 @@ async def export_billing_excel(
             cell.font = Font(bold=True)
             cell.number_format = currency_fmt
             cell.alignment = right_align
+
+        # ── Report: RPT Receivables (COA roll-forward statement) ──────────────
+        elif data.report_type == "receivables":
+            ws.title = "RPT Receivables"
+            ws["A1"] = "MUNICIPAL TREASURY OFFICE — RPT RECEIVABLES STATEMENT"
+            ws["A1"].font = title_font
+            ws["A2"] = f"Report Year: {data.year}    Generated: {date_str}"
+            ws["A2"].font = Font(italic=True, size=10)
+            ws.merge_cells("A1:B1")
+            ws.merge_cells("A2:B2")
+            ws["A1"].alignment = center_align
+            ws["A2"].alignment = center_align
+
+            # Header row
+            for col_idx, h in enumerate(["Line Item", "Amount"], 1):
+                ws.cell(row=4, column=col_idx, value=h)
+            style_header_row(ws, 4, 2)
+
+            # Single computation path — same service the on-screen view uses.
+            summary = bill_svc.get_rpt_receivables_summary(data.year, db_session=db_session)
+
+            line_items = [
+                ("Beginning Receivable",      float(summary.get("beginning_receivable", 0) or 0)),
+                ("Current-Year Assessment",   float(summary.get("current_year_assessment", 0) or 0)),
+                ("Collections",               float(summary.get("collections", 0) or 0)),
+                ("Adjustments",               float(summary.get("adjustments", 0) or 0)),
+                ("Ending Receivable",         float(summary.get("ending_receivable", 0) or 0)),
+            ]
+
+            for offset, (label, amount) in enumerate(line_items):
+                row_idx = 5 + offset
+                is_total = label == "Ending Receivable"
+                label_cell = ws.cell(row=row_idx, column=1, value=label)
+                label_cell.border = thin_border
+                if is_total:
+                    label_cell.font = Font(bold=True)
+                amt_cell = ws.cell(row=row_idx, column=2, value=amount)
+                amt_cell.number_format = currency_fmt
+                amt_cell.alignment = right_align
+                amt_cell.border = thin_border
+                if is_total:
+                    amt_cell.font = Font(bold=True)
 
         # ── Report: Assessment Roll ───────────────────────────────────────────
         else:

@@ -30,9 +30,9 @@ export default function AdminUsers() {
     setLoading(true);
     setError("");
     try {
-      const token = localStorage.getItem("mto_token");
       const res = await fetch("/api/v1/users", {
-        headers: { "Authorization": `Bearer ${token}` }
+        credentials: "include",
+        headers: { "X-Requested-With": "XMLHttpRequest" }
       });
 
       if (!res.ok) throw new Error("Failed to load user list.");
@@ -55,12 +55,11 @@ export default function AdminUsers() {
     setError("");
     setSuccess("");
     try {
-      const token = localStorage.getItem("mto_token");
       const res = await fetch("/api/v1/users", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
           "X-Requested-With": "XMLHttpRequest"
         },
         body: JSON.stringify({
@@ -93,12 +92,11 @@ export default function AdminUsers() {
     setError("");
     setSuccess("");
     try {
-      const token = localStorage.getItem("mto_token");
       const res = await fetch(`/api/v1/users/${userId}`, {
         method: "PATCH",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
           "X-Requested-With": "XMLHttpRequest"
         },
         body: JSON.stringify({ is_active: !currentStatus })
@@ -116,13 +114,10 @@ export default function AdminUsers() {
     setError("");
     setSuccess("");
     try {
-      const token = localStorage.getItem("mto_token");
       const res = await fetch(`/api/v1/users/${userId}`, {
         method: "DELETE",
-        headers: { 
-          "Authorization": `Bearer ${token}`,
-          "X-Requested-With": "XMLHttpRequest"
-        }
+        credentials: "include",
+        headers: { "X-Requested-With": "XMLHttpRequest" }
       });
 
       if (!res.ok) throw new Error("Failed to delete user account.");
@@ -144,12 +139,11 @@ export default function AdminUsers() {
     setError("");
     setSuccess("");
     try {
-      const token = localStorage.getItem("mto_token");
       const res = await fetch(`/api/v1/users/${userId}/reset-password`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
           "X-Requested-With": "XMLHttpRequest"
         },
         body: JSON.stringify({ new_password: newPass })

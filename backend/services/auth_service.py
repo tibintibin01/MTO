@@ -125,19 +125,6 @@ def has_permission(user, permission):
 
 
 
-def acquire_user_lock(user_id, user_name, stale_minutes=30):
-    return {"ok": True, "locked_by": user_name}
-
-
-def release_user_lock(user_id, user_name):
-    pass
-
-
-def release_all_user_locks(user_name):
-    pass
-
-
-
 def get_user_by_username(username, db_session: Session):
     u = db_session.query(User).filter(User.username == username, User.deleted_at == None).first()
     if not u:
@@ -194,13 +181,6 @@ def verify_user_login(username, password, db_session: Session):
         user.password = hash_password(password)
         
     db_session.commit()
-
-    # Clear locks on login
-    import backend.services.property_service as prop_service
-    try:
-        prop_service.release_all_property_locks(user.username)
-    except Exception as e:
-        log_error_to_file("Failed to clear orphaned locks on login", error=e)
 
     # 4. Generate tokens
     from backend.deps import create_access_token

@@ -51,6 +51,14 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 REDIS_URL = os.getenv("REDIS_URL")
 MTO_ENV = os.getenv("MTO_ENV", "development").lower()
 
+# Require Redis in production for distributed rate limiting
+if MTO_ENV == "production" and not REDIS_URL:
+    raise RuntimeError(
+        "REDIS_URL is required in production for rate limiting. "
+        "In-memory rate limiting does not work across multiple workers. "
+        "Set REDIS_URL=redis://redis:6379/0 in your environment."
+    )
+
 
 def _get_user_identifier(request: Request) -> str:
     """
@@ -371,15 +379,21 @@ async def verify_csrf_token(request: Request):
     forge the header — even if SameSite cookies are bypassed.
 
     Bearer token clients (desktop app) are exempt — CSRF only applies to
-    cookie-authenticated sessions.
+    cookie-authenticated sessions. The Bearer token must be a non-empty,
+    structurally valid JWT (3 dot-separated parts) to qualify for exemption.
+    A bare "Bearer null" or "Bearer " does NOT bypass CSRF.
     """
     if request.method not in ("POST", "PUT", "DELETE", "PATCH"):
         return
 
-    # Bearer token clients are not cookie-authenticated — CSRF does not apply
+    # Bearer token clients are not cookie-authenticated — CSRF does not apply.
+    # But only if the token is actually present and structurally valid (3 parts).
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
-        return
+        token_value = auth_header[7:].strip()
+        # A valid JWT has exactly 3 dot-separated base64 segments
+        if token_value and token_value.count(".") == 2 and len(token_value) > 20:
+            return
 
     csrf_header = request.headers.get("X-CSRF-Token", "")
     csrf_cookie = request.cookies.get("csrf_token", "")
@@ -421,10 +435,29 @@ class RoleChecker:
             )
         return current_user
 
-# Permission presets
+# ---------------------------------------------------------------------------
+# Permission presets — derived from auth_service.ROLE_PERMISSIONS
+# ---------------------------------------------------------------------------
+# These are the route-level guards. They answer: "which roles can ACCESS
+# this endpoint at all?" The granular per-operation checks inside services
+# (auth_service.has_permission) answer: "can this specific user DO this
+# specific action?"
+#
+# Both systems reference the same ROLE_PERMISSIONS map in auth_service.py
+# so they cannot drift independently.
+# ---------------------------------------------------------------------------
+from backend.services.auth_service import ROLE_PERMISSIONS
+
+def _roles_with_any_permission(*permissions: str) -> list[str]:
+    """Returns all roles that have at least one of the given permissions."""
+    return [
+        role for role, perms in ROLE_PERMISSIONS.items()
+        if any(p in perms for p in permissions)
+    ]
+
 admin_only = RoleChecker(["admin"])
-write_access = RoleChecker(["admin", "cashier", "encoder"])
-read_only = RoleChecker(["admin", "cashier", "encoder", "viewer"])
+write_access = RoleChecker(_roles_with_any_permission("property_edit", "payment_post"))
+read_only = RoleChecker(_roles_with_any_permission("property_view"))
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()

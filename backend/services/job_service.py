@@ -718,6 +718,23 @@ def _check_monthly_penalty_accrual():
         mto_logger.error("Monthly penalty accrual check failed: %s", e)
 
 
+def _refresh_dashboard_stats():
+    """
+    Refreshes dashboard stats every 5 minutes.
+    Ensures the dashboard shows current data even when no payments are posted.
+    """
+    try:
+        from backend.database import SessionLocal
+        from backend.services.stats_service import refresh_system_stats
+        
+        with SessionLocal() as db:
+            refresh_system_stats(db_session=db)
+        
+        mto_logger.info("Dashboard stats refreshed by maintenance thread.")
+    except Exception as e:
+        mto_logger.warning(f"Dashboard stats refresh failed (non-fatal): {e}")
+
+
 def _recover_stale_jobs():
     """
     Resets jobs stuck in RUNNING back to PENDING.
@@ -970,6 +987,7 @@ def start_worker():
             _check_scheduled_backup()
             _cleanup_expired_idempotency_keys()
             _check_monthly_penalty_accrual()
+            _refresh_dashboard_stats()
 
     threading.Thread(target=maintenance_loop, daemon=True, name="JobMaintenance").start()
 

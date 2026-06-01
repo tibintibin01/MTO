@@ -134,6 +134,12 @@ class AuditLog(Base):
     ip_address = Column(String(45), nullable=True)
     timestamp = Column(DateTime, nullable=False)
 
+    __table_args__ = (
+        Index("ix_audit_logs_username_timestamp", "username", timestamp.desc()),
+        Index("ix_audit_logs_timestamp", timestamp.desc()),
+        Index("ix_audit_logs_table_record", "table_name", "record_id"),
+    )
+
 
 class ReceiptHistory(Base):
     __tablename__ = "receipt_history"

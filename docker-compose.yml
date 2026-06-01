@@ -34,6 +34,8 @@ services:
     environment:
       MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD is required}
       MARIADB_DATABASE: ${MTO_DB_NAME:?MTO_DB_NAME is required}
+      # NOTE: The live database is named 'property_system'. Ensure MTO_DB_NAME
+      # in your .env matches the actual database name on your server.
       MARIADB_USER: ${MTO_DB_USER:?MTO_DB_USER is required}
       MARIADB_PASSWORD: ${MTO_DB_PASSWORD:?MTO_DB_PASSWORD is required}
     volumes:
