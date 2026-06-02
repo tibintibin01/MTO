@@ -738,30 +738,35 @@ async def export_billing_excel(
                 ws.cell(row=4, column=col_idx, value=h)
             style_header_row(ws, 4, len(headers))
 
-            result = prop_svc.get_assessment_roll(limit=10000, cursor=None, db_session=db_session)
-            items = result.get("items", []) if isinstance(result, dict) else result
+            from backend.models import Property
+
+            query = db_session.query(
+                Property.td_number,
+                Property.owner_name,
+                Property.barangay,
+                Property.kind_of_property,
+                Property.assessed_value,
+                Property.effectivity_date,
+            ).filter(Property.deleted_at == None)
 
             if brgy_filter:
-                filtered_items = []
-                for item in items:
-                    if isinstance(item, dict):
-                        b = item.get("barangay", "")
-                    else:
-                        b = item[6] if len(item) > 6 else ""
-                    if b == brgy_filter:
-                        filtered_items.append(item)
-                items = filtered_items
+                query = query.filter(Property.barangay == brgy_filter)
+
+            items = query.order_by(Property.id.asc()).all()
 
             for row_idx, item in enumerate(items or [], start=5):
-                if isinstance(item, dict):
-                    vals = [
-                        item.get("td_number", ""), item.get("owner_name", ""),
-                        item.get("barangay", ""), item.get("kind_of_property", ""),
-                        float(item.get("assessed_value", 0) or 0),
-                        item.get("tax_year", ""),
-                    ]
-                else:
-                    vals = list(item) + [""] * max(0, 6 - len(item))
+                eff_year = item[5]
+                if eff_year and len(str(eff_year)) >= 4:
+                    eff_year = str(eff_year)[:4]
+
+                vals = [
+                    item[0] or "",
+                    item[1] or "",
+                    item[2] or "",
+                    item[3] or "",
+                    float(item[4] or 0),
+                    eff_year or "",
+                ]
 
                 for col_idx, val in enumerate(vals, 1):
                     cell = ws.cell(row=row_idx, column=col_idx, value=val)
