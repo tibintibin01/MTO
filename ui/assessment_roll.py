@@ -6,6 +6,9 @@ from utils import tr
 from ui_components import LoadingOverlay, AutocompleteComboBox, attach_autocomplete
 import api_clients.property_service as prop_svc
 import api_clients.api_helper as api
+import api_clients.billing_service as billing
+import shutil
+import os
 from ui.dossier import PropertyDossierModal
 from ui.import_wizard import ImportWizardModal
 import threading
@@ -131,6 +134,26 @@ class AssessmentRollPage:
             fg_color="#27ae60",
             width=120,
         ).pack(side="right")
+
+        self._pdf_btn = ctk.CTkButton(
+            header,
+            text="📄 Export PDF",
+            command=self._export_roll_pdf,
+            fg_color="#c0392b",
+            hover_color="#962d22",
+            width=130,
+        )
+        self._pdf_btn.pack(side="right", padx=(0, 6))
+
+        self._excel_btn = ctk.CTkButton(
+            header,
+            text="📊 Export Excel",
+            command=self._export_roll_excel,
+            fg_color="#1a7431",
+            hover_color="#145a27",
+            width=140,
+        )
+        self._excel_btn.pack(side="right", padx=(0, 6))
 
         # --- TABLE ---
         table_fr = ctk.CTkFrame(self.container, fg_color="transparent", corner_radius=12)
@@ -413,7 +436,81 @@ class AssessmentRollPage:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    @staticmethod
+    def _open_file(path):
+        """Open a file with the default OS application after saving."""
+        try:
+            import subprocess, sys
+            if sys.platform.startswith("win"):
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                subprocess.call(["open", path])
+            else:
+                subprocess.call(["xdg-open", path])
+        except Exception:
+            pass
 
+    def _export_with_feedback(self, btn, worker_fn):
+        """Run worker_fn in a thread; show progress on btn, then open the result."""
+        original_text = btn.cget("text")
+        btn.configure(text="⏳ Generating...", state="disabled")
+
+        def _run():
+            try:
+                path = worker_fn()
+                # Ask where to save
+                def _save():
+                    dest = filedialog.asksaveasfilename(
+                        title="Save Assessment Roll",
+                        initialfile=os.path.basename(path),
+                        defaultextension=os.path.splitext(path)[1],
+                        filetypes=[
+                            ("PDF files", "*.pdf"),
+                            ("Excel files", "*.xlsx"),
+                            ("All files", "*.*"),
+                        ],
+                    )
+                    if dest:
+                        shutil.copy2(path, dest)
+                        if messagebox.askyesno("Export Successful",
+                                               f"Assessment roll saved to:\n{dest}\n\nOpen it now?"):
+                            self._open_file(dest)
+                    btn.configure(text=original_text, state="normal")
+
+                self.container.after(0, _save)
+            except Exception as exc:
+                self.container.after(
+                    0, lambda e=exc: (
+                        messagebox.showerror("Export Failed", str(e)),
+                        btn.configure(text=original_text, state="normal"),
+                    )
+                )
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _export_roll_pdf(self):
+        brgy = self.brgy_var.get()
+        y_start = self.year_start_ent.get().strip()
+        y_end = self.year_end_ent.get().strip()
+        
+        self._export_with_feedback(
+            self._pdf_btn,
+            lambda: billing.download_assessment_roll_pdf(
+                barangay=brgy if brgy != "ALL" else None,
+                year_start=y_start if y_start else None,
+                year_end=y_end if y_end else None,
+            )
+        )
+
+    def _export_roll_excel(self):
+        brgy = self.brgy_var.get()
+        self._export_with_feedback(
+            self._excel_btn,
+            lambda: billing.export_report_excel(
+                "assessment_roll",
+                barangay=brgy if brgy != "ALL" else None
+            )
+        )
 
 
 class AssessmentModal(ctk.CTkToplevel):

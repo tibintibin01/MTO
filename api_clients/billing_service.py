@@ -93,11 +93,11 @@ def get_report_details(month="All", year="All", limit=100, cursor=None):
     result = api_request(
         "GET", "/billing/report-details", params=params
     )
-    # Backend now returns {"items": [...], "next_cursor": ..., "has_more": ..., "count": ...}
+    # Return the full paginated dict so the UI can read next_cursor / has_more.
+    # Fallback to a wrapped list for any legacy response shape.
     if isinstance(result, dict) and "items" in result:
-        return result["items"]
-    # Fallback for any legacy response shape
-    return result if isinstance(result, list) else []
+        return result
+    return {"items": result if isinstance(result, list) else [], "has_more": False, "next_cursor": None}
 
 
 def get_rpt_receivables_summary(year):
@@ -142,6 +142,82 @@ def download_statement_pdf(property_id):
 def download_notice_pdf(property_id):
     """Triggers the download of a delinquency notice PDF and returns the local path."""
     return api_download_file("GET", f"/properties/{property_id}/notice-pdf")
+
+
+def download_receivables_by_barangay_pdf(year=None, barangay=None):
+    """Downloads the Receivables-by-Barangay PDF report and returns the local file path."""
+    params = {}
+    if year:
+        params["year"] = year
+    if barangay and barangay != "ALL":
+        params["barangay"] = barangay
+    return api_download_file(
+        "GET", "/reports/receivables-by-barangay-pdf",
+        params=params if params else None,
+    )
+
+
+def download_assessment_roll_pdf(barangay=None, year_start=None, year_end=None):
+    """Downloads the Assessment Roll PDF report and returns the local file path."""
+    params = {}
+    if barangay and barangay != "ALL":
+        params["barangay"] = barangay
+    if year_start:
+        params["year_start"] = year_start
+    if year_end:
+        params["year_end"] = year_end
+    return api_download_file(
+        "GET", "/reports/assessment-roll-pdf",
+        params=params if params else None,
+    )
+
+
+def export_report_excel(report_type, month="All", year="All", barangay=None):
+    """Downloads an Excel (.xlsx) export and returns the local file path.
+
+    The backend ExportReportRequest expects a JSON body, so we use the
+    api_request helper (raw_response=True) and then stream-save like
+    api_download_file does internally.
+    """
+    import tempfile, os
+    from api_clients.api_helper import (
+        BASE_URL, _SESSION_TOKEN, is_token_expired, _try_refresh,
+        CERT_PATH
+    )
+    import requests as _req, urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    if _SESSION_TOKEN and is_token_expired(_SESSION_TOKEN):
+        if not _try_refresh():
+            raise Exception("Session expired. Please log in again.")
+
+    headers = {"X-Requested-With": "XMLHttpRequest"}
+    if _SESSION_TOKEN:
+        headers["Authorization"] = f"Bearer {_SESSION_TOKEN}"
+
+    body = {"report_type": report_type, "month": month, "year": year}
+    if barangay and barangay != "ALL":
+        body["barangay"] = barangay
+    verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
+    resp = _req.post(
+        f"{BASE_URL}/billing/export/excel",
+        json=body, headers=headers, timeout=180, verify=verify_param, stream=True,
+    )
+    resp.raise_for_status()
+
+    suffix = ".xlsx"
+    if "content-disposition" in resp.headers:
+        cd = resp.headers["content-disposition"]
+        if "filename=" in cd:
+            fn = cd.split("filename=")[1].strip('"')
+            if "." in fn:
+                suffix = "." + fn.split(".")[-1]
+
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    with os.fdopen(fd, "wb") as tmp:
+        for chunk in resp.iter_content(chunk_size=8192):
+            tmp.write(chunk)
+    return path
 
 
 def get_compliant_accounts(barangay=None, limit=100):

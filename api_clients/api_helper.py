@@ -17,7 +17,16 @@ DEFAULT_SERVER_URL = "http://localhost:8001"
 BASE_URL = DEFAULT_SERVER_URL
 
 # Look for an external config file (useful for .exe deployment)
-CONFIG_PATH = Path("server_config.json")
+import sys
+if getattr(sys, "frozen", False):
+    # Packaged environment — resolve relative to the folder containing the executable
+    CONFIG_PATH = Path(sys.executable).resolve().parent / "server_config.json"
+else:
+    # Development environment — resolve relative to the project root
+    CONFIG_PATH = Path("server_config.json")
+    if not CONFIG_PATH.exists():
+        CONFIG_PATH = Path(__file__).resolve().parent.parent / "server_config.json"
+
 if CONFIG_PATH.exists():
     try:
         with open(CONFIG_PATH, "r") as f:

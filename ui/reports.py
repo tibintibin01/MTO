@@ -1,8 +1,10 @@
 import customtkinter as ctk
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from datetime import datetime
 import threading
+import shutil
+import os
 from theme_manager import ModernTheme
 import api_clients.billing_service as billing
 import api_clients.property_service as prop
@@ -221,7 +223,7 @@ class ReportsPage:
             text_color=ModernTheme.PRIMARY,
         ).pack(side="left")
 
-        # Year filter — right side
+        # Year filter + export buttons — right side
         filter_fr = ctk.CTkFrame(top_fr, fg_color="transparent")
         filter_fr.pack(side="right")
 
@@ -239,6 +241,8 @@ class ReportsPage:
         self.brgy_year_cb.set(str(curr_y))
         self.brgy_year_cb.pack(side="left", padx=(0, 8))
 
+
+
         ctk.CTkButton(
             filter_fr,
             text=f"🔄 {tr('reports.barangay.btn_refresh')}",
@@ -247,6 +251,29 @@ class ReportsPage:
             height=35,
             font=ModernTheme.BUTTON,
             fg_color=ModernTheme.SECONDARY,
+        ).pack(side="left", padx=(0, 6))
+
+        # ── Export buttons ───────────────────────────────────────────────────
+        ctk.CTkButton(
+            filter_fr,
+            text="📄 Export PDF",
+            command=self._export_brgy_pdf,
+            width=130,
+            height=35,
+            font=ModernTheme.BUTTON,
+            fg_color="#c0392b",
+            hover_color="#962d22",
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            filter_fr,
+            text="📊 Export Excel",
+            command=self._export_brgy_excel,
+            width=140,
+            height=35,
+            font=ModernTheme.BUTTON,
+            fg_color="#1a7431",
+            hover_color="#145a27",
         ).pack(side="left")
 
         # Info banner explaining cumulative logic
@@ -557,4 +584,101 @@ class ReportsPage:
 
         self.brgy_total_lbl.configure(
             text=tr("reports.barangay.total").replace("{value}", f"P {grand_total:,.2f}")
+        )
+
+    # ── Export helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _open_file(path):
+        """Open a file with the default OS application after saving."""
+        try:
+            import subprocess, sys
+            if sys.platform.startswith("win"):
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                subprocess.call(["open", path])
+            else:
+                subprocess.call(["xdg-open", path])
+        except Exception:
+            pass
+
+    def _export_with_feedback(self, btn, worker_fn):
+        """Run worker_fn in a thread; show progress on btn, then open the result."""
+        original_text = btn.cget("text")
+        btn.configure(text="⏳ Generating...", state="disabled")
+
+        def _run():
+            try:
+                path = worker_fn()
+                # Ask where to save
+                def _save():
+                    dest = filedialog.asksaveasfilename(
+                        title="Save Report",
+                        initialfile=os.path.basename(path),
+                        defaultextension=os.path.splitext(path)[1],
+                        filetypes=[
+                            ("PDF files", "*.pdf"),
+                            ("Excel files", "*.xlsx"),
+                            ("All files", "*.*"),
+                        ],
+                    )
+                    if dest:
+                        shutil.copy2(path, dest)
+                        if messagebox.askyesno("Export Successful",
+                                               f"Report saved to:\n{dest}\n\nOpen it now?"):
+                            self._open_file(dest)
+                    btn.configure(text=original_text, state="normal")
+
+                self.container.after(0, _save)
+            except Exception as exc:
+                self.container.after(
+                    0, lambda e=exc: (
+                        messagebox.showerror("Export Failed", str(e)),
+                        btn.configure(text=original_text, state="normal"),
+                    )
+                )
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _export_brgy_pdf(self):
+        selected = self.brgy_year_cb.get()
+        year = None if selected == "All Years" else int(selected)
+        btn = None
+        # Walk the widget tree to find our PDF button
+        try:
+            tab_children = self.barangay_tab.winfo_children()
+            for w in tab_children:
+                for w2 in w.winfo_children():
+                    for w3 in w2.winfo_children():
+                        if hasattr(w3, "cget") and "Export PDF" in str(w3.cget("text")):
+                            btn = w3
+        except Exception:
+            pass
+        if btn is None:
+            btn = ctk.CTkButton(self.barangay_tab, text="")
+
+        self._export_with_feedback(
+            btn,
+            lambda: billing.download_receivables_by_barangay_pdf(year=year)
+        )
+
+    def _export_brgy_excel(self):
+        selected = self.brgy_year_cb.get()
+        year_str = selected if selected != "All Years" else "All"
+        btn = None
+        try:
+            tab_children = self.barangay_tab.winfo_children()
+            for w in tab_children:
+                for w2 in w.winfo_children():
+                    for w3 in w2.winfo_children():
+                        if hasattr(w3, "cget") and "Export Excel" in str(w3.cget("text")):
+                            btn = w3
+        except Exception:
+            pass
+        if btn is None:
+            btn = ctk.CTkButton(self.barangay_tab, text="")
+
+        self._export_with_feedback(
+            btn,
+            lambda: billing.export_report_excel("receivables_by_barangay", year=year_str),
         )

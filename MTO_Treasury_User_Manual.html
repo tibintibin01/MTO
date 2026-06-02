@@ -1,0 +1,1201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Revenue System - User Manual</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #64748b;
+      --line: #dbe3ef;
+      --soft: #f6f8fb;
+      --blue: #1769c2;
+      --blue-dark: #0d3f7a;
+      --green: #0f8a5f;
+      --orange: #b95d00;
+      --red: #b42318;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #ffffff;
+      font-family: "Segoe UI", Arial, sans-serif;
+      line-height: 1.6;
+    }
+
+    .page {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 36px 28px 64px;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 18px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 6px;
+      background: var(--blue);
+      color: #ffffff;
+      cursor: pointer;
+      font-weight: 700;
+      padding: 10px 16px;
+    }
+
+    .cover {
+      min-height: 520px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      border: 1px solid #153d73;
+      border-radius: 10px;
+      padding: 54px;
+      color: #ffffff;
+      background: linear-gradient(145deg, #10233f, #0a1527 65%, #06386d);
+    }
+
+    .kicker {
+      color: #9cc8ff;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 12px 0 12px;
+      font-size: 42px;
+      line-height: 1.1;
+    }
+
+    .cover p {
+      color: #cbd5e1;
+      font-size: 17px;
+      max-width: 720px;
+    }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 40px;
+    }
+
+    .meta div {
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .meta span {
+      display: block;
+      color: #93a4bd;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .meta strong {
+      display: block;
+      margin-top: 4px;
+      color: #ffffff;
+      font-size: 13px;
+    }
+
+    h2 {
+      margin: 42px 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--line);
+      color: #0f172a;
+      font-size: 23px;
+    }
+
+    h3 {
+      margin: 28px 0 8px;
+      color: #0f172a;
+      font-size: 17px;
+    }
+
+    p, li, td, th {
+      font-size: 14px;
+    }
+
+    a { color: var(--blue); }
+
+    .toc {
+      columns: 2;
+      column-gap: 42px;
+      padding-left: 20px;
+    }
+
+    .toc li {
+      break-inside: avoid;
+      margin-bottom: 8px;
+    }
+
+    .callout {
+      margin: 18px 0;
+      padding: 14px 16px;
+      border-left: 5px solid var(--blue);
+      border-radius: 0 8px 8px 0;
+      background: #eef6ff;
+    }
+
+    .callout strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .warn {
+      border-left-color: var(--orange);
+      background: #fff7ed;
+    }
+
+    .danger {
+      border-left-color: var(--red);
+      background: #fff1f1;
+    }
+
+    .ok {
+      border-left-color: var(--green);
+      background: #ecfdf5;
+    }
+
+    .steps {
+      counter-reset: step;
+      list-style: none;
+      padding-left: 0;
+    }
+
+    .steps li {
+      counter-increment: step;
+      position: relative;
+      margin: 10px 0;
+      padding: 10px 14px 10px 50px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    .steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 14px;
+      top: 10px;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      color: #ffffff;
+      background: var(--blue);
+      text-align: center;
+      line-height: 24px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 24px;
+    }
+
+    th {
+      background: var(--soft);
+      color: #0f172a;
+      text-align: left;
+      font-weight: 700;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      vertical-align: top;
+    }
+
+    code, pre {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #eef2f7;
+    }
+
+    pre {
+      overflow: auto;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+      line-height: 1.5;
+    }
+
+    .section {
+      page-break-inside: avoid;
+    }
+
+    .footer {
+      margin-top: 56px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    @media print {
+      .toolbar { display: none; }
+      .page { max-width: none; padding: 0; }
+      .cover {
+        min-height: 92vh;
+        border-radius: 0;
+        color: #000000;
+        background: #ffffff !important;
+        border: 2px solid #000000;
+      }
+      .cover p, .kicker, .meta span, .meta strong { color: #000000; }
+      .meta div { border-color: #999999; background: #ffffff; }
+      h2 { page-break-after: avoid; }
+      table, tr, .callout, .steps li { page-break-inside: avoid; }
+      .break { page-break-before: always; }
+    }
+  </style>
+</head>
+<body>
+<main class="page">
+  <div class="toolbar">
+    <button onclick="window.print()">Print or Save as PDF</button>
+  </div>
+
+  <section class="cover">
+    <div class="kicker">Municipal Treasury Office</div>
+    <h1>Revenue System User Manual</h1>
+    <p>
+      A practical operating guide for cashiers, treasury staff, administrators,
+      and support personnel using the desktop revenue system.
+    </p>
+    <div class="meta">
+      <div><span>Application</span><strong>Revenue System</strong></div>
+      <div><span>Version</span><strong>2.1.0</strong></div>
+      <div><span>Manual Date</span><strong>June 2026</strong></div>
+      <div><span>Audience</span><strong>Internal Users</strong></div>
+    </div>
+  </section>
+
+  <section class="break">
+    <h2>Table of Contents</h2>
+    <ol class="toc">
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#roles">Roles and Button Availability</a></li>
+      <li><a href="#startup">Starting the App</a></li>
+      <li><a href="#login">Login and Logout</a></li>
+      <li><a href="#navigation">Main Navigation</a></li>
+      <li><a href="#properties">Property Records</a></li>
+      <li><a href="#ledger">Payment and Receipt Ledger</a></li>
+      <li><a href="#assessment">Assessment Roll</a></li>
+      <li><a href="#delinquency">Delinquency Dashboard</a></li>
+      <li><a href="#computation">How Computation Works</a></li>
+      <li><a href="#compliant">Compliant Properties</a></li>
+      <li><a href="#reports">Reports</a></li>
+      <li><a href="#analytics">Analytics Hub</a></li>
+      <li><a href="#import">Import Wizard</a></li>
+      <li><a href="#admin">System Administration</a></li>
+      <li><a href="#portable">Portable EXE Updates</a></li>
+      <li><a href="#troubleshooting">Troubleshooting</a></li>
+    </ol>
+  </section>
+
+  <section id="overview" class="section">
+    <h2>1. Overview</h2>
+    <p>
+      The Revenue System is a desktop application for managing real property
+      tax records, assessments, payment history, official receipt information,
+      delinquency monitoring, compliance reporting, and administrative tools.
+    </p>
+    <p>
+      The desktop app connects to the central API server. The server stores the
+      official database records. Workstations use the desktop app to search,
+      encode, import, generate reports, and perform cashier workflows.
+    </p>
+
+    <h3>Main User Roles</h3>
+    <table>
+      <thead><tr><th>Role</th><th>Typical Access</th></tr></thead>
+      <tbody>
+        <tr><td>Admin</td><td>All modules, system tools, user settings, health checks, logs, duplicate cleanup, and import tools.</td></tr>
+        <tr><td>Treasury Staff</td><td>Property search, ledger, reports, dashboards, and allowed cashier functions.</td></tr>
+        <tr><td>Viewer or Encoder</td><td>Limited modules based on assigned permissions.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <strong>Important</strong>
+      Menu items can differ by user account. If a page is missing from the sidebar,
+      the account may not have permission to access that module.
+    </div>
+  </section>
+
+  <section id="roles" class="section">
+    <h2>2. Roles and Button Availability</h2>
+    <p>
+      The app uses role-based access control. A staff member may see a page but
+      not see every button inside that page. Buttons for editing, deleting,
+      backup, restore, and system maintenance are hidden unless the signed-in
+      user has the required permission.
+    </p>
+
+    <h3>System Roles</h3>
+    <table>
+      <thead><tr><th>Role</th><th>Best For</th><th>Main Permissions</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Admin</td>
+          <td>System owner, IT support, treasurer, or authorized supervisor.</td>
+          <td>All user, property, payment, import, report, audit, recycle, backup, restore, and maintenance tools.</td>
+        </tr>
+        <tr>
+          <td>Cashier</td>
+          <td>Daily collection and receipt operations.</td>
+          <td>View properties, post payments, view/generate receipts, view ledger, and view reports.</td>
+        </tr>
+        <tr>
+          <td>Encoder</td>
+          <td>Staff who encode or update property and assessment information.</td>
+          <td>View/edit properties, post payments, view/generate receipts, view ledger, and view reports.</td>
+        </tr>
+        <tr>
+          <td>Viewer</td>
+          <td>Read-only staff, supervisors, or report users.</td>
+          <td>View properties, receipts, ledger, and reports. Cannot edit, delete, import, backup, restore, or manage users.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Sidebar Page Availability</h3>
+    <table>
+      <thead><tr><th>Page</th><th>Available To</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Dashboard</td><td>All roles</td><td>Backup button inside Dashboard is Admin only.</td></tr>
+        <tr><td>Property Records</td><td>All roles</td><td>Edit, add, delete, import, and cleanup depend on role.</td></tr>
+        <tr><td>Payment and Receipt Ledger</td><td>All roles</td><td>Delete payment is Admin only.</td></tr>
+        <tr><td>Delinquency Dashboard</td><td>All roles</td><td>Used for delinquent account review and PDF generation.</td></tr>
+        <tr><td>Compliant Properties</td><td>All roles</td><td>Read/report page for fully paid properties.</td></tr>
+        <tr><td>Reports</td><td>All roles</td><td>All configured roles currently include report viewing.</td></tr>
+        <tr><td>Analytics Hub</td><td>All roles</td><td>Shown to roles with report access.</td></tr>
+        <tr><td>Assessment Roll</td><td>All roles</td><td>Add/import actions should be handled by Admin or Encoder-trained users.</td></tr>
+        <tr><td>Audit Trail</td><td>Admin only</td><td>Requires view logs permission.</td></tr>
+        <tr><td>System Health</td><td>Admin only</td><td>Requires admin-level system permissions.</td></tr>
+        <tr><td>System Settings</td><td>Admin only</td><td>Contains users, backups, restore, cleanup, and tax policy tools.</td></tr>
+        <tr><td>System Help</td><td>All roles</td><td>Basic help page.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Important Button Availability</h3>
+    <table>
+      <thead><tr><th>Module</th><th>Button or Action</th><th>Available To</th><th>What It Does</th></tr></thead>
+      <tbody>
+        <tr><td>Dashboard</td><td>Run Hybrid Backup Now</td><td>Admin</td><td>Starts the backup job for local, USB, cloud, and verification flow.</td></tr>
+        <tr><td>Property Records</td><td>Search, filters, previous/next page</td><td>All roles</td><td>Find and browse property records.</td></tr>
+        <tr><td>Property Records</td><td>Add Property</td><td>Admin, Encoder</td><td>Create a new property record.</td></tr>
+        <tr><td>Property Records</td><td>Edit</td><td>Admin, Encoder</td><td>Modify a selected property record.</td></tr>
+        <tr><td>Property Records</td><td>Bulk Import</td><td>Admin, Encoder</td><td>Open the import wizard for property records.</td></tr>
+        <tr><td>Property Records</td><td>Data Cleanup</td><td>Admin, Encoder</td><td>Update unspecified barangay/property fields in bulk.</td></tr>
+        <tr><td>Property Records</td><td>Delete</td><td>Admin</td><td>Moves a property to the Recycle Bin.</td></tr>
+        <tr><td>Add/Edit Property</td><td>Auto-Compute Penalty and Discount</td><td>Admin, Encoder</td><td>Uses the server computation endpoint to fill penalty, discount, and amount due.</td></tr>
+        <tr><td>Ledger</td><td>Fetch History</td><td>All roles</td><td>Loads payment and receipt history.</td></tr>
+        <tr><td>Ledger</td><td>View Receipt</td><td>All roles</td><td>Opens the selected receipt if available.</td></tr>
+        <tr><td>Ledger</td><td>Regenerate Receipt</td><td>Admin, Cashier, Encoder</td><td>Generates the receipt PDF again when allowed.</td></tr>
+        <tr><td>Ledger</td><td>Export Data</td><td>All roles</td><td>Exports ledger data for review.</td></tr>
+        <tr><td>Ledger</td><td>Bulk Import</td><td>Visible in Ledger; use under Admin supervision</td><td>Opens payment ledger import wizard.</td></tr>
+        <tr><td>Ledger</td><td>Delete Payment</td><td>Admin</td><td>Deletes a selected payment and reverses its billing impact.</td></tr>
+        <tr><td>Delinquency</td><td>Refresh List</td><td>All roles</td><td>Reloads delinquent accounts.</td></tr>
+        <tr><td>Delinquency</td><td>Generate Computation</td><td>All roles</td><td>Creates a computation PDF for the selected delinquent property.</td></tr>
+        <tr><td>Delinquency</td><td>Generate Notice</td><td>All roles</td><td>Creates a delinquency notice PDF for the selected property.</td></tr>
+        <tr><td>Compliant Properties</td><td>Refresh, Search, Export CSV</td><td>All roles</td><td>Review and export compliant property records.</td></tr>
+        <tr><td>Reports</td><td>Generate, Load Summary, Refresh Breakdown</td><td>All roles</td><td>Loads collection, receivable, and barangay reports.</td></tr>
+        <tr><td>Assessment Roll</td><td>Refresh, paging, filters</td><td>All roles</td><td>Browse assessment records.</td></tr>
+        <tr><td>Assessment Roll</td><td>Bulk Import, Add Record</td><td>Admin, Encoder-trained staff</td><td>Add or import assessment records.</td></tr>
+        <tr><td>System Settings</td><td>All action buttons</td><td>Admin</td><td>System maintenance, users, audit, backups, restore, and tax policies.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <strong>Training Note</strong>
+      If a staff member cannot see a button, do not assume the app is broken.
+      First confirm the user's role. Admin can update roles in System Settings
+      under User Management.
+    </div>
+  </section>
+
+  <section id="startup" class="section">
+    <h2>3. Starting the App</h2>
+    <ol class="steps">
+      <li>Open the folder that contains <code>Treasury.exe</code>.</li>
+      <li>Confirm that <code>.env</code>, <code>server_config.json</code>, and <code>config.json</code> are in the same folder.</li>
+      <li>Double-click <code>Treasury.exe</code>.</li>
+      <li>Wait for the login screen to appear.</li>
+    </ol>
+
+    <h3>Required Files</h3>
+    <pre>Revenue System folder
+|-- Treasury.exe
+|-- .env
+|-- server_config.json
+|-- config.json
+|-- logs</pre>
+
+    <p>
+      The <code>server_config.json</code> file tells the app where the API server is.
+      A common local server setting looks like this:
+    </p>
+    <pre>{
+  "server_url": "http://localhost:8001"
+}</pre>
+
+    <p>
+      For office network deployment, replace <code>localhost</code> with the server
+      computer's IP address, for example <code>http://192.168.1.15:8001</code>.
+    </p>
+  </section>
+
+  <section id="login" class="section">
+    <h2>4. Login and Logout</h2>
+    <h3>Login</h3>
+    <ol class="steps">
+      <li>Enter your username.</li>
+      <li>Enter your password.</li>
+      <li>Optional: tick Remember Me to save only the username.</li>
+      <li>Click Log In.</li>
+    </ol>
+
+    <h3>Logout</h3>
+    <ol class="steps">
+      <li>Click Logout at the bottom of the sidebar.</li>
+      <li>Wait until the app returns to the login window or closes the session.</li>
+    </ol>
+
+    <div class="callout warn">
+      <strong>Security Reminder</strong>
+      Do not share your account. Always use Logout before leaving the workstation.
+      Closing the app window is not the same as intentionally signing out.
+    </div>
+  </section>
+
+  <section id="navigation" class="section">
+    <h2>5. Main Navigation</h2>
+    <p>
+      After login, the sidebar on the left gives access to the system modules.
+      The profile card shows the signed-in user and role. The active page is
+      highlighted in blue.
+    </p>
+
+    <table>
+      <thead><tr><th>Sidebar Item</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>Dashboard</td><td>Main overview of system activity and quick status information.</td></tr>
+        <tr><td>Property Records</td><td>Search, add, edit, view, import, and manage property records.</td></tr>
+        <tr><td>Payment and Receipt Ledger</td><td>Review payments, receipts, yearly balances, and payment history.</td></tr>
+        <tr><td>Delinquency Dashboard</td><td>Find properties with unpaid balances and generate delinquency notices.</td></tr>
+        <tr><td>Compliant Properties</td><td>View properties whose total paid amount meets or exceeds the total amount due.</td></tr>
+        <tr><td>Reports</td><td>Generate operational, receivable, collection, and taxpayer reports.</td></tr>
+        <tr><td>Analytics Hub</td><td>Review charts, summaries, and trends.</td></tr>
+        <tr><td>Assessment Roll</td><td>Manage assessment roll records and import assessment data.</td></tr>
+        <tr><td>Audit Trail</td><td>Review activity logs and system actions.</td></tr>
+        <tr><td>System Health</td><td>Check backend, database, and service health.</td></tr>
+        <tr><td>System Settings</td><td>Admin tools, users, maintenance, cleanup, and system utilities.</td></tr>
+        <tr><td>System Help</td><td>Basic in-app help guide.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="properties" class="section">
+    <h2>6. Property Records</h2>
+    <p>
+      Use Property Records to search and maintain taxpayer property details.
+      A property record usually includes TD number, owner name, payor name,
+      barangay, kind of property, assessed value, tax year, PIN, and related fields.
+    </p>
+
+    <h3>Search for a Property</h3>
+    <ol class="steps">
+      <li>Open Property Records from the sidebar.</li>
+      <li>Type a TD number, PIN, owner name, payor name, or location in the search box.</li>
+      <li>Review the table results.</li>
+      <li>Select a row to edit, view details, or open related actions.</li>
+    </ol>
+
+    <h3>Add or Edit a Property</h3>
+    <ol class="steps">
+      <li>Click Add Property for a new record, or select an existing row and click Edit.</li>
+      <li>Enter the required details carefully.</li>
+      <li>Review TD number and owner details before saving.</li>
+      <li>Click Save.</li>
+    </ol>
+
+    <div class="callout warn">
+      <strong>Duplicate TD Number Protection</strong>
+      The system blocks duplicate TD numbers. If saving fails with a duplicate
+      TD number message, search for the existing TD number first before creating
+      another record.
+    </div>
+
+    <h3>Property Dossier</h3>
+    <p>
+      The dossier view shows a consolidated record for a selected property:
+      master details, payment history, assessment changes, and related record
+      history. Use it when reviewing a taxpayer account before editing or posting
+      corrections.
+    </p>
+  </section>
+
+  <section id="ledger" class="section">
+    <h2>7. Payment and Receipt Ledger</h2>
+    <p>
+      The ledger module is used to review payments, official receipt numbers,
+      tax years, payment amounts, discounts, penalties, and related property data.
+    </p>
+
+    <h3>Common Ledger Tasks</h3>
+    <table>
+      <thead><tr><th>Task</th><th>How to Use It</th></tr></thead>
+      <tbody>
+        <tr><td>Search payments</td><td>Use filters such as TD number, owner name, OR number, tax year, or date.</td></tr>
+        <tr><td>Review receipt history</td><td>Select a payment row and inspect the OR number, year, amount, discount, and penalty.</td></tr>
+        <tr><td>Import payment ledger</td><td>Use the Import Wizard from the ledger when importing payment records.</td></tr>
+        <tr><td>Delete payment</td><td>Admin or authorized users can delete a payment when correction is required. This reverses related billing impact.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout danger">
+      <strong>Use Payment Delete Carefully</strong>
+      Deleting a payment changes balances. Use it only for verified duplicate or
+      mistaken records and keep supporting documentation.
+    </div>
+  </section>
+
+  <section id="assessment" class="section">
+    <h2>8. Assessment Roll</h2>
+    <p>
+      The Assessment Roll module lists property assessment data used for tax
+      computation and account validation.
+    </p>
+
+    <h3>Add an Assessment Record</h3>
+    <ol class="steps">
+      <li>Open Assessment Roll.</li>
+      <li>Click Add Assessment Record.</li>
+      <li>Enter TD number, owner name, PIN, barangay, property kind, market value, assessed value, and other required fields.</li>
+      <li>Click Save.</li>
+    </ol>
+
+    <h3>Import Assessment Roll</h3>
+    <ol class="steps">
+      <li>Open Assessment Roll.</li>
+      <li>Click Import.</li>
+      <li>Select the spreadsheet file.</li>
+      <li>Validate the data.</li>
+      <li>Commit the import after reviewing the summary.</li>
+    </ol>
+  </section>
+
+  <section id="delinquency" class="section">
+    <h2>9. Delinquency Dashboard</h2>
+    <p>
+      The Delinquency Dashboard helps identify properties with unpaid balances.
+      It is useful for collection follow-up and notice preparation.
+    </p>
+
+    <h3>Workflow</h3>
+    <ol class="steps">
+      <li>Open Delinquency Dashboard.</li>
+      <li>Review totals, filters, and barangay summaries.</li>
+      <li>Select a property from the list.</li>
+      <li>Generate or export delinquency information as needed.</li>
+    </ol>
+
+    <div class="callout">
+      <strong>Balance Source</strong>
+      Delinquency information should be reviewed against the property billing
+      and payment records before issuing official notices.
+    </div>
+  </section>
+
+  <section id="computation" class="section">
+    <h2>10. How Computation Works</h2>
+    <p>
+      The app computes tax due using the property's assessed value, the tax year,
+      the tax policy rates for that year, recorded penalties, recorded discounts,
+      and payments already posted to the billing record.
+    </p>
+
+    <h3>Default Tax Rates</h3>
+    <p>
+      Each tax year can have its own rates in System Settings. If no rate is set
+      for a tax year, the system uses these defaults:
+    </p>
+    <table>
+      <thead><tr><th>Item</th><th>Default Rate</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>Basic Tax</td><td>1.00%</td><td>Regular real property tax portion.</td></tr>
+        <tr><td>SEF Tax</td><td>1.00%</td><td>Special Education Fund portion.</td></tr>
+        <tr><td>Penalty</td><td>2.00% per month</td><td>Used by the automatic payment computation for late payments.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Basic Formula</h3>
+    <pre>Basic Tax = Assessed Value x Basic Rate
+SEF Tax = Assessed Value x SEF Rate
+Total Tax = Basic Tax + SEF Tax
+Total Due = Total Tax + Penalty - Discount
+Balance = Total Due - Amount Paid</pre>
+
+    <p>
+      The dashboard treats a property as delinquent when its computed balance is
+      greater than zero.
+    </p>
+
+    <h3>How the Delinquency Dashboard Gets the Balance</h3>
+    <p>
+      The Delinquency Dashboard reads billing rows from the database. A property
+      may have one billing row per tax year. For each property, the app sums all
+      billing rows and compares them with the payments posted against those rows.
+    </p>
+
+    <pre>Property Total Due =
+  Sum of (Assessed Value x Basic Rate)
++ Sum of (Assessed Value x SEF Rate)
++ Sum of Penalties
+- Sum of Discounts
+
+Property Total Paid =
+  Sum of Amount Paid on the property's billing rows
+
+Property Balance =
+  Property Total Due - Property Total Paid
+
+If Property Balance > 0, the property appears as delinquent.</pre>
+
+    <h3>How the Compute Payment Button Works</h3>
+    <p>
+      When the app computes a payment from assessed value, tax year, and payment
+      date, it applies the following rules:
+    </p>
+    <table>
+      <thead><tr><th>Payment Date</th><th>Discount</th><th>Penalty</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>On or before December 31 before the tax year</td>
+          <td>20% advance payment discount</td>
+          <td>No penalty</td>
+        </tr>
+        <tr>
+          <td>January 1 to March 31 of the tax year</td>
+          <td>10% prompt payment discount</td>
+          <td>No penalty</td>
+        </tr>
+        <tr>
+          <td>After March 31 of the tax year</td>
+          <td>No discount</td>
+          <td>Monthly penalty may apply</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      For late payments, the system starts counting penalty from February 1 of
+      the tax year. The penalty is based on the total tax, not on the assessed
+      value directly.
+    </p>
+
+    <pre>Penalty = Total Tax x Penalty Rate x Number of Months Late</pre>
+
+    <h3>Worked Example</h3>
+    <p>
+      Example property:
+      assessed value is PHP 100,000, tax year is 2026, basic rate is 1%,
+      SEF rate is 1%, and penalty rate is 2% per month.
+    </p>
+
+    <table>
+      <thead><tr><th>Step</th><th>Computation</th><th>Amount</th></tr></thead>
+      <tbody>
+        <tr><td>Basic Tax</td><td>PHP 100,000 x 1%</td><td>PHP 1,000.00</td></tr>
+        <tr><td>SEF Tax</td><td>PHP 100,000 x 1%</td><td>PHP 1,000.00</td></tr>
+        <tr><td>Total Tax</td><td>Basic + SEF</td><td>PHP 2,000.00</td></tr>
+        <tr><td>Prompt Discount</td><td>If paid Jan 1 to Mar 31: PHP 2,000 x 10%</td><td>- PHP 200.00</td></tr>
+        <tr><td>Net Due During Prompt Period</td><td>PHP 2,000 - PHP 200</td><td>PHP 1,800.00</td></tr>
+      </tbody>
+    </table>
+
+    <p>
+      If the same property is paid late and the app counts 4 months late:
+    </p>
+    <table>
+      <thead><tr><th>Step</th><th>Computation</th><th>Amount</th></tr></thead>
+      <tbody>
+        <tr><td>Total Tax</td><td>Basic + SEF</td><td>PHP 2,000.00</td></tr>
+        <tr><td>Penalty</td><td>PHP 2,000 x 2% x 4 months</td><td>PHP 160.00</td></tr>
+        <tr><td>Net Due</td><td>PHP 2,000 + PHP 160</td><td>PHP 2,160.00</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Multi-Year Delinquency</h3>
+    <p>
+      If a property has billing records for several unpaid years, each year is
+      computed separately using that year's assessed value and tax policy. The
+      dashboard then adds the balances together.
+    </p>
+
+    <pre>2024 Balance + 2025 Balance + 2026 Balance = Total Delinquent Balance</pre>
+
+    <div class="callout">
+      <strong>Why the figures may change after sync or import</strong>
+      The app can create missing billing-year records from a property's
+      effectivity year or tax year up to the current year. This is why running a
+      billing sync can make a delinquent balance more complete: it fills missing
+      unpaid years that were not originally imported.
+    </div>
+
+    <div class="callout warn">
+      <strong>Important</strong>
+      Existing billing rows keep their recorded penalty, discount, assessed
+      value, and amount paid. Changing a tax policy affects new computations and
+      reports that resolve rates by tax year, but staff should still review
+      existing records before issuing official computations or notices.
+    </div>
+  </section>
+
+  <section id="compliant" class="section">
+    <h2>11. Compliant Properties</h2>
+    <p>
+      The Compliant Properties dashboard shows properties where the total amount
+      paid is greater than or equal to the total amount due across all included
+      billing years.
+    </p>
+
+    <h3>Using the Dashboard</h3>
+    <ol class="steps">
+      <li>Open Compliant Properties from the sidebar.</li>
+      <li>Use the barangay list to filter the property table.</li>
+      <li>Use Search to find a TD number, owner, barangay, or property kind.</li>
+      <li>Click Refresh to reload current data.</li>
+      <li>Click Export CSV to save the displayed compliant property list.</li>
+    </ol>
+
+    <table>
+      <thead><tr><th>Column</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>TD Number</td><td>Tax declaration number of the property.</td></tr>
+        <tr><td>Owner Name</td><td>Registered owner or taxpayer name.</td></tr>
+        <tr><td>Barangay</td><td>Barangay location of the property.</td></tr>
+        <tr><td>Total Paid</td><td>Total amount recorded as paid.</td></tr>
+        <tr><td>Years</td><td>Number of billing years included in the computation.</td></tr>
+        <tr><td>Last OR</td><td>Most recent official receipt number, when available.</td></tr>
+        <tr><td>Last Paid</td><td>Most recent payment date, when available.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="reports" class="section">
+    <h2>12. Reports</h2>
+    <p>
+      Reports help treasury staff produce summaries for collection monitoring,
+      taxpayer inquiries, receivables review, and office records.
+    </p>
+
+    <h3>Common Reports</h3>
+    <table>
+      <thead><tr><th>Report</th><th>Use</th></tr></thead>
+      <tbody>
+        <tr><td>Receivables by Barangay</td><td>Shows unpaid receivables grouped by barangay.</td></tr>
+        <tr><td>Collection Summary</td><td>Summarizes collected amounts for review and reconciliation.</td></tr>
+        <tr><td>Statement of Account</td><td>Shows taxpayer balance and billing details.</td></tr>
+        <tr><td>Notice of Delinquency</td><td>Generates formal notice details for delinquent accounts.</td></tr>
+        <tr><td>Export CSV</td><td>Saves table output for spreadsheet review.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <strong>Before Printing</strong>
+      Always review filters, dates, barangay, and year selections before printing
+      or submitting a report.
+    </div>
+  </section>
+
+  <section id="analytics" class="section">
+    <h2>13. Analytics Hub</h2>
+    <p>
+      Analytics Hub provides visual summaries of collection performance, assessed
+      values, barangay trends, and other management indicators.
+    </p>
+
+    <h3>How to Use It</h3>
+    <ol class="steps">
+      <li>Open Analytics Hub.</li>
+      <li>Wait for data to load from the server.</li>
+      <li>Review cards, charts, and summary tables.</li>
+      <li>Refresh if recent imports or payments are not yet reflected.</li>
+    </ol>
+  </section>
+
+  <section id="import" class="section">
+    <h2>14. Import Wizard</h2>
+    <p>
+      The Import Wizard supports bulk loading for property records, assessment
+      roll records, and payment ledger records. The exact mode depends on where
+      the wizard is opened.
+    </p>
+
+    <h3>Import Process</h3>
+    <ol class="steps">
+      <li>Open the correct module: Property Records, Assessment Roll, or Ledger.</li>
+      <li>Click Import.</li>
+      <li>Select the spreadsheet file.</li>
+      <li>Review detected columns and mapping.</li>
+      <li>Click Validate.</li>
+      <li>Review warnings, duplicate notes, and failed rows.</li>
+      <li>Click Commit only after confirming the summary.</li>
+    </ol>
+
+    <h3>Spreadsheet Tips</h3>
+    <ul>
+      <li>Use consistent column names.</li>
+      <li>Remove completely blank rows.</li>
+      <li>Check TD number formatting before import.</li>
+      <li>Keep one taxpayer/property record per row.</li>
+      <li>Save a backup copy of the spreadsheet before importing.</li>
+    </ul>
+
+    <div class="callout warn">
+      <strong>Duplicate Records</strong>
+      The system may skip or reject rows with duplicate TD numbers or conflicting
+      values. Review the import summary before assuming every row was inserted.
+    </div>
+  </section>
+
+  <section id="admin" class="section">
+    <h2>15. System Administration</h2>
+    <p>
+      System Settings is for Admin users only. It contains user access,
+      audit logs, deleted-record recovery, database backup and restore,
+      data-quality cleanup, and tax policy configuration.
+    </p>
+
+    <div class="callout danger">
+      <strong>Admin Safety</strong>
+      System Settings can affect many records. Before running cleanup, restore,
+      TD fixes, or batch deletes, create or confirm a recent backup and review
+      the preview screens carefully.
+    </div>
+
+    <h3>System Settings Tabs</h3>
+    <table>
+      <thead><tr><th>Tab</th><th>Available To</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>User Management</td><td>Admin</td><td>Create accounts, change roles, enable/disable accounts, reset passwords, and delete users.</td></tr>
+        <tr><td>Audit Logs</td><td>Admin</td><td>Review user activity and before/after record changes.</td></tr>
+        <tr><td>Recycle Bin</td><td>Admin</td><td>Restore deleted properties or permanently purge records when allowed.</td></tr>
+        <tr><td>Database and Backup</td><td>Admin</td><td>Backup, restore, restart server, sync billing years, audit TD numbers, and batch delete payments.</td></tr>
+        <tr><td>Tax Policy</td><td>Admin</td><td>View and update Basic, SEF, and penalty rates by tax year.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>User Management Tab</h3>
+    <p>
+      Use this tab to control staff access. All changes are logged.
+    </p>
+    <table>
+      <thead><tr><th>Button or Field</th><th>Available To</th><th>Use</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Register New User</td><td>Admin</td><td>Creates a new user account.</td><td>Choose role carefully: admin, cashier, encoder, or viewer.</td></tr>
+        <tr><td>Refresh</td><td>Admin</td><td>Reloads the user list.</td><td>Use after creating or changing accounts.</td></tr>
+        <tr><td>System Role</td><td>Admin</td><td>Changes the selected user's role.</td><td>Click Apply Role Change to save.</td></tr>
+        <tr><td>Account Enabled</td><td>Admin</td><td>Turns account access on or off.</td><td>Disable instead of deleting when access should be temporary stopped.</td></tr>
+        <tr><td>Force Password Reset</td><td>Admin</td><td>Sets a new password for the selected user.</td><td>Existing sessions are invalidated after password reset.</td></tr>
+        <tr><td>Delete Account</td><td>Admin</td><td>Soft-deletes the selected account.</td><td>Deleted users cannot log in.</td></tr>
+        <tr><td>Apply Role Change</td><td>Admin</td><td>Saves selected role changes.</td><td>Confirm the dialog before applying.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Audit Logs Tab</h3>
+    <p>
+      Audit Logs show important actions such as login activity, property edits,
+      user changes, batch cleanup, backup actions, and other system events.
+    </p>
+    <table>
+      <thead><tr><th>Button or Field</th><th>Available To</th><th>Use</th></tr></thead>
+      <tbody>
+        <tr><td>Filter by User</td><td>Admin</td><td>Shows logs for one user or all users.</td></tr>
+        <tr><td>Refresh Trace</td><td>Admin</td><td>Reloads the latest audit entries.</td></tr>
+        <tr><td>Load More</td><td>Admin</td><td>Loads the next set of audit records.</td></tr>
+        <tr><td>Double-click log row</td><td>Admin</td><td>Opens before/after details when available.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Recycle Bin Tab</h3>
+    <p>
+      Deleted property records are moved to the Recycle Bin first. This protects
+      the office from accidental deletion.
+    </p>
+    <table>
+      <thead><tr><th>Button</th><th>Available To</th><th>Use</th><th>Important Note</th></tr></thead>
+      <tbody>
+        <tr><td>Refresh</td><td>Admin</td><td>Reloads deleted records.</td><td>Use after a delete or restore operation.</td></tr>
+        <tr><td>Restore Selected</td><td>Admin</td><td>Returns the selected property to active records.</td><td>Use when a property was deleted by mistake.</td></tr>
+        <tr><td>Purge Permanently</td><td>Admin</td><td>Permanently removes a deleted record.</td><td>Use with extreme care. Purge cannot be undone.</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Database and Backup Tab</h3>
+    <p>
+      This tab is the main maintenance area. It includes backup status, backup
+      actions, restore, server restart, billing-year sync, TD number audit,
+      and payment cleanup.
+    </p>
+
+    <h4>Backup Status Panel</h4>
+    <table>
+      <thead><tr><th>Status Item</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>Local SQL Dump</td><td>Last database backup saved on the server/local backup folder.</td></tr>
+        <tr><td>USB Drive Mirror</td><td>Last mirror copy to configured USB storage, if available.</td></tr>
+        <tr><td>Cloud Synchronization</td><td>Last cloud sync status, if cloud backup is enabled.</td></tr>
+        <tr><td>Data Integrity Check</td><td>Restore-test or verification status for backup health.</td></tr>
+      </tbody>
+    </table>
+
+    <h4>Database and Backup Buttons</h4>
+    <table>
+      <thead><tr><th>Button</th><th>Available To</th><th>What It Does</th><th>When to Use</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Start Hybrid Backup</td>
+          <td>Admin</td>
+          <td>Queues a backup job. The system creates a local backup and may mirror to USB/cloud depending on configuration.</td>
+          <td>Before imports, cleanup, restore tests, major edits, or end-of-day routines.</td>
+        </tr>
+        <tr>
+          <td>Restart Server</td>
+          <td>Admin</td>
+          <td>Sends a restart command to the backend server.</td>
+          <td>After backend updates or when instructed by IT. Avoid during active cashier transactions.</td>
+        </tr>
+        <tr>
+          <td>Sync Billing Years</td>
+          <td>Admin</td>
+          <td>Previews and then creates missing yearly billing records from a property's effectivity/tax year up to the current year.</td>
+          <td>When delinquency balances look incomplete or after importing assessment data.</td>
+        </tr>
+        <tr>
+          <td>Audit TD Numbers</td>
+          <td>Admin</td>
+          <td>Scans property TD numbers and payments for malformed TDs, duplicate TDs, duplicate payments, and shadow duplicates.</td>
+          <td>After bulk import, before cleanup, or when duplicate TD/payment errors appear.</td>
+        </tr>
+        <tr>
+          <td>Batch Delete Payments</td>
+          <td>Admin</td>
+          <td>Opens a safe preview-and-confirm tool for deleting duplicate or incorrect payment records by OR number or payment ID.</td>
+          <td>Only after verifying duplicates. Prefer Payment ID mode for exact targeting.</td>
+        </tr>
+        <tr>
+          <td>View Backups</td>
+          <td>Admin</td>
+          <td>Opens the configured local backup folder.</td>
+          <td>To verify backup files or choose a restore file.</td>
+        </tr>
+        <tr>
+          <td>Restore</td>
+          <td>Admin</td>
+          <td>Restores the database from a selected SQL backup file.</td>
+          <td>Disaster recovery only. The app asks for confirmation and requires typing RESTORE.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout danger">
+      <strong>Restore Warning</strong>
+      Restore overwrites the current database with the selected backup. Records
+      entered after that backup may be lost. The system creates a safety backup
+      before restore, but the operation should still be treated as critical.
+    </div>
+
+    <h4>Sync Billing Years Workflow</h4>
+    <ol class="steps">
+      <li>Click Sync Billing Years.</li>
+      <li>The app first runs a dry-run preview.</li>
+      <li>Review the number of properties scanned, records to create, and records skipped.</li>
+      <li>If the preview is correct, click Proceed.</li>
+      <li>Wait for the background job to complete.</li>
+      <li>Refresh Delinquency Dashboard to view updated multi-year balances.</li>
+    </ol>
+
+    <h4>Audit TD Numbers Results</h4>
+    <table>
+      <thead><tr><th>Audit Tab</th><th>Meaning</th><th>Available Actions</th></tr></thead>
+      <tbody>
+        <tr><td>Format Issues</td><td>TD numbers not matching the expected format such as <code>06-0014-00239</code>.</td><td>Export CSV, Auto-Fix Format Issues when eligible.</td></tr>
+        <tr><td>Duplicate TDs</td><td>More than one property has the same TD number.</td><td>Review manually before editing or deleting.</td></tr>
+        <tr><td>Duplicate Payments</td><td>Extra payment records share the same OR number and tax year.</td><td>Use Batch Delete Payments after review.</td></tr>
+        <tr><td>Shadow Duplicates</td><td>A malformed TD appears to duplicate an existing correct-format TD.</td><td>Batch Delete bad TDs only when the bad records have no payments.</td></tr>
+      </tbody>
+    </table>
+
+    <h4>Auto-Fix Format Issues</h4>
+    <p>
+      Auto-Fix only attempts safe formatting corrections. It can fix common TD
+      patterns such as missing zeroes or misplaced dashes. It skips records that
+      would create a duplicate TD number.
+    </p>
+    <ol class="steps">
+      <li>Run Audit TD Numbers.</li>
+      <li>If format issues exist, click Auto-Fix Format Issues.</li>
+      <li>Review the dry-run preview.</li>
+      <li>Confirm only if the previewed fixed TD numbers are correct.</li>
+      <li>Run the audit again to confirm remaining issues.</li>
+    </ol>
+
+    <h4>Batch Delete Payments Workflow</h4>
+    <ol class="steps">
+      <li>Open Batch Delete Payments.</li>
+      <li>Choose OR Number mode or Payment ID mode.</li>
+      <li>Paste IDs/numbers or load them from a file.</li>
+      <li>Click Preview.</li>
+      <li>Review every row that will be deleted.</li>
+      <li>Confirm the delete only if the preview is correct.</li>
+    </ol>
+
+    <div class="callout warn">
+      <strong>Payment Cleanup Tip</strong>
+      Payment ID mode is safer than OR number mode because it targets exact
+      payment rows. Use OR number mode only when you are certain all matching
+      records should be reviewed for deletion.
+    </div>
+
+    <h3>Tax Policy Tab</h3>
+    <p>
+      Tax Policy controls the rates used by computations for each tax year.
+      These values affect Basic Tax, SEF Tax, and monthly penalty calculations.
+    </p>
+    <table>
+      <thead><tr><th>Field or Button</th><th>Available To</th><th>Use</th></tr></thead>
+      <tbody>
+        <tr><td>Refresh</td><td>Admin</td><td>Reloads tax policy rows from the server.</td></tr>
+        <tr><td>Tax Year table</td><td>Admin</td><td>Select a tax year to edit its rates.</td></tr>
+        <tr><td>Basic Rate (%)</td><td>Admin</td><td>Regular real property tax rate. Default is 1.00%.</td></tr>
+        <tr><td>SEF Rate (%)</td><td>Admin</td><td>Special Education Fund rate. Default is 1.00%.</td></tr>
+        <tr><td>Penalty Rate/mo (%)</td><td>Admin</td><td>Monthly penalty rate. Default is 2.00%.</td></tr>
+        <tr><td>Save</td><td>Admin</td><td>Saves the selected year's rates.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout warn">
+      <strong>Tax Policy Note</strong>
+      Enter percentages as human-readable values, for example <code>1.00</code>
+      for 1% and <code>2.00</code> for 2% per month. The backend stores these
+      as decimal rates.
+    </div>
+
+    <h3>System Health Page</h3>
+    <p>
+      System Health is also Admin only. Use it to confirm that the backend API,
+      database, connection pool, cache, and related services are working. If
+      users report connection errors or 500 errors, check System Health and the
+      backend terminal/logs before continuing office operations.
+    </p>
+  </section>
+
+  <section id="portable" class="section">
+    <h2>16. Portable EXE Updates</h2>
+    <p>
+      The PyInstaller build creates a portable executable named
+      <code>Treasury.exe</code>. If the app code is updated, most workstation
+      updates only require replacing that EXE file.
+    </p>
+
+    <h3>Update by Replacing the EXE</h3>
+    <ol class="steps">
+      <li>Close the app on the workstation.</li>
+      <li>Open the installed or portable app folder.</li>
+      <li>Replace the old <code>Treasury.exe</code> with the new one.</li>
+      <li>Keep <code>.env</code>, <code>server_config.json</code>, and <code>config.json</code> in the same folder.</li>
+      <li>Open the app again and log in.</li>
+    </ol>
+
+    <h3>When to Use the Installer Again</h3>
+    <ul>
+      <li>Installing on a new workstation.</li>
+      <li>Recreating Start Menu or desktop shortcuts.</li>
+      <li>Deploying changed support files or a new manual.</li>
+      <li>Recovering from a missing app folder.</li>
+    </ul>
+  </section>
+
+  <section id="troubleshooting" class="section">
+    <h2>17. Troubleshooting</h2>
+
+    <table>
+      <thead><tr><th>Problem</th><th>Likely Cause</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Cannot reach API server</td>
+          <td>Server is not running, wrong IP address, or wrong protocol.</td>
+          <td>Start the API server. Check <code>server_config.json</code>. Use <code>http://</code> unless HTTPS is configured.</td>
+        </tr>
+        <tr>
+          <td>Login fails with network error</td>
+          <td>Desktop app cannot connect to the backend.</td>
+          <td>Confirm server health at <code>http://localhost:8001/health</code> on the server PC.</td>
+        </tr>
+        <tr>
+          <td>App says SECRET_KEY is missing</td>
+          <td><code>.env</code> is missing or not beside the EXE.</td>
+          <td>Copy the correct <code>.env</code> file beside <code>Treasury.exe</code>.</td>
+        </tr>
+        <tr>
+          <td>500 Internal Server Error</td>
+          <td>Backend issue, database conflict, duplicate record, or server exception.</td>
+          <td>Check backend terminal/logs. Retry after confirming database and server are running.</td>
+        </tr>
+        <tr>
+          <td>Duplicate TD number error</td>
+          <td>A property already exists with the same TD number.</td>
+          <td>Search for that TD number and edit the existing record instead of creating another one.</td>
+        </tr>
+        <tr>
+          <td>Import fails</td>
+          <td>Spreadsheet format, duplicate values, bad dates, or missing required fields.</td>
+          <td>Review the import summary. Fix spreadsheet rows and try again.</td>
+        </tr>
+        <tr>
+          <td>Icon still shows old background</td>
+          <td>Windows icon cache is showing an old shortcut image.</td>
+          <td>Rename the EXE once, recreate shortcut, or restart Windows Explorer.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout ok">
+      <strong>Basic Health Check</strong>
+      If the server is on the same machine, open a browser and visit
+      <code>http://localhost:8001/health</code>. A healthy server should return
+      an online status.
+    </div>
+  </section>
+
+  <section class="footer">
+    Revenue System User Manual - Internal municipal office use only.
+  </section>
+</main>
+</body>
+</html>

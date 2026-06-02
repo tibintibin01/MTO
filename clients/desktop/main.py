@@ -9,15 +9,33 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 # Add root folder to sys.path so nested desktop client scripts can import api_clients and utils seamlessly
-BASE_DIR = Path(__file__).resolve().parent
-ROOT_DIR = BASE_DIR.parent.parent
+if getattr(sys, "frozen", False):
+    # Running from PyInstaller bundle
+    # sys._MEIPASS is the temporary directory where bundled files are unpacked
+    ROOT_DIR = Path(sys._MEIPASS).resolve()
+    # The actual folder where the .exe is running on the host system
+    EXE_DIR = Path(sys.executable).resolve().parent
+    
+    # Look for .env in the exe's folder or one level up (in case it is inside a dist/ subdirectory)
+    env_path = EXE_DIR / ".env"
+    if not env_path.exists() and (EXE_DIR.parent / ".env").exists():
+        env_path = EXE_DIR.parent / ".env"
+else:
+    # Running from source code
+    BASE_DIR = Path(__file__).resolve().parent
+    ROOT_DIR = BASE_DIR.parent.parent
+    env_path = ROOT_DIR / ".env"
+
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 ASSETS_DIR = ROOT_DIR # In this repo, assets are currently in root
 
 from dotenv import load_dotenv
-load_dotenv(dotenv_path=ROOT_DIR / ".env")
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+else:
+    load_dotenv()
 
 import api_clients.auth_service as auth
 import api_clients.system_service as system
@@ -45,7 +63,22 @@ setup_theme("dark")
 
 # CRITICAL SECURITY CHECK
 if not os.getenv("SECRET_KEY") or len(os.getenv("SECRET_KEY", "")) < 16:
-    print("CRITICAL SECURITY ERROR: SECRET_KEY is missing or too weak (min 16 chars).")
+    error_msg = (
+        "CRITICAL SECURITY ERROR: SECRET_KEY is missing or too weak (minimum 16 characters).\n\n"
+        f"Please ensure a valid '.env' file is present at:\n{env_path.resolve() if 'env_path' in locals() else '.env'}"
+    )
+    print(error_msg)
+    
+    # Show user-friendly error popup
+    try:
+        from tkinter import messagebox
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("Municipal Treasury System | Secure Access", error_msg)
+        root.destroy()
+    except Exception as popup_err:
+        print(f"Failed to display popup error: {popup_err}")
     sys.exit(1)
 
 print("DEBUG: Starting LoginApp...")

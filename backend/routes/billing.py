@@ -10,7 +10,7 @@ import backend.services.property_service as prop_svc
 import backend.services.system_service as sys_svc
 import backend.services.payment_service as pay_svc
 import backend.services.analytics_service as analytics
-from backend.generators import soa_gen, computation_gen, notice_gen
+from backend.generators import soa_gen, computation_gen, notice_gen, report_gen
 from utils.logger import mto_logger
 from backend.services.storage_service import storage_service
 
@@ -127,6 +127,101 @@ async def get_receivables_by_barangay(
         data_start_year=data_start_year,
         db_session=db_session,
     )
+
+
+@router.get("/reports/receivables-by-barangay-pdf", tags=["Reports"])
+async def export_receivables_by_barangay_pdf(
+    year: Optional[int] = None,
+    barangay: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Generates a print-ready PDF of the Receivables by Barangay report
+    for the requested year (or all years when year is omitted).
+    """
+    rows = prop_svc.get_receivables_by_barangay(
+        report_year=year, db_session=db_session
+    )
+    if barangay and barangay != "ALL":
+        rows = [r for r in rows if r[0] == barangay]
+
+    year_label = str(year) if year else "All Years"
+    if barangay and barangay != "ALL":
+        year_label += f" - Barangay: {barangay}"
+
+    try:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        pdf_path = await asyncio.to_thread(
+            report_gen.generate_receivables_by_barangay_pdf, rows, year_label, base_dir
+        )
+        file_name = os.path.basename(pdf_path)
+
+        if storage_service.enabled:
+            s3_key = f"reports/{file_name}"
+            uploaded_key = await asyncio.to_thread(storage_service.upload_file, pdf_path, s3_key)
+            if uploaded_key:
+                presigned_url = await asyncio.to_thread(storage_service.generate_presigned_url, s3_key)
+                if presigned_url:
+                    try:
+                        os.remove(pdf_path)
+                    except Exception:
+                        pass
+                    return RedirectResponse(presigned_url, status_code=307)
+
+        return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
+    except Exception as e:
+        import traceback
+        mto_logger.error(f"Failed to generate Receivables by Barangay PDF: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"PDF Generation Failed: {str(e)}")
+
+
+@router.get("/reports/assessment-roll-pdf", tags=["Reports"])
+async def export_assessment_roll_pdf(
+    barangay: Optional[str] = None,
+    year_start: Optional[int] = None,
+    year_end: Optional[int] = None,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Generates a print-ready PDF of the full Assessment Roll (landscape A4).
+    Optionally filtered by barangay and/or effectivity year range.
+    """
+    result = prop_svc.search_properties(
+        "",
+        limit=10000,
+        barangay=barangay if barangay and barangay != "ALL" else None,
+        year_start=year_start,
+        year_end=year_end,
+        db_session=db_session,
+    )
+    items = result.get("items", []) if isinstance(result, dict) else result
+    try:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        pdf_path = await asyncio.to_thread(
+            report_gen.generate_assessment_roll_pdf, items, base_dir, barangay
+        )
+        file_name = os.path.basename(pdf_path)
+
+        if storage_service.enabled:
+            s3_key = f"reports/{file_name}"
+            uploaded_key = await asyncio.to_thread(storage_service.upload_file, pdf_path, s3_key)
+            if uploaded_key:
+                presigned_url = await asyncio.to_thread(storage_service.generate_presigned_url, s3_key)
+                if presigned_url:
+                    try:
+                        os.remove(pdf_path)
+                    except Exception:
+                        pass
+                    return RedirectResponse(presigned_url, status_code=307)
+
+        return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
+    except Exception as e:
+        import traceback
+        mto_logger.error(f"Failed to generate Assessment Roll PDF: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"PDF Generation Failed: {str(e)}")
+
 
 @router.get("/analytics/trends", tags=["Analytics"], dependencies=[Depends(read_only)])
 async def get_analytics_trends(months: int = 12, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
@@ -358,6 +453,7 @@ class ExportReportRequest(BaseModel):
     month: str = "All"
     year: str = "All"
     report_type: str = "collections"   # collections | delinquents | assessment_roll | receivables
+    barangay: Optional[str] = None
 
 
 @router.post("/billing/export/excel", tags=["Reports"])
@@ -568,16 +664,73 @@ async def export_billing_excel(
                 if is_total:
                     amt_cell.font = Font(bold=True)
 
+        # ── Report: Receivables by Barangay ──────────────────────────────────
+        elif data.report_type == "receivables_by_barangay":
+            ws.title = "Receivables by Barangay"
+            ws["A1"] = "MUNICIPAL TREASURY OFFICE — RECEIVABLES BY BARANGAY"
+            ws["A1"].font = title_font
+            
+            brgy_filter = data.barangay if data.barangay and data.barangay != "ALL" else None
+            brgy_lbl = f"Barangay: {brgy_filter}" if brgy_filter else "All Barangays"
+            ws["A2"] = f"As of Year: {data.year}  ·  {brgy_lbl}    Generated: {date_str}"
+            ws["A2"].font = Font(italic=True, size=10)
+            ws.merge_cells("A1:G1")
+            ws.merge_cells("A2:G2")
+            ws["A1"].alignment = center_align
+            ws["A2"].alignment = center_align
+
+            headers = ["Barangay", "Assessed Value", "Total Due", "Penalty", "Discount", "Collected", "Total Receivable"]
+            for col_idx, h in enumerate(headers, 1):
+                ws.cell(row=4, column=col_idx, value=h)
+            style_header_row(ws, 4, len(headers))
+
+            y_val = None if data.year == "All" or data.year == "All Years" else int(data.year)
+            rows = prop_svc.get_receivables_by_barangay(report_year=y_val, db_session=db_session)
+            
+            if brgy_filter:
+                rows = [r for r in rows if r[0] == brgy_filter]
+
+            grand_total = 0.0
+            for row_idx, row in enumerate(rows or [], start=5):
+                vals = [
+                    row[0],
+                    float(row[1] or 0),
+                    float(row[2] or 0),
+                    float(row[3] or 0),
+                    float(row[4] or 0),
+                    float(row[5] or 0),
+                    float(row[6] or 0),
+                ]
+                for col_idx, val in enumerate(vals, 1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                    cell.border = thin_border
+                    if col_idx >= 2:
+                        cell.number_format = currency_fmt
+                        cell.alignment = right_align
+
+                grand_total += float(row[6] or 0)
+
+            total_row = len(rows or []) + 5
+            ws.cell(row=total_row, column=1, value="GRAND TOTAL").font = Font(bold=True)
+            cell = ws.cell(row=total_row, column=7, value=grand_total)
+            cell.font = Font(bold=True)
+            cell.number_format = currency_fmt
+            cell.alignment = right_align
+
         # ── Report: Assessment Roll ───────────────────────────────────────────
         else:
             ws.title = "Assessment Roll"
             ws["A1"] = "MUNICIPAL TREASURY OFFICE — ASSESSMENT ROLL"
             ws["A1"].font = title_font
-            ws["A2"] = f"Generated: {date_str}"
+            
+            brgy_filter = data.barangay if data.barangay and data.barangay != "ALL" else None
+            brgy_lbl = f"Barangay: {brgy_filter}" if brgy_filter else "All Barangays"
+            ws["A2"] = f"{brgy_lbl}    Generated: {date_str}"
             ws["A2"].font = Font(italic=True, size=10)
             ws.merge_cells("A1:F1")
             ws.merge_cells("A2:F2")
             ws["A1"].alignment = center_align
+            ws["A2"].alignment = center_align
 
             headers = ["TD Number", "Owner Name", "Barangay", "Kind of Property",
                        "Assessed Value", "Tax Year"]
@@ -587,6 +740,17 @@ async def export_billing_excel(
 
             result = prop_svc.get_assessment_roll(limit=10000, cursor=None, db_session=db_session)
             items = result.get("items", []) if isinstance(result, dict) else result
+
+            if brgy_filter:
+                filtered_items = []
+                for item in items:
+                    if isinstance(item, dict):
+                        b = item.get("barangay", "")
+                    else:
+                        b = item[6] if len(item) > 6 else ""
+                    if b == brgy_filter:
+                        filtered_items.append(item)
+                items = filtered_items
 
             for row_idx, item in enumerate(items or [], start=5):
                 if isinstance(item, dict):

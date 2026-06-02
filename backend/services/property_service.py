@@ -623,6 +623,7 @@ def get_assessment_roll(limit=100, cursor=None, db_session: Session = None):
         Property.location,
         Property.kind_of_property,
         Property.assessed_value,
+        Property.barangay,
     ).filter(Property.deleted_at == None)
 
     if cursor:
@@ -644,6 +645,7 @@ def get_assessment_roll(limit=100, cursor=None, db_session: Session = None):
                 "location": r[3],
                 "kind_of_property": r[4],
                 "assessed_value": float(r[5] or 0),
+                "barangay": r[6],
             }
             for r in items
         ],
