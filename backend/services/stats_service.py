@@ -1,11 +1,33 @@
 # -*- coding: utf-8 -*-
-from datetime import datetime, timezone
-from sqlalchemy import func, cast
-from sqlalchemy.types import Date
+from datetime import datetime, timezone, timedelta, time, date
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from backend.models import Property, Payment, SystemStats
-from backend.database import SessionLocal
-from utils.db_compat import today, this_month_start
+
+# Philippine Standard Time — treasury operations use local calendar days.
+_PH_TZ = timezone(timedelta(hours=8))
+_STATS_STALE_SECONDS = 300
+
+
+def _today_ph() -> date:
+    return datetime.now(_PH_TZ).date()
+
+
+def _month_start_ph() -> date:
+    d = _today_ph()
+    return d.replace(day=1)
+
+
+def _ph_day_bounds(day: date) -> tuple[datetime, datetime]:
+    start = datetime.combine(day, time.min, tzinfo=_PH_TZ).astimezone(timezone.utc)
+    end = datetime.combine(day, time.max, tzinfo=_PH_TZ).astimezone(timezone.utc)
+    return start, end
+
+
+def _effective_payment_datetime():
+    """Use date_paid when present, otherwise fall back to created_at."""
+    return func.coalesce(Payment.date_paid, Payment.created_at)
+
 
 def refresh_system_stats(db_session: Session = None):
     """
@@ -24,17 +46,19 @@ def refresh_system_stats(db_session: Session = None):
         ).scalar()
         _update_stat(db_session, "unpaid_properties", unpaid_props)
 
-        # 3. Collections Today
-        today_date = today()
+        # 3. Collections Today (Philippine calendar day, UTC-safe bounds)
+        paid_at = _effective_payment_datetime()
+        day_start, day_end = _ph_day_bounds(_today_ph())
         today_coll = db_session.query(func.sum(Payment.amount)).filter(
-            cast(Payment.date_paid, Date) == today_date
+            paid_at >= day_start,
+            paid_at <= day_end,
         ).scalar()
         _update_stat(db_session, "collections_today", float(today_coll or 0))
 
-        # 4. Collections Month
-        month_start = this_month_start()
+        # 4. Collections Month (from 1st of current PH month)
+        month_start = datetime.combine(_month_start_ph(), time.min, tzinfo=_PH_TZ).astimezone(timezone.utc)
         month_coll = db_session.query(func.sum(Payment.amount)).filter(
-            cast(Payment.date_paid, Date) >= month_start
+            paid_at >= month_start,
         ).scalar()
         _update_stat(db_session, "collections_month", float(month_coll or 0))
 
@@ -58,3 +82,19 @@ def get_cached_stat(key: str, default=0, db_session: Session = None):
     """Retrieves a pre-calculated stat from the database."""
     stat = db_session.query(SystemStats).filter(SystemStats.stat_key == key).first()
     return float(stat.stat_value) if stat else default
+
+
+def stats_are_stale(db_session: Session, max_age_seconds: int = _STATS_STALE_SECONDS) -> bool:
+    """Returns True when dashboard stats have never been computed or are older than max_age."""
+    stat = (
+        db_session.query(SystemStats)
+        .filter(SystemStats.stat_key == "total_properties")
+        .first()
+    )
+    if not stat or not stat.last_updated:
+        return True
+    updated = stat.last_updated
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - updated).total_seconds()
+    return age > max_age_seconds

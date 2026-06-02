@@ -444,6 +444,7 @@ def _handle_accrue_penalties(job: Job, payload: dict):
 def _handle_backup(job: Job, payload: dict):
     import asyncio
     from backend.services.backup_service import run_hybrid_backup
+    from fastapi import HTTPException
 
     _update_job(job.id, progress=10, progress_message="Initiating backup...")
 
@@ -451,9 +452,13 @@ def _handle_backup(job: Job, payload: dict):
     try:
         user = {"username": job.submitted_by, "role": "admin"}
         with SessionLocal() as db:
-            success, message = loop.run_until_complete(
-                run_hybrid_backup(user=user, db_session=db)
-            )
+            try:
+                success, message = loop.run_until_complete(
+                    run_hybrid_backup(user=user, db_session=db)
+                )
+            except HTTPException as exc:
+                detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+                raise Exception(detail) from exc
     finally:
         loop.close()
 

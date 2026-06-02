@@ -197,8 +197,62 @@ class DashboardApp(ctk.CTk):
             show_toast(self, "Resolving: Discarded local version. Using server data.", type="success")
 
     def trigger_backup_action(self):
-        try: system.trigger_backup(); show_toast(self, tr("dashboard.backup.success_toast"), type="info")
-        except Exception as e: ErrorDialog(self, "Backup Error", str(e))
+        try:
+            res = system.trigger_backup()
+            job_id = res.get("job_id") if isinstance(res, dict) else None
+            show_toast(
+                self,
+                res.get("message", tr("dashboard.backup.success_toast")) if isinstance(res, dict) else tr("dashboard.backup.success_toast"),
+                type="info",
+            )
+            if job_id:
+                threading.Thread(
+                    target=self._poll_backup_job,
+                    args=(job_id,),
+                    daemon=True,
+                ).start()
+        except Exception as e:
+            ErrorDialog(self, "Backup Error", str(e))
+
+    def _poll_backup_job(self, job_id: str):
+        """Poll backup job until completion and refresh dashboard status."""
+        import time
+
+        for _ in range(180):  # up to ~15 minutes at 5s intervals
+            time.sleep(5)
+            try:
+                job = system.get_job_status(job_id)
+            except Exception:
+                continue
+            if not job:
+                continue
+
+            status = job.get("status")
+            if status == "COMPLETED":
+                msg = (job.get("result") or {}).get("message", "Backup completed successfully.")
+                self.after(0, lambda m=msg: show_toast(self, m, type="success"))
+                self.after(0, self._refresh_dashboard_if_active)
+                return
+            if status == "FAILED":
+                err = job.get("error") or job.get("progress_message") or "Backup failed."
+                self.after(0, lambda e=err: ErrorDialog(self, "Backup Failed", e))
+                self.after(0, self._refresh_dashboard_if_active)
+                return
+
+        self.after(
+            0,
+            lambda: show_toast(
+                self,
+                "Backup is still running. Refresh the dashboard in a few minutes.",
+                type="warning",
+            ),
+        )
+
+    def _refresh_dashboard_if_active(self):
+        from ui.dashboard_home import DashboardHomePage
+
+        if isinstance(getattr(self, "current_page", None), DashboardHomePage):
+            self.current_page.start_data_refresh()
 
     def _handle_notification(self, data):
         self.after(0, lambda: show_toast(self, f"🔔 {data.get('title')}: {data.get('message')}", type=data.get("level", "info")))

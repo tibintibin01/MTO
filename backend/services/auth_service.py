@@ -15,12 +15,34 @@ def require_permission(permission: str):
     """
 
     def decorator(func):
+        import inspect
+
         @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Locate user object in arguments
+        async def async_wrapper(*args, **kwargs):
             user = kwargs.get("current_user") or kwargs.get("user")
             if not user and args:
-                # Many services pass user as the first or last argument
+                for arg in args:
+                    if isinstance(arg, dict) and ("role" in arg or "username" in arg):
+                        user = arg
+                        break
+
+            if not user:
+                raise HTTPException(
+                    status_code=401, detail="Authentication required for this operation"
+                )
+
+            if not has_permission(user, permission):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Access Denied: Missing required permission '{permission}'",
+                )
+
+            return await func(*args, **kwargs)
+
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            user = kwargs.get("current_user") or kwargs.get("user")
+            if not user and args:
                 for arg in args:
                     if isinstance(arg, dict) and ("role" in arg or "username" in arg):
                         user = arg
@@ -39,7 +61,9 @@ def require_permission(permission: str):
 
             return func(*args, **kwargs)
 
-        return wrapper
+        if inspect.iscoroutinefunction(func):
+            return async_wrapper
+        return sync_wrapper
 
     return decorator
 

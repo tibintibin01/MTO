@@ -136,17 +136,14 @@ def log_action(user, action, db_session: Session = None):
 
 
 def get_dashboard_summary(db_session: Session = None):
-    from backend.services.stats_service import get_cached_stat, refresh_system_stats
-    
-    total_props = int(get_cached_stat("total_properties", db_session=db_session))
-    
-    # Auto-refresh if the cache is empty (likely first run or empty table)
-    if total_props == 0:
+    from backend.services.stats_service import get_cached_stat, refresh_system_stats, stats_are_stale
+
+    # Refresh when stats are missing/stale so dashboard cards stay accurate.
+    if stats_are_stale(db_session):
         refresh_system_stats(db_session=db_session)
-        total_props = int(get_cached_stat("total_properties", db_session=db_session))
 
     summary = {
-        "total_properties": total_props,
+        "total_properties": int(get_cached_stat("total_properties", db_session=db_session)),
         "unpaid_properties": int(get_cached_stat("unpaid_properties", db_session=db_session)),
         "collections_today": float(get_cached_stat("collections_today", db_session=db_session)),
         "collections_month": float(get_cached_stat("collections_month", db_session=db_session)),

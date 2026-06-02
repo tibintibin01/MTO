@@ -219,7 +219,6 @@ class DashboardHomePage:
     def trigger_manual_backup(self):
         try:
             self.callbacks["trigger_backup"]()
-            self.parent.after(1000, self.start_data_refresh)
         except Exception as e:
             from tkinter import messagebox
             messagebox.showerror("Backup Error", str(e))
