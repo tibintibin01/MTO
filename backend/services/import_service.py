@@ -806,67 +806,66 @@ def commit_payment_import(data_list, user, db_session: Session = None):
             except Exception:
                 date_obj = datetime.now(timezone.utc)
 
-            # Per-row try — one bad row skips, doesn't kill the batch
+            # Per-row savepoint — one bad row rolls back only itself, not prior rows
             try:
-                payment = Payment(
-                    property_id=pid,
-                    amount=row["amount"],
-                    penalty=row.get("penalty", 0.0),
-                    discount=row.get("discount", 0.0),
-                    or_number=row["or_number"],
-                    tax_year=row["tax_year"],
-                    date_paid=date_obj,
-                    posted_by=row.get("posted_by", "NONE"),
-                )
-                db_session.add(payment)
-                db_session.flush()  # get payment.id
-
-                year_str = row["tax_year"]
-                year = (
-                    int(year_str)
-                    if year_str and str(year_str).strip().isdigit()
-                    else datetime.now(timezone.utc).year
-                )
-
-                billing = db_session.query(PropertyBilling).filter(
-                    PropertyBilling.property_id == pid,
-                    PropertyBilling.tax_year == year,
-                ).first()
-
-                if not billing:
-                    prop = db_session.query(Property).filter(Property.id == pid).first()
-                    av = float(prop.assessed_value or 0.0) if prop else 0.0
-                    is_prop_year = str(year) == (prop.tax_year if prop else "")
-                    billing_pen = float(row.get("penalty", 0.0))
-                    billing_disc = float(row.get("discount", 0.0))
-                    if is_prop_year and prop:
-                        billing_pen = max(billing_pen, float(prop.penalty or 0.0))
-                        billing_disc = max(billing_disc, float(prop.discount or 0.0))
-                    billing = PropertyBilling(
+                with db_session.begin_nested():
+                    payment = Payment(
                         property_id=pid,
-                        tax_year=year,
-                        assessed_value=av,
-                        penalty=billing_pen,
-                        discount=billing_disc,
-                        amount_paid=0.0,
+                        amount=row["amount"],
+                        penalty=row.get("penalty", 0.0),
+                        discount=row.get("discount", 0.0),
+                        or_number=row["or_number"],
+                        tax_year=row["tax_year"],
+                        date_paid=date_obj,
+                        posted_by=row.get("posted_by", "NONE"),
                     )
-                    db_session.add(billing)
-                    db_session.flush()
-                else:
-                    billing.penalty = float(billing.penalty or 0.0) + float(row.get("penalty", 0.0))
-                    billing.discount = float(billing.discount or 0.0) + float(row.get("discount", 0.0))
+                    db_session.add(payment)
+                    db_session.flush()  # get payment.id
 
-                from backend.services.billing_service import sync_payment_billings
-                sync_payment_billings(
-                    None,
-                    payment.id,
-                    [{"billing_id": billing.id, "tax_year": year, "applied_amount": row["amount"]}],
-                    db_session=db_session,
-                )
+                    year_str = row["tax_year"]
+                    year = (
+                        int(year_str)
+                        if year_str and str(year_str).strip().isdigit()
+                        else datetime.now(timezone.utc).year
+                    )
+
+                    billing = db_session.query(PropertyBilling).filter(
+                        PropertyBilling.property_id == pid,
+                        PropertyBilling.tax_year == year,
+                    ).first()
+
+                    if not billing:
+                        prop = db_session.query(Property).filter(Property.id == pid).first()
+                        av = float(prop.assessed_value or 0.0) if prop else 0.0
+                        is_prop_year = str(year) == (prop.tax_year if prop else "")
+                        billing_pen = float(row.get("penalty", 0.0))
+                        billing_disc = float(row.get("discount", 0.0))
+                        if is_prop_year and prop:
+                            billing_pen = max(billing_pen, float(prop.penalty or 0.0))
+                            billing_disc = max(billing_disc, float(prop.discount or 0.0))
+                        billing = PropertyBilling(
+                            property_id=pid,
+                            tax_year=year,
+                            assessed_value=av,
+                            penalty=billing_pen,
+                            discount=billing_disc,
+                            amount_paid=0.0,
+                        )
+                        db_session.add(billing)
+                        db_session.flush()
+                    else:
+                        billing.penalty = float(billing.penalty or 0.0) + float(row.get("penalty", 0.0))
+                        billing.discount = float(billing.discount or 0.0) + float(row.get("discount", 0.0))
+
+                    from backend.services.billing_service import sync_payment_billings
+                    sync_payment_billings(
+                        payment.id,
+                        [{"billing_id": billing.id, "tax_year": year, "applied_amount": row["amount"]}],
+                        db_session=db_session,
+                    )
                 inserted += 1
 
             except Exception as row_err:
-                db_session.rollback()
                 skipped += 1
                 reason = f"OR {row.get('or_number', '?')}: {str(row_err)[:120]}"
                 skip_reasons.append(reason)
@@ -894,7 +893,6 @@ def commit_payment_import(data_list, user, db_session: Session = None):
     except Exception as e:
         db_session.rollback()
         mto_logger.error(f"commit_payment_import failed: {e}")
-        raise
         raise
 
 

@@ -21,6 +21,7 @@ class ImportWizardModal(ctk.CTkToplevel):
         
         self.validated_data = []
         self.raw_report = []
+        self.validation_token = None
         self._closing = False
         
         self.setup_ui()
@@ -228,6 +229,7 @@ class ImportWizardModal(ctk.CTkToplevel):
                 if res.get("success"):
                     self.validated_data = res.get("data", [])
                     self.raw_report = res.get("report", [])
+                    self.validation_token = res.get("validation_token") or res.get("cache_token")
                     self.ui_after(0, lambda: self.show_step_2(self.raw_report, res["total_rows"], res["valid_rows"]))
                 else:
                     self.ui_after(0, lambda err=res.get("error"): self.safe_show_error("Validation Failed", err or "Unknown error"))
@@ -365,9 +367,13 @@ class ImportWizardModal(ctk.CTkToplevel):
             
         def worker():
             try:
-                res = system.commit_import(self.validated_data, mode=self.mode)
+                if self.validation_token:
+                    payload = {"validation_token": self.validation_token}
+                else:
+                    payload = self.validated_data
+                res = system.commit_import(payload, mode=self.mode)
                 if res.get("status") == "success":
-                    self.ui_after(0, lambda r=res: self.finish_import(r["imported"]))
+                    self.ui_after(0, lambda r=res: self.finish_import(r))
                 else:
                     self.ui_after(0, lambda: self.safe_show_error("Import Failed", "Database error during bulk save."))
             except Exception as e:
@@ -413,12 +419,26 @@ class ImportWizardModal(ctk.CTkToplevel):
 
         # ── Premium success dialog ────────────────────────────────────────────
         if isinstance(stats, dict):
-            inserted = stats.get("inserted", 0)
-            updated  = stats.get("updated", 0)
-            total    = inserted + updated
-            detail   = f"🆕  New records:      {inserted:,}\n🔄  Updated records:  {updated:,}"
+            if "imported" in stats and "details" not in stats and "inserted" not in stats:
+                total = int(stats.get("imported") or 0)
+                skipped = int(stats.get("skipped") or 0)
+                detail = "Records saved to the financial ledger."
+                if skipped:
+                    detail += f"\n⚠️  Skipped rows: {skipped:,}"
+            elif stats.get("details") and isinstance(stats["details"], dict):
+                inserted = int(stats["details"].get("inserted") or stats.get("imported") or 0)
+                skipped = int(stats["details"].get("skipped") or stats.get("skipped") or 0)
+                total = inserted
+                detail = f"Records saved to the financial ledger."
+                if skipped:
+                    detail += f"\n⚠️  Skipped rows: {skipped:,}"
+            else:
+                inserted = stats.get("inserted", 0)
+                updated  = stats.get("updated", 0)
+                total    = inserted + updated
+                detail   = f"🆕  New records:      {inserted:,}\n🔄  Updated records:  {updated:,}"
         else:
-            total  = stats
+            total  = int(stats or 0)
             detail = f"Records saved to the financial ledger."
 
         self._closing = True

@@ -204,7 +204,16 @@ async def commit_bulk_import(
     if mode == "payments":
         from backend.services.import_service import commit_payment_import
         res = commit_payment_import(payload, current_user, db_session=db_session)
-        return {"status": "success", "imported": res["inserted"]}
+        msg = f"{res['inserted']} payment(s) imported"
+        if res.get("skipped"):
+            msg += f", {res['skipped']} skipped"
+        return {
+            "status": "success",
+            "imported": res["inserted"],
+            "skipped": res.get("skipped", 0),
+            "message": msg,
+            "details": res,
+        }
     from backend.services.import_service import commit_property_import
     count = commit_property_import(payload, current_user, db_session=db_session)
     return {"status": "success", "imported": count}
