@@ -466,7 +466,31 @@ class SystemAdminPage:
             path = os.path.join(backup_base, "local")
 
         if not os.path.exists(path):
-            messagebox.showerror("Error", f"Backup folder not found:\n{path}")
+            # Check if we are running on a remote client
+            import urllib.parse
+            server_ip = "127.0.0.1"
+            try:
+                with open("server_config.json", "r") as config_file:
+                    import json
+                    cfg = json.load(config_file)
+                    server_url = cfg.get("server_url", "")
+                    parsed = urllib.parse.urlparse(server_url)
+                    server_ip = parsed.hostname or "127.0.0.1"
+            except Exception:
+                pass
+
+            is_remote = server_ip not in ("localhost", "127.0.0.1", "::1")
+
+            if is_remote:
+                messagebox.showinfo(
+                    "Remote Server Backup",
+                    f"The backup files are stored securely on the Server PC ({server_ip}) at:\n"
+                    f"{path}\n\n"
+                    f"Since you are on a remote Cashier PC, you cannot open this directory directly.\n"
+                    f"To view it from here, please access the files directly on the Server PC or share that folder over the office network."
+                )
+            else:
+                messagebox.showerror("Error", f"Backup folder not found:\n{path}")
             return
 
         # Open the folder in the platform's file manager
