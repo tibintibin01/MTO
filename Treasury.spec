@@ -48,6 +48,7 @@ a = Analysis(
         'api_clients.search_service',
         'api_clients.offline_manager',
         'api_clients.sync_monitor',
+        'api_clients.reports_service',
         'ui.property',
         'ui.navigation',
         'ui.reports',
