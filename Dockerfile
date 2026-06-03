@@ -20,9 +20,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
+# Install runtime dependencies (including mariadb-client for mysqldump)
 RUN apt-get update && apt-get install -y \
     libmariadb-dev-compat \
+    mariadb-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
