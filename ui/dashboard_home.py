@@ -1,4 +1,5 @@
 import threading
+import time
 import customtkinter as ctk
 from theme_manager import ModernTheme
 import api_clients.auth_service as auth
@@ -162,13 +163,25 @@ class DashboardHomePage:
         self.trend_chart.draw(months, totals, chart_type="line")
 
         b = summary.get("backup", {})
-        self.backup_labels["local"].configure(text=b.get("last_local", "Never"))
-        self.backup_labels["usb"].configure(text=b.get("last_usb", "Never"))
-        self.backup_labels["cloud"].configure(text=b.get("last_cloud", "Never"))
-        v = b.get("last_verify", "Unknown")
-        upper_val = v.upper()
-        v_color = ModernTheme.SUCCESS if ("SUCCESS" in upper_val or ":" in upper_val or "OK" in upper_val) else "#e74c3c" if "FAILED" in upper_val else "gray"
-        self.backup_labels["verify"].configure(text=v, text_color=v_color)
+        def backup_color(value):
+            upper_val = str(value or "").upper()
+            if b.get("is_running"):
+                return "#f59e0b"
+            if any(word in upper_val for word in ("FAILED", "ERROR", "ISSUE")):
+                return "#e74c3c"
+            if any(word in upper_val for word in ("SUCCESS", "OK")) or ":" in upper_val:
+                return ModernTheme.SUCCESS
+            return "gray"
+
+        for key, fallback in (
+            ("local", "Never"),
+            ("usb", "Never"),
+            ("cloud", "Never"),
+            ("verify", "Unknown"),
+        ):
+            field = "last_verify" if key == "verify" else f"last_{key}"
+            value = b.get(field, fallback)
+            self.backup_labels[key].configure(text=value, text_color=backup_color(value))
 
         if self.backup_btn:
             if b.get("is_running"): self.backup_btn.configure(state="disabled", text="BACKUP IN PROGRESS...")
@@ -217,8 +230,52 @@ class DashboardHomePage:
         self.cache_lbl.pack(side="right")
 
     def trigger_manual_backup(self):
-        try:
-            self.callbacks["trigger_backup"]()
-        except Exception as e:
-            from tkinter import messagebox
-            messagebox.showerror("Backup Error", str(e))
+        if self.backup_btn and self.backup_btn.cget("state") == "disabled":
+            return
+
+        if self.backup_btn:
+            self.backup_btn.configure(state="disabled", text="STARTING BACKUP...")
+
+        def run():
+            try:
+                res = self.callbacks["trigger_backup"]() or {}
+                job_id = res.get("job_id")
+                if not job_id:
+                    self.parent.after(0, self.start_data_refresh)
+                    return
+
+                deadline = time.time() + 900
+                while time.time() < deadline:
+                    job = system.get_job_status(job_id) or {}
+                    status = str(job.get("status", "")).upper()
+                    progress = int(job.get("progress") or 0)
+
+                    if self.backup_btn:
+                        self.parent.after(
+                            0,
+                            lambda p=progress: self.backup_btn.configure(
+                                state="disabled",
+                                text=f"BACKUP {p}%..."
+                            )
+                        )
+
+                    if status == "COMPLETED":
+                        self.parent.after(0, self.start_data_refresh)
+                        return
+                    if status == "FAILED":
+                        msg = job.get("error") or job.get("progress_message") or "Backup failed."
+                        self.parent.after(0, lambda m=msg: ErrorDialog(self.parent.winfo_toplevel(), "Backup Failed", m))
+                        self.parent.after(0, self.start_data_refresh)
+                        return
+
+                    time.sleep(1.5)
+
+                self.parent.after(0, lambda: ErrorDialog(self.parent.winfo_toplevel(), "Backup Timeout", "Backup did not finish within 15 minutes."))
+                self.parent.after(0, self.start_data_refresh)
+            except Exception as e:
+                from tkinter import messagebox
+                err = str(e)
+                self.parent.after(0, lambda: messagebox.showerror("Backup Error", err))
+                self.parent.after(0, self.start_data_refresh)
+
+        threading.Thread(target=run, daemon=True).start()

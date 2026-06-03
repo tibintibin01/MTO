@@ -14,12 +14,9 @@ from utils.config import config as mto_config
 from utils.secrets_manager import secrets
 from utils.logger import mto_logger
 
-# Resolve backup directory from environment or fall back to a relative path
-# that works in both Windows dev and Docker/Linux deployments.
-BACKUP_BASE_DIR = os.getenv(
-    "MTO_BACKUP_DIR",
-    os.path.join(os.path.expanduser("~"), "mto_backups"),
-)
+# Resolve backup directory from config so .env values are honored. The config
+# field reads MTO_BACKUP_DIR because MTOSettings uses the MTO_ env prefix.
+BACKUP_BASE_DIR = mto_config.BACKUP_DIR
 LOCAL_DIR = os.path.join(BACKUP_BASE_DIR, "local")
 USB_SECRET_FILE = "revenue_system_backup_drive.txt"
 
@@ -118,6 +115,10 @@ def get_backup_status(db_session: Session = None):
             "last_verify": "Unknown",
             "last_checksum": "None",
             "health": "UNKNOWN",
+            "last_status": "UNKNOWN",
+            "last_file": None,
+            "backup_dir": BACKUP_BASE_DIR,
+            "local_dir": LOCAL_DIR,
         }
 
         if latest:
@@ -136,17 +137,21 @@ def get_backup_status(db_session: Session = None):
                 if raw_health in ("OK", "Success", "SUCCESS") or "Success" in raw_health
                 else raw_health.replace("Issue: ", "").strip()
             )
-            # Determine USB/Cloud status from the backup status field
-            usb_status   = ts_str if latest.status in ("SYNCED", "LOCAL_ONLY", "SUCCESS", "OK") else "Never"
-            cloud_status = ts_str if latest.status == "SYNCED" else "Never"
+            status = (latest.status or "UNKNOWN").upper()
+            local_statuses = {"LOCAL_ONLY", "USB_ONLY", "CLOUD_ONLY", "SYNCED", "SUCCESS", "OK", "COMPLETED"}
+            local_status = ts_str if status in local_statuses else f"FAILED {ts_str}"
+            usb_status = ts_str if status in {"USB_ONLY", "SYNCED"} else "Not found"
+            cloud_status = ts_str if status in {"CLOUD_ONLY", "SYNCED"} else "Disabled"
 
             result.update({
-                "last_local":    ts_str,
+                "last_local":    local_status,
                 "last_usb":      usb_status,
                 "last_cloud":    cloud_status,
                 "last_verify":   health_display,
                 "last_checksum": latest.checksum or "None",
                 "health":        raw_health,
+                "last_status":   status,
+                "last_file":     latest.file_path,
             })
 
         return result
@@ -234,6 +239,7 @@ async def run_hybrid_backup(user=None, db_session: Session = None):
 
         # 4. USB Mirroring
         await report_progress(4, 70, "Syncing to USB Drive...")
+        usb_success = False
         usb_path = await asyncio.to_thread(_find_usb_drive)
         if usb_path:
             def sync_usb():
@@ -243,6 +249,7 @@ async def run_hybrid_backup(user=None, db_session: Session = None):
                 shutil.copy2(local_path + ".sha256", os.path.join(usb_dest, filename + ".sha256"))
                 _rotate_backups(usb_dest, keep=14)
             await asyncio.to_thread(sync_usb)
+            usb_success = True
 
         # 5. Cloud Sync
         await report_progress(5, 90, "Syncing to Cloud...")
@@ -252,7 +259,14 @@ async def run_hybrid_backup(user=None, db_session: Session = None):
                 cloud_success = True
                 break
 
-        final_status = "SYNCED" if cloud_success else "LOCAL_ONLY"
+        if cloud_success and usb_success:
+            final_status = "SYNCED"
+        elif cloud_success:
+            final_status = "CLOUD_ONLY"
+        elif usb_success:
+            final_status = "USB_ONLY"
+        else:
+            final_status = "LOCAL_ONLY"
         await report_progress(6, 100, "Finalizing backup logs...")
         return True, "Hybrid backup completed successfully."
 

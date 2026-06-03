@@ -220,7 +220,7 @@ def export_report_excel(report_type, month="All", year="All", barangay=None):
     return path
 
 
-def get_compliant_accounts(barangay=None, limit=100):
+def _get_compliant_accounts_first_page(barangay=None, limit=100):
     """
     Returns properties with zero outstanding balance across all billing years.
     Optionally filtered by barangay.
@@ -248,6 +248,48 @@ def get_compliant_accounts(barangay=None, limit=100):
             for item in result["items"]
         ]
     return []
+
+
+def get_compliant_accounts(barangay=None, limit=200):
+    """
+    Returns all compliant properties, following the backend cursor pages.
+    The UI expects tuples:
+      (id, td_number, owner_name, barangay, kind, total_paid, years_covered, last_or, last_paid)
+    """
+    rows = []
+    cursor = None
+
+    while True:
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if barangay and barangay != "ALL":
+            params["barangay"] = barangay
+
+        result = api_request("GET", "/billing/compliant", params=params)
+        if not isinstance(result, dict) or "items" not in result:
+            break
+
+        rows.extend(
+            (
+                item.get("id"),
+                item.get("td_number"),
+                item.get("owner_name"),
+                item.get("barangay", "-"),
+                item.get("kind_of_property", "-"),
+                item.get("total_paid", 0),
+                item.get("years_covered", 0),
+                item.get("last_or") or "-",
+                item.get("last_paid") or "-",
+            )
+            for item in result["items"]
+        )
+
+        cursor = result.get("next_cursor")
+        if not result.get("has_more") or not cursor:
+            break
+
+    return rows
 
 
 def get_compliant_summary():

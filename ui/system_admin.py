@@ -5,6 +5,7 @@ from ui.users import UserAccessPage
 from ui.logs import AuditLogsPage
 from ui.recycle import RecycleBinPage
 from ui.batch_delete_payments import BatchDeletePaymentsModal
+from ui_components import ErrorDialog, show_toast
 from theme_manager import ModernTheme
 from utils import tr
 
@@ -342,11 +343,16 @@ class SystemAdminPage:
             status = system_svc.get_backup_verification_status()
             if status:
                 for key, lbl in self.status_labels.items():
-                    val = status.get(key, "Unknown")
-                    # Highlight green for success/timestamps, orange for unknown/failed
-                    # Highlight green for SUCCESS/OK/timestamps, orange for failures
+                    val = str(status.get(key, "Unknown") or "Unknown")
                     upper_val = val.upper()
-                    color = ModernTheme.SUCCESS if ("SUCCESS" in upper_val or ":" in upper_val or "OK" in upper_val) else ModernTheme.WARNING
+                    if status.get("is_running"):
+                        color = "#f59e0b"
+                    elif any(word in upper_val for word in ("FAILED", "ERROR", "ISSUE")):
+                        color = "#e74c3c"
+                    elif any(word in upper_val for word in ("SUCCESS", "OK")) or ":" in upper_val:
+                        color = ModernTheme.SUCCESS
+                    else:
+                        color = "#f59e0b"
                     lbl.configure(text=val, text_color=color)
         except Exception as e:
             print(f"DEBUG: Status update failed: {e}")
@@ -358,6 +364,7 @@ class SystemAdminPage:
 
     def trigger_backup(self):
         import threading
+        import time
 
         if self.backup_btn.cget("state") == "disabled":
             return
@@ -370,8 +377,43 @@ class SystemAdminPage:
             try:
                 import api_clients.system_service as system_svc
 
-                # Call the API endpoint instead of direct backend service
                 res = system_svc.trigger_backup()
+                job_id = res.get("job_id")
+
+                if job_id:
+                    deadline = time.time() + 900
+                    while time.time() < deadline:
+                        job = system_svc.get_job_status(job_id) or {}
+                        status = str(job.get("status", "")).upper()
+                        progress = int(job.get("progress") or 0)
+                        progress_msg = job.get("progress_message") or "Backup queued..."
+
+                        if self.container.winfo_exists():
+                            self.container.after(
+                                0,
+                                lambda p=progress, m=progress_msg: self.backup_btn.configure(
+                                    text=f"BACKUP {p}% - {m[:38]}"
+                                )
+                            )
+
+                        if status == "COMPLETED":
+                            result = job.get("result") or {}
+                            msg = result.get("message") or job.get("progress_message") or "Backup completed successfully."
+                            if self.container.winfo_exists():
+                                self.container.after(0, lambda: self._finalize_backup(True, msg))
+                            return
+
+                        if status == "FAILED":
+                            msg = job.get("error") or job.get("progress_message") or "Backup failed."
+                            if self.container.winfo_exists():
+                                self.container.after(0, lambda: self._finalize_backup(False, msg))
+                            return
+
+                        time.sleep(1.5)
+
+                    if self.container.winfo_exists():
+                        self.container.after(0, lambda: self._finalize_backup(False, "Backup did not finish within 15 minutes. Check System Health."))
+                    return
 
                 # Check if the UI still exists before updating
                 if self.container.winfo_exists():
@@ -401,7 +443,6 @@ class SystemAdminPage:
         self.update_status_display()
         if success:
             show_toast(self.container.winfo_toplevel(), tr("admin.db.success"), type="success")
-            self.open_backup_folder()
         else:
             ErrorDialog(self.container.winfo_toplevel(), tr("admin.db.failed"), tr("admin.db.failed_msg").replace("{msg}", msg))
 
@@ -410,13 +451,19 @@ class SystemAdminPage:
         import subprocess
         import sys
 
-        # Read from the same env var used by backup_service so the path
-        # is consistent regardless of where the desktop app is installed.
-        backup_base = os.getenv(
-            "MTO_BACKUP_DIR",
-            os.path.join(os.path.expanduser("~"), "mto_backups"),
-        )
-        path = os.path.join(backup_base, "local")
+        try:
+            import api_clients.system_service as system_svc
+            status = system_svc.get_backup_verification_status() or {}
+            path = status.get("local_dir")
+        except Exception:
+            path = None
+
+        if not path:
+            backup_base = os.getenv(
+                "MTO_BACKUP_DIR",
+                os.path.join(os.path.expanduser("~"), "mto_backups"),
+            )
+            path = os.path.join(backup_base, "local")
 
         if not os.path.exists(path):
             messagebox.showerror("Error", f"Backup folder not found:\n{path}")
@@ -434,11 +481,19 @@ class SystemAdminPage:
         from tkinter import filedialog, simpledialog
         import os
 
-        backup_base = os.getenv(
-            "MTO_BACKUP_DIR",
-            os.path.join(os.path.expanduser("~"), "mto_backups"),
-        )
-        initial_dir = os.path.join(backup_base, "local")
+        try:
+            import api_clients.system_service as system_svc
+            status = system_svc.get_backup_verification_status() or {}
+            initial_dir = status.get("local_dir")
+        except Exception:
+            initial_dir = None
+
+        if not initial_dir:
+            backup_base = os.getenv(
+                "MTO_BACKUP_DIR",
+                os.path.join(os.path.expanduser("~"), "mto_backups"),
+            )
+            initial_dir = os.path.join(backup_base, "local")
 
         # 1. Pick the file
         file_path = filedialog.askopenfilename(

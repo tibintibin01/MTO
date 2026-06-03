@@ -217,8 +217,8 @@ class CompliantDashboardPage:
         self._sum_tree.tag_configure("evenrow", background=_ROW_EVEN, foreground=_ROW_FG)
         self._sum_tree.tag_configure(
             "all_row",
-            background=_ROW_SEL,
-            foreground="#e0f2fe",
+            background=_ROW_ODD,
+            foreground=_ROW_FG,
             font=("Inter", 11, "bold"),
         )
 
@@ -389,6 +389,7 @@ class CompliantDashboardPage:
                 iid=row.get("barangay", str(i)),
             )
 
+        self._sync_summary_selection()
         self._apply_search()
 
     def _apply_search(self):
@@ -458,8 +459,20 @@ class CompliantDashboardPage:
         if not sel:
             return
         iid = sel[0]
-        self._selected_barangay = "ALL" if iid == "__ALL__" else iid
+        selected = "ALL" if iid == "__ALL__" else iid
+        if selected == self._selected_barangay:
+            return
+        self._selected_barangay = selected
         self._load_all()
+
+    def _sync_summary_selection(self):
+        iid = "__ALL__" if self._selected_barangay == "ALL" else self._selected_barangay
+        if iid not in self._sum_tree.get_children():
+            iid = "__ALL__"
+            self._selected_barangay = "ALL"
+        self._sum_tree.selection_set(iid)
+        self._sum_tree.focus(iid)
+        self._sum_tree.see(iid)
 
     # ── CSV export ────────────────────────────────────────────────────────────
 

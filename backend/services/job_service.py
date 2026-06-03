@@ -650,7 +650,7 @@ def _check_scheduled_backup():
         from backend.models import BackupHistory, Job
         with SessionLocal() as db:
             recent = db.query(BackupHistory).filter(
-                BackupHistory.status.in_(["LOCAL_ONLY", "SYNCED", "COMPLETED"]),
+                BackupHistory.status.in_(["LOCAL_ONLY", "USB_ONLY", "CLOUD_ONLY", "SYNCED", "COMPLETED"]),
                 BackupHistory.timestamp >= window_start,
                 BackupHistory.filename != "__lock__",
             ).first()

@@ -48,9 +48,11 @@ class MTOSettings(BaseSettings):
     # --- SCHEDULED BACKUP ---
     # BACKUP_SCHEDULE controls automatic backup frequency.
     # Values: disabled | daily | weekly
-    # BACKUP_SCHEDULE_HOUR: 0–23, hour of day (local server time) to run.
-    # BACKUP_SCHEDULE_MINUTE: 0–59, minute within the hour (default 30).
-    # BACKUP_SCHEDULE_DAY_OF_WEEK: 0=Monday … 6=Sunday (only used for weekly).
+    # BACKUP_DIR controls where local .sql backups are stored.
+    # BACKUP_SCHEDULE_HOUR: 0-23, hour of day (local server time) to run.
+    # BACKUP_SCHEDULE_MINUTE: 0-59, minute within the hour (default 30).
+    # BACKUP_SCHEDULE_DAY_OF_WEEK: 0=Monday ... 6=Sunday (only used for weekly).
+    BACKUP_DIR: str = Field(default_factory=lambda: os.path.join(os.path.expanduser("~"), "mto_backups"))
     BACKUP_SCHEDULE: str = Field(default="disabled")
     BACKUP_SCHEDULE_HOUR: int = Field(default=16, ge=0, le=23)
     BACKUP_SCHEDULE_MINUTE: int = Field(default=30, ge=0, le=59)
@@ -77,7 +79,7 @@ class MTOSettings(BaseSettings):
                 raise ValueError("MTO_DB_USER cannot be empty in production mode.")
             if not self.DB_NAME:
                 raise ValueError("MTO_DB_NAME cannot be empty in production mode.")
-            # Reject root — the application must never run as the DB superuser.
+            # Reject root - the application must never run as the DB superuser.
             if self.DB_USER.strip().lower() == "root":
                 raise ValueError(
                     "MTO_DB_USER=root is not allowed in production. "
