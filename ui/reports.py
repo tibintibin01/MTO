@@ -9,6 +9,8 @@ from theme_manager import ModernTheme
 import api_clients.billing_service as billing
 import api_clients.property_service as prop
 import api_clients.system_service as system
+import api_clients.reports_service as reports_api
+from ui_components import show_toast
 from utils import format_curr, tr
 
 
@@ -87,6 +89,22 @@ class ReportsPage:
             filter_fr, text=tr("reports.collection.btn_generate"), command=self.generate_collection_report,
             font=ModernTheme.BUTTON, fg_color=ModernTheme.SUCCESS
         ).pack(side="left", padx=10)
+
+        # 🏦 Manage Bank Deposits button
+        self.manage_dep_btn = ctk.CTkButton(
+            filter_fr, text="🏦 Manage Deposits", command=self.open_manage_deposits,
+            font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY
+        )
+        self.manage_dep_btn.pack(side="left", padx=10)
+
+        # 📊 Export COA RCD button
+        self.export_rcd_btn = ctk.CTkButton(
+            filter_fr, text="📊 Export COA RCD (Excel)", command=self.open_export_signatories,
+            font=ModernTheme.BUTTON, fg_color=ModernTheme.WARNING
+        )
+        role = str(self.user.get("role", "")).strip().lower() if isinstance(self.user, dict) else ""
+        if role == "admin":
+            self.export_rcd_btn.pack(side="left", padx=10)
 
         # ── Pagination state ──────────────────────────────────────────────────
         self._coll_page_size = 100
@@ -682,3 +700,332 @@ class ReportsPage:
             btn,
             lambda: billing.export_report_excel("receivables_by_barangay", year=year_str),
         )
+
+    def open_manage_deposits(self):
+        start_date, end_date = self.get_selected_date_range()
+        ManageDepositsModal(self.container, start_date, end_date)
+
+    def open_export_signatories(self):
+        default_officer = self.user.get("full_name", "") if isinstance(self.user, dict) else ""
+        SignatoriesModal(self.container, default_officer, self.export_coa_rcd)
+
+    def export_coa_rcd(self, liquidating_officer, treasurer):
+        start_date, end_date = self.get_selected_date_range()
+        self._show_loading()
+        
+        self.export_rcd_btn.configure(state="disabled", text="⏳ Exporting...")
+        
+        def worker():
+            try:
+                path = reports_api.download_coa_rcd(
+                    start_date=start_date,
+                    end_date=end_date,
+                    liquidating_officer=liquidating_officer,
+                    treasurer=treasurer
+                )
+                
+                def save_file():
+                    filename = f"COA_RCD_{start_date}_to_{end_date}.xlsx"
+                    dest = filedialog.asksaveasfilename(
+                        title="Save COA RCD Report",
+                        initialfile=filename,
+                        defaultextension=".xlsx",
+                        filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+                    )
+                    if dest:
+                        shutil.copy2(path, dest)
+                        if messagebox.askyesno("Export Successful", f"COA RCD report saved to:\n{dest}\n\nOpen it now?"):
+                            self._open_file(dest)
+                            
+                self.container.after(0, save_file)
+            except Exception as e:
+                self.container.after(0, lambda: messagebox.showerror("Export Failed", str(e)))
+            finally:
+                self.container.after(0, lambda: [
+                    self._hide_loading(),
+                    self.export_rcd_btn.configure(state="normal", text="📊 Export COA RCD (Excel)")
+                ])
+                
+        threading.Thread(target=worker, daemon=True).start()
+
+    def get_selected_date_range(self):
+        month = self.month_cb.get()
+        year = self.year_cb.get()
+        
+        import calendar
+        now = datetime.now()
+        y = int(year) if year != "All" else now.year
+        
+        if month == "All":
+            start_date = f"{y}-01-01"
+            end_date = f"{y}-12-31"
+        else:
+            m = int(month)
+            _, last_day = calendar.monthrange(y, m)
+            start_date = f"{y}-{m:02d}-01"
+            end_date = f"{y}-{m:02d}-{last_day:02d}"
+            
+        return start_date, end_date
+
+
+class SignatoriesModal(ctk.CTkToplevel):
+    def __init__(self, parent, default_officer, callback):
+        super().__init__(parent)
+        self.title("RCD Signatories")
+        self.geometry("400x320")
+        self.resizable(False, False)
+        self.callback = callback
+        
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self.attributes("-topmost", True)
+        
+        self.update_idletasks()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"+{(sw-400)//2}+{(sh-320)//2}")
+        
+        self.setup_ui(default_officer)
+        
+    def setup_ui(self, default_officer):
+        self.configure(fg_color="#1a1a2e")
+        ctk.CTkFrame(self, fg_color=ModernTheme.PRIMARY, height=4, corner_radius=0).pack(fill="x")
+        
+        body = ctk.CTkFrame(self, fg_color="#1a1a2e")
+        body.pack(fill="both", expand=True, padx=30, pady=24)
+        
+        ctk.CTkLabel(body, text="COA RCD Signatories", font=("Segoe UI", 14, "bold"), text_color="white").pack(anchor="w", pady=(0, 6))
+        ctk.CTkLabel(body, text="Enter the names of the signing officers for this report.", font=("Segoe UI", 11), text_color="#a0aec0").pack(anchor="w", pady=(0, 16))
+        
+        ctk.CTkLabel(body, text="Liquidating Officer", font=("Segoe UI", 11, "bold"), text_color="#a0aec0").pack(anchor="w")
+        self.officer_ent = ctk.CTkEntry(body, height=36, fg_color="#2d2d4e", border_color="#4a4a6e", text_color="white")
+        self.officer_ent.insert(0, default_officer)
+        self.officer_ent.pack(fill="x", pady=(4, 12))
+        
+        ctk.CTkLabel(body, text="Municipal Treasurer", font=("Segoe UI", 11, "bold"), text_color="#a0aec0").pack(anchor="w")
+        self.treasurer_ent = ctk.CTkEntry(body, height=36, fg_color="#2d2d4e", border_color="#4a4a6e", text_color="white")
+        self.treasurer_ent.pack(fill="x", pady=(4, 16))
+        
+        btn_fr = ctk.CTkFrame(body, fg_color="transparent")
+        btn_fr.pack(fill="x")
+        
+        ctk.CTkButton(btn_fr, text="Cancel", command=self.destroy,
+                      fg_color="#2d2d4e", hover_color="#3d3d5e", text_color="#a0aec0",
+                      height=38, width=100, font=("Segoe UI", 11, "bold"), corner_radius=8).pack(side="left")
+                      
+        ctk.CTkButton(btn_fr, text="Export Excel", command=self.on_export,
+                      fg_color=ModernTheme.SUCCESS, hover_color="#1e7e34", text_color="white",
+                      height=38, width=150, font=("Segoe UI", 11, "bold"), corner_radius=8).pack(side="right")
+                      
+    def on_export(self):
+        officer = self.officer_ent.get().strip()
+        treasurer = self.treasurer_ent.get().strip()
+        if not officer or not treasurer:
+            messagebox.showerror("Error", "Both fields are required.")
+            return
+        self.callback(officer, treasurer)
+        self.destroy()
+
+
+class ManageDepositsModal(ctk.CTkToplevel):
+    def __init__(self, parent, start_date: str, end_date: str):
+        super().__init__(parent)
+        self.title("Manage Bank Deposits")
+        self.geometry("750x550")
+        self.resizable(False, False)
+        self.start_date = start_date
+        self.end_date = end_date
+        
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self.attributes("-topmost", True)
+        
+        self.update_idletasks()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"+{(sw-750)//2}+{(sh-550)//2}")
+        
+        self.setup_ui()
+        self.refresh_deposits()
+        
+    def setup_ui(self):
+        self.configure(fg_color="#1a1a2e")
+        ctk.CTkFrame(self, fg_color=ModernTheme.PRIMARY, height=4, corner_radius=0).pack(fill="x")
+        
+        main_fr = ctk.CTkFrame(self, fg_color="transparent")
+        main_fr.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        title_fr = ctk.CTkFrame(main_fr, fg_color="transparent")
+        title_fr.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(title_fr, text="🏦 Bank Deposit Slips", font=("Segoe UI", 16, "bold"), text_color="white").pack(anchor="w")
+        ctk.CTkLabel(title_fr, text=f"Date Range: {self.start_date} to {self.end_date}", font=("Segoe UI", 11), text_color="#a0aec0").pack(anchor="w")
+        
+        content_fr = ctk.CTkFrame(main_fr, fg_color="transparent")
+        content_fr.pack(fill="both", expand=True, pady=10)
+        content_fr.grid_columnconfigure(0, weight=1)
+        content_fr.grid_columnconfigure(1, weight=2)
+        content_fr.grid_rowconfigure(0, weight=1)
+        
+        # --- LEFT: FORM ---
+        form_fr = ctk.CTkFrame(content_fr, fg_color="#252538", corner_radius=8)
+        form_fr.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        
+        ctk.CTkLabel(form_fr, text="Log New Deposit", font=("Segoe UI", 12, "bold"), text_color="white").pack(anchor="w", padx=15, pady=(15, 10))
+        
+        ctk.CTkLabel(form_fr, text="Date Deposited (YYYY-MM-DD)", font=("Segoe UI", 10), text_color="#a0aec0").pack(anchor="w", padx=15)
+        self.date_ent = ctk.CTkEntry(form_fr, height=32, fg_color="#1a1a2e", border_color="#4a4a6e", text_color="white")
+        self.date_ent.insert(0, datetime.now().strftime("%Y-%m-%d"))
+        self.date_ent.pack(fill="x", padx=15, pady=(4, 10))
+        
+        ctk.CTkLabel(form_fr, text="Bank Name / Branch", font=("Segoe UI", 10), text_color="#a0aec0").pack(anchor="w", padx=15)
+        self.bank_ent = ctk.CTkEntry(form_fr, placeholder_text="e.g. Landbank", height=32, fg_color="#1a1a2e", border_color="#4a4a6e", text_color="white")
+        self.bank_ent.pack(fill="x", padx=15, pady=(4, 10))
+        
+        ctk.CTkLabel(form_fr, text="Reference / Slip No.", font=("Segoe UI", 10), text_color="#a0aec0").pack(anchor="w", padx=15)
+        self.ref_ent = ctk.CTkEntry(form_fr, placeholder_text="e.g. DS-12345", height=32, fg_color="#1a1a2e", border_color="#4a4a6e", text_color="white")
+        self.ref_ent.pack(fill="x", padx=15, pady=(4, 10))
+        
+        ctk.CTkLabel(form_fr, text="Amount (₱)", font=("Segoe UI", 10), text_color="#a0aec0").pack(anchor="w", padx=15)
+        self.amt_ent = ctk.CTkEntry(form_fr, placeholder_text="e.g. 50000.00", height=32, fg_color="#1a1a2e", border_color="#4a4a6e", text_color="white")
+        self.amt_ent.pack(fill="x", padx=15, pady=(4, 15))
+        
+        ctk.CTkButton(form_fr, text="➕ Save Deposit", command=self.save_deposit,
+                      fg_color=ModernTheme.PRIMARY, hover_color="#2c6ea1", text_color="white",
+                      height=36, font=("Segoe UI", 11, "bold")).pack(fill="x", padx=15, pady=(0, 15))
+        
+        # --- RIGHT: TABLE ---
+        table_container = ctk.CTkFrame(content_fr, fg_color="#252538", corner_radius=8)
+        table_container.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+        
+        ctk.CTkLabel(table_container, text="Existing Deposits", font=("Segoe UI", 12, "bold"), text_color="white").pack(anchor="w", padx=15, pady=(15, 10))
+        
+        tree_fr = ctk.CTkFrame(table_container, fg_color="transparent")
+        tree_fr.pack(fill="both", expand=True, padx=15, pady=(0, 10))
+        
+        scrolly = ttk.Scrollbar(tree_fr, orient="vertical")
+        scrolly.pack(side="right", fill="y")
+        
+        cols = ("ID", "Date", "Bank", "Ref No", "Amount", "Logged By")
+        self.tree = ttk.Treeview(tree_fr, columns=cols, show="headings", yscrollcommand=scrolly.set, height=10)
+        scrolly.configure(command=self.tree.yview)
+        
+        self.tree.heading("ID", text="ID")
+        self.tree.heading("Date", text="DATE")
+        self.tree.heading("Bank", text="BANK")
+        self.tree.heading("Ref No", text="REF NO")
+        self.tree.heading("Amount", text="AMOUNT")
+        self.tree.heading("Logged By", text="BY")
+        
+        self.tree.column("ID", width=40, anchor="center")
+        self.tree.column("Date", width=90, anchor="center")
+        self.tree.column("Bank", width=120, anchor="w")
+        self.tree.column("Ref No", width=90, anchor="center")
+        self.tree.column("Amount", width=100, anchor="right")
+        self.tree.column("Logged By", width=80, anchor="center")
+        
+        self.tree.pack(fill="both", expand=True)
+        
+        self.tree.tag_configure("oddrow", background="#2b2b2b", foreground="white")
+        self.tree.tag_configure("evenrow", background="#333333", foreground="white")
+        
+        btn_fr = ctk.CTkFrame(table_container, fg_color="transparent")
+        btn_fr.pack(fill="x", padx=15, pady=(0, 15))
+        
+        ctk.CTkButton(btn_fr, text="🗑️ Delete Selected", command=self.delete_deposit,
+                      fg_color="#c0392b", hover_color="#962d22", text_color="white",
+                      width=150, height=32, font=("Segoe UI", 11, "bold")).pack(side="right")
+
+        close_fr = ctk.CTkFrame(main_fr, fg_color="transparent")
+        close_fr.pack(fill="x", pady=(10, 0))
+        ctk.CTkButton(close_fr, text="Close", command=self.destroy,
+                      fg_color="#2d2d4e", hover_color="#3d3d5e", text_color="#a0aec0",
+                      width=100, height=36, font=("Segoe UI", 11, "bold"), corner_radius=8).pack(side="right")
+                      
+    def refresh_deposits(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+            
+        def worker():
+            try:
+                data = reports_api.list_bank_deposits(self.start_date, self.end_date)
+                self.after(0, lambda: self._update_table(data))
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror("Error", f"Failed to load deposits: {e}"))
+                
+        threading.Thread(target=worker, daemon=True).start()
+        
+    def _update_table(self, data):
+        for i, d in enumerate(data):
+            tag = "evenrow" if i % 2 == 0 else "oddrow"
+            self.tree.insert("", "end", values=(
+                d["id"],
+                d["date_deposited"],
+                d["bank_name"],
+                d["reference_number"],
+                format_curr(d["amount"]),
+                d["deposited_by"]
+            ), tags=(tag,))
+            
+    def save_deposit(self):
+        date_val = self.date_ent.get().strip()
+        bank_val = self.bank_ent.get().strip()
+        ref_val = self.ref_ent.get().strip()
+        amt_val = self.amt_ent.get().strip()
+        
+        if not date_val or not bank_val or not ref_val or not amt_val:
+            messagebox.showerror("Error", "All fields are required.")
+            return
+            
+        try:
+            amt = float(amt_val)
+            if amt <= 0:
+                raise ValueError()
+        except ValueError:
+            messagebox.showerror("Error", "Amount must be a positive number.")
+            return
+            
+        try:
+            datetime.strptime(date_val, "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror("Error", "Invalid Date format. Use YYYY-MM-DD.")
+            return
+            
+        def worker():
+            try:
+                reports_api.log_bank_deposit(date_val, bank_val, ref_val, amt)
+                self.after(0, lambda: [
+                    self.bank_ent.delete(0, tk.END),
+                    self.ref_ent.delete(0, tk.END),
+                    self.amt_ent.delete(0, tk.END),
+                    self.refresh_deposits(),
+                    show_toast(self.winfo_toplevel(), "Deposit logged successfully.", type="success")
+                ])
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror("Error", str(e)))
+                
+        threading.Thread(target=worker, daemon=True).start()
+        
+    def delete_deposit(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showerror("Error", "Please select a deposit slip to delete.")
+            return
+            
+        vals = self.tree.item(sel[0])["values"]
+        dep_id = int(vals[0])
+        bank = vals[2]
+        ref = vals[3]
+        
+        if not messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete deposit Ref {ref} to {bank}?"):
+            return
+            
+        def worker():
+            try:
+                reports_api.delete_bank_deposit(dep_id)
+                self.after(0, lambda: [
+                    self.refresh_deposits(),
+                    show_toast(self.winfo_toplevel(), "Deposit deleted.", type="info")
+                ])
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror("Error", str(e)))
+                
+        threading.Thread(target=worker, daemon=True).start()
+

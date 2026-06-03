@@ -159,7 +159,7 @@ def create_app() -> FastAPI:
     app.middleware("http")(security_headers_middleware)
 
     # Import and Include Routers
-    from backend.routes import auth, users, properties, payments, billing, system, public, jobs
+    from backend.routes import auth, users, properties, payments, billing, system, public, jobs, reports
     app.include_router(auth.router)
     app.include_router(users.router)
     app.include_router(properties.router)
@@ -168,6 +168,7 @@ def create_app() -> FastAPI:
     app.include_router(system.router)
     app.include_router(public.router)
     app.include_router(jobs.router)
+    app.include_router(reports.router)
 
     # Serve static files (analytics dashboard HTML, etc.)
     # Must be mounted after all API routers so API paths take precedence.

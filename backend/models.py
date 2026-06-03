@@ -346,6 +346,18 @@ class RetentionLog(Base):
     notes = Column(Text, nullable=True)
     executed_at = Column(DateTime, nullable=False)
 
+class BankDeposit(Base):
+    __tablename__ = "bank_deposits"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date_deposited = Column(DateTime, nullable=False, index=True)
+    bank_name = Column(String(255), nullable=False)
+    reference_number = Column(String(255), nullable=False)
+    amount = Column(DECIMAL(14, 2), nullable=False, default=0.00)
+    deposited_by = Column(String(150), nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+
+
 # --- SECURE GOVERNMENT COMPLIANCE: AUDIT LOG IMMUTABILITY ---
 from sqlalchemy import event
 

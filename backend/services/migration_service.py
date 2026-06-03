@@ -161,6 +161,21 @@ MIGRATIONS = [
             # Enforce database-level data integrity preventing duplicate billing records per property and tax year
             "ALTER TABLE property_billings ADD UNIQUE KEY IF NOT EXISTS uq_property_billings_property_tax_year (property_id, tax_year);"
         )
+    },
+    {
+        "id": "create_bank_deposits_table",
+        "sql": (
+            "CREATE TABLE IF NOT EXISTS bank_deposits ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  date_deposited DATETIME NOT NULL,"
+            "  bank_name VARCHAR(255) NOT NULL,"
+            "  reference_number VARCHAR(255) NOT NULL,"
+            "  amount DECIMAL(14,2) NOT NULL DEFAULT 0.00,"
+            "  deposited_by VARCHAR(150) NOT NULL,"
+            "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+            "  INDEX(date_deposited)"
+            ");"
+        )
     }
 
 ]
