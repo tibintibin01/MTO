@@ -75,8 +75,15 @@ def _index_exists(index_name: str, table_name: str) -> bool:
     """), {"table_name": table_name, "index_name": index_name}).scalar())
 
 
-def _create_check_if_missing(constraint_name: str, table_name: str, expression: str) -> None:
+def _create_check_if_missing(
+    constraint_name: str,
+    table_name: str,
+    column_name: str,
+    expression: str,
+) -> None:
     if not _table_exists(table_name) or _constraint_exists(constraint_name, table_name):
+        return
+    if not _column_exists(table_name, column_name):
         return
 
     op.create_check_constraint(constraint_name, table_name, expression)
@@ -94,20 +101,20 @@ def _create_unique_index_if_missing(index_name: str, table_name: str, columns: l
 
 
 def upgrade():
-    for constraint, table, expr in [
-        ('chk_payments_amount_non_negative', 'payments', 'amount >= 0'),
-        ('chk_payments_penalty_non_negative', 'payments', 'penalty >= 0'),
-        ('chk_payments_discount_non_negative', 'payments', 'discount >= 0'),
-        ('chk_properties_assessed_value_non_negative', 'properties', 'assessed_value >= 0'),
-        ('chk_properties_penalty_non_negative', 'properties', 'penalty >= 0'),
-        ('chk_properties_discount_non_negative', 'properties', 'discount >= 0'),
-        ('chk_property_billings_assessed_value_non_negative', 'property_billings', 'assessed_value >= 0'),
-        ('chk_property_billings_penalty_non_negative', 'property_billings', 'penalty >= 0'),
-        ('chk_property_billings_discount_non_negative', 'property_billings', 'discount >= 0'),
-        ('chk_property_billings_amount_paid_non_negative', 'property_billings', 'amount_paid >= 0'),
-        ('chk_payment_billings_amount_paid_non_negative', 'payment_billings', 'amount_paid >= 0'),
+    for constraint, table, column, expr in [
+        ('chk_payments_amount_non_negative', 'payments', 'amount', 'amount >= 0'),
+        ('chk_payments_penalty_non_negative', 'payments', 'penalty', 'penalty >= 0'),
+        ('chk_payments_discount_non_negative', 'payments', 'discount', 'discount >= 0'),
+        ('chk_properties_assessed_value_non_negative', 'properties', 'assessed_value', 'assessed_value >= 0'),
+        ('chk_properties_penalty_non_negative', 'properties', 'penalty', 'penalty >= 0'),
+        ('chk_properties_discount_non_negative', 'properties', 'discount', 'discount >= 0'),
+        ('chk_property_billings_assessed_value_non_negative', 'property_billings', 'assessed_value', 'assessed_value >= 0'),
+        ('chk_property_billings_penalty_non_negative', 'property_billings', 'penalty', 'penalty >= 0'),
+        ('chk_property_billings_discount_non_negative', 'property_billings', 'discount', 'discount >= 0'),
+        ('chk_property_billings_amount_paid_non_negative', 'property_billings', 'amount_paid', 'amount_paid >= 0'),
+        ('chk_payment_billings_amount_paid_non_negative', 'payment_billings', 'amount_paid', 'amount_paid >= 0'),
     ]:
-        _create_check_if_missing(constraint, table, expr)
+        _create_check_if_missing(constraint, table, column, expr)
 
     # UNIQUE on or_number: nullable column, multiple NULLs are allowed in MySQL/MariaDB.
     _create_unique_index_if_missing('uq_payments_or_number', 'payments', ['or_number'])
