@@ -69,6 +69,8 @@ async def login_for_access_token(
         )
 
 @router.post("/api/auth/login")
+@limiter.limit("10/minute")
+@user_limiter.limit("10/minute")
 async def login(credentials: Dict[str, str], request: Request, response: Response, db_session: Session = Depends(get_db)):
     """
     Secure login with brute-force protection and structured logging.

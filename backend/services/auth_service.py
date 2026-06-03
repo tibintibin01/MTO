@@ -172,7 +172,7 @@ def verify_user_login(username, password, db_session: Session):
     # datetime.utcnow() here — both sides are naive UTC, no offset error.
     # Using datetime.now() (local time) would be wrong on any server not in UTC,
     # including Docker containers which default to UTC while the OS may be UTC+8.
-    _now_utc_naive = datetime.utcnow()
+    _now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
     if user.lockout_until and user.lockout_until > _now_utc_naive:
         diff = user.lockout_until - _now_utc_naive
         minutes = int(diff.total_seconds() // 60) + 1
@@ -185,7 +185,7 @@ def verify_user_login(username, password, db_session: Session):
         if user.failed_attempts >= 5:
             # Write naive UTC so the comparison in the lockout check above
             # (datetime.utcnow()) stays on the same naive-UTC basis.
-            user.lockout_until = datetime.utcnow() + timedelta(minutes=5)
+            user.lockout_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
             db_session.commit()
             raise ValueError("LOCKED:5")
         else:
@@ -421,7 +421,7 @@ def reset_user_password(user_id, new_password, admin_user, db_session: Session):
     # Use UTC naive to match datetime.utcfromtimestamp(iat) in get_current_user.
     # datetime.now() would give local time (UTC+8 in Philippines), causing the
     # iat comparison to incorrectly reject fresh tokens after a password reset.
-    user.password_changed_at = datetime.utcnow()
+    user.password_changed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     # Revoke all existing refresh tokens — the user must log in again
     # with the new password to get a fresh token pair.

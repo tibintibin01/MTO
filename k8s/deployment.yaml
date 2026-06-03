@@ -26,7 +26,7 @@ spec:
       # ---------------------------------------------------------------------------
       initContainers:
       - name: run-migrations
-        image: mto-treasury:latest
+        image: mto-treasury:__IMAGE_TAG__
         command: ["alembic", "upgrade", "head"]
         envFrom:
         - configMapRef:
@@ -48,7 +48,7 @@ spec:
         #   image: registry/mto-backend@sha256:<digest>
         # Using :latest is intentionally avoided — it silently pulls a
         # different image on node restarts and makes rollbacks unreliable.
-        image: mto-treasury:latest
+        image: mto-treasury:__IMAGE_TAG__
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8001

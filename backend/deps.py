@@ -351,7 +351,7 @@ async def get_current_user(request: Request, token: Optional[str] = None, db_ses
     # Reject tokens issued before the last password change.
     # password_changed_at is a naive MariaDB datetime — compare with naive iat.
     if iat is not None and user.password_changed_at is not None:
-        token_issued_at = datetime.utcfromtimestamp(iat)
+        token_issued_at = datetime.fromtimestamp(iat, tz=timezone.utc).replace(tzinfo=None)
         if token_issued_at < user.password_changed_at:
             from utils.logger import mto_logger
             mto_logger.security(
