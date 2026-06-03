@@ -358,12 +358,28 @@ def _create_local_dump(dest_path):
             if db_pass:
                 env["MYSQL_PWD"] = db_pass
 
-            subprocess.run(cmd, stdout=f, check=True, timeout=300, env=env)
+            subprocess.run(
+                cmd,
+                stdout=f,
+                stderr=subprocess.PIPE,
+                check=True,
+                timeout=300,
+                env=env,
+            )
         return True
 
     except subprocess.TimeoutExpired:
         log_error_to_file("Backup Dump Timeout", "mysqldump exceeded 5-minute limit.")
         # Remove the partial file — a truncated dump must not be treated as valid
+        try:
+            os.remove(dest_path)
+        except OSError:
+            pass
+        return False
+
+    except subprocess.CalledProcessError as e:
+        stderr_msg = e.stderr.decode("utf-8", errors="ignore") if e.stderr else "No stderr message output."
+        log_error_to_file("Backup Dump Process Error", e, extra={"stderr": stderr_msg})
         try:
             os.remove(dest_path)
         except OSError:
