@@ -10,7 +10,7 @@ import api_clients.billing_service as billing
 import api_clients.property_service as prop
 import api_clients.system_service as system
 import api_clients.reports_service as reports_api
-from ui_components import show_toast
+from ui_components import ErrorDialog, show_toast
 from utils import format_curr, tr
 
 
@@ -204,8 +204,8 @@ class ReportsPage:
         receiv_fr = ctk.CTkFrame(self.receivables_tab, fg_color="transparent")
         receiv_fr.pack(fill="both", expand=True, padx=10, pady=10)
 
-        filter_fr = ctk.CTkFrame(receiv_fr)
-        filter_fr.pack(fill="x", pady=10)
+        filter_fr = ctk.CTkFrame(receiv_fr, fg_color="transparent")
+        filter_fr.pack(fill="x", pady=(0, 12))
 
         curr_y = datetime.now().year
         self.receiv_year_cb = ctk.CTkComboBox(
@@ -216,8 +216,30 @@ class ReportsPage:
 
         ctk.CTkButton(
             filter_fr, text=tr("reports.receivables.btn_load"), command=self.generate_receivables_report,
-            font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY
-        ).pack(side="left")
+            font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY, height=34
+        ).pack(side="left", padx=(8, 0))
+
+        self.receiv_export_excel_btn = ctk.CTkButton(
+            filter_fr,
+            text="EXPORT EXCEL",
+            command=self._export_receivables_excel,
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.SUCCESS,
+            height=34,
+            width=130,
+        )
+        self.receiv_export_excel_btn.pack(side="right", padx=(8, 0))
+
+        self.receiv_export_brgy_btn = ctk.CTkButton(
+            filter_fr,
+            text="BARANGAY PDF",
+            command=self._export_receivables_barangay_pdf,
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.SECONDARY,
+            height=34,
+            width=130,
+        )
+        self.receiv_export_brgy_btn.pack(side="right")
 
         self.receiv_content = ctk.CTkFrame(receiv_fr, fg_color="transparent")
         self.receiv_content.pack(fill="both", expand=True)
@@ -452,7 +474,8 @@ class ReportsPage:
         def worker():
             try:
                 data = billing.get_rpt_receivables_summary(year)
-                self.container.after(0, lambda: self._update_receiv_summary(data))
+                brgy_rows = prop.get_receivables_by_barangay(year=int(year))
+                self.container.after(0, lambda: self._update_receiv_summary(data, brgy_rows))
             except Exception as e:
                 self.container.after(
                     0, lambda err=e: messagebox.showerror("Error", str(err))
@@ -462,7 +485,7 @@ class ReportsPage:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _update_receiv_summary(self, data):
+    def _update_receiv_summary(self, data, brgy_rows=None):
         for child in self.receiv_content.winfo_children():
             child.destroy()
 
@@ -477,83 +500,181 @@ class ReportsPage:
         adj = float(data.get("adjustments", 0))
         end = float(data.get("ending_receivable", 0))
         year = data.get("report_year", "N/A")
+        brgy_rows = brgy_rows or []
 
-        # Calculate Efficiency (Collections / (Beginning + Current))
-        total_target = beg + curr
+        # Collection efficiency = collections divided by collectible amount.
+        total_target = beg + curr + adj
         efficiency = (coll / total_target * 100) if total_target > 0 else 0
+        uncollected_rate = (end / total_target * 100) if total_target > 0 else 0
+
+        def money(value):
+            return format_curr(value).replace("₱", "P")
+
+        def metric_card(parent, title, value, color, subtitle=None):
+            card = ctk.CTkFrame(
+                parent,
+                fg_color=("#e2e8f0", "#1e293b"),
+                corner_radius=8,
+                border_width=1,
+                border_color=("#cbd5e1", "#334155"),
+            )
+            ctk.CTkLabel(
+                card,
+                text=title.upper(),
+                font=("Inter", 9, "bold"),
+                text_color=ModernTheme.TEXT_GRAY,
+            ).pack(anchor="w", padx=14, pady=(12, 2))
+            ctk.CTkLabel(
+                card,
+                text=money(value),
+                font=("Inter", 20, "bold"),
+                text_color=color,
+            ).pack(anchor="w", padx=14)
+            if subtitle:
+                ctk.CTkLabel(
+                    card,
+                    text=subtitle,
+                    font=("Inter", 10),
+                    text_color=ModernTheme.TEXT_GRAY,
+                ).pack(anchor="w", padx=14, pady=(2, 12))
+            else:
+                ctk.CTkFrame(card, height=12, fg_color="transparent").pack()
+            return card
 
         # --- HEADER ---
         header_fr = ctk.CTkFrame(self.receiv_content, fg_color="transparent")
-        header_fr.pack(fill="x", pady=(0, 20))
+        header_fr.pack(fill="x", pady=(0, 12))
         ctk.CTkLabel(
             header_fr,
-            text=tr("reports.receivables.performance_title").replace("{year}", str(year)),
+            text=f"FISCAL YEAR {year} RECEIVABLES PERFORMANCE",
             font=ModernTheme.H2,
             text_color=ModernTheme.PRIMARY,
         ).pack(side="left")
-        
-        eff_color = ModernTheme.SUCCESS if efficiency > 50 else ModernTheme.WARNING
+
+        eff_color = ModernTheme.SUCCESS if efficiency >= 70 else ModernTheme.WARNING if efficiency >= 40 else ModernTheme.DANGER
         ctk.CTkLabel(
             header_fr,
-            text=tr("reports.receivables.efficiency").replace("{value}", f"{efficiency:.1f}"),
+            text=f"Collection Efficiency: {efficiency:.1f}%",
             font=ModernTheme.H3,
             text_color=eff_color,
         ).pack(side="right")
 
-        # --- CARDS GRID ---
-        grid_fr = ctk.CTkFrame(self.receiv_content, fg_color="transparent")
-        grid_fr.pack(fill="x")
-        grid_fr.grid_columnconfigure((0, 1, 2), weight=1)
-
-        # Helper to make a metric card
-        def make_card(parent, row, col, title, value, color, icon=""):
-            card = ctk.CTkFrame(parent, height=140, corner_radius=12)
-            card.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
-
-            ctk.CTkLabel(
-                card,
-                text=title.upper(),
-                font=ModernTheme.BODY_BOLD,
-                text_color=ModernTheme.TEXT_GRAY,
-            ).pack(pady=(20, 5))
-            ctk.CTkLabel(
-                card,
-                text=f"P {value:,.2f}",
-                font=ModernTheme.H2,
-                text_color=color,
-            ).pack(pady=(0, 20))
-
-            # Subtle indicator bar at the bottom of the card
-            indicator = ctk.CTkFrame(card, height=4, fg_color=color, corner_radius=0)
-            indicator.pack(fill="x", side="bottom")
-
-        make_card(grid_fr, 0, 0, tr("reports.receivables.cards.beginning"), beg, ModernTheme.TEXT_GRAY)
-        make_card(grid_fr, 0, 1, tr("reports.receivables.cards.assessment"), curr, ModernTheme.PRIMARY)
-        make_card(grid_fr, 0, 2, tr("reports.receivables.cards.adjustments"), adj, "#9b59b6")
-
-        # Lower Row
-        grid_fr_2 = ctk.CTkFrame(self.receiv_content, fg_color="transparent")
-        grid_fr_2.pack(fill="x")
-        grid_fr_2.grid_columnconfigure((0, 1), weight=1)
-
-        make_card(grid_fr_2, 0, 0, tr("reports.receivables.cards.collections"), coll, ModernTheme.SUCCESS)
-        make_card(grid_fr_2, 0, 1, tr("reports.receivables.cards.ending"), end, ModernTheme.DANGER)
-
-        # --- VISUAL EFFICIENCY METER ---
-        meter_fr = ctk.CTkFrame(self.receiv_content, height=80, corner_radius=15)
-        meter_fr.pack(fill="x", pady=20, padx=10)
-
+        formula_fr = ctk.CTkFrame(
+            self.receiv_content,
+            fg_color=("#dbeafe", "#172033"),
+            border_width=1,
+            border_color=("#93c5fd", "#334155"),
+            corner_radius=8,
+        )
+        formula_fr.pack(fill="x", pady=(0, 12))
+        formula = (
+            f"{money(beg)} beginning + {money(curr)} current assessment "
+            f"+ {money(adj)} adjustments - {money(coll)} collections = {money(end)} ending receivable"
+        )
         ctk.CTkLabel(
-            meter_fr,
-            text=tr("reports.receivables.target_progress"),
-            font=ModernTheme.BODY_BOLD,
-            text_color=ModernTheme.TEXT_GRAY,
-        ).pack(pady=(15, 5), padx=30, anchor="w")
+            formula_fr,
+            text=formula,
+            font=("Inter", 12, "bold"),
+            text_color=("#1e293b", "#cbd5e1"),
+        ).pack(anchor="w", padx=14, pady=10)
 
-        prog_bar = ctk.CTkProgressBar(meter_fr, height=12, corner_radius=6)
-        prog_bar.pack(fill="x", padx=30, pady=(5, 15))
-        prog_bar.set(min(1.0, efficiency / 100))
-        prog_bar.configure(progress_color=ModernTheme.SUCCESS if efficiency > 70 else ModernTheme.WARNING)
+        grid = ctk.CTkFrame(self.receiv_content, fg_color="transparent")
+        grid.pack(fill="x", pady=(0, 12))
+        for col in range(3):
+            grid.grid_columnconfigure(col, weight=1)
+
+        metric_card(grid, "Beginning Balance", beg, "#94a3b8", "Prior-year unpaid balance").grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 8))
+        metric_card(grid, "Current Assessment", curr, ModernTheme.PRIMARY, f"New billings for {year}").grid(row=0, column=1, sticky="nsew", padx=4, pady=(0, 8))
+        metric_card(grid, "Total Collectible", total_target, "#f59e0b", "Beginning + current + adjustments").grid(row=0, column=2, sticky="nsew", padx=(8, 0), pady=(0, 8))
+        metric_card(grid, "Collections", coll, ModernTheme.SUCCESS, f"{efficiency:.1f}% of collectible amount").grid(row=1, column=0, sticky="nsew", padx=(0, 8))
+        metric_card(grid, "Adjustments", adj, "#a855f7", "Corrections and adjustments").grid(row=1, column=1, sticky="nsew", padx=4)
+        metric_card(grid, "Ending Receivable", end, ModernTheme.DANGER, f"{uncollected_rate:.1f}% remains uncollected").grid(row=1, column=2, sticky="nsew", padx=(8, 0))
+
+        body = ctk.CTkFrame(self.receiv_content, fg_color="transparent")
+        body.pack(fill="both", expand=True)
+        body.grid_columnconfigure(0, weight=2)
+        body.grid_columnconfigure(1, weight=3)
+        body.grid_rowconfigure(0, weight=1)
+
+        progress_fr = ctk.CTkFrame(
+            body,
+            fg_color=("#e2e8f0", "#1e293b"),
+            corner_radius=8,
+            border_width=1,
+            border_color=("#cbd5e1", "#334155"),
+        )
+        progress_fr.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        ctk.CTkLabel(
+            progress_fr,
+            text="COLLECTION TARGET PROGRESS",
+            font=("Inter", 11, "bold"),
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(anchor="w", padx=16, pady=(14, 8))
+
+        prog_bar = ctk.CTkProgressBar(progress_fr, height=14, corner_radius=7)
+        prog_bar.pack(fill="x", padx=16, pady=(0, 8))
+        prog_bar.set(min(1.0, max(0.0, efficiency / 100)))
+        prog_bar.configure(progress_color=eff_color)
+
+        remaining = max(0.0, total_target - coll)
+        status_text = (
+            "Healthy collection pace" if efficiency >= 70
+            else "Needs collection follow-up" if efficiency >= 40
+            else "Critical collection gap"
+        )
+        ctk.CTkLabel(
+            progress_fr,
+            text=f"{status_text}\nRemaining target: {money(remaining)}",
+            font=("Inter", 13, "bold"),
+            text_color=eff_color,
+            justify="left",
+        ).pack(anchor="w", padx=16, pady=(6, 4))
+        ctk.CTkLabel(
+            progress_fr,
+            text="Efficiency is collections divided by beginning receivable plus current assessment and adjustments.",
+            font=("Inter", 10),
+            text_color=ModernTheme.TEXT_GRAY,
+            wraplength=430,
+            justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 14))
+
+        brgy_fr = ctk.CTkFrame(
+            body,
+            fg_color=("#e2e8f0", "#1e293b"),
+            corner_radius=8,
+            border_width=1,
+            border_color=("#cbd5e1", "#334155"),
+        )
+        brgy_fr.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+        ctk.CTkLabel(
+            brgy_fr,
+            text="TOP RECEIVABLE BARANGAYS",
+            font=("Inter", 11, "bold"),
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(anchor="w", padx=16, pady=(14, 8))
+
+        cols = ("Barangay", "Collected", "Receivable", "Rate")
+        tree = ttk.Treeview(brgy_fr, columns=cols, show="headings", height=7)
+        for col in cols:
+            tree.heading(col, text=col.upper())
+            tree.column(col, anchor="center", width=110)
+        tree.column("Barangay", anchor="w", width=170)
+        tree.pack(fill="both", expand=True, padx=16, pady=(0, 14))
+        tree.tag_configure("oddrow", background="#1e293b", foreground="#cbd5e1")
+        tree.tag_configure("evenrow", background="#162032", foreground="#cbd5e1")
+
+        top_rows = sorted(brgy_rows, key=lambda row: float(row[6] or 0), reverse=True)[:7]
+        for idx, row in enumerate(top_rows):
+            collected = float(row[5] or 0)
+            receivable = float(row[6] or 0)
+            due = float(row[2] or 0)
+            rate = (collected / due * 100) if due > 0 else 0
+            tree.insert(
+                "",
+                "end",
+                values=(row[0], money(collected), money(receivable), f"{rate:.1f}%"),
+                tags=("evenrow" if idx % 2 == 0 else "oddrow",),
+            )
 
     def generate_barangay_receivables(self):
         self._show_loading()
@@ -657,6 +778,20 @@ class ReportsPage:
                 )
 
         threading.Thread(target=_run, daemon=True).start()
+
+    def _export_receivables_excel(self):
+        year = self.receiv_year_cb.get()
+        self._export_with_feedback(
+            self.receiv_export_excel_btn,
+            lambda: billing.export_report_excel("receivables", year=year),
+        )
+
+    def _export_receivables_barangay_pdf(self):
+        year = int(self.receiv_year_cb.get())
+        self._export_with_feedback(
+            self.receiv_export_brgy_btn,
+            lambda: billing.download_receivables_by_barangay_pdf(year=year),
+        )
 
     def _export_brgy_pdf(self):
         selected = self.brgy_year_cb.get()
