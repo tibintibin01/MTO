@@ -504,11 +504,15 @@ class AssessmentRollPage:
 
     def _export_roll_excel(self):
         brgy = self.brgy_var.get()
+        y_start = self.year_start_ent.get().strip()
+        y_end = self.year_end_ent.get().strip()
         self._export_with_feedback(
             self._excel_btn,
             lambda: billing.export_report_excel(
                 "assessment_roll",
-                barangay=brgy if brgy != "ALL" else None
+                barangay=brgy if brgy != "ALL" else None,
+                year_start=y_start if y_start else None,
+                year_end=y_end if y_end else None,
             )
         )
 

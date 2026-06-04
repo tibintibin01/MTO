@@ -454,6 +454,8 @@ class ExportReportRequest(BaseModel):
     year: str = "All"
     report_type: str = "collections"   # collections | delinquents | assessment_roll | receivables
     barangay: Optional[str] = None
+    year_start: Optional[int] = None
+    year_end: Optional[int] = None
 
 
 @router.post("/billing/export/excel", tags=["Reports"])
@@ -725,7 +727,12 @@ async def export_billing_excel(
             
             brgy_filter = data.barangay if data.barangay and data.barangay != "ALL" else None
             brgy_lbl = f"Barangay: {brgy_filter}" if brgy_filter else "All Barangays"
-            ws["A2"] = f"{brgy_lbl}    Generated: {date_str}"
+            year_lbl = ""
+            if data.year_start or data.year_end:
+                year_from = str(data.year_start) if data.year_start else "Start"
+                year_to = str(data.year_end) if data.year_end else "End"
+                year_lbl = f"    Effectivity Years: {year_from}-{year_to}"
+            ws["A2"] = f"{brgy_lbl}{year_lbl}    Generated: {date_str}"
             ws["A2"].font = Font(italic=True, size=10)
             ws.merge_cells("A1:F1")
             ws.merge_cells("A2:F2")
@@ -738,33 +745,26 @@ async def export_billing_excel(
                 ws.cell(row=4, column=col_idx, value=h)
             style_header_row(ws, 4, len(headers))
 
-            from backend.models import Property
-
-            query = db_session.query(
-                Property.td_number,
-                Property.owner_name,
-                Property.barangay,
-                Property.kind_of_property,
-                Property.assessed_value,
-                Property.effectivity_date,
-            ).filter(Property.deleted_at == None)
-
-            if brgy_filter:
-                query = query.filter(Property.barangay == brgy_filter)
-
-            items = query.order_by(Property.id.asc()).all()
+            items = prop_svc.search_properties(
+                "",
+                limit=10000,
+                barangay=brgy_filter,
+                year_start=data.year_start,
+                year_end=data.year_end,
+                db_session=db_session,
+            )
 
             for row_idx, item in enumerate(items or [], start=5):
-                eff_year = item[5]
+                eff_year = item[21] if len(item) > 21 else ""
                 if eff_year and len(str(eff_year)) >= 4:
                     eff_year = str(eff_year)[:4]
 
                 vals = [
-                    item[0] or "",
                     item[1] or "",
                     item[2] or "",
-                    item[3] or "",
-                    float(item[4] or 0),
+                    item[22] if len(item) > 22 else "",
+                    item[7] if len(item) > 7 else "",
+                    float(item[9] or 0),
                     eff_year or "",
                 ]
 

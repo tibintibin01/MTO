@@ -172,7 +172,7 @@ def download_assessment_roll_pdf(barangay=None, year_start=None, year_end=None):
     )
 
 
-def export_report_excel(report_type, month="All", year="All", barangay=None):
+def export_report_excel(report_type, month="All", year="All", barangay=None, year_start=None, year_end=None):
     """Downloads an Excel (.xlsx) export and returns the local file path.
 
     The backend ExportReportRequest expects a JSON body, so we use the
@@ -198,6 +198,10 @@ def export_report_excel(report_type, month="All", year="All", barangay=None):
     body = {"report_type": report_type, "month": month, "year": year}
     if barangay and barangay != "ALL":
         body["barangay"] = barangay
+    if year_start:
+        body["year_start"] = year_start
+    if year_end:
+        body["year_end"] = year_end
     verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
     resp = _req.post(
         f"{BASE_URL}/billing/export/excel",
