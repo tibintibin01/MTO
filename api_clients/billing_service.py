@@ -278,7 +278,45 @@ def _get_compliant_accounts_first_page(barangay=None, limit=100):
     return []
 
 
-def get_compliant_accounts(barangay=None, limit=200):
+def get_compliant_accounts_page(barangay=None, search=None, limit=50, cursor=None):
+    """
+    Returns one cursor page of compliant properties.
+    Response shape: {items: [tuple...], next_cursor, has_more, count}
+    """
+    params = {"limit": limit}
+    if cursor:
+        params["cursor"] = cursor
+    if barangay and barangay != "ALL":
+        params["barangay"] = barangay
+    if search:
+        params["search"] = search
+
+    result = api_request("GET", "/billing/compliant", params=params)
+    if not isinstance(result, dict) or "items" not in result:
+        return {"items": [], "next_cursor": None, "has_more": False, "count": 0}
+
+    return {
+        "items": [
+            (
+                item.get("id"),
+                item.get("td_number"),
+                item.get("owner_name"),
+                item.get("barangay", "-"),
+                item.get("kind_of_property", "-"),
+                item.get("total_paid", 0),
+                item.get("years_covered", 0),
+                item.get("last_or") or "-",
+                item.get("last_paid") or "-",
+            )
+            for item in result["items"]
+        ],
+        "next_cursor": result.get("next_cursor"),
+        "has_more": bool(result.get("has_more")),
+        "count": result.get("count", len(result.get("items", []))),
+    }
+
+
+def get_compliant_accounts(barangay=None, search=None, limit=200):
     """
     Returns all compliant properties, following the backend cursor pages.
     The UI expects tuples:
@@ -293,6 +331,8 @@ def get_compliant_accounts(barangay=None, limit=200):
             params["cursor"] = cursor
         if barangay and barangay != "ALL":
             params["barangay"] = barangay
+        if search:
+            params["search"] = search
 
         result = api_request("GET", "/billing/compliant", params=params)
         if not isinstance(result, dict) or "items" not in result:

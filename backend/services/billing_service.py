@@ -516,6 +516,7 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
 
 def get_compliant_accounts(
     barangay: str = None,
+    search: str = None,
     limit: int = 50,
     cursor: int = None,
     db_session: Session = None,
@@ -609,6 +610,19 @@ def get_compliant_accounts(
         query = query.filter(
             func.coalesce(Property.barangay, "UNSPECIFIED") == barangay
         )
+
+    if search and str(search).strip():
+        term = str(search).strip()
+        like_term = f"%{term}%"
+        query = query.filter(or_(
+            Property.td_number.like(like_term),
+            Property.prev_td_number.like(like_term),
+            Property.pin.like(like_term),
+            Property.owner_name.like(like_term),
+            Property.payor_name.like(like_term),
+            Property.location.like(like_term),
+            Property.barangay.like(like_term),
+        ))
 
     if cursor:
         query = query.filter(Property.id > int(cursor))

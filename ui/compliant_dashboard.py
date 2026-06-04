@@ -39,14 +39,19 @@ class CompliantDashboardPage:
         self.user = user
         self._summary = []
         self._selected_barangay = "ALL"
-        self._all_rows: list = []
+        self._rows: list = []
+        self._page_size = 50
+        self._page_index = 0
+        self._page_cursors = [None]
+        self._next_cursor = None
+        self._has_more = False
         self._prop_resize_job = None
 
         self.container = ctk.CTkFrame(parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
         self._setup_ui()
-        self._load_all()
+        self._load_all(reset_page=True)
 
     # ── UI ────────────────────────────────────────────────────────────────────
 
@@ -82,7 +87,7 @@ class CompliantDashboardPage:
         ctk.CTkButton(
             btn_fr,
             text="🔄  REFRESH",
-            command=self._load_all,
+            command=lambda: self._load_all(reset_page=True),
             width=130,
             font=ModernTheme.BUTTON,
             fg_color=_BTN_REFRESH[0],
@@ -256,7 +261,6 @@ class CompliantDashboardPage:
 
         # Visible search entry with explicit border and bg
         self._search_var = tk.StringVar()
-        self._search_var.trace_add("write", lambda *_: self._apply_search())
         self._search_entry = ctk.CTkEntry(
             search_fr,
             textvariable=self._search_var,
@@ -270,6 +274,7 @@ class CompliantDashboardPage:
             text_color=("#1e293b", "#e2e8f0"),
         )
         self._search_entry.pack(side="right")
+        self._search_entry.bind("<Return>", lambda _e: self._apply_search())
 
         # Property treeview — wrap in a dark frame so the empty area below
         # rows matches the row background instead of showing white
@@ -329,19 +334,65 @@ class CompliantDashboardPage:
         self._prop_tree.configure(style="Compliant.Treeview")
         self._prop_tree.bind("<Configure>", self._on_prop_tree_resize)
 
+        pager = ctk.CTkFrame(parent, fg_color="transparent")
+        pager.pack(fill="x", pady=(8, 0))
+
+        self._prev_btn = ctk.CTkButton(
+            pager,
+            text="PREV",
+            command=self._prev_page,
+            width=90,
+            height=32,
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=_BTN_SEARCH[0],
+            hover_color=_BTN_SEARCH[1],
+            state="disabled",
+        )
+        self._prev_btn.pack(side="left")
+
+        self._page_lbl = ctk.CTkLabel(
+            pager,
+            text="PAGE 1",
+            font=ModernTheme.BODY_BOLD,
+            text_color=ModernTheme.TEXT_GRAY,
+        )
+        self._page_lbl.pack(side="left", padx=12)
+
+        self._next_btn = ctk.CTkButton(
+            pager,
+            text="NEXT",
+            command=self._next_page,
+            width=90,
+            height=32,
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=_BTN_SEARCH[0],
+            hover_color=_BTN_SEARCH[1],
+            state="disabled",
+        )
+        self._next_btn.pack(side="left")
+
     # ── Data loading ──────────────────────────────────────────────────────────
 
-    def _load_all(self):
+    def _load_all(self, reset_page=False):
+        if reset_page:
+            self._page_index = 0
+            self._page_cursors = [None]
+            self._next_cursor = None
+            self._has_more = False
         overlay = LoadingOverlay(self.container, "LOADING COMPLIANCE DATA...")
 
         def worker():
             try:
+                barangay = None if self._selected_barangay == "ALL" else self._selected_barangay
+                cursor = self._page_cursors[self._page_index] if self._page_index < len(self._page_cursors) else None
                 summary = billing.get_compliant_summary()
-                props = billing.get_compliant_accounts(
-                    barangay=None if self._selected_barangay == "ALL"
-                             else self._selected_barangay
+                page = billing.get_compliant_accounts_page(
+                    barangay=barangay,
+                    search=self._search_var.get().strip(),
+                    limit=self._page_size,
+                    cursor=cursor,
                 )
-                self.container.after(0, lambda: self._render(summary, props))
+                self.container.after(0, lambda: self._render(summary, page))
             except Exception as e:
                 self.container.after(
                     0, lambda err=e: messagebox.showerror("Load Error", str(err))
@@ -351,13 +402,15 @@ class CompliantDashboardPage:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _render(self, summary: list, props: list):
+    def _render(self, summary: list, page: dict):
         self._summary = summary
-        self._all_rows = props
+        self._rows = page.get("items", []) if isinstance(page, dict) else []
+        self._next_cursor = page.get("next_cursor") if isinstance(page, dict) else None
+        self._has_more = bool(page.get("has_more")) if isinstance(page, dict) else False
 
         total_props     = sum(r.get("total_properties", 0) for r in summary)
         total_compliant = sum(r.get("compliant_count", 0)  for r in summary)
-        total_collected = sum(r[5] for r in props)
+        total_collected = sum(r.get("collected_from_compliant", 0) for r in summary)
         rate = (total_compliant / total_props * 100) if total_props else 0.0
 
         self._kpi_compliant.configure(text=f"{total_compliant:,}")
@@ -390,19 +443,13 @@ class CompliantDashboardPage:
             )
 
         self._sync_summary_selection()
-        self._apply_search()
+        self._render_rows()
 
     def _apply_search(self):
-        term = self._search_var.get().strip().lower()
-        rows = self._all_rows
+        self._load_all(reset_page=True)
 
-        if term:
-            rows = [
-                r for r in rows
-                if term in str(r[1]).lower()
-                or term in str(r[2]).lower()
-            ]
-
+    def _render_rows(self):
+        rows = self._rows
         for item in self._prop_tree.get_children():
             self._prop_tree.delete(item)
 
@@ -421,9 +468,39 @@ class CompliantDashboardPage:
             if self._selected_barangay == "ALL"
             else f"COMPLIANT — {self._selected_barangay}"
         )
-        self._list_label.configure(text=f"{brgy}  ({len(rows)} shown)")
+        search_note = " MATCHES" if self._search_var.get().strip() else ""
+        self._list_label.configure(text=f"{brgy}{search_note}  ({len(rows)} on this page)")
+        self._update_pager()
 
     # ── Barangay filter ───────────────────────────────────────────────────────
+
+    def _update_pager(self):
+        page_no = self._page_index + 1
+        start = self._page_index * self._page_size + (1 if self._rows else 0)
+        end = self._page_index * self._page_size + len(self._rows)
+        if self._rows:
+            label = f"PAGE {page_no}  |  {start:,}-{end:,}"
+        else:
+            label = f"PAGE {page_no}  |  No records"
+        self._page_lbl.configure(text=label)
+        self._prev_btn.configure(state="normal" if self._page_index > 0 else "disabled")
+        self._next_btn.configure(state="normal" if self._has_more else "disabled")
+
+    def _next_page(self):
+        if not self._has_more or not self._next_cursor:
+            return
+        if len(self._page_cursors) <= self._page_index + 1:
+            self._page_cursors.append(self._next_cursor)
+        else:
+            self._page_cursors[self._page_index + 1] = self._next_cursor
+        self._page_index += 1
+        self._load_all()
+
+    def _prev_page(self):
+        if self._page_index <= 0:
+            return
+        self._page_index -= 1
+        self._load_all()
 
     def _on_prop_tree_resize(self, event=None):
         if self._prop_resize_job:
@@ -432,7 +509,7 @@ class CompliantDashboardPage:
 
     def _run_prop_tree_resize(self):
         self._prop_resize_job = None
-        self._apply_search()
+        self._render_rows()
 
     def _fill_prop_tree_background(self, real_row_count):
         rowheight = 34
@@ -463,7 +540,7 @@ class CompliantDashboardPage:
         if selected == self._selected_barangay:
             return
         self._selected_barangay = selected
-        self._load_all()
+        self._load_all(reset_page=True)
 
     def _sync_summary_selection(self):
         iid = "__ALL__" if self._selected_barangay == "ALL" else self._selected_barangay
@@ -477,7 +554,15 @@ class CompliantDashboardPage:
     # ── CSV export ────────────────────────────────────────────────────────────
 
     def _export_csv(self):
-        if not self._all_rows:
+        barangay = None if self._selected_barangay == "ALL" else self._selected_barangay
+        search = self._search_var.get().strip()
+        try:
+            export_rows = billing.get_compliant_accounts(barangay=barangay, search=search)
+        except Exception as e:
+            messagebox.showerror("Export Error", str(e))
+            return
+
+        if not export_rows:
             messagebox.showinfo("Export", "No data to export.")
             return
 
@@ -497,7 +582,7 @@ class CompliantDashboardPage:
                     "ID", "TD Number", "Owner Name", "Barangay", "Kind",
                     "Total Paid", "Years Covered", "Last OR", "Last Paid",
                 ])
-                for r in self._all_rows:
+                for r in export_rows:
                     writer.writerow(r)
             messagebox.showinfo("Export Complete", f"Saved to:\n{path}")
             os.startfile(path)

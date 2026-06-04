@@ -95,6 +95,7 @@ async def get_collections_worklist(
 @router.get("/billing/compliant")
 async def get_compliant_list(
     barangay: Optional[str] = None,
+    search: Optional[str] = None,
     limit: int = 50,
     cursor: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
@@ -105,7 +106,7 @@ async def get_compliant_list(
     Optionally filtered by barangay. Cursor-paginated.
     """
     return bill_svc.get_compliant_accounts(
-        barangay=barangay, limit=limit, cursor=cursor, db_session=db_session
+        barangay=barangay, search=search, limit=limit, cursor=cursor, db_session=db_session
     )
 
 
