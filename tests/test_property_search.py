@@ -126,3 +126,19 @@ def test_search_properties_keeps_exact_owner_substring_inside_long_name(db):
     rows = search_properties("APALLA", barangay="BAYABAS", db_session=db)
 
     assert [row[1] for row in rows] == ["06-0004-00031"]
+
+
+def test_search_properties_finds_replacement_by_previous_td_number(db):
+    _property(db, "06-0001-00001", "2023")
+    _property(
+        db,
+        "06-0001-00099",
+        "2024",
+        prev_td_number="06-0001-00001",
+        owner_name="CURRENT OWNER",
+    )
+    db.commit()
+
+    rows = search_properties("06-0001-00001", barangay="BAYABAS", db_session=db)
+
+    assert [row[1] for row in rows] == ["06-0001-00099", "06-0001-00001"]

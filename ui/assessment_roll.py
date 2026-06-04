@@ -72,7 +72,7 @@ class AssessmentRollPage:
 
         # Search Box
         self.search_ent = ctk.CTkEntry(
-            filters_fr, placeholder_text="Search PIN, TD, or Owner...", width=250
+            filters_fr, placeholder_text="Search PIN, TD, Former TD, or Owner...", width=270
         )
         self.search_ent.pack(side="left")
         self.search_ent.bind("<Return>", lambda e: self.refresh_table())

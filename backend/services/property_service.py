@@ -116,14 +116,18 @@ def search_properties(
             query = query.filter(
                 (Property.td_number == dashed_term) |
                 (Property.pin == dashed_term) |
+                (Property.prev_td_number == dashed_term) |
                 (Property.td_number.like(f"%{dashed_term}%")) |
-                (Property.pin.like(f"%{dashed_term}%"))
+                (Property.pin.like(f"%{dashed_term}%")) |
+                (Property.prev_td_number.like(f"%{dashed_term}%"))
             )
             is_id_search = True
         elif "-" in clean_term:
             # Structured TD number / PIN — exact match only
             query = query.filter(
-                (Property.td_number == clean_term) | (Property.pin == clean_term)
+                (Property.td_number == clean_term) |
+                (Property.pin == clean_term) |
+                (Property.prev_td_number == clean_term)
             )
             is_id_search = True
         else:
@@ -131,6 +135,7 @@ def search_properties(
             like_term = f"%{clean_term}%"
             query = query.filter(
                 (Property.td_number.like(like_term)) |
+                (Property.prev_td_number.like(like_term)) |
                 (Property.owner_name.like(like_term)) |
                 (Property.payor_name.like(like_term)) |
                 (Property.pin.like(like_term)) |
@@ -196,6 +201,7 @@ def search_properties(
                 prop.payor_name or "",
                 prop.location or "",
                 prop.td_number or "",
+                prop.prev_td_number or "",
             ]
             if any(search_upper in c.upper() for c in candidates):
                 return 1.0
