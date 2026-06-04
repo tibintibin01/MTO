@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 from datetime import datetime, timezone
-from sqlalchemy import text, func
+from sqlalchemy import text, func, cast, Integer
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment, AuditLog, TaxPolicy
@@ -133,11 +133,16 @@ def search_properties(
     if kind and kind != "ALL":
         query = query.filter(Property.kind_of_property == kind)
 
-    if year_start:
-        query = query.filter(Property.effectivity_date >= str(year_start))
-
-    if year_end:
-        query = query.filter(Property.effectivity_date <= str(year_end))
+    if year_start or year_end:
+        # effectivity_date is legacy text and may contain either "2024" or
+        # full dates like "2024-01-01". Compare on the extracted year so the
+        # "TO" filter includes full dates within that year.
+        year_source = func.coalesce(func.nullif(Property.effectivity_date, ""), Property.tax_year)
+        effectivity_year = cast(func.substr(year_source, 1, 4), Integer)
+        if year_start:
+            query = query.filter(effectivity_year >= int(year_start))
+        if year_end:
+            query = query.filter(effectivity_year <= int(year_end))
 
     if barangay and barangay != "ALL":
         query = query.filter(Property.barangay == barangay)
