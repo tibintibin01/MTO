@@ -8,6 +8,8 @@ CONNECTION_STATUS = "ONLINE" # ONLINE, OFFLINE, SYNCING
 
 import os
 import json
+import re
+import tempfile
 from pathlib import Path
 
 # --- NETWORK CONFIGURATION ---
@@ -288,7 +290,6 @@ def api_download_file(method, endpoint, params=None):
     
     try:
         import urllib3
-        import tempfile
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         
         verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
@@ -305,25 +306,42 @@ def api_download_file(method, endpoint, params=None):
         
         response.raise_for_status()
         
-        # Create a temporary file to store the PDF
-        suffix = ".pdf"
-        if "content-disposition" in response.headers:
-            cd = response.headers["content-disposition"]
-            if "filename=" in cd:
-                fname = cd.split("filename=")[1].strip('"')
-                if "." in fname:
-                    suffix = "." + fname.split(".")[-1]
-        
-        fd, path = tempfile.mkstemp(suffix=suffix)
-        with os.fdopen(fd, 'wb') as tmp:
-            for chunk in response.iter_content(chunk_size=8192):
-                tmp.write(chunk)
-                
-        return path
+        return save_stream_response_to_temp_file(response, default_suffix=".pdf")
         
     except Exception as e:
         status_code = getattr(getattr(e, "response", None), "status_code", "N/A")
         raise Exception(f"File Download Error (Status {status_code}): {str(e)}")
+
+
+def response_filename(response, default_name="download"):
+    """Returns a safe filename from Content-Disposition, falling back to default_name."""
+    cd = response.headers.get("content-disposition", "")
+    match = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', cd, flags=re.IGNORECASE)
+    raw_name = match.group(1).strip() if match else default_name
+    safe_name = os.path.basename(raw_name).strip()
+    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", safe_name)
+    return safe_name or default_name
+
+
+def save_stream_response_to_temp_file(response, default_suffix=".bin"):
+    """Saves a streaming response to temp using the server-provided filename."""
+    filename = response_filename(response, default_name=f"download{default_suffix}")
+    if "." not in filename and default_suffix:
+        filename += default_suffix
+
+    stem, suffix = os.path.splitext(filename)
+    temp_dir = tempfile.gettempdir()
+    candidate = os.path.join(temp_dir, filename)
+    counter = 1
+    while os.path.exists(candidate):
+        candidate = os.path.join(temp_dir, f"{stem}_{counter}{suffix}")
+        counter += 1
+
+    with open(candidate, "wb") as tmp:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                tmp.write(chunk)
+    return candidate
 
 
 # Auto-Cache for successful GET requests

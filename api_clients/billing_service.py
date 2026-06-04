@@ -179,10 +179,9 @@ def export_report_excel(report_type, month="All", year="All", barangay=None, yea
     api_request helper (raw_response=True) and then stream-save like
     api_download_file does internally.
     """
-    import tempfile, os
     from api_clients.api_helper import (
         BASE_URL, _SESSION_TOKEN, is_token_expired, _try_refresh,
-        CERT_PATH
+        CERT_PATH, save_stream_response_to_temp_file
     )
     import requests as _req, urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -209,19 +208,7 @@ def export_report_excel(report_type, month="All", year="All", barangay=None, yea
     )
     resp.raise_for_status()
 
-    suffix = ".xlsx"
-    if "content-disposition" in resp.headers:
-        cd = resp.headers["content-disposition"]
-        if "filename=" in cd:
-            fn = cd.split("filename=")[1].strip('"')
-            if "." in fn:
-                suffix = "." + fn.split(".")[-1]
-
-    fd, path = tempfile.mkstemp(suffix=suffix)
-    with os.fdopen(fd, "wb") as tmp:
-        for chunk in resp.iter_content(chunk_size=8192):
-            tmp.write(chunk)
-    return path
+    return save_stream_response_to_temp_file(resp, default_suffix=".xlsx")
 
 
 def _get_compliant_accounts_first_page(barangay=None, limit=100):

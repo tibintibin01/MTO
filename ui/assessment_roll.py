@@ -92,23 +92,17 @@ class AssessmentRollPage:
         self.brgy_cb.pack(side="left")
         self.brgy_cb.configure(command=lambda e: self.refresh_table())
 
-        # Year Range
+        # Active assessment roll year
         ctk.CTkLabel(
             filters_fr,
-            text="YEAR FROM:",
+            text="AS OF YEAR:",
             font=("Segoe UI", 10, "bold"),
             text_color="gray",
         ).pack(side="left", padx=(20, 5))
-        self.year_start_ent = ctk.CTkEntry(
+        self.as_of_year_ent = ctk.CTkEntry(
             filters_fr, width=80, placeholder_text="YYYY"
         )
-        self.year_start_ent.pack(side="left")
-
-        ctk.CTkLabel(
-            filters_fr, text="TO:", font=("Segoe UI", 10, "bold"), text_color="gray"
-        ).pack(side="left", padx=(5, 5))
-        self.year_end_ent = ctk.CTkEntry(filters_fr, width=80, placeholder_text="YYYY")
-        self.year_end_ent.pack(side="left")
+        self.as_of_year_ent.pack(side="left")
 
         ctk.CTkButton(
             filters_fr,
@@ -274,8 +268,7 @@ class AssessmentRollPage:
             try:
                 term = self.search_ent.get().strip()
                 brgy = self.brgy_var.get()
-                y_start = self.year_start_ent.get().strip()
-                y_end = self.year_end_ent.get().strip()
+                as_of_year = self.as_of_year_ent.get().strip()
                 
                 cursor_to_use = self.page_cursors[self.current_page]
                 
@@ -284,8 +277,7 @@ class AssessmentRollPage:
                     limit=self.page_size,
                     cursor=cursor_to_use,
                     barangay=brgy if brgy != "ALL" else None,
-                    year_start=y_start,
-                    year_end=y_end,
+                    as_of_year=as_of_year if as_of_year else None,
                 )
                 
                 results = response.get("items", [])
@@ -490,29 +482,25 @@ class AssessmentRollPage:
 
     def _export_roll_pdf(self):
         brgy = self.brgy_var.get()
-        y_start = self.year_start_ent.get().strip()
-        y_end = self.year_end_ent.get().strip()
+        as_of_year = self.as_of_year_ent.get().strip()
         
         self._export_with_feedback(
             self._pdf_btn,
             lambda: billing.download_assessment_roll_pdf(
                 barangay=brgy if brgy != "ALL" else None,
-                year_start=y_start if y_start else None,
-                year_end=y_end if y_end else None,
+                as_of_year=as_of_year if as_of_year else None,
             )
         )
 
     def _export_roll_excel(self):
         brgy = self.brgy_var.get()
-        y_start = self.year_start_ent.get().strip()
-        y_end = self.year_end_ent.get().strip()
+        as_of_year = self.as_of_year_ent.get().strip()
         self._export_with_feedback(
             self._excel_btn,
             lambda: billing.export_report_excel(
                 "assessment_roll",
                 barangay=brgy if brgy != "ALL" else None,
-                year_start=y_start if y_start else None,
-                year_end=y_end if y_end else None,
+                as_of_year=as_of_year if as_of_year else None,
             )
         )
 

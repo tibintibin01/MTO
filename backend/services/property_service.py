@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timezone
 from sqlalchemy import text, func, cast, Integer
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment, AuditLog, TaxPolicy
 from backend.services.auth_service import get_username, require_permission
 import backend.services.billing_service as billing
@@ -75,8 +75,14 @@ def clean_currency(value):
         return 0.0
 
 
+def _effectivity_year_expr(model):
+    year_source = func.coalesce(func.nullif(func.trim(model.effectivity_date), ""), model.tax_year)
+    return cast(func.substr(year_source, 1, 4), Integer)
+
+
 def search_properties(
-    term, limit=100, cursor=None, kind=None, year_start=None, year_end=None, barangay=None, db_session: Session = None
+    term, limit=100, cursor=None, kind=None, year_start=None, year_end=None,
+    as_of_year=None, barangay=None, db_session: Session = None
 ):
     """
     Enhanced search with optional filters and fuzzy owner-name matching.
@@ -133,12 +139,28 @@ def search_properties(
     if kind and kind != "ALL":
         query = query.filter(Property.kind_of_property == kind)
 
-    if year_start or year_end:
+    if as_of_year:
+        as_of = int(as_of_year)
+        effectivity_year = _effectivity_year_expr(Property)
+        replacement = aliased(Property)
+        replacement_effectivity_year = _effectivity_year_expr(replacement)
+        replaced_td_numbers = (
+            db_session.query(func.trim(replacement.prev_td_number))
+            .filter(
+                replacement.deleted_at == None,
+                replacement.prev_td_number != None,
+                func.trim(replacement.prev_td_number) != "",
+                replacement_effectivity_year <= as_of,
+            )
+            .scalar_subquery()
+        )
+        query = query.filter(effectivity_year <= as_of)
+        query = query.filter(~func.trim(Property.td_number).in_(replaced_td_numbers))
+    elif year_start or year_end:
         # effectivity_date is legacy text and may contain either "2024" or
         # full dates like "2024-01-01". Compare on the extracted year so the
         # "TO" filter includes full dates within that year.
-        year_source = func.coalesce(func.nullif(Property.effectivity_date, ""), Property.tax_year)
-        effectivity_year = cast(func.substr(year_source, 1, 4), Integer)
+        effectivity_year = _effectivity_year_expr(Property)
         if year_start:
             query = query.filter(effectivity_year >= int(year_start))
         if year_end:

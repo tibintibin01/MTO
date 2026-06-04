@@ -358,6 +358,18 @@ class BankDeposit(Base):
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
 
+class RateLimitBlock(Base):
+    __tablename__ = "rate_limit_blocks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    ip_address = Column(String(45), nullable=False, index=True)
+    username = Column(String(150), nullable=True, index=True)
+    endpoint = Column(String(255), nullable=False)
+    limit_rule = Column(String(255), nullable=False)
+    retry_after = Column(Integer, nullable=False)
+
+
 # --- SECURE GOVERNMENT COMPLIANCE: AUDIT LOG IMMUTABILITY ---
 from sqlalchemy import event
 

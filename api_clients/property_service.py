@@ -4,7 +4,7 @@ from api_clients.api_helper import api_request, api_request_with_cache
 
 
 def search_properties(
-    term, limit=50, cursor=None, kind=None, year_start=None, year_end=None, barangay=None
+    term, limit=50, cursor=None, kind=None, year_start=None, year_end=None, as_of_year=None, barangay=None
 ):
     params = {"search": term, "limit": limit}
     if cursor:
@@ -15,6 +15,8 @@ def search_properties(
         params["year_start"] = year_start
     if year_end:
         params["year_end"] = year_end
+    if as_of_year:
+        params["as_of_year"] = as_of_year
     if barangay:
         params["barangay"] = barangay
     return api_request_with_cache("GET", "/properties", params=params)

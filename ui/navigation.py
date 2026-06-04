@@ -19,6 +19,7 @@ NAV_ICONS = {
     "health":        "💻",
     "settings":      "⚙️",
     "help":          "❓",
+    "rate_limiting": "🛑",
 }
 
 
@@ -217,6 +218,10 @@ class NavigationSidebar(ctk.CTkFrame):
                           lambda: self._navigate("health", SystemHealthPage))
             self._add_nav("settings", tr("dashboard.nav.settings"),
                           lambda: self._navigate("settings", SystemAdminPage))
+            if auth.get_user_role(self.user_data).lower() == "admin":
+                from ui.rate_limiting import RateLimitingPage
+                self._add_nav("rate_limiting", "RATE LIMITS",
+                              lambda: self._navigate("rate_limiting", RateLimitingPage))
 
         # ── Section label ────────────────────────────────────────────────────
         self._section_label("SYSTEM HELP")

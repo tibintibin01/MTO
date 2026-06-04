@@ -7,8 +7,47 @@ from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 import jwt as _pyjwt
 from jwt.exceptions import InvalidTokenError as JWTError  # noqa: F401 — re-exported for callers
+import functools
+import inspect
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+
+# --- MONKEY-PATCH SLOWAPI TO SUPPORT MULTIPLE STACKED LIMITERS ---
+_original_limit_decorator = Limiter._Limiter__limit_decorator
+
+def _patched_limit_decorator(self, *args, **kwargs):
+    decorator = _original_limit_decorator(self, *args, **kwargs)
+    def new_decorator(func):
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args_inner, **kwargs_inner):
+                request = kwargs_inner.get("request")
+                if not request:
+                    for arg in args_inner:
+                        if isinstance(arg, Request):
+                            request = arg
+                            break
+                if request and hasattr(request, "state"):
+                    request.state._rate_limiting_complete = False
+                return await func(*args_inner, **kwargs_inner)
+            return decorator(async_wrapper)
+        else:
+            @functools.wraps(func)
+            def sync_wrapper(*args_inner, **kwargs_inner):
+                request = kwargs_inner.get("request")
+                if not request:
+                    for arg in args_inner:
+                        if isinstance(arg, Request):
+                            request = arg
+                            break
+                if request and hasattr(request, "state"):
+                    request.state._rate_limiting_complete = False
+                return func(*args_inner, **kwargs_inner)
+            return decorator(sync_wrapper)
+    return new_decorator
+
+Limiter._Limiter__limit_decorator = _patched_limit_decorator
+# -----------------------------------------------------------------
 
 from sqlalchemy.orm import Session
 from utils.config import config as mto_config

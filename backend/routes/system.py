@@ -19,6 +19,7 @@ from backend.routes.admin_tools import router as _admin_tools_router
 from backend.routes.maintenance import router as _maintenance_router
 from backend.routes.health import router as _health_router
 from backend.routes.compute import router as _compute_router
+from backend.routes.rate_limiting import router as _rate_limiting_router
 
 # Single aggregated router — registered in main.py as app.include_router(system.router)
 router = APIRouter()
@@ -27,3 +28,4 @@ router.include_router(_admin_tools_router)
 router.include_router(_maintenance_router)
 router.include_router(_health_router)
 router.include_router(_compute_router)
+router.include_router(_rate_limiting_router)

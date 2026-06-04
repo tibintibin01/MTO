@@ -176,6 +176,23 @@ MIGRATIONS = [
             "  INDEX(date_deposited)"
             ");"
         )
+    },
+    {
+        "id": "create_rate_limit_blocks_table",
+        "sql": (
+            "CREATE TABLE IF NOT EXISTS rate_limit_blocks ("
+            "  id INT AUTO_INCREMENT PRIMARY KEY,"
+            "  timestamp DATETIME NOT NULL,"
+            "  ip_address VARCHAR(45) NOT NULL,"
+            "  username VARCHAR(150),"
+            "  endpoint VARCHAR(255) NOT NULL,"
+            "  limit_rule VARCHAR(255) NOT NULL,"
+            "  retry_after INT NOT NULL,"
+            "  INDEX(timestamp),"
+            "  INDEX(ip_address),"
+            "  INDEX(username)"
+            ");"
+        )
     }
 
 ]

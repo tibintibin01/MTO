@@ -20,6 +20,7 @@ async def list_properties(
     kind: Optional[str] = None,
     year_start: Optional[int] = None,
     year_end: Optional[int] = None,
+    as_of_year: Optional[int] = None,
     barangay: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db)
@@ -31,6 +32,7 @@ async def list_properties(
         kind=kind,
         year_start=year_start,
         year_end=year_end,
+        as_of_year=as_of_year,
         barangay=barangay,
         db_session=db_session
     )

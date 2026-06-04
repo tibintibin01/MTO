@@ -235,3 +235,22 @@ def shadow_duplicate_cleanup(bad_ids: list):
     """
     return api_request("POST", "/system/shadow-duplicate-cleanup",
                        data={"bad_ids": bad_ids})
+
+
+def get_rate_limiting_stats():
+    """Fetches rate limit metrics and stats (Admin only)."""
+    return api_request("GET", "/system/rate-limiting/stats")
+
+
+def get_rate_limiting_blocks(limit=50, cursor=None):
+    """Retrieves paginated logs of rate limit blocks (Admin only)."""
+    params = {"limit": limit}
+    if cursor:
+        params["cursor"] = cursor
+    return api_request("GET", "/system/rate-limiting/blocks", params=params)
+
+
+def reset_rate_limits(identifier: str):
+    """Resets rate limit keys/counters for a client IP or username (Admin only)."""
+    return api_request("POST", "/system/rate-limiting/reset", data={"identifier": identifier})
+
