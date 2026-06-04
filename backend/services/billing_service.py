@@ -835,6 +835,9 @@ def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
 
 def get_collections_worklist(
     barangay: str = None,
+    search: str = None,
+    payment_status: str = None,
+    min_balance: float = None,
     min_age_days: int = 0,
     limit: int = 50,
     offset: int = 0,
@@ -902,7 +905,30 @@ def get_collections_worklist(
     if barangay and barangay.strip() and barangay.upper() != "ALL":
         query = query.filter(Property.barangay == barangay.strip())
 
+    if search and str(search).strip():
+        term = str(search).strip()
+        like_term = f"%{term}%"
+        query = query.filter(or_(
+            Property.td_number.like(like_term),
+            Property.prev_td_number.like(like_term),
+            Property.pin.like(like_term),
+            Property.owner_name.like(like_term),
+            Property.payor_name.like(like_term),
+            Property.location.like(like_term),
+            Property.barangay.like(like_term),
+        ))
+
     query = query.group_by(Property.id).having(balance_expr > 0)
+
+    if min_balance is not None:
+        query = query.having(balance_expr >= float(min_balance))
+
+    status = str(payment_status or "").strip().upper()
+    total_paid_expr = func.sum(PropertyBilling.amount_paid)
+    if status == "NO_PAYMENT":
+        query = query.having(total_paid_expr <= 0)
+    elif status == "PARTIAL":
+        query = query.having(total_paid_expr > 0)
 
     # Order by balance DESC — collections priority is biggest arrears first
     rows = query.order_by(balance_expr.desc(), Property.id.asc()).all()

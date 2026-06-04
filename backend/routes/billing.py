@@ -66,6 +66,9 @@ async def get_delinquent_list(
 @router.get("/billing/collections", dependencies=[Depends(read_only)])
 async def get_collections_worklist(
     barangay: Optional[str] = None,
+    search: Optional[str] = None,
+    payment_status: Optional[str] = None,
+    min_balance: Optional[float] = None,
     min_age_days: int = 0,
     limit: int = 50,
     offset: int = 0,
@@ -79,6 +82,9 @@ async def get_collections_worklist(
     """
     return bill_svc.get_collections_worklist(
         barangay=barangay,
+        search=search,
+        payment_status=payment_status,
+        min_balance=min_balance,
         min_age_days=min_age_days,
         limit=limit,
         offset=offset,

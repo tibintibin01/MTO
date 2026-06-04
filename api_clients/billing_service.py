@@ -129,6 +129,36 @@ def get_delinquent_accounts(limit=100, offset=0):
     return result if isinstance(result, list) else []
 
 
+def get_collections_worklist(
+    barangay=None, search=None, payment_status=None, min_balance=None,
+    min_age_days=0, limit=50, offset=0
+):
+    """Returns the richer collections worklist with summary and aging metadata."""
+    params = {
+        "limit": limit,
+        "offset": offset,
+        "min_age_days": min_age_days or 0,
+    }
+    if barangay and barangay != "ALL":
+        params["barangay"] = barangay
+    if search:
+        params["search"] = search
+    if payment_status and payment_status != "ALL":
+        params["payment_status"] = payment_status
+    if min_balance not in (None, ""):
+        params["min_balance"] = min_balance
+    result = api_request("GET", "/billing/collections", params=params)
+    if isinstance(result, dict):
+        return result
+    return {
+        "items": result if isinstance(result, list) else [],
+        "summary": {},
+        "has_more": False,
+        "next_offset": None,
+        "total_matching": 0,
+    }
+
+
 def download_computation_pdf(property_id):
     """Triggers the download of a computation PDF and returns the local path."""
     return api_download_file("GET", f"/properties/{property_id}/computation-pdf")
