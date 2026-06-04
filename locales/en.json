@@ -288,7 +288,10 @@
                 "local": "Local SQL Dump",
                 "usb": "USB Drive Mirror",
                 "cloud": "Cloud Synchronization",
-                "verify": "Data Integrity Check"
+                "verify": "Restore Verification",
+                "latest": "Latest Server Backup",
+                "checksum": "SHA-256 Checksum",
+                "storage": "Storage Target"
             },
             "scanning": "Scanning...",
             "progress": "BACKUP IN PROGRESS...",

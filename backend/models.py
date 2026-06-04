@@ -213,7 +213,7 @@ class BackupHistory(Base):
     file_path = Column(Text, nullable=False)
     checksum = Column(String(64), nullable=True)
     status = Column(String(50), default="PENDING")
-    health = Column(String(100), default="UNKNOWN")
+    health = Column(String(255), default="UNKNOWN")
     user_name = Column(String(255), nullable=True)
     timestamp = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 

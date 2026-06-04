@@ -1,5 +1,6 @@
 import os
 import subprocess
+import hashlib
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from backend.database import SessionLocal
@@ -11,9 +12,19 @@ DB_CONFIG = {
     "user": mto_config.DB_USER,
     "password": secrets.db_password,
     "host": mto_config.DB_HOST,
+    "port": mto_config.DB_PORT,
 }
 
-def verify_sql_dump(file_path, db_session: Session = None):
+
+def _calculate_sha256(file_path):
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(1024 * 1024), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+
+def verify_sql_dump(file_path, db_session: Session = None, expected_checksum: str = None):
     """
     Performs a multi-point integrity check on a MySQL dump file.
     1. Shallow Check: File presence and completion marker.
@@ -39,6 +50,14 @@ def verify_sql_dump(file_path, db_session: Session = None):
         return False, f"Shallow Verification Error: {str(e)}"
 
     # 2. Deep Check — requires a live DB session and configured credentials
+    if expected_checksum:
+        try:
+            actual_checksum = _calculate_sha256(file_path)
+            if actual_checksum.lower() != expected_checksum.lower():
+                return False, "Checksum mismatch: backup file content changed after creation."
+        except Exception as e:
+            return False, f"Checksum Verification Error: {str(e)}"
+
     if db_session is None:
         try:
             with SessionLocal() as session:
@@ -74,6 +93,7 @@ def perform_restore_test(file_path, db_session: Session = None):
     db_user = DB_CONFIG["user"]
     db_pass = DB_CONFIG["password"]
     db_host = DB_CONFIG["host"]
+    db_port = DB_CONFIG["port"]
 
     # Search paths in priority order: config value first, then common locations
     # for Windows (XAMPP, standard installer), Linux, Docker, and macOS Homebrew.
@@ -117,28 +137,46 @@ def perform_restore_test(file_path, db_session: Session = None):
             actual_mysql_executable,
             f"-u{db_user}",
             f"-h{db_host}",
+            f"-P{db_port}",
             temp_db_name
         ]
+        env = dict(os.environ)
         if db_pass:
-            cmd.insert(2, f"-p{db_pass}")
+            env["MYSQL_PWD"] = db_pass
 
         is_win = os.name == 'nt'
         # On windows, mysql command sometimes needs shell=True to find the executable if it's just 'mysql'
         shell_required = is_win and "\\" not in mysql_path
         
         with open(file_path, "r", encoding="utf-8") as f:
-            subprocess.run(cmd, stdin=f, check=True, timeout=600, shell=shell_required)
+            subprocess.run(cmd, stdin=f, check=True, timeout=600, shell=shell_required, env=env)
 
-        # 3. Verify data exists (e.g., check properties table)
+        # 3. Verify required tables exist and core data is queryable.
+        required_tables = ("users", "properties", "payments", "property_billings", "backup_history")
+        placeholders = ", ".join([f"'{table}'" for table in required_tables])
+        table_rows = db_session.execute(text(
+            "SELECT table_name FROM information_schema.tables "
+            f"WHERE table_schema = '{temp_db_name}' AND table_name IN ({placeholders})"
+        )).fetchall()
+        restored_tables = {row[0] for row in table_rows}
+        missing_tables = sorted(set(required_tables) - restored_tables)
+        if missing_tables:
+            raise RuntimeError(f"missing tables after restore: {', '.join(missing_tables)}")
+
         res = db_session.execute(text(f"SELECT COUNT(*) FROM {temp_db_name}.properties")).first()
-        count = res[0] if res else 0
+        property_count = res[0] if res else 0
+        res = db_session.execute(text(f"SELECT COUNT(*) FROM {temp_db_name}.payments")).first()
+        payment_count = res[0] if res else 0
         
         # 4. Cleanup
         db_session.execute(text(f"DROP DATABASE {temp_db_name}"))
         db_session.commit()
         
-        if count > 0:
-            return True, f"Restore Test Passed: {count} records verified."
+        if property_count > 0:
+            return True, (
+                "Checksum and restore test passed: "
+                f"{property_count} properties and {payment_count} payments verified."
+            )
         else:
             return False, "Restore Test Failed: Database is empty after restoration."
 

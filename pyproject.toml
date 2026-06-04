@@ -30,8 +30,12 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = ["db_manager", "migration_manager", "receipt_generator", "theme_manager", "ui_components", "database_hardening_tool"]
-packages = ["backend", "ui", "utils"]
+py-modules = ["migration_manager", "database_hardening_tool"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["api_clients*", "backend*", "clients*", "ui*", "utils*"]
+namespaces = true
 
 [tool.pytest.ini_options]
 # Force test environment so production-only validators (non-root DB user,

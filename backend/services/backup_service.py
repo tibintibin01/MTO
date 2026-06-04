@@ -114,9 +114,12 @@ def get_backup_status(db_session: Session = None):
             "last_cloud": "Never",
             "last_verify": "Unknown",
             "last_checksum": "None",
+            "last_checksum_short": "None",
             "health": "UNKNOWN",
             "last_status": "UNKNOWN",
             "last_file": None,
+            "last_backup": "Never",
+            "storage_status": "No verified backup yet",
             "backup_dir": BACKUP_BASE_DIR,
             "local_dir": LOCAL_DIR,
         }
@@ -142,16 +145,35 @@ def get_backup_status(db_session: Session = None):
             local_status = ts_str if status in local_statuses else f"FAILED {ts_str}"
             usb_status = ts_str if status in {"USB_ONLY", "SYNCED"} else "Not found"
             cloud_status = ts_str if status in {"CLOUD_ONLY", "SYNCED"} else "Disabled"
+            checksum = latest.checksum or "None"
+            checksum_short = (
+                f"{checksum[:12]}...{checksum[-8:]}"
+                if checksum and checksum != "None" and len(checksum) > 24
+                else checksum
+            )
+            storage_status = {
+                "SYNCED": "Server, USB, and cloud",
+                "CLOUD_ONLY": "Server and cloud",
+                "USB_ONLY": "Server and USB",
+                "LOCAL_ONLY": "Server only",
+                "SUCCESS": "Server",
+                "OK": "Server",
+                "COMPLETED": "Server",
+                "VERIFY_FAILED": "Verification failed",
+            }.get(status, status)
 
             result.update({
                 "last_local":    local_status,
                 "last_usb":      usb_status,
                 "last_cloud":    cloud_status,
                 "last_verify":   health_display,
-                "last_checksum": latest.checksum or "None",
+                "last_checksum": checksum,
+                "last_checksum_short": checksum_short,
                 "health":        raw_health,
                 "last_status":   status,
                 "last_file":     latest.file_path,
+                "last_backup":   f"{latest.filename} @ {ts_str}",
+                "storage_status": storage_status,
             })
 
         return result
@@ -230,8 +252,17 @@ async def run_hybrid_backup(user=None, db_session: Session = None):
 
         # 2. Verify Local Backup
         await report_progress(2, 40, "Verifying backup integrity...")
-        v_success, v_msg = await asyncio.to_thread(verify_sql_dump, local_path)
+        v_success, v_msg = await asyncio.to_thread(
+            verify_sql_dump,
+            local_path,
+            db_session,
+            checksum,
+        )
         health = "OK" if v_success else f"Issue: {v_msg}"
+        if not v_success:
+            final_status = "VERIFY_FAILED"
+            await report_progress(2, 0, f"ERROR: {v_msg}")
+            return False, f"Backup verification failed: {v_msg}"
 
         # 3. Rotation (Local)
         await report_progress(3, 50, "Rotating old local backups...")

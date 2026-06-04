@@ -273,17 +273,6 @@ class SystemAdminPage:
                 daemon=True
             ).start()
 
-        self.view_btn = ctk.CTkButton(
-            btn_fr,
-            text=f"📁 {tr('admin.db.btn_view')}",
-            command=self.open_backup_folder,
-            height=45,
-            width=150,
-            font=ModernTheme.BUTTON,
-            fg_color=ModernTheme.SECONDARY,
-        )
-        self.view_btn.pack(side="left", padx=5)
-
         self.restore_btn = ctk.CTkButton(
             btn_fr,
             text=f"⏮️ {tr('admin.db.btn_restore')}",
@@ -310,10 +299,10 @@ class SystemAdminPage:
 
         self.status_labels = {}
         status_items = [
-            (tr("admin.db.items.local"), "last_local"),
-            (tr("admin.db.items.usb"), "last_usb"),
-            (tr("admin.db.items.cloud"), "last_cloud"),
+            (tr("admin.db.items.latest"), "last_backup"),
             (tr("admin.db.items.verify"), "last_verify"),
+            (tr("admin.db.items.checksum"), "last_checksum_short"),
+            (tr("admin.db.items.storage"), "storage_status"),
         ]
 
         for label, key in status_items:
@@ -349,7 +338,11 @@ class SystemAdminPage:
                         color = "#f59e0b"
                     elif any(word in upper_val for word in ("FAILED", "ERROR", "ISSUE")):
                         color = "#e74c3c"
-                    elif any(word in upper_val for word in ("SUCCESS", "OK")) or ":" in upper_val:
+                    elif key == "last_checksum_short" and upper_val not in ("NONE", "UNKNOWN"):
+                        color = ModernTheme.SUCCESS
+                    elif key in ("last_backup", "storage_status") and upper_val not in ("NEVER", "UNKNOWN", "NO VERIFIED BACKUP YET"):
+                        color = ModernTheme.SUCCESS
+                    elif any(word in upper_val for word in ("SUCCESS", "OK", "PASSED")) or ":" in upper_val:
                         color = ModernTheme.SUCCESS
                     else:
                         color = "#f59e0b"
