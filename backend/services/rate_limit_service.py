@@ -21,7 +21,7 @@ def log_rate_limit_block(
     """
     try:
         block = RateLimitBlock(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             ip_address=ip_address,
             username=username,
             endpoint=endpoint,

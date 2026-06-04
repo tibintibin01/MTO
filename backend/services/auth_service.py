@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from utils import log_error_to_file, hash_password, verify_password, needs_rehash
 from datetime import datetime, timedelta, timezone
 
+import inspect
 from functools import wraps
 from fastapi import HTTPException
 
@@ -14,51 +15,35 @@ def require_permission(permission: str):
     It expects a 'current_user' or 'user' object in the function arguments.
     """
 
+    def _require_user(args, kwargs):
+        user = kwargs.get("current_user") or kwargs.get("user")
+        if not user and args:
+            for arg in args:
+                if isinstance(arg, dict) and ("role" in arg or "username" in arg):
+                    user = arg
+                    break
+
+        if not user:
+            raise HTTPException(
+                status_code=401, detail="Authentication required for this operation"
+            )
+
+        if not has_permission(user, permission):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Access Denied: Missing required permission '{permission}'",
+            )
+
     def decorator(func):
-        import inspect
 
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
-            user = kwargs.get("current_user") or kwargs.get("user")
-            if not user and args:
-                for arg in args:
-                    if isinstance(arg, dict) and ("role" in arg or "username" in arg):
-                        user = arg
-                        break
-
-            if not user:
-                raise HTTPException(
-                    status_code=401, detail="Authentication required for this operation"
-                )
-
-            if not has_permission(user, permission):
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Access Denied: Missing required permission '{permission}'",
-                )
-
+            _require_user(args, kwargs)
             return await func(*args, **kwargs)
 
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
-            user = kwargs.get("current_user") or kwargs.get("user")
-            if not user and args:
-                for arg in args:
-                    if isinstance(arg, dict) and ("role" in arg or "username" in arg):
-                        user = arg
-                        break
-
-            if not user:
-                raise HTTPException(
-                    status_code=401, detail="Authentication required for this operation"
-                )
-
-            if not has_permission(user, permission):
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Access Denied: Missing required permission '{permission}'",
-                )
-
+            _require_user(args, kwargs)
             return func(*args, **kwargs)
 
         if inspect.iscoroutinefunction(func):
@@ -167,9 +152,8 @@ def verify_user_login(username, password, db_session: Session):
         raise ValueError("DISABLED:Account is disabled. Please contact the administrator.")
 
     # 2. Check for active security lockout.
-    # lockout_until is written as a naive UTC datetime (datetime.utcnow() /
-    # datetime.now(timezone.utc).replace(tzinfo=None)) so we compare against
-    # datetime.utcnow() here — both sides are naive UTC, no offset error.
+    # lockout_until is written as a naive UTC datetime, so compare against a
+    # naive UTC "now" here. Both sides stay on the same clock basis.
     # Using datetime.now() (local time) would be wrong on any server not in UTC,
     # including Docker containers which default to UTC while the OS may be UTC+8.
     _now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -184,7 +168,7 @@ def verify_user_login(username, password, db_session: Session):
         user.failed_attempts = (user.failed_attempts or 0) + 1
         if user.failed_attempts >= 5:
             # Write naive UTC so the comparison in the lockout check above
-            # (datetime.utcnow()) stays on the same naive-UTC basis.
+            # stays on the same naive-UTC basis.
             user.lockout_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
             db_session.commit()
             raise ValueError("LOCKED:5")
@@ -418,7 +402,7 @@ def reset_user_password(user_id, new_password, admin_user, db_session: Session):
         return False
 
     user.password = hash_password(new_password)
-    # Use UTC naive to match datetime.utcfromtimestamp(iat) in get_current_user.
+    # Use naive UTC to match the token issued-at comparison in get_current_user.
     # datetime.now() would give local time (UTC+8 in Philippines), causing the
     # iat comparison to incorrectly reject fresh tokens after a password reset.
     user.password_changed_at = datetime.now(timezone.utc).replace(tzinfo=None)
