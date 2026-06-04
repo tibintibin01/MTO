@@ -193,6 +193,15 @@ MIGRATIONS = [
             "  INDEX(username)"
             ");"
         )
+    },
+    {
+        "id": "add_job_queue_composite_indexes",
+        "sql": (
+            "CREATE INDEX IF NOT EXISTS ix_jobs_status_type_created "
+            "ON jobs (status, job_type, created_at);"
+            "CREATE INDEX IF NOT EXISTS ix_jobs_status_started "
+            "ON jobs (status, started_at);"
+        )
     }
 
 ]

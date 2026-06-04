@@ -244,6 +244,10 @@ class Job(Base):
                           → FAILED
     """
     __tablename__ = "jobs"
+    __table_args__ = (
+        Index("ix_jobs_status_type_created", "status", "job_type", "created_at"),
+        Index("ix_jobs_status_started", "status", "started_at"),
+    )
 
     id = Column(String(36), primary_key=True)          # UUID
     job_type = Column(String(50), nullable=False, index=True)
