@@ -127,7 +127,7 @@ async def create_property(
     current_user: dict = Depends(write_access),
     db_session: Session = Depends(get_db)
 ):
-    payload = data.dict(by_alias=True)
+    payload = data.model_dump(by_alias=True, exclude_unset=True)
     if not payload.get("Tax Year") and payload.get("Effectivity Date"):
         eff_date = payload["Effectivity Date"]
         if len(str(eff_date)) >= 4:
@@ -152,7 +152,7 @@ async def update_property(
     current_user: dict = Depends(write_access),
     db_session: Session = Depends(get_db)
 ):
-    payload = data.model_dump(by_alias=True)
+    payload = data.model_dump(by_alias=True, exclude_unset=True)
     if not payload.get("Tax Year") and payload.get("Effectivity Date"):
         eff_date = payload["Effectivity Date"]
         if len(str(eff_date)) >= 4:

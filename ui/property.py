@@ -310,7 +310,29 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.scroll_form = ctk.CTkScrollableFrame(self, fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK), corner_radius=10)
         self.scroll_form.pack(fill="both", expand=True, padx=20, pady=(20, 10))
 
-        fields = [("TD Number", "td_number"), ("Owner Name", "owner_name"), ("Payor", "payor_name"), ("Lot Number", "lot_number"), ("Area", "area"), ("Location", "location"), ("Kind", "kind_of_property"), ("Tax Year", "tax_year"), ("OR Number", "or_number"), ("OR Date", "or_date"), ("Assessed Value", "assessed_value"), ("Penalty", "penalty"), ("Discount", "discount"), ("Amount Paid", "amount_paid")]
+        fields = [
+            ("TD Number", "td_number"),
+            ("Owner Name", "owner_name"),
+            ("Payor", "payor_name"),
+            ("Lot Number", "lot_number"),
+            ("Area", "area"),
+            ("Location", "location"),
+            ("Kind", "kind_of_property"),
+            ("Tax Year", "tax_year"),
+            ("Assessed Value", "assessed_value"),
+        ]
+        payment_fields = [
+            ("OR Number", "or_number"),
+            ("OR Date", "or_date"),
+            ("Penalty", "penalty"),
+            ("Discount", "discount"),
+            ("Amount Paid", "amount_paid"),
+        ]
+
+        for _, key in fields + payment_fields:
+            self.vars[key] = tk.StringVar()
+
+        visible_fields = fields + payment_fields if self.payment_mode else fields
 
         def _scroll_to_widget(widget):
             """
@@ -340,9 +362,8 @@ class PropertyEditModal(ctk.CTkToplevel):
             except Exception:
                 pass
 
-        for label, key in fields:
+        for label, key in visible_fields:
             ctk.CTkLabel(self.scroll_form, text=label.upper(), font=("Segoe UI", 9, "bold"), text_color="gray").pack(anchor="w", padx=10, pady=(10, 0))
-            self.vars[key] = tk.StringVar()
             if key == "location":
                 entry = ctk.CTkEntry(self.scroll_form, height=40, textvariable=self.vars[key],
                                      placeholder_text="Type barangay name...")
@@ -385,6 +406,9 @@ class PropertyEditModal(ctk.CTkToplevel):
 
         self.total_lbl = ctk.CTkLabel(self.calc_box, text="TOTAL TAX DUE: 0.00", font=("Segoe UI", 12, "bold"), text_color="#1f538d")
         self.total_lbl.pack(pady=15)
+        if not self.payment_mode:
+            self.calc_box.pack_forget()
+            compute_fr.pack_forget()
 
         footer = ctk.CTkFrame(self, fg_color="transparent")
         footer.pack(fill="x", padx=20, pady=20)
@@ -491,7 +515,8 @@ class PropertyEditModal(ctk.CTkToplevel):
             # specific tax year — use that for accurate final amounts.
             total = (av * 0.02) + pe - ds
             self.total_lbl.configure(text=f"TOTAL TAX DUE: {total:,.2f}  (preview — use ⚡ AUTO-COMPUTE for exact amount)")
-            if not self.property_id: self.vars["amount_paid"].set(f"{total:.2f}")
+            if self.payment_mode and not self.property_id:
+                self.vars["amount_paid"].set(f"{total:.2f}")
         except Exception:
             pass
         self.validate()
@@ -529,13 +554,16 @@ class PropertyEditModal(ctk.CTkToplevel):
             "location": "Location",
             "kind_of_property": "Kind of Property",
             "tax_year": "Tax Year",
-            "or_number": "OR Number",
-            "or_date": "OR Date",
             "assessed_value": "Assessed Value",
-            "penalty": "Penalty",
-            "discount": "Discount",
-            "amount_paid": "Amount Paid"
         }
+        if self.payment_mode:
+            key_map.update({
+                "or_number": "OR Number",
+                "or_date": "OR Date",
+                "penalty": "Penalty",
+                "discount": "Discount",
+                "amount_paid": "Amount Paid",
+            })
         
         data = {}
         for internal_key, backend_key in key_map.items():
