@@ -181,6 +181,7 @@ async def export_assessment_roll_pdf(
     barangay: Optional[str] = None,
     year_start: Optional[int] = None,
     year_end: Optional[int] = None,
+    as_of_year: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
@@ -194,13 +195,14 @@ async def export_assessment_roll_pdf(
         barangay=barangay if barangay and barangay != "ALL" else None,
         year_start=year_start,
         year_end=year_end,
+        as_of_year=as_of_year,
         db_session=db_session,
     )
     items = result.get("items", []) if isinstance(result, dict) else result
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pdf_path = await asyncio.to_thread(
-            report_gen.generate_assessment_roll_pdf, items, base_dir, barangay
+            report_gen.generate_assessment_roll_pdf, items, base_dir, barangay, as_of_year
         )
         file_name = os.path.basename(pdf_path)
 
@@ -456,6 +458,7 @@ class ExportReportRequest(BaseModel):
     barangay: Optional[str] = None
     year_start: Optional[int] = None
     year_end: Optional[int] = None
+    as_of_year: Optional[int] = None
 
 
 @router.post("/billing/export/excel", tags=["Reports"])
@@ -728,7 +731,9 @@ async def export_billing_excel(
             brgy_filter = data.barangay if data.barangay and data.barangay != "ALL" else None
             brgy_lbl = f"Barangay: {brgy_filter}" if brgy_filter else "All Barangays"
             year_lbl = ""
-            if data.year_start or data.year_end:
+            if data.as_of_year:
+                year_lbl = f"    Active As Of: {data.as_of_year}"
+            elif data.year_start or data.year_end:
                 year_from = str(data.year_start) if data.year_start else "Start"
                 year_to = str(data.year_end) if data.year_end else "End"
                 year_lbl = f"    Effectivity Years: {year_from}-{year_to}"
@@ -751,6 +756,7 @@ async def export_billing_excel(
                 barangay=brgy_filter,
                 year_start=data.year_start,
                 year_end=data.year_end,
+                as_of_year=data.as_of_year,
                 db_session=db_session,
             )
 

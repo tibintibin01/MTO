@@ -28,13 +28,14 @@ def db():
     eng.dispose()
 
 
-def _property(db, td_number, effectivity_date, tax_year=None, barangay="BAYABAS"):
+def _property(db, td_number, effectivity_date, tax_year=None, barangay="BAYABAS", prev_td_number=None):
     row = Property(
         td_number=td_number,
         owner_name=f"OWNER {td_number}",
         barangay=barangay,
         effectivity_date=effectivity_date,
         tax_year=tax_year,
+        prev_td_number=prev_td_number,
         assessed_value=100_000,
         penalty=0,
         discount=0,
@@ -78,3 +79,27 @@ def test_search_properties_year_filter_falls_back_to_tax_year(db):
     )
 
     assert [row[1] for row in rows] == ["TD-TAX-2024"]
+
+
+def test_search_properties_as_of_year_excludes_replaced_previous_td(db):
+    _property(db, "06-0001-00001", "2023")
+    _property(db, "06-0001-00099", "2024", prev_td_number="06-0001-00001")
+    db.commit()
+
+    rows_2023 = search_properties("", barangay="BAYABAS", as_of_year=2023, db_session=db)
+    rows_2025 = search_properties("", barangay="BAYABAS", as_of_year=2025, db_session=db)
+
+    assert {row[1] for row in rows_2023} == {"06-0001-00001"}
+    assert {row[1] for row in rows_2025} == {"06-0001-00099"}
+
+
+def test_search_properties_as_of_year_keeps_old_td_until_replacement_effective(db):
+    _property(db, "06-0001-00001", "2023")
+    _property(db, "06-0001-00099", "2026", prev_td_number="06-0001-00001")
+    db.commit()
+
+    rows_2025 = search_properties("", barangay="BAYABAS", as_of_year=2025, db_session=db)
+    rows_2026 = search_properties("", barangay="BAYABAS", as_of_year=2026, db_session=db)
+
+    assert {row[1] for row in rows_2025} == {"06-0001-00001"}
+    assert {row[1] for row in rows_2026} == {"06-0001-00099"}

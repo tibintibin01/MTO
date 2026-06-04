@@ -195,7 +195,7 @@ def generate_receivables_by_barangay_pdf(rows, year_label, base_dir):
 # 2. ASSESSMENT ROLL — Landscape A4 (wide table)
 # ===========================================================================
 
-def generate_assessment_roll_pdf(items, base_dir, barangay_filter=None):
+def generate_assessment_roll_pdf(items, base_dir, barangay_filter=None, as_of_year=None):
     """
     Generate a PDF for the Assessment Roll.
 
@@ -235,6 +235,8 @@ def generate_assessment_roll_pdf(items, base_dir, barangay_filter=None):
     ]
 
     filter_label = f"Barangay: {barangay_filter}" if barangay_filter else "All Barangays"
+    if as_of_year:
+        filter_label += f" | Active As Of: {as_of_year}"
 
     def new_page():
         draw_seal(c, width, height)

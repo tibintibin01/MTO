@@ -157,7 +157,7 @@ def download_receivables_by_barangay_pdf(year=None, barangay=None):
     )
 
 
-def download_assessment_roll_pdf(barangay=None, year_start=None, year_end=None):
+def download_assessment_roll_pdf(barangay=None, year_start=None, year_end=None, as_of_year=None):
     """Downloads the Assessment Roll PDF report and returns the local file path."""
     params = {}
     if barangay and barangay != "ALL":
@@ -166,13 +166,18 @@ def download_assessment_roll_pdf(barangay=None, year_start=None, year_end=None):
         params["year_start"] = year_start
     if year_end:
         params["year_end"] = year_end
+    if as_of_year:
+        params["as_of_year"] = as_of_year
     return api_download_file(
         "GET", "/reports/assessment-roll-pdf",
         params=params if params else None,
     )
 
 
-def export_report_excel(report_type, month="All", year="All", barangay=None, year_start=None, year_end=None):
+def export_report_excel(
+    report_type, month="All", year="All", barangay=None,
+    year_start=None, year_end=None, as_of_year=None
+):
     """Downloads an Excel (.xlsx) export and returns the local file path.
 
     The backend ExportReportRequest expects a JSON body, so we use the
@@ -201,6 +206,8 @@ def export_report_excel(report_type, month="All", year="All", barangay=None, yea
         body["year_start"] = year_start
     if year_end:
         body["year_end"] = year_end
+    if as_of_year:
+        body["as_of_year"] = as_of_year
     verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
     resp = _req.post(
         f"{BASE_URL}/billing/export/excel",
