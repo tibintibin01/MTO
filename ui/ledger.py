@@ -5,6 +5,7 @@ from tkinter import messagebox, ttk
 import tkinter as tk
 from theme_manager import ModernTheme
 import api_clients.payment_service as payment
+import api_clients.property_service as prop_svc
 import api_clients.auth_service as auth
 import api_clients.system_service as system
 from utils import format_curr, export_data_to_excel, tr
@@ -16,6 +17,7 @@ class LedgerPage:
         self.user = user
         self.is_loading = False
         self.search_timer = None
+        self._ledger_property_ids = {}
         self.setup_ui()
 
     def setup_ui(self):
@@ -39,6 +41,18 @@ class LedgerPage:
 
         self.search_btn = ctk.CTkButton(toolbar, text=f"🔍 {tr('ledger.btn_fetch')}", command=self.load_ledger, width=150, height=35, font=ModernTheme.BUTTON)
         self.search_btn.pack(side="left", padx=10)
+
+        if auth.has_permission(self.user, "payment_post"):
+            self.add_payment_btn = ctk.CTkButton(
+                toolbar,
+                text="+ ADD PAYMENT",
+                command=self.add_payment,
+                width=145,
+                height=35,
+                font=ModernTheme.BUTTON,
+                fg_color=ModernTheme.SUCCESS,
+            )
+            self.add_payment_btn.pack(side="left", padx=(0, 10))
 
         # Action Buttons
         self.view_btn = ctk.CTkButton(toolbar, text=f"📄 {tr('ledger.btn_view')}", command=self.open_receipt, 
@@ -172,6 +186,7 @@ class LedgerPage:
 
     def _update_ui(self, rows, term):
         grand_total = 0.0
+        self._ledger_property_ids = {}
         if rows:
             for i, r in enumerate(rows):
                 # r: 0:pay_id, 1:date, 2:or, 3:year, 4:basic, 5:sef, 6:pen, 7:disc, 8:amt, 9:user, 10:path, 11:rid
@@ -188,7 +203,9 @@ class LedgerPage:
                 f_r[8] = format_curr(f_r[8]) # Total
                 
                 tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-                self.tree.insert("", "end", values=f_r, tags=(r[10], tag)) # Store path and zebra tag
+                item_id = self.tree.insert("", "end", values=f_r, tags=(r[10], tag)) # Store path and zebra tag
+                if len(r) > 14:
+                    self._ledger_property_ids[item_id] = r[14]
                 try: grand_total += float(r[8])
                 except: pass
             self.total_lbl.configure(text=tr("ledger.footer.total").replace("{value}", f"₱ {grand_total:,.2f}"))
@@ -239,6 +256,80 @@ class LedgerPage:
     def open_import_wizard(self):
         from ui.import_wizard import ImportWizardModal
         ImportWizardModal(self.container.winfo_toplevel(), mode="payments")
+
+    def add_payment(self):
+        selected_property_id = self._selected_property_id()
+        if selected_property_id:
+            self._open_payment_modal(selected_property_id)
+            return
+
+        term = self.search_ent.get().strip()
+        if not term:
+            ErrorDialog(
+                self.parent.winfo_toplevel(),
+                "Search Required",
+                "Search a TD number, former TD number, PIN, or owner name first.",
+            )
+            return
+
+        overlay = LoadingOverlay(self.container, "Finding Property...")
+
+        def worker():
+            try:
+                res = prop_svc.search_properties(term, limit=20)
+                items = res.get("items", []) if isinstance(res, dict) else []
+                match, message = self._resolve_property_match(term, items)
+                if match:
+                    self.container.after(0, lambda pid=match[0]: self._open_payment_modal(pid))
+                else:
+                    self.container.after(0, lambda msg=message: messagebox.showwarning("Add Payment", msg))
+            except Exception as e:
+                self.container.after(0, lambda err=e: messagebox.showerror("Add Payment", str(err)))
+            finally:
+                self.container.after(0, lambda: overlay.hide())
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _selected_property_id(self):
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        return self._ledger_property_ids.get(sel[0])
+
+    def _resolve_property_match(self, term, items):
+        if not items:
+            return None, "No property matched your search."
+
+        clean_term = self._normalize_identifier(term)
+        exact = []
+        for row in items:
+            td_number = row[1] if len(row) > 1 else ""
+            pin = row[18] if len(row) > 18 else ""
+            former_td = row[20] if len(row) > 20 else ""
+            candidates = [td_number, pin, former_td]
+            if any(self._normalize_identifier(value) == clean_term for value in candidates if value):
+                exact.append(row)
+
+        if len(exact) == 1:
+            return exact[0], None
+        if len(items) == 1:
+            return items[0], None
+
+        return None, "Multiple properties matched. Please search the exact TD number or former TD number, then try Add Payment again."
+
+    def _normalize_identifier(self, value):
+        return str(value or "").strip().replace(" ", "-").upper()
+
+    def _open_payment_modal(self, property_id):
+        from ui.property import PropertyEditModal
+        PropertyEditModal(
+            self.container.winfo_toplevel(),
+            "Add Payment",
+            property_id,
+            self.load_ledger,
+            user=self.user,
+            payment_mode=True,
+        )
 
     def do_export(self):
         data = []

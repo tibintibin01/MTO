@@ -275,13 +275,14 @@ class PropertyPage:
             messagebox.showerror("Error", str(e))
 
 class PropertyEditModal(ctk.CTkToplevel):
-    def __init__(self, parent, title, property_id, callback, user=None):
+    def __init__(self, parent, title, property_id, callback, user=None, payment_mode=False):
         super().__init__(parent)
         self.title(title)
         self.geometry("600x750")
         self.property_id = property_id
         self.callback = callback
         self.user = user
+        self.payment_mode = payment_mode
         self.vars = {}
         self.barangays = ["NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN", "BUENAVISTA", "CALAOCAN", "DIAMANEN", "DIANED", "DIARABASIN", "DIBUTUNAN", "DIMABUNO", "DINADIAWAN", "DITALE", "GUPA", "IPIL", "LABOY", "LIPIT", "LOBBOT", "MALIGAYA", "MIJARES", "MUCDOL", "PUANGI", "SALAY", "SAPANGKAWAYAN", "TOYTOYAN"]
 
@@ -298,7 +299,10 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.grab_set()
         self.attributes("-topmost", True)
         self.setup_ui()
-        if self.property_id: self.load_data()
+        if self.property_id:
+            self.load_data()
+            if self.payment_mode:
+                self._prepare_payment_entry()
         else: self.recompute()
 
     def setup_ui(self):
@@ -387,6 +391,19 @@ class PropertyEditModal(ctk.CTkToplevel):
         ctk.CTkButton(footer, text="CANCEL", command=self.destroy, fg_color="#95a5a6", width=120).pack(side="left")
         self.save_btn = ctk.CTkButton(footer, text="SAVE PROPERTY", command=self.save, fg_color="#2ecc71", width=200, state="disabled")
         self.save_btn.pack(side="right")
+
+    def _prepare_payment_entry(self):
+        """Reuse the property editor as a clean payment-posting form."""
+        self.title("Add Payment")
+        for key in ("or_number", "or_date", "penalty", "discount", "amount_paid"):
+            if key in self.vars:
+                self.vars[key].set("")
+        self.save_btn.configure(text="SAVE PAYMENT")
+        self._compute_lbl.configure(
+            text="Enter OR Number, OR Date, Tax Year, then use AUTO-COMPUTE.",
+            text_color="#64748b",
+        )
+        self.recompute()
 
     def _auto_compute(self):
         """
@@ -481,6 +498,11 @@ class PropertyEditModal(ctk.CTkToplevel):
 
     def validate(self, *args):
         valid = bool(self.vars["td_number"].get().strip() and self.vars["owner_name"].get().strip() and self.vars["assessed_value"].get().strip())
+        if self.payment_mode:
+            valid = valid and all(
+                self.vars[key].get().strip()
+                for key in ("or_number", "or_date", "tax_year", "amount_paid")
+            )
         self.save_btn.configure(state="normal" if valid else "disabled")
 
     def load_data(self):
@@ -523,6 +545,17 @@ class PropertyEditModal(ctk.CTkToplevel):
         # Handle Barangay specifically as it's often a duplicate of Location
         data["Barangay"] = data["Location"]
 
+        if self.payment_mode:
+            required_payment_fields = ("OR Number", "OR Date", "Tax Year", "Amount Paid")
+            missing = [field for field in required_payment_fields if not data.get(field, "").strip()]
+            if missing:
+                messagebox.showerror(
+                    "Missing Payment Details",
+                    f"Please fill in: {', '.join(missing)}.",
+                    parent=self,
+                )
+                return
+
         # Normalize Date
         from api_clients.billing_service import normalize_date_input
         raw_date = data.get("OR Date", "").strip()
@@ -541,8 +574,10 @@ class PropertyEditModal(ctk.CTkToplevel):
             key = self._idempotency_key if has_payment else None
 
             prop_svc.save_property(data, editing_id=self.property_id, user=self.user, idempotency_key=key)
-            messagebox.showinfo("Success", "Property record saved successfully.", parent=self)
-            self.callback()
+            success_msg = "Payment saved successfully." if self.payment_mode else "Property record saved successfully."
+            messagebox.showinfo("Success", success_msg, parent=self)
+            if self.callback:
+                self.callback()
             self.destroy()
         except Exception as e:
             messagebox.showerror("Error", str(e), parent=self)
