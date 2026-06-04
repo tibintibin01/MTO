@@ -28,10 +28,18 @@ def db():
     eng.dispose()
 
 
-def _property(db, td_number, effectivity_date, tax_year=None, barangay="BAYABAS", prev_td_number=None):
+def _property(
+    db,
+    td_number,
+    effectivity_date,
+    tax_year=None,
+    barangay="BAYABAS",
+    prev_td_number=None,
+    owner_name=None,
+):
     row = Property(
         td_number=td_number,
-        owner_name=f"OWNER {td_number}",
+        owner_name=owner_name or f"OWNER {td_number}",
         barangay=barangay,
         effectivity_date=effectivity_date,
         tax_year=tax_year,
@@ -103,3 +111,18 @@ def test_search_properties_as_of_year_keeps_old_td_until_replacement_effective(d
 
     assert {row[1] for row in rows_2025} == {"06-0001-00001"}
     assert {row[1] for row in rows_2026} == {"06-0001-00099"}
+
+
+def test_search_properties_keeps_exact_owner_substring_inside_long_name(db):
+    _property(
+        db,
+        "06-0004-00031",
+        "2024",
+        owner_name="SPS. APALLA, EXAMPLE LONG OWNER NAME WITH MULTIPLE WORDS",
+    )
+    _property(db, "06-0004-00032", "2024", owner_name="SANTOS, JUAN")
+    db.commit()
+
+    rows = search_properties("APALLA", barangay="BAYABAS", db_session=db)
+
+    assert [row[1] for row in rows] == ["06-0004-00031"]

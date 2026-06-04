@@ -132,6 +132,7 @@ def search_properties(
             query = query.filter(
                 (Property.td_number.like(like_term)) |
                 (Property.owner_name.like(like_term)) |
+                (Property.payor_name.like(like_term)) |
                 (Property.pin.like(like_term)) |
                 (Property.location.like(like_term))
             )
@@ -192,9 +193,12 @@ def search_properties(
             """
             candidates = [
                 prop.owner_name or "",
+                prop.payor_name or "",
                 prop.location or "",
                 prop.td_number or "",
             ]
+            if any(search_upper in c.upper() for c in candidates):
+                return 1.0
             return max(
                 difflib.SequenceMatcher(None, search_upper, c.upper()).ratio()
                 for c in candidates
