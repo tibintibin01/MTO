@@ -1,6 +1,7 @@
 import hashlib
 
 from utils import log_critical_event
+from utils import logger
 from backend.services import verification_service
 
 
@@ -60,3 +61,7 @@ def test_verify_sql_dump_accepts_matching_checksum(tmp_path, monkeypatch):
 
 def test_log_critical_event_does_not_raise():
     log_critical_event("BACKUP_FAILURE", "test failure", user="SYSTEM")
+
+
+def test_logger_module_critical_compatibility_does_not_raise():
+    logger.critical("test critical compatibility")

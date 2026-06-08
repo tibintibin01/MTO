@@ -126,3 +126,23 @@ class MTOLogger:
 
 # Global Access Point
 mto_logger = MTOLogger()
+
+
+def info(message: str, **kwargs):
+    """Module-level compatibility wrapper for older imports."""
+    mto_logger.info(message, **kwargs)
+
+
+def warning(message: str, **kwargs):
+    """Module-level compatibility wrapper for older imports."""
+    mto_logger.warning(message, **kwargs)
+
+
+def error(message: str, **kwargs):
+    """Module-level compatibility wrapper for older imports."""
+    mto_logger.error(message, **kwargs)
+
+
+def critical(message: str, **kwargs):
+    """Module-level compatibility wrapper for older imports."""
+    mto_logger.critical(message, **kwargs)
