@@ -1,13 +1,125 @@
 import os
 from datetime import datetime, timezone
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
-from backend.generators.base import (
-    BRANDING, safe_text, safe_filename, fmt_currency, draw_field, draw_header, draw_seal
-)
-from backend.generators.soa_gen import _draw_soa_table_header
+
+from backend.generators.base import BRANDING, safe_text, safe_filename, fmt_currency
+
+
+def _asset_path(key):
+    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(root_dir, BRANDING.get(key, ""))
+
+
+def _draw_png(c, path, x, y, w, h):
+    if not os.path.exists(path):
+        return
+    try:
+        c.drawImage(path, x, y, width=w, height=h, preserveAspectRatio=True, mask="auto")
+    except Exception:
+        pass
+
+
+def _draw_header(c, title, width, height, margin_x):
+    primary = colors.HexColor(BRANDING["branding_colors"]["primary"])
+    danger = colors.HexColor(BRANDING["branding_colors"]["danger"])
+    secondary = colors.HexColor(BRANDING["branding_colors"]["secondary"])
+    accent = colors.HexColor(BRANDING["branding_colors"]["accent"])
+    centre_x = width / 2
+
+    c.setFillColor(colors.white)
+    c.rect(0, height - 50 * mm, width, 50 * mm, fill=1, stroke=0)
+    c.setFillColor(danger)
+    c.rect(0, height - 4 * mm, width, 4 * mm, fill=1, stroke=0)
+    c.setStrokeColor(accent)
+    c.setLineWidth(0.8)
+    c.line(margin_x, height - 47 * mm, width - margin_x, height - 47 * mm)
+
+    _draw_png(c, _asset_path("logo_path"), margin_x, height - 39 * mm, 29 * mm, 29 * mm)
+    _draw_png(c, _asset_path("seal_path"), width - margin_x - 32 * mm, height - 40 * mm, 32 * mm, 32 * mm)
+
+    c.setFillColor(colors.black)
+    c.setFont("Helvetica", 7.5)
+    c.drawCentredString(centre_x, height - 11 * mm, BRANDING.get("republic_header", "Republic of the Philippines"))
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(centre_x, height - 16 * mm, BRANDING.get("province", ""))
+    c.setFont("Helvetica-Bold", 10)
+    c.drawCentredString(centre_x, height - 21 * mm, BRANDING.get("municipality", ""))
+    c.setFont("Helvetica-Bold", 8.5)
+    c.setFillColor(primary)
+    c.drawCentredString(centre_x, height - 26 * mm, BRANDING.get("office_name", "MUNICIPAL TREASURY OFFICE"))
+    c.setStrokeColor(primary)
+    c.setLineWidth(0.7)
+    c.line(centre_x - 38 * mm, height - 29 * mm, centre_x + 38 * mm, height - 29 * mm)
+
+    c.setFont("Helvetica-Bold", 16)
+    c.setFillColor(danger)
+    c.drawCentredString(centre_x, height - 38 * mm, title)
+
+    now = datetime.now()
+    c.setFillColor(secondary)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawRightString(width - margin_x, height - 51 * mm, now.strftime("%B %d, %Y"))
+    c.setFont("Helvetica", 8)
+    c.drawRightString(width - margin_x, height - 56 * mm, now.strftime("%I:%M %p"))
+
+
+def _section_title(c, title, x, y, w, color=None):
+    color = color or colors.HexColor(BRANDING["branding_colors"]["primary"])
+    c.setFillColor(color)
+    c.setFont("Helvetica-Bold", 10.5)
+    c.drawString(x, y, title.upper())
+    c.setStrokeColor(color)
+    c.setLineWidth(0.6)
+    c.line(x, y - 3 * mm, x + w, y - 3 * mm)
+
+
+def _wrap_text(c, text, x, y, max_width, font="Helvetica", size=9, leading=4.5 * mm):
+    c.setFont(font, size)
+    words = safe_text(text).split()
+    lines = []
+    current = ""
+    for word in words:
+        probe = f"{current} {word}".strip()
+        if c.stringWidth(probe, font, size) <= max_width or not current:
+            current = probe
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    for idx, line in enumerate(lines):
+        c.drawString(x, y - idx * leading, line)
+    return y - max(1, len(lines)) * leading
+
+
+def _info_row(c, label, value, x, y, label_w, value_w):
+    secondary = colors.HexColor(BRANDING["branding_colors"]["secondary"])
+    c.setFillColor(secondary)
+    c.setFont("Helvetica-Bold", 7.5)
+    c.drawString(x, y, label.upper())
+    c.setFillColor(colors.black)
+    c.setFont("Helvetica", 9)
+    c.drawRightString(x + label_w + value_w, y, safe_text(value) or "-")
+
+
+def _table_header(c, x, y, columns, color):
+    c.setFillColor(color)
+    c.rect(x, y - 5 * mm, sum(w for _, w in columns), 8 * mm, fill=1, stroke=0)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 7.5)
+    cursor = x
+    for idx, (label, w) in enumerate(columns):
+        if idx == 0:
+            c.drawString(cursor + 2 * mm, y, label)
+        else:
+            c.drawRightString(cursor + w - 2 * mm, y, label)
+        cursor += w
+    return y - 8 * mm
+
 
 def generate_delinquency_notice(statement_data, base_dir):
     statements_dir = os.path.join(base_dir, "statements")
@@ -21,64 +133,64 @@ def generate_delinquency_notice(statement_data, base_dir):
     c = canvas.Canvas(output_path, pagesize=A4)
     width, height = A4
     margin_x = 15 * mm
-    
-    # 1. Background Seal (Watermark)
-    draw_seal(c, width, height)
+    content_w = width - 2 * margin_x
+    danger = colors.HexColor(BRANDING["branding_colors"]["danger"])
+    accent = colors.HexColor(BRANDING["branding_colors"]["accent"])
 
-    # 2. Header
-    danger_color = colors.HexColor(BRANDING["branding_colors"]["danger"])
-    draw_header(c, "NOTICE OF DELINQUENCY", width, height, margin_x, color=danger_color)
+    _draw_header(c, "NOTICE OF DELINQUENCY", width, height, margin_x)
 
-    current_y = height - 55 * mm
+    current_y = height - 67 * mm
     c.setFillColor(colors.black)
-    c.setFont("Helvetica", 11)
-    
     notice_text = (
-        "Our records show that the property listed below has an outstanding balance. "
-        "Please settle your account immediately to avoid further penalties and legal action."
+        "This serves as formal notice that, based on the records of the Municipal Treasury Office, "
+        "the real property account listed below has outstanding real property tax obligations. "
+        "Please settle the stated balance promptly to avoid additional penalties and appropriate collection action."
     )
-    c.drawString(margin_x, current_y, notice_text)
-    
-    current_y -= 14 * mm
-    c.setStrokeColor(colors.HexColor("#f5c6cb"))
-    c.rect(margin_x, current_y - 26 * mm, width - (2 * margin_x), 28 * mm, fill=0, stroke=1)
-    draw_field(c, "TD Number", statement_data.get("td_number"), margin_x + 4 * mm, current_y - 5 * mm, width=width - 2*margin_x - 10*mm)
-    draw_field(c, "Owner Name", statement_data.get("owner_name"), margin_x + 4 * mm, current_y - 12 * mm, width=width - 2*margin_x - 10*mm)
-    draw_field(c, "Location", statement_data.get("location"), margin_x + 4 * mm, current_y - 19 * mm, width=width - 2*margin_x - 10*mm)
-    
-    current_y -= 36 * mm
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(margin_x, current_y, "Delinquent Balances")
+    current_y = _wrap_text(c, notice_text, margin_x, current_y, content_w, size=9.5)
+
     current_y -= 6 * mm
-    c.line(margin_x, current_y, width - margin_x, current_y)
-    current_y -= 8 * mm
+    box_h = 29 * mm
+    c.setFillColor(colors.HexColor("#fff7f7"))
+    c.setStrokeColor(colors.HexColor("#f3b3b3"))
+    c.roundRect(margin_x, current_y - box_h, content_w, box_h, 2 * mm, fill=1, stroke=1)
+    row_y = current_y - 8 * mm
+    _info_row(c, "TD Number", statement_data.get("td_number"), margin_x + 5 * mm, row_y, 30 * mm, 55 * mm)
+    _info_row(c, "Owner Name", statement_data.get("owner_name"), width / 2, row_y, 28 * mm, 61 * mm)
+    row_y -= 8 * mm
+    _info_row(c, "Location", statement_data.get("location"), margin_x + 5 * mm, row_y, 30 * mm, 55 * mm)
+    _info_row(c, "Kind", statement_data.get("kind_of_property"), width / 2, row_y, 28 * mm, 61 * mm)
+    row_y -= 8 * mm
+    _info_row(c, "Total Balance", fmt_currency(statement_data.get("total_balance")), margin_x + 5 * mm, row_y, 30 * mm, 55 * mm)
+
+    current_y -= box_h + 12 * mm
+    _section_title(c, "Delinquent Balance Details", margin_x, current_y, content_w, danger)
+    current_y -= 11 * mm
 
     columns = [
-        ("Year", 16 * mm), ("Assessed", 29 * mm), ("Basic", 21 * mm),
-        ("SEF", 21 * mm), ("Penalty", 21 * mm), ("Total", 23 * mm),
-        ("Paid", 21 * mm), ("Balance", 24 * mm),
+        ("Year", 15 * mm), ("Assessed", 26 * mm), ("Basic", 22 * mm),
+        ("SEF", 22 * mm), ("Penalty", 24 * mm), ("Due", 25 * mm),
+        ("Paid", 22 * mm), ("Balance", 24 * mm),
     ]
-    table_width = sum(item[1] for item in columns)
+    current_y = _table_header(c, margin_x, current_y, columns, danger)
+    c.setFont("Helvetica", 7.5)
+    c.setFillColor(colors.black)
+    c.setStrokeColor(accent)
 
-    current_y = _draw_soa_table_header(c, margin_x, current_y, columns)
-    c.setFont("Helvetica", 8)
-    c.setStrokeColor(colors.HexColor("#f5c6cb"))
-
-    for row in statement_data.get("billing_rows", []):
-        if float(row.get("balance_amount", 0)) <= 0:
-            continue
-            
-        if current_y < 35 * mm:
+    delinquent_rows = [r for r in statement_data.get("billing_rows", []) if float(r.get("balance_amount", 0) or 0) > 0]
+    for idx, row in enumerate(delinquent_rows):
+        if current_y < 52 * mm:
             c.showPage()
-            current_y = height - 55 * mm
-            current_y = _draw_soa_table_header(c, margin_x, current_y, columns)
-            c.setFont("Helvetica", 8)
-            c.setStrokeColor(colors.HexColor("#f5c6cb"))
+            _draw_header(c, "NOTICE OF DELINQUENCY", width, height, margin_x)
+            current_y = height - 65 * mm
+            current_y = _table_header(c, margin_x, current_y, columns, danger)
+            c.setFont("Helvetica", 7.5)
+            c.setFillColor(colors.black)
 
-        row_top = current_y + 2.5 * mm
-        c.rect(margin_x, row_top - 7 * mm, table_width, 8 * mm, fill=0, stroke=1)
+        if idx % 2 == 0:
+            c.setFillColor(colors.HexColor("#f8fafc"))
+            c.rect(margin_x, current_y - 4.5 * mm, sum(w for _, w in columns), 7.5 * mm, fill=1, stroke=0)
+            c.setFillColor(colors.black)
 
-        current_x = margin_x
         values = [
             safe_text(row.get("tax_year")),
             fmt_currency(row.get("assessed_value")),
@@ -89,27 +201,57 @@ def generate_delinquency_notice(statement_data, base_dir):
             fmt_currency(row.get("amount_paid")),
             fmt_currency(row.get("balance_amount")),
         ]
-        for index, value in enumerate(values):
-            width_value = columns[index][1]
-            if index > 0:
-                c.line(current_x, row_top - 7 * mm, current_x, row_top + 1 * mm)
-            if index == 0:
-                c.drawString(current_x + 2 * mm, current_y, value)
+        cursor = margin_x
+        for col_idx, value in enumerate(values):
+            col_w = columns[col_idx][1]
+            if col_idx == 0:
+                c.drawString(cursor + 2 * mm, current_y, value)
             else:
-                c.drawRightString(current_x + width_value - 2 * mm, current_y, value)
-            current_x += width_value
-        current_y -= 8 * mm
+                c.drawRightString(cursor + col_w - 2 * mm, current_y, value)
+            cursor += col_w
+        c.setStrokeColor(accent)
+        c.line(margin_x, current_y - 5 * mm, margin_x + sum(w for _, w in columns), current_y - 5 * mm)
+        current_y -= 7.5 * mm
 
+    current_y -= 5 * mm
+    c.setStrokeColor(danger)
+    c.setLineWidth(1)
+    c.line(margin_x, current_y, width - margin_x, current_y)
     current_y -= 8 * mm
+    c.setFillColor(danger)
     c.setFont("Helvetica-Bold", 12)
-    c.setFillColor(colors.HexColor("#c0392b"))
     c.drawString(margin_x, current_y, "TOTAL DELINQUENT BALANCE")
-    c.drawRightString(width - margin_x, current_y, fmt_currency(statement_data.get("total_balance")))
+    c.drawRightString(width - margin_x, current_y, f"PHP {fmt_currency(statement_data.get('total_balance'))}")
 
     current_y -= 16 * mm
-    c.setFont(BRANDING["fonts"]["body"], 8)
+    c.setFillColor(colors.black)
+    c.setFont("Helvetica", 9)
+    current_y = _wrap_text(
+        c,
+        "Kindly present this notice when making payment at the Municipal Treasury Office. "
+        "For questions or verification, please bring the latest tax declaration and official receipt records.",
+        margin_x,
+        current_y,
+        content_w,
+        size=9,
+    )
+
+    current_y -= 20 * mm
+    sig_x = width - margin_x - 70 * mm
+    c.setStrokeColor(colors.black)
+    c.line(sig_x, current_y, width - margin_x, current_y)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawCentredString(sig_x + 35 * mm, current_y + 2 * mm, safe_text(statement_data.get("accountable_officer")) or "")
+    c.setFont("Helvetica", 8)
     c.setFillColor(colors.HexColor(BRANDING["branding_colors"]["secondary"]))
-    c.drawString(margin_x, current_y, BRANDING["footer_text"])
+    c.drawCentredString(sig_x + 35 * mm, current_y - 5 * mm, "Municipal Treasurer / Authorized Representative")
+
+    footer_y = 15 * mm
+    c.setStrokeColor(accent)
+    c.line(margin_x, footer_y + 5 * mm, width - margin_x, footer_y + 5 * mm)
+    c.setFont("Helvetica", 7)
+    c.setFillColor(colors.HexColor(BRANDING["branding_colors"]["secondary"]))
+    c.drawCentredString(width / 2, footer_y, BRANDING["footer_text"])
 
     c.save()
     return output_path
