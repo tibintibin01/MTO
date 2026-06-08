@@ -17,6 +17,40 @@ from backend.services.storage_service import storage_service
 router = APIRouter(tags=["Billing"])
 
 
+def _fetch_all_assessment_roll_items(
+    db_session: Session,
+    barangay: Optional[str] = None,
+    year_start: Optional[int] = None,
+    year_end: Optional[int] = None,
+    as_of_year: Optional[int] = None,
+    batch_size: int = 5000,
+):
+    """Fetch the full assessment roll in cursor batches for exports."""
+    items = []
+    cursor = None
+    while True:
+        batch = prop_svc.search_properties(
+            "",
+            limit=batch_size,
+            cursor=cursor,
+            barangay=barangay if barangay and barangay != "ALL" else None,
+            year_start=year_start,
+            year_end=year_end,
+            as_of_year=as_of_year,
+            db_session=db_session,
+        )
+        if not batch:
+            break
+
+        items.extend(batch)
+        if len(batch) < batch_size:
+            break
+
+        cursor = batch[-1][0]
+
+    return items
+
+
 @router.get("/billing/summary")
 async def get_billing_summary(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     return sys_svc.get_dashboard_summary(db_session=db_session)
@@ -196,16 +230,13 @@ async def export_assessment_roll_pdf(
     Generates a print-ready PDF of the full Assessment Roll (landscape A4).
     Optionally filtered by barangay and/or effectivity year range.
     """
-    result = prop_svc.search_properties(
-        "",
-        limit=10000,
+    items = _fetch_all_assessment_roll_items(
+        db_session=db_session,
         barangay=barangay if barangay and barangay != "ALL" else None,
         year_start=year_start,
         year_end=year_end,
         as_of_year=as_of_year,
-        db_session=db_session,
     )
-    items = result.get("items", []) if isinstance(result, dict) else result
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pdf_path = await asyncio.to_thread(
@@ -757,14 +788,12 @@ async def export_billing_excel(
                 ws.cell(row=4, column=col_idx, value=h)
             style_header_row(ws, 4, len(headers))
 
-            items = prop_svc.search_properties(
-                "",
-                limit=10000,
+            items = _fetch_all_assessment_roll_items(
+                db_session=db_session,
                 barangay=brgy_filter,
                 year_start=data.year_start,
                 year_end=data.year_end,
                 as_of_year=data.as_of_year,
-                db_session=db_session,
             )
 
             for row_idx, item in enumerate(items or [], start=5):
