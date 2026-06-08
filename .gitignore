@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
 .venv/
 venv/
 ENV/
@@ -20,6 +23,7 @@ dist/
 
 # Database
 mto_local.db
+backups/
 
 # Local config — contains user-specific settings, never commit
 config.json

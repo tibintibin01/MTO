@@ -1,9 +1,0 @@
-backend
-database_hardening_tool
-db_manager
-migration_manager
-receipt_generator
-theme_manager
-ui
-ui_components
-utils

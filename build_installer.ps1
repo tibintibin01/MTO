@@ -11,7 +11,7 @@ $IsccCandidates = @(
 
 if (-not (Test-Path $Exe)) {
     $PyInstaller = Join-Path $Root "venv\Scripts\pyinstaller.exe"
-    $Spec = Join-Path $Root "MTO Treasury.spec"
+    $Spec = Join-Path $Root "Treasury.spec"
 
     if (-not (Test-Path $PyInstaller)) {
         throw "PyInstaller was not found at $PyInstaller. Build Treasury.exe first or install PyInstaller in the project venv."
