@@ -77,14 +77,34 @@ def _section_title(c, title, x, y, w):
     c.line(x, y - 3 * mm, x + w, y - 3 * mm)
 
 
-def _kv(c, label, value, x, y, w):
+def _kv(c, label, value, x, y, w, value_size=9):
     secondary = colors.HexColor(BRANDING["branding_colors"]["secondary"])
     c.setFillColor(secondary)
     c.setFont("Helvetica-Bold", 7.5)
     c.drawString(x, y, label.upper())
+
+    text = safe_text(value) or "-"
+    font = "Helvetica"
     c.setFillColor(colors.black)
-    c.setFont("Helvetica", 9)
-    c.drawRightString(x + w, y, safe_text(value) or "-")
+    c.setFont(font, value_size)
+
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        probe = f"{current} {word}".strip()
+        if c.stringWidth(probe, font, value_size) <= w or not current:
+            current = probe
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    if not lines:
+        lines = ["-"]
+
+    for idx, line in enumerate(lines[:2]):
+        c.drawString(x, y - (5 + idx * 4.2) * mm, line)
 
 
 def _table_header(c, x, y, columns):
@@ -136,21 +156,25 @@ def generate_delinquency_computation(statement_data, base_dir):
     _section_title(c, "Property and Taxpayer Information", margin_x, current_y, content_w)
     current_y -= 10 * mm
 
-    box_h = 31 * mm
+    box_h = 55 * mm
     c.setFillColor(colors.HexColor("#f8fafc"))
     c.setStrokeColor(accent)
     c.roundRect(margin_x, current_y - box_h, content_w, box_h, 2 * mm, fill=1, stroke=1)
+    cell_gap = 8 * mm
+    cell_w = (content_w - (10 * mm) - cell_gap) / 2
     left_x = margin_x + 5 * mm
-    right_x = width / 2 + 4 * mm
+    right_x = left_x + cell_w + cell_gap
+    full_w = content_w - 10 * mm
     row_y = current_y - 8 * mm
-    _kv(c, "TD Number", statement_data.get("td_number"), left_x, row_y, 72 * mm)
-    _kv(c, "Kind of Property", statement_data.get("kind_of_property"), right_x, row_y, 72 * mm)
-    row_y -= 8 * mm
-    _kv(c, "Owner Name", statement_data.get("owner_name"), left_x, row_y, 72 * mm)
-    _kv(c, "Assessed Value", fmt_currency(statement_data.get("assessed_value")), right_x, row_y, 72 * mm)
-    row_y -= 8 * mm
-    _kv(c, "Location", statement_data.get("location"), left_x, row_y, 72 * mm)
-    _kv(c, "Total Balance", fmt_currency(statement_data.get("total_balance")), right_x, row_y, 72 * mm)
+    _kv(c, "TD Number", statement_data.get("td_number"), left_x, row_y, cell_w)
+    _kv(c, "Total Balance", fmt_currency(statement_data.get("total_balance")), right_x, row_y, cell_w)
+    row_y -= 13 * mm
+    _kv(c, "Owner Name", statement_data.get("owner_name"), left_x, row_y, full_w, value_size=8.8)
+    row_y -= 13 * mm
+    _kv(c, "Location", statement_data.get("location"), left_x, row_y, full_w)
+    row_y -= 13 * mm
+    _kv(c, "Kind of Property", statement_data.get("kind_of_property"), left_x, row_y, cell_w)
+    _kv(c, "Assessed Value", fmt_currency(statement_data.get("assessed_value")), right_x, row_y, cell_w)
 
     current_y -= box_h + 12 * mm
     _section_title(c, "Tax Computation Details", margin_x, current_y, content_w)

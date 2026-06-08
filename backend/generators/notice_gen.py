@@ -96,14 +96,35 @@ def _wrap_text(c, text, x, y, max_width, font="Helvetica", size=9, leading=4.5 *
     return y - max(1, len(lines)) * leading
 
 
-def _info_row(c, label, value, x, y, label_w, value_w):
+def _info_cell(c, label, value, x, y, width, value_size=9):
     secondary = colors.HexColor(BRANDING["branding_colors"]["secondary"])
     c.setFillColor(secondary)
     c.setFont("Helvetica-Bold", 7.5)
     c.drawString(x, y, label.upper())
+
+    text = safe_text(value) or "-"
+    font = "Helvetica"
     c.setFillColor(colors.black)
-    c.setFont("Helvetica", 9)
-    c.drawRightString(x + label_w + value_w, y, safe_text(value) or "-")
+    c.setFont(font, value_size)
+
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        probe = f"{current} {word}".strip()
+        if c.stringWidth(probe, font, value_size) <= width or not current:
+            current = probe
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    if not lines:
+        lines = ["-"]
+
+    max_lines = 2
+    for idx, line in enumerate(lines[:max_lines]):
+        c.drawString(x, y - (5 + idx * 4.2) * mm, line)
 
 
 def _table_header(c, x, y, columns, color):
@@ -149,18 +170,24 @@ def generate_delinquency_notice(statement_data, base_dir):
     current_y = _wrap_text(c, notice_text, margin_x, current_y, content_w, size=9.5)
 
     current_y -= 6 * mm
-    box_h = 29 * mm
+    box_h = 43 * mm
     c.setFillColor(colors.HexColor("#fff7f7"))
     c.setStrokeColor(colors.HexColor("#f3b3b3"))
     c.roundRect(margin_x, current_y - box_h, content_w, box_h, 2 * mm, fill=1, stroke=1)
+    cell_gap = 8 * mm
+    cell_w = (content_w - (10 * mm) - cell_gap) / 2
+    left_x = margin_x + 5 * mm
+    right_x = left_x + cell_w + cell_gap
+    full_w = content_w - 10 * mm
+
     row_y = current_y - 8 * mm
-    _info_row(c, "TD Number", statement_data.get("td_number"), margin_x + 5 * mm, row_y, 30 * mm, 55 * mm)
-    _info_row(c, "Owner Name", statement_data.get("owner_name"), width / 2, row_y, 28 * mm, 61 * mm)
-    row_y -= 8 * mm
-    _info_row(c, "Location", statement_data.get("location"), margin_x + 5 * mm, row_y, 30 * mm, 55 * mm)
-    _info_row(c, "Kind", statement_data.get("kind_of_property"), width / 2, row_y, 28 * mm, 61 * mm)
-    row_y -= 8 * mm
-    _info_row(c, "Total Balance", fmt_currency(statement_data.get("total_balance")), margin_x + 5 * mm, row_y, 30 * mm, 55 * mm)
+    _info_cell(c, "TD Number", statement_data.get("td_number"), left_x, row_y, cell_w)
+    _info_cell(c, "Total Balance", fmt_currency(statement_data.get("total_balance")), right_x, row_y, cell_w)
+    row_y -= 13 * mm
+    _info_cell(c, "Owner Name", statement_data.get("owner_name"), left_x, row_y, full_w, value_size=8.8)
+    row_y -= 13 * mm
+    _info_cell(c, "Location", statement_data.get("location"), left_x, row_y, cell_w)
+    _info_cell(c, "Kind", statement_data.get("kind_of_property"), right_x, row_y, cell_w)
 
     current_y -= box_h + 12 * mm
     _section_title(c, "Delinquent Balance Details", margin_x, current_y, content_w, danger)
