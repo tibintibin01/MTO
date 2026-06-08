@@ -1,5 +1,6 @@
 import hashlib
 
+from utils import log_critical_event
 from backend.services import verification_service
 
 
@@ -55,3 +56,7 @@ def test_verify_sql_dump_accepts_matching_checksum(tmp_path, monkeypatch):
 
     assert success is True
     assert message == "restore ok"
+
+
+def test_log_critical_event_does_not_raise():
+    log_critical_event("BACKUP_FAILURE", "test failure", user="SYSTEM")

@@ -113,6 +113,9 @@ class MTOLogger:
     def error(self, message: str, **kwargs):
         self.log("ERROR", message, kwargs)
 
+    def critical(self, message: str, **kwargs):
+        self.log("CRITICAL", message, kwargs)
+
     def warning(self, message: str, **kwargs):
         self.log("WARNING", message, kwargs)
 

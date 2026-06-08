@@ -182,7 +182,7 @@ sys_logger.addHandler(console)
 
 def log_critical_event(event_type: str, message: str, user: str = "SYSTEM"):
     """Logs a critical event for monitoring and alerting tools."""
-    logger.critical(f"EVENT_TYPE={event_type} | USER={user} | MESSAGE={message}")
+    sys_logger.critical(f"EVENT_TYPE={event_type} | USER={user} | MESSAGE={message}")
 
 def log_error_to_file(context: str, error: Optional[Exception] = None, extra: Optional[Any] = None, traceback_text: Optional[str] = None) -> Optional[str]:
     """Professional wrapper for the system logger to maintain compatibility."""
