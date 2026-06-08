@@ -5,7 +5,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from backend.generators.base import (
-    BRANDING, safe_text, safe_filename, fmt_currency, draw_seal
+    BRANDING, safe_text, safe_filename, fmt_currency
 )
 
 
@@ -69,77 +69,107 @@ def _num_to_words(amount: float) -> str:
 
 def _draw_official_header(c, width, height, margin_x):
     """
-    Draws the full government-compliant header.
-    Uses the same municipal logo on both left and right sides
-    (standard PH LGU receipt format).
-    White-background removal uses a near-white mask range so logos
-    with slightly off-white backgrounds render cleanly on the blue header.
+    Draws a clean official-document header.
+    Left: Municipality of Dipaculao seal. Right: Bagong Pilipinas mark.
+    The assets are transparent PNGs, so use mask='auto' to avoid white boxes.
     """
     primary = colors.HexColor(BRANDING["branding_colors"]["primary"])
+    secondary = colors.HexColor(BRANDING["branding_colors"]["secondary"])
+    accent = colors.HexColor(BRANDING["branding_colors"]["accent"])
+
+    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    logo_path = os.path.join(root_dir, BRANDING.get("logo_path", ""))
+    seal_path = os.path.join(root_dir, BRANDING.get("seal_path", ""))
+
+    # White paper header with thin official rule lines.
+    c.setFillColor(colors.white)
+    c.rect(0, height - 50 * mm, width, 50 * mm, fill=1, stroke=0)
     c.setFillColor(primary)
-    c.rect(0, height - 48 * mm, width, 48 * mm, fill=1, stroke=0)
+    c.rect(0, height - 4 * mm, width, 4 * mm, fill=1, stroke=0)
+    c.setStrokeColor(accent)
+    c.setLineWidth(0.8)
+    c.line(margin_x, height - 47 * mm, width - margin_x, height - 47 * mm)
 
-    # Resolve the single logo path used on both sides
-    logo_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        BRANDING.get("logo_path", "")
-    )
-
-    def _draw_logo(x, y, w=28 * mm, h=28 * mm):
-        """Draw logo with pure-white background removal."""
-        if not os.path.exists(logo_path):
+    def _draw_png(path, x, y, w, h):
+        if not os.path.exists(path):
             return
         try:
-            # mask=(255,255,255,255,255,255) removes only pure white pixels.
-            # Using 250-255 was too aggressive and removed pixels inside the seal.
-            c.drawImage(logo_path, x, y, width=w, height=h,
-                        mask=[255, 255, 255, 255, 255, 255])
+            c.drawImage(path, x, y, width=w, height=h, preserveAspectRatio=True, mask="auto")
         except Exception:
-            try:
-                c.drawImage(logo_path, x, y, width=w, height=h, mask='auto')
-            except Exception:
-                pass
+            pass
 
-    # Logo left
-    _draw_logo(margin_x, height - 44 * mm)
-    # Same logo right (standard PH LGU receipt format)
-    _draw_logo(width - margin_x - 28 * mm, height - 44 * mm)
+    # Municipal seal and Bagong Pilipinas mark, both without background boxes.
+    _draw_png(logo_path, margin_x, height - 39 * mm, 29 * mm, 29 * mm)
+    _draw_png(seal_path, width - margin_x - 32 * mm, height - 40 * mm, 32 * mm, 32 * mm)
 
-    # Centre text block
-    c.setFillColor(colors.white)
     centre_x = width / 2
-
+    c.setFillColor(colors.black)
     c.setFont("Helvetica", 7.5)
-    c.drawCentredString(centre_x, height - 10 * mm,
-                        BRANDING.get("republic_header", "Republic of the Philippines"))
+    c.drawCentredString(
+        centre_x, height - 11 * mm,
+        BRANDING.get("republic_header", "Republic of the Philippines")
+    )
     c.setFont("Helvetica", 8)
-    c.drawCentredString(centre_x, height - 15 * mm,
-                        BRANDING.get("province", ""))
-    c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(centre_x, height - 20 * mm,
-                        BRANDING.get("municipality", ""))
-    c.setFont("Helvetica", 8)
-    c.drawCentredString(centre_x, height - 25 * mm,
-                        BRANDING.get("office_name", "MUNICIPAL TREASURY OFFICE"))
+    c.drawCentredString(centre_x, height - 16 * mm, BRANDING.get("province", ""))
+    c.setFont("Helvetica-Bold", 10)
+    c.drawCentredString(centre_x, height - 21 * mm, BRANDING.get("municipality", ""))
+    c.setFont("Helvetica-Bold", 8.5)
+    c.setFillColor(primary)
+    c.drawCentredString(
+        centre_x, height - 26 * mm,
+        BRANDING.get("office_name", "MUNICIPAL TREASURY OFFICE")
+    )
 
-    # Thin divider
-    c.setStrokeColor(colors.Color(1, 1, 1, alpha=0.4))
-    c.setLineWidth(0.5)
-    c.line(centre_x - 35 * mm, height - 27 * mm,
-           centre_x + 35 * mm, height - 27 * mm)
+    c.setStrokeColor(primary)
+    c.setLineWidth(0.7)
+    c.line(centre_x - 36 * mm, height - 29 * mm, centre_x + 36 * mm, height - 29 * mm)
 
-    c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(centre_x, height - 34 * mm, "OFFICIAL RECEIPT")
+    c.setFont("Helvetica-Bold", 18)
+    c.setFillColor(primary)
+    c.drawCentredString(centre_x, height - 38 * mm, "OFFICIAL RECEIPT")
 
-    # Date / time placed BELOW the header bar so it never overlaps the seal
     now = datetime.now()
-    c.setFillColor(colors.HexColor(BRANDING["branding_colors"]["secondary"]))
+    c.setFillColor(secondary)
     c.setFont("Helvetica-Bold", 8)
-    c.drawRightString(width - margin_x, height - 52 * mm,
-                      now.strftime("%B %d, %Y"))
+    c.drawRightString(width - margin_x, height - 51 * mm, now.strftime("%B %d, %Y"))
     c.setFont("Helvetica", 8)
-    c.drawRightString(width - margin_x, height - 57 * mm,
-                      now.strftime("%I:%M %p"))
+    c.drawRightString(width - margin_x, height - 56 * mm, now.strftime("%I:%M %p"))
+
+
+def _draw_section_title(c, title, x, y, width):
+    primary = colors.HexColor(BRANDING["branding_colors"]["primary"])
+    c.setFillColor(primary)
+    c.setFont("Helvetica-Bold", 10.5)
+    c.drawString(x, y, title.upper())
+    c.setStrokeColor(primary)
+    c.setLineWidth(0.6)
+    c.line(x, y - 3 * mm, x + width, y - 3 * mm)
+
+
+def _draw_wrapped_right(c, text, x_right, y, max_width, font="Helvetica", size=9):
+    """
+    Draws short wrapped values right-aligned. Keeps long owner names from
+    spilling into the left-side labels.
+    """
+    text = safe_text(text)
+    c.setFont(font, size)
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        probe = f"{current} {word}".strip()
+        if c.stringWidth(probe, font, size) <= max_width or not current:
+            current = probe
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    if not lines:
+        lines = [""]
+    for offset, line in enumerate(lines[:2]):
+        c.drawRightString(x_right, y - (offset * 4.2 * mm), line)
+    return len(lines[:2])
 
 
 # ---------------------------------------------------------------------------
@@ -162,8 +192,6 @@ def generate_or_receipt(receipt_data, base_dir):
     margin_x = 18 * mm
 
     # ── Watermark seal ────────────────────────────────────────────────────────
-    draw_seal(c, width, height)
-
     # ── Header ────────────────────────────────────────────────────────────────
     _draw_official_header(c, width, height, margin_x)
 
@@ -174,10 +202,11 @@ def generate_or_receipt(receipt_data, base_dir):
     # ── Receipt metadata box ──────────────────────────────────────────────────
     accent = colors.HexColor(BRANDING["branding_colors"]["accent"])
     box_h = 22 * mm
+    c.setFillColor(colors.HexColor("#f8fafc"))
     c.setStrokeColor(accent)
     c.setLineWidth(0.8)
     c.rect(margin_x, current_y - box_h, width - 2 * margin_x, box_h,
-           fill=0, stroke=1)
+           fill=1, stroke=1)
 
     def _lbl(text, x, y):
         c.setFont("Helvetica-Bold", 7.5)
@@ -220,24 +249,21 @@ def generate_or_receipt(receipt_data, base_dir):
     current_y -= box_h + 10 * mm
 
     # ── Property details ──────────────────────────────────────────────────────
-    c.setFont("Helvetica-Bold", 11)
-    c.setFillColor(colors.black)
-    c.drawString(margin_x, current_y, "Property Details")
-    current_y -= 5 * mm
-    c.setStrokeColor(colors.HexColor(BRANDING["branding_colors"]["primary"]))
-    c.setLineWidth(0.5)
-    c.line(margin_x, current_y, width - margin_x, current_y)
-    current_y -= 8 * mm
+    _draw_section_title(c, "Property Details", margin_x, current_y, width - 2 * margin_x)
+    current_y -= 11 * mm
 
     def _field_row(label, value):
         nonlocal current_y
         c.setFont("Helvetica-Bold", 7.5)
         c.setFillColor(colors.HexColor(BRANDING["branding_colors"]["secondary"]))
         c.drawString(margin_x, current_y, label.upper())
-        c.setFont("Helvetica", 9)
+        c.setFont("Helvetica", 9.2)
         c.setFillColor(colors.black)
-        c.drawRightString(width - margin_x, current_y, safe_text(value))
-        current_y -= 8 * mm
+        lines = _draw_wrapped_right(
+            c, value, width - margin_x, current_y,
+            max_width=95 * mm, font="Helvetica", size=9.2
+        )
+        current_y -= (8 if lines == 1 else 12) * mm
 
     _field_row("TD Number",       receipt_data.get("td_number"))
     _field_row("Owner Name",      receipt_data.get("owner_name"))
@@ -248,14 +274,11 @@ def generate_or_receipt(receipt_data, base_dir):
     current_y -= 8 * mm
 
     # ── Payment breakdown ─────────────────────────────────────────────────────
-    c.setFont("Helvetica-Bold", 11)
-    c.setFillColor(colors.black)
-    c.drawString(margin_x, current_y, "Payment Breakdown")
-    current_y -= 5 * mm
-    c.setStrokeColor(colors.HexColor(BRANDING["branding_colors"]["primary"]))
-    c.line(margin_x, current_y, width - margin_x, current_y)
-    current_y -= 8 * mm
+    _draw_section_title(c, "Payment Breakdown", margin_x, current_y, width - 2 * margin_x)
+    current_y -= 11 * mm
 
+    c.setFillColor(colors.HexColor("#f1f5f9"))
+    c.rect(margin_x, current_y - 5 * mm, width - 2 * margin_x, 9 * mm, fill=1, stroke=0)
     c.setFont("Helvetica-Bold", 10)
     c.setFillColor(colors.black)
     c.drawString(margin_x, current_y, "Description")
@@ -319,7 +342,6 @@ def generate_or_receipt(receipt_data, base_dir):
         current_y -= 8 * mm
         if current_y < 60 * mm:
             c.showPage()
-            draw_seal(c, width, height)
             current_y = height - 25 * mm
             c.setFont("Helvetica", 10)
             c.setFillColor(colors.black)
