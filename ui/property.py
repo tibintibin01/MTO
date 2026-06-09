@@ -659,9 +659,15 @@ class BulkBarangayUpdateModal(ctk.CTkToplevel):
                 self.tree.insert("", "end", values=("", "No cleanup needed", "All properties have barangay values", ""))
                 return
             for r in res:
-                self.tree.insert("", "end", values=(r[0], r[1], r[2], r[6]))
+                row = list(r)
+                prop_id = row[0] if len(row) > 0 else ""
+                td_number = row[1] if len(row) > 1 else ""
+                owner = row[2] if len(row) > 2 else ""
+                location = row[3] if len(row) > 3 else ""
+                self.tree.insert("", "end", values=(prop_id, td_number, owner, location))
         except Exception as e:
             messagebox.showerror("Data Cleanup Error", str(e), parent=self)
+
     def do_update(self):
         sel = self.tree.selection()
         if not sel: return
