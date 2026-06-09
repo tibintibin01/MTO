@@ -48,6 +48,10 @@ async def list_properties(
         "count": len(items)
     }
 
+@router.get("/unspecified")
+async def get_unspecified_properties(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+    return prop_svc.get_unspecified_properties(db_session=db_session)
+
 @router.get("/{property_id}/history")
 async def get_property_history(property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     from backend.models import PropertyAssessmentHistory
@@ -104,10 +108,6 @@ async def purge_property(
 ):
     prop_svc.purge_property(property_id, current_user, db_session=db_session)
     return {"status": "purged"}
-
-@router.get("/unspecified")
-async def get_unspecified_properties(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
-    return prop_svc.get_unspecified_properties(db_session=db_session)
 
 @router.get("/{property_id}")
 async def get_property(

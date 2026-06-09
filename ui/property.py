@@ -652,16 +652,23 @@ class BulkBarangayUpdateModal(ctk.CTkToplevel):
 
     def load_unspecified(self):
         try:
-            res = prop_svc.get_unspecified_properties()
-            for item in self.tree.get_children(): self.tree.delete(item)
-            for r in res: self.tree.insert("", "end", values=(r[0], r[1], r[2], r[6]))
-        except: pass
-
+            res = prop_svc.get_unspecified_properties() or []
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+            if not res:
+                self.tree.insert("", "end", values=("", "No cleanup needed", "All properties have barangay values", ""))
+                return
+            for r in res:
+                self.tree.insert("", "end", values=(r[0], r[1], r[2], r[6]))
+        except Exception as e:
+            messagebox.showerror("Data Cleanup Error", str(e), parent=self)
     def do_update(self):
         sel = self.tree.selection()
         if not sel: return
         brgy = self.brgy_cmb.get()
-        ids = [self.tree.item(s)["values"][0] for s in sel]
+        ids = [self.tree.item(s)["values"][0] for s in sel if self.tree.item(s)["values"][0]]
+        if not ids:
+            return
         try:
             prop_svc.bulk_update_barangay(ids, brgy)
             messagebox.showinfo("Success", "Properties updated.")
