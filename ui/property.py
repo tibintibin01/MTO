@@ -318,6 +318,7 @@ class PropertyEditModal(ctk.CTkToplevel):
             ("Area", "area"),
             ("Location", "location"),
             ("Kind", "kind_of_property"),
+            ("Effectivity", "effectivity_date"),
             ("Assessed Value", "assessed_value"),
         ]
         payment_fields = [
@@ -371,7 +372,8 @@ class PropertyEditModal(ctk.CTkToplevel):
                 entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
                 attach_autocomplete(entry, self.barangays, self.vars[key])
             else:
-                entry = ctk.CTkEntry(self.scroll_form, height=40, textvariable=self.vars[key])
+                placeholder = "e.g. 2027" if key == "effectivity_date" else ""
+                entry = ctk.CTkEntry(self.scroll_form, height=40, textvariable=self.vars[key], placeholder_text=placeholder)
                 entry.pack(fill="x", padx=10, pady=(0, 5))
                 entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
                 if key in ["assessed_value", "penalty", "discount"]:
@@ -535,9 +537,9 @@ class PropertyEditModal(ctk.CTkToplevel):
             prop = prop_svc.get_property_by_id(self.property_id)
             if not prop: return
             if isinstance(prop, dict):
-                mapping = {"td_number": prop.get("td_number"), "owner_name": prop.get("owner_name"), "pin": prop.get("pin"), "lot_number": prop.get("lot_number"), "area": prop.get("area"), "location": prop.get("location"), "kind_of_property": prop.get("kind_of_property"), "assessed_value": str(prop.get("assessed_value", "0.00")), "penalty": str(prop.get("penalty", "0.00")), "discount": str(prop.get("discount", "0.00")), "or_number": prop.get("or_number"), "or_date": str(prop.get("or_date")) if prop.get("or_date") else "", "tax_year": prop.get("tax_year"), "amount_paid": str(prop.get("amount_paid", "0.00"))}
+                mapping = {"td_number": prop.get("td_number"), "owner_name": prop.get("owner_name"), "pin": prop.get("pin"), "lot_number": prop.get("lot_number"), "area": prop.get("area"), "location": prop.get("location"), "kind_of_property": prop.get("kind_of_property"), "effectivity_date": prop.get("effectivity_date"), "assessed_value": str(prop.get("assessed_value", "0.00")), "penalty": str(prop.get("penalty", "0.00")), "discount": str(prop.get("discount", "0.00")), "or_number": prop.get("or_number"), "or_date": str(prop.get("or_date")) if prop.get("or_date") else "", "tax_year": prop.get("tax_year"), "amount_paid": str(prop.get("amount_paid", "0.00"))}
             else:
-                mapping = {"td_number": prop[1], "owner_name": prop[2], "lot_number": prop[4], "area": prop[5], "location": prop[6], "kind_of_property": prop[7], "assessed_value": str(prop[9]), "penalty": str(prop[10]), "discount": str(prop[11]), "or_number": prop[12], "or_date": str(prop[13]) if prop[13] else "", "tax_year": prop[14], "pin": prop[18] if len(prop) > 18 else ""}
+                mapping = {"td_number": prop[1], "owner_name": prop[2], "lot_number": prop[4], "area": prop[5], "location": prop[6], "kind_of_property": prop[7], "assessed_value": str(prop[9]), "penalty": str(prop[10]), "discount": str(prop[11]), "or_number": prop[12], "or_date": str(prop[13]) if prop[13] else "", "tax_year": prop[14], "pin": prop[18] if len(prop) > 18 else "", "effectivity_date": prop[21] if len(prop) > 21 else ""}
             for k, v in mapping.items():
                 if k in self.vars: self.vars[k].set(str(v) if v is not None else "")
             self.recompute()
@@ -553,6 +555,7 @@ class PropertyEditModal(ctk.CTkToplevel):
             "area": "Area",
             "location": "Location",
             "kind_of_property": "Kind of Property",
+            "effectivity_date": "Effectivity Date",
             "assessed_value": "Assessed Value",
         }
         if self.payment_mode:
