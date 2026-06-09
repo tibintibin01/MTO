@@ -64,12 +64,26 @@ class MTOLogger:
         
         self._initialized = True
 
-    def log(self, level: str, message: str, extra: Dict[str, Any] = None):
-        """Logs a message with optional structured metadata."""
+    def log(self, level: str, message: str, *args, extra: Dict[str, Any] = None, **kwargs):
+        """Logs a message with optional structured metadata.
+
+        Accepts standard logging-style positional arguments so calls like
+        logger.warning("Backup failed: %s", err) cannot crash the app.
+        """
         lvl = getattr(logging, level.upper(), logging.INFO)
-        
-        # We use a custom attribute to pass extra data to the formatter
-        self.logger.log(lvl, message, extra={"extra_data": extra} if extra else None)
+
+        metadata = dict(extra or {})
+        exc_info = kwargs.pop("exc_info", None)
+        metadata.update(kwargs)
+
+        # We use a custom attribute to pass extra data to the formatter.
+        self.logger.log(
+            lvl,
+            message,
+            *args,
+            exc_info=exc_info,
+            extra={"extra_data": metadata} if metadata else None,
+        )
 
         # Asynchronous Immutable Log Shipping Hook
         if level.upper() in ["WARNING", "ERROR"]:
@@ -82,11 +96,16 @@ class MTOLogger:
                     import json
                     from datetime import datetime
                     
+                    try:
+                        rendered_message = message % args if args else message
+                    except Exception:
+                        rendered_message = str(message)
+
                     payload = {
                         "timestamp": datetime.now().isoformat(),
                         "level": level.upper(),
-                        "message": message,
-                        "metadata": extra or {}
+                        "message": rendered_message,
+                        "metadata": metadata
                     }
                     
                     def ship_log():
@@ -107,42 +126,42 @@ class MTOLogger:
                 pass
 
 
-    def info(self, message: str, **kwargs):
-        self.log("INFO", message, kwargs)
+    def info(self, message: str, *args, **kwargs):
+        self.log("INFO", message, *args, **kwargs)
 
-    def error(self, message: str, **kwargs):
-        self.log("ERROR", message, kwargs)
+    def error(self, message: str, *args, **kwargs):
+        self.log("ERROR", message, *args, **kwargs)
 
-    def critical(self, message: str, **kwargs):
-        self.log("CRITICAL", message, kwargs)
+    def critical(self, message: str, *args, **kwargs):
+        self.log("CRITICAL", message, *args, **kwargs)
 
-    def warning(self, message: str, **kwargs):
-        self.log("WARNING", message, kwargs)
+    def warning(self, message: str, *args, **kwargs):
+        self.log("WARNING", message, *args, **kwargs)
 
-    def security(self, message: str, **kwargs):
+    def security(self, message: str, *args, **kwargs):
         """Specialized security event logging."""
         kwargs["category"] = "SECURITY"
-        self.log("WARNING", message, kwargs)
+        self.log("WARNING", message, *args, **kwargs)
 
 # Global Access Point
 mto_logger = MTOLogger()
 
 
-def info(message: str, **kwargs):
+def info(message: str, *args, **kwargs):
     """Module-level compatibility wrapper for older imports."""
-    mto_logger.info(message, **kwargs)
+    mto_logger.info(message, *args, **kwargs)
 
 
-def warning(message: str, **kwargs):
+def warning(message: str, *args, **kwargs):
     """Module-level compatibility wrapper for older imports."""
-    mto_logger.warning(message, **kwargs)
+    mto_logger.warning(message, *args, **kwargs)
 
 
-def error(message: str, **kwargs):
+def error(message: str, *args, **kwargs):
     """Module-level compatibility wrapper for older imports."""
-    mto_logger.error(message, **kwargs)
+    mto_logger.error(message, *args, **kwargs)
 
 
-def critical(message: str, **kwargs):
+def critical(message: str, *args, **kwargs):
     """Module-level compatibility wrapper for older imports."""
-    mto_logger.critical(message, **kwargs)
+    mto_logger.critical(message, *args, **kwargs)

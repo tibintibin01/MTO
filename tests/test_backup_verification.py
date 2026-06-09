@@ -65,3 +65,8 @@ def test_log_critical_event_does_not_raise():
 
 def test_logger_module_critical_compatibility_does_not_raise():
     logger.critical("test critical compatibility")
+
+def test_logger_positional_args_compatibility_does_not_raise():
+    logger.warning("backup warning: %s", "locked")
+    logger.error("backup error: %s", "locked")
+    logger.critical("backup critical: %s", "locked")
