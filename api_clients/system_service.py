@@ -254,3 +254,15 @@ def reset_rate_limits(identifier: str):
     """Resets rate limit keys/counters for a client IP or username (Admin only)."""
     return api_request("POST", "/system/rate-limiting/reset", data={"identifier": identifier})
 
+def preview_portal_snapshot():
+    """Generates and saves a sanitized portal snapshot without uploading."""
+    return api_request("POST", "/system/portal-snapshot/preview")
+
+
+def publish_portal_snapshot(dry_run: bool = False):
+    """Publishes the one-way sanitized snapshot for the public web portal."""
+    return api_request(
+        "POST",
+        "/system/portal-snapshot/publish",
+        data={"dry_run": bool(dry_run)},
+    )

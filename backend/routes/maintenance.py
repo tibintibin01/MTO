@@ -23,6 +23,11 @@ class RestoreRequest(BaseModel):
     file_path: str
 
 
+
+
+class PortalPublishRequest(BaseModel):
+    dry_run: bool = False
+
 # ---------------------------------------------------------------------------
 # Backup
 # ---------------------------------------------------------------------------
@@ -39,6 +44,27 @@ async def trigger_backup(
     job_id = submit_job(job_type="backup", submitted_by=current_user["username"])
     return {"status": "backup_started", "job_id": job_id,
             "message": "Backup queued. Poll /jobs/{job_id} for progress."}
+
+
+@router.post("/system/portal-snapshot/preview", dependencies=[Depends(admin_only)])
+async def preview_portal_snapshot(
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """Generates and saves a sanitized portal snapshot without uploading it."""
+    from backend.services.portal_publish_service import publish_portal_snapshot
+    return publish_portal_snapshot(db_session=db_session, dry_run=True)
+
+
+@router.post("/system/portal-snapshot/publish", dependencies=[Depends(admin_only)])
+async def publish_portal_snapshot(
+    request: PortalPublishRequest = PortalPublishRequest(),
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """One-way publish of sanitized read-only data for the public web portal."""
+    from backend.services.portal_publish_service import publish_portal_snapshot as _publish
+    return _publish(db_session=db_session, dry_run=request.dry_run)
 
 
 @router.get("/system/backup/status", dependencies=[Depends(read_only)])

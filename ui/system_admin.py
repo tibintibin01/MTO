@@ -239,6 +239,19 @@ class SystemAdminPage:
         )
         self.sync_btn.pack(side="left", padx=5)
 
+        
+        self.portal_publish_btn = ctk.CTkButton(
+            btn_fr,
+            text="PUBLISH PORTAL",
+            command=self.publish_portal_snapshot,
+            height=45,
+            width=190,
+            font=ModernTheme.BUTTON,
+            fg_color="#0f766e",
+            hover_color="#115e59",
+        )
+        self.portal_publish_btn.pack(side="left", padx=5)
+
         self.td_audit_btn = ctk.CTkButton(
             btn_fr,
             text="🔍 AUDIT TD NUMBERS",
@@ -426,6 +439,54 @@ class SystemAdminPage:
                         )
                 except:
                     pass
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def publish_portal_snapshot(self):
+        import threading
+
+        if self.portal_publish_btn.cget("state") == "disabled":
+            return
+
+        proceed = messagebox.askyesno(
+            "Publish Web Portal Data",
+            "This will generate a sanitized, read-only snapshot for the public web portal.\n\n"
+            "The web portal cannot edit office records. Continue?",
+        )
+        if not proceed:
+            return
+
+        self.portal_publish_btn.configure(state="disabled", text="PUBLISHING...")
+
+        def run():
+            try:
+                import api_clients.system_service as system_svc
+                res = system_svc.publish_portal_snapshot(dry_run=False) or {}
+                checksum = str(res.get("checksum") or "")
+                short_checksum = checksum[:12] if checksum else "None"
+                msg = (
+                    f"Status: {res.get('status', 'unknown')}\n"
+                    f"Records: {res.get('record_count', 0):,}\n"
+                    f"Checksum: {short_checksum}\n"
+                    f"Saved: {res.get('latest_path') or res.get('snapshot_path') or 'Unknown'}\n\n"
+                    f"{res.get('message', 'Snapshot prepared successfully.')}"
+                )
+
+                def done():
+                    self.portal_publish_btn.configure(state="normal", text="PUBLISH PORTAL")
+                    messagebox.showinfo("Portal Snapshot", msg)
+
+                if self.container.winfo_exists():
+                    self.container.after(0, done)
+            except Exception as exc:
+                err = str(exc)
+
+                def failed():
+                    self.portal_publish_btn.configure(state="normal", text="PUBLISH PORTAL")
+                    ErrorDialog(self.container.winfo_toplevel(), "Portal Publish Failed", err)
+
+                if self.container.winfo_exists():
+                    self.container.after(0, failed)
 
         threading.Thread(target=run, daemon=True).start()
 

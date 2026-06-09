@@ -45,6 +45,12 @@ class MTOSettings(BaseSettings):
     ENABLE_SENTRY_TELEMETRY: bool = True
     MAINTENANCE_MODE: bool = False
 
+    
+    # --- PUBLIC PORTAL PUBLISH ---
+    PORTAL_PUBLISH_URL: str = Field(default="")
+    PORTAL_PUBLISH_TOKEN: str = Field(default="")
+    PORTAL_LOOKUP_SECRET: str = Field(default="")
+
     # --- SCHEDULED BACKUP ---
     # BACKUP_SCHEDULE controls automatic backup frequency.
     # Values: disabled | daily | weekly
