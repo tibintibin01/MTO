@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from theme_manager import ModernTheme
 from utils import tr
-from ui_components import LoadingOverlay, AutocompleteComboBox, attach_autocomplete
+from ui_components import LoadingOverlay
 import api_clients.property_service as prop_svc
 import api_clients.api_helper as api
 import api_clients.billing_service as billing
@@ -119,15 +119,6 @@ class AssessmentRollPage:
             fg_color="#3498db",
             width=120,
         ).pack(side="right", padx=5)
-
-
-        ctk.CTkButton(
-            header,
-            text="+ ADD RECORD",
-            command=self.open_modal,
-            fg_color="#27ae60",
-            width=120,
-        ).pack(side="right")
 
         self._pdf_btn = ctk.CTkButton(
             header,
@@ -373,10 +364,6 @@ class AssessmentRollPage:
 
         messagebox.showinfo("Import Summary", msg)
         self.refresh_table()
-
-    def open_modal(self):
-        AssessmentModal(self.container, self.refresh_table, user=self.user)
-
     def open_dossier(self):
         sel = self.tree.selection()
         if not sel:
@@ -503,174 +490,3 @@ class AssessmentRollPage:
                 as_of_year=as_of_year if as_of_year else None,
             )
         )
-
-
-class AssessmentModal(ctk.CTkToplevel):
-    def __init__(self, parent, callback, user=None):
-        super().__init__(parent)
-        self.title("Add Assessment Record")
-        self.geometry("600x750")
-        self.resizable(False, True)
-        self.callback = callback
-        self.user = user
-        self.vars = {}
-
-        self.transient(parent.winfo_toplevel())
-        self.grab_set()
-        self.attributes("-topmost", True)
-
-        # Centre on screen
-        self.update_idletasks()
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"+{(sw-600)//2}+{(sh-750)//2}")
-
-        self.setup_ui()
-
-    def setup_ui(self):
-        # ── Match the dark theme used by PropertyEditModal ────────────────────
-        self.configure(fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK))
-
-        # Scrollable form — same style as Add Property
-        self.scroll_form = ctk.CTkScrollableFrame(
-            self,
-            fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK),
-            corner_radius=10,
-        )
-        self.scroll_form.pack(fill="both", expand=True, padx=20, pady=(20, 10))
-
-        # ── Auto-scroll helper (same as PropertyEditModal) ────────────────────
-        def _scroll_to_widget(widget):
-            try:
-                canvas = self.scroll_form._parent_canvas
-                widget.update_idletasks()
-                wy = widget.winfo_y()
-                wh = widget.winfo_height()
-                ch = canvas.winfo_height()
-                scroll_region = canvas.cget("scrollregion")
-                if not scroll_region:
-                    return
-                total_h = float(scroll_region.split()[3])
-                if total_h <= 0:
-                    return
-                target_top = wy - (ch // 2) + (wh // 2)
-                target_top = max(0, min(target_top, total_h - ch))
-                canvas.yview_moveto(target_top / total_h)
-            except Exception:
-                pass
-
-        # ── Fields ────────────────────────────────────────────────────────────
-        fields = [
-            ("PIN (Property Index Number)", "pin"),
-            ("TD Number *",                 "td_number"),
-            ("Lot Number",                  "lot_number"),
-            ("Block Number",                "block_number"),
-            ("Owner Name *",                "owner_name"),
-            ("Assessed Value *",            "assessed_value"),
-            ("Previous TD Number",          "prev_td_number"),
-            ("Effectivity Year (e.g. 2024)","effectivity_date"),
-        ]
-
-        for label, key in fields:
-            ctk.CTkLabel(
-                self.scroll_form,
-                text=label.upper(),
-                font=("Segoe UI", 9, "bold"),
-                text_color="gray",
-            ).pack(anchor="w", padx=10, pady=(10, 0))
-            var = tk.StringVar()
-            entry = ctk.CTkEntry(self.scroll_form, height=40, textvariable=var)
-            entry.pack(fill="x", padx=10, pady=(0, 5))
-            entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
-            self.vars[key] = var
-
-        # Barangay autocomplete
-        ctk.CTkLabel(
-            self.scroll_form,
-            text="BARANGAY *",
-            font=("Segoe UI", 9, "bold"),
-            text_color="gray",
-        ).pack(anchor="w", padx=10, pady=(10, 0))
-        self.brgy_var = ctk.StringVar(value="")
-        brgy_entry = ctk.CTkEntry(
-            self.scroll_form,
-            textvariable=self.brgy_var,
-            height=40,
-            placeholder_text="Type barangay name...",
-        )
-        brgy_entry.pack(fill="x", padx=10, pady=(0, 5))
-        brgy_entry.bind("<FocusIn>", lambda e, w=brgy_entry: self.after_idle(_scroll_to_widget, w))
-        attach_autocomplete(brgy_entry, [
-            "NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN",
-            "BUENAVISTA", "CALAOCAN", "DIAMANEN", "DIANED", "DIARABASIN",
-            "DIBUTUNAN", "DIMABUNO", "DINADIAWAN", "DITALE", "GUPA",
-            "IPIL", "LABOY", "LIPIT", "LOBBOT", "MALIGAYA", "MIJARES",
-            "MUCDOL", "PUANGI", "SALAY", "SAPANGKAWAYAN", "TOYTOYAN",
-        ], self.brgy_var)
-
-        # ── Footer — same layout as PropertyEditModal ─────────────────────────
-        footer = ctk.CTkFrame(self, fg_color="transparent")
-        footer.pack(fill="x", padx=20, pady=20)
-
-        ctk.CTkButton(
-            footer,
-            text="CANCEL",
-            command=self.destroy,
-            fg_color="#95a5a6",
-            hover_color="#7f8c8d",
-            width=120,
-            height=44,
-        ).pack(side="left")
-
-        ctk.CTkButton(
-            footer,
-            text="SAVE TO ROLL",
-            command=self.save,
-            fg_color="#2ecc71",
-            hover_color="#27ae60",
-            width=200,
-            height=44,
-            state="normal",
-        ).pack(side="right")
-
-    def save(self):
-        data = {k: v.get().strip() for k, v in self.vars.items()}
-        data["barangay"] = self.brgy_var.get()
-
-        if (
-            not data["td_number"]
-            or not data["owner_name"]
-            or not data["barangay"]
-        ):
-            messagebox.showerror(
-                "Validation Error",
-                "TD Number, Owner Name, and Barangay are required.",
-                parent=self,
-            )
-            return
-
-        api_payload = {
-            "PIN":              data["pin"],
-            "TD Number":        data["td_number"],
-            "Lot Number":       data["lot_number"],
-            "Block Number":     data["block_number"],
-            "Owner Name":       data["owner_name"],
-            "Assessed Value":   data["assessed_value"],
-            "Previous TD Number": data["prev_td_number"],
-            "Effectivity Date": data["effectivity_date"],
-            "Barangay":         data["barangay"],
-        }
-
-        try:
-            prop_svc.save_property(api_payload, user=self.user)
-            self.attributes("-topmost", False)
-            messagebox.showinfo(
-                "Success",
-                "Assessment record successfully added to the Roll.",
-                parent=self,
-            )
-            self.callback()
-            self.destroy()
-        except Exception as e:
-            self.attributes("-topmost", False)
-            messagebox.showerror("Error", str(e), parent=self)
-            self.attributes("-topmost", True)
