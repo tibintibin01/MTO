@@ -1,6 +1,33 @@
 # -*- coding: utf-8 -*-
 import pytest
-from backend.services.billing_service import calculate_penalty, get_total_due
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker
+
+from backend.database import Base
+from backend.models import Property, PropertyBilling
+from backend.services.billing_service import (
+    calculate_penalty,
+    get_compliant_summary_by_barangay,
+    get_total_due,
+)
+
+
+@pytest.fixture()
+def db():
+    eng = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+
+    @event.listens_for(eng, "connect")
+    def _fk(conn, _):
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    Base.metadata.create_all(eng)
+    Session = sessionmaker(bind=eng, autocommit=False, autoflush=False)
+    session = Session()
+    yield session
+    session.rollback()
+    session.close()
+    Base.metadata.drop_all(eng)
+    eng.dispose()
 
 def test_calculate_penalty_basic():
     """Test standard 2% monthly penalty logic."""
@@ -21,8 +48,6 @@ def test_calculate_penalty_cap():
     months_late = 40 # 80% penalty
     penalty = calculate_penalty(principal, months_late)
     assert penalty == 800.0
-
-from backend.models import Property
 
 def test_get_total_due_logic(mock_db_session):
     """Test the orchestration of total due calculation including basic, SEF, and penalties."""
@@ -47,3 +72,41 @@ def test_get_total_due_logic(mock_db_session):
     assert total_data["sef"] == 1000.0
     assert total_data["total_due"] >= 2000.0
 
+
+def _property_with_billing(db, td, barangay, paid=2_000.0):
+    prop = Property(
+        td_number=td,
+        owner_name=f"Owner {td}",
+        barangay=barangay,
+        assessed_value=100_000.0,
+        penalty=0,
+        discount=0,
+    )
+    db.add(prop)
+    db.flush()
+    db.add(
+        PropertyBilling(
+            property_id=prop.id,
+            tax_year="2024",
+            assessed_value=100_000.0,
+            penalty=0,
+            discount=0,
+            amount_paid=paid,
+        )
+    )
+    db.flush()
+    return prop
+
+
+def test_compliant_summary_excludes_unassigned_barangay_rows(db):
+    _property_with_billing(db, "TD-REAL", "NORTH POBLACION")
+    _property_with_billing(db, "TD-NULL", None)
+    _property_with_billing(db, "TD-BLANK", "  ")
+    _property_with_billing(db, "TD-UNSPECIFIED", "UNSPECIFIED")
+    db.commit()
+
+    summary = get_compliant_summary_by_barangay(db_session=db)
+
+    assert [row["barangay"] for row in summary] == ["NORTH POBLACION"]
+    assert summary[0]["total_properties"] == 1
+    assert summary[0]["compliant_count"] == 1

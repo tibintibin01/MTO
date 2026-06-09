@@ -41,6 +41,16 @@ def total_rate_expr():
     return basic_rate_expr() + sef_rate_expr()
 
 
+def _assigned_barangay_filters():
+    """Only real barangay names, excluding blank/null cleanup placeholders."""
+    trimmed = func.trim(Property.barangay)
+    return (
+        Property.barangay != None,
+        trimmed != "",
+        func.upper(trimmed) != "UNSPECIFIED",
+    )
+
+
 def tax_rate_subquery(db_session: Session, billing_tax_year_col):
     """
     Correlated scalar subquery that resolves the total rate for a billing row.
@@ -690,12 +700,13 @@ def get_compliant_summary_by_barangay(db_session: Session = None):
     per_property = (
         db_session.query(
             Property.id,
-            func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
+            func.trim(Property.barangay).label("barangay"),
             total_due_expr.label("total_due"),
             total_paid_expr.label("total_paid"),
         )
         .join(PropertyBilling, PropertyBilling.property_id == Property.id)
         .filter(Property.deleted_at == None)
+        .filter(*_assigned_barangay_filters())
         .group_by(Property.id, Property.barangay)
         .subquery()
     )
