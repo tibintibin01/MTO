@@ -666,18 +666,96 @@ class BulkBarangayUpdateModal(ctk.CTkToplevel):
                 location = row[3] if len(row) > 3 else ""
                 self.tree.insert("", "end", values=(prop_id, td_number, owner, location))
         except Exception as e:
-            messagebox.showerror("Data Cleanup Error", str(e), parent=self)
+            self._show_error("Data Cleanup Error", str(e))
+
+    def _bring_to_front(self):
+        try:
+            self.lift()
+            self.focus_force()
+            self.attributes("-topmost", True)
+            self.after(250, lambda: self.attributes("-topmost", True) if self.winfo_exists() else None)
+        except Exception:
+            pass
+
+    def _show_error(self, title, message):
+        self._bring_to_front()
+        messagebox.showerror(title, message, parent=self)
+        self.after(50, self._bring_to_front)
+
+    def _show_success(self, updated_count, barangay):
+        self._bring_to_front()
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("Update Complete")
+        dlg.geometry("420x300")
+        dlg.resizable(False, False)
+        dlg.transient(self)
+        dlg.attributes("-topmost", True)
+        dlg.configure(fg_color="#08111f")
+
+        self.update_idletasks()
+        sw, sh = self.winfo_width(), self.winfo_height()
+        sx, sy = self.winfo_rootx(), self.winfo_rooty()
+        dw, dh = 420, 300
+        dlg.geometry(f"{dw}x{dh}+{sx + max((sw - dw) // 2, 0)}+{sy + max((sh - dh) // 2, 0)}")
+
+        shell = ctk.CTkFrame(dlg, fg_color="#0f1b2d", corner_radius=18, border_width=1, border_color="#24344f")
+        shell.pack(fill="both", expand=True, padx=14, pady=14)
+        ctk.CTkFrame(shell, height=4, fg_color="#10b981", corner_radius=2).pack(fill="x", padx=20, pady=(18, 0))
+
+        icon = ctk.CTkFrame(shell, width=76, height=76, corner_radius=38, fg_color="#063c32", border_width=2, border_color="#10b981")
+        icon.pack(pady=(22, 12))
+        icon.pack_propagate(False)
+        ctk.CTkLabel(icon, text="✓", font=("Segoe UI", 34, "bold"), text_color="#34d399").place(relx=0.5, rely=0.48, anchor="center")
+
+        ctk.CTkLabel(shell, text="Barangay Updated", font=("Inter", 18, "bold"), text_color="#f8fafc").pack()
+        ctk.CTkLabel(
+            shell,
+            text=f"{updated_count} propert{'y' if updated_count == 1 else 'ies'} assigned to {barangay}.",
+            font=("Inter", 12),
+            text_color="#a8bdd8",
+            wraplength=340,
+            justify="center",
+        ).pack(pady=(8, 0))
+        ctk.CTkLabel(shell, text="The cleanup list has been refreshed.", font=("Inter", 10), text_color="#64748b").pack(pady=(6, 0))
+
+        btn = ctk.CTkButton(
+            shell,
+            text="DONE",
+            command=dlg.destroy,
+            width=160,
+            height=40,
+            corner_radius=10,
+            fg_color="#10b981",
+            hover_color="#059669",
+            font=("Inter", 12, "bold"),
+        )
+        btn.pack(pady=(20, 0))
+
+        dlg.bind("<Return>", lambda _e: dlg.destroy())
+        dlg.bind("<Escape>", lambda _e: dlg.destroy())
+        dlg.update_idletasks()
+        dlg.lift(self)
+        dlg.focus_force()
+        dlg.grab_set()
+        btn.focus_set()
+        self.wait_window(dlg)
+        self._bring_to_front()
 
     def do_update(self):
         sel = self.tree.selection()
-        if not sel: return
+        if not sel:
+            self._show_error("No Selection", "Select one or more properties to update.")
+            return
         brgy = self.brgy_cmb.get()
         ids = [self.tree.item(s)["values"][0] for s in sel if self.tree.item(s)["values"][0]]
         if not ids:
+            self._show_error("No Valid Properties", "The selected row cannot be updated.")
             return
         try:
             prop_svc.bulk_update_barangay(ids, brgy)
-            messagebox.showinfo("Success", "Properties updated.")
+            updated_count = len(ids)
             self.load_unspecified()
             self.callback()
-        except Exception as e: messagebox.showerror("Error", str(e))
+            self._show_success(updated_count, brgy)
+        except Exception as e:
+            self._show_error("Update Failed", str(e))
