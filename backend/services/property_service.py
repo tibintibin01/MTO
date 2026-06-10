@@ -75,6 +75,43 @@ def clean_currency(value):
         return 0.0
 
 
+def _normalize_effectivity_date(value):
+    """
+    Stores effectivity as a real DATE-compatible value.
+
+    The desktop form intentionally accepts a plain year because assessment
+    rolls commonly record effectivity by year. MariaDB DATE columns need a full
+    date, so YYYY is stored as YYYY-01-01 while still preserving the year used
+    by billing and assessment filters.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if hasattr(value, "isoformat") and not isinstance(value, str):
+        return value.isoformat()
+
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    if raw.isdigit() and len(raw) == 4:
+        year = int(raw)
+        if 1900 <= year <= 2200:
+            return f"{year}-01-01"
+
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m-%d-%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date().isoformat()
+        except ValueError:
+            pass
+
+    raise HTTPException(
+        status_code=422,
+        detail="Effectivity must be a year like 2023 or a date like 2023-01-01.",
+    )
+
+
 def _effectivity_year_expr(model):
     year_source = func.coalesce(func.nullif(func.trim(model.effectivity_date), ""), model.tax_year)
     return cast(func.substr(year_source, 1, 4), Integer)
@@ -306,7 +343,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
         prop.pin = _up(data.get("PIN", prop.pin))
         prop.block_number = _up(data.get("Block Number", prop.block_number))
         prop.prev_td_number = _up(data.get("Previous TD Number", prop.prev_td_number))
-        prop.effectivity_date = data.get("Effectivity Date", prop.effectivity_date)
+        prop.effectivity_date = _normalize_effectivity_date(data.get("Effectivity Date", prop.effectivity_date))
         prop.barangay = _up(data.get("Barangay", prop.barangay) or data.get("Location", prop.location))
         
         if editing_id:
