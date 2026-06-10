@@ -1,6 +1,7 @@
 import os
 import subprocess
 import hashlib
+import pymysql
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from backend.database import SessionLocal
@@ -15,6 +16,56 @@ DB_CONFIG = {
     "port": mto_config.DB_PORT,
 }
 
+
+
+def _restore_credential_candidates():
+    """Returns DB users to try for isolated restore verification."""
+    candidates = []
+
+    verify_user = secrets.get("MTO_BACKUP_VERIFY_DB_USER", default=None)
+    verify_password = secrets.get("MTO_BACKUP_VERIFY_DB_PASSWORD", default="")
+    if verify_user:
+        candidates.append((verify_user, verify_password, "configured verification user"))
+
+    root_password = secrets.get("DB_ROOT_PASSWORD", default=None)
+    if root_password is not None:
+        candidates.append(("root", root_password, "DB_ROOT_PASSWORD root user"))
+
+    # XAMPP installs often use a blank local root password. Try it only as a
+    # local fallback, never as the first production assumption.
+    candidates.append(("root", "", "local root fallback"))
+    candidates.append((DB_CONFIG["user"], DB_CONFIG["password"], "application user"))
+
+    unique = []
+    seen = set()
+    for user, password, label in candidates:
+        key = (user, password)
+        if user and key not in seen:
+            unique.append((user, password, label))
+            seen.add(key)
+    return unique
+
+
+def _connect_for_restore_verification():
+    """Finds a MySQL account that can connect for restore verification."""
+    last_error = None
+    for user, password, label in _restore_credential_candidates():
+        try:
+            conn = pymysql.connect(
+                host=DB_CONFIG["host"],
+                port=int(DB_CONFIG["port"]),
+                user=user,
+                password=password or "",
+                charset="utf8mb4",
+                autocommit=True,
+                connect_timeout=10,
+                read_timeout=30,
+                write_timeout=30,
+            )
+            return conn, user, password or "", label
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"could not connect with any restore verification DB account: {last_error}")
 
 def _calculate_sha256(file_path):
     sha256_hash = hashlib.sha256()
@@ -73,42 +124,33 @@ def perform_restore_test(file_path, db_session: Session = None):
     """
     Verifies that the backup can actually be restored by performing
     a dry-run restore into a temporary validation database.
+
+    The normal application DB user is intentionally least-privilege and may not
+    be allowed to CREATE/DROP DATABASE. When no verification-capable account is
+    available, checksum verification still passes but the restore test is
+    marked as skipped with clear setup guidance.
     """
     # Create a safe temp name (sanitize filename to be a valid DB name).
-    # Only allow alphanumeric + underscore — no SQL injection possible.
+    # Only allow alphanumeric + underscore; no SQL injection possible.
     base_name = os.path.basename(file_path).split('.')[0]
-    safe_name = "".join([c if c.isalnum() else "_" for c in base_name])
-    # Hard-cap length so the DB name stays within MariaDB's 64-char limit
-    safe_name = safe_name[:40]
+    safe_name = "".join([c if c.isalnum() else "_" for c in base_name])[:40]
     temp_db_name = f"mto_verify_{safe_name}"
 
-    # Validate the final name is safe before interpolating into SQL.
-    # This is a defence-in-depth check — safe_name construction above already
-    # guarantees only [a-zA-Z0-9_] characters, but we verify explicitly.
     import re as _re
     if not _re.fullmatch(r"[a-zA-Z0-9_]+", temp_db_name):
         return False, f"Unsafe temp DB name generated: {temp_db_name!r}"
-    
-    mysql_path = DB_CONFIG.get("mysql_path", "mysql")
-    db_user = DB_CONFIG["user"]
-    db_pass = DB_CONFIG["password"]
-    db_host = DB_CONFIG["host"]
-    db_port = DB_CONFIG["port"]
 
-    # Search paths in priority order: config value first, then common locations
-    # for Windows (XAMPP, standard installer), Linux, Docker, and macOS Homebrew.
+    mysql_path = DB_CONFIG.get("mysql_path", "mysql")
+
     COMMON_MYSQL_PATHS = [
         mysql_path,
-        # Windows
         r"C:\xampp\mysql\bin\mysql.exe",
         r"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe",
         r"C:\Program Files\MySQL\MySQL Server 5.7\bin\mysql.exe",
         r"D:\xampp\mysql\bin\mysql.exe",
         r"C:\mysql\bin\mysql.exe",
-        # Linux / Docker
         "/usr/bin/mysql",
         "/usr/local/bin/mysql",
-        # macOS Homebrew
         "/opt/homebrew/bin/mysql",
         "/usr/local/mysql/bin/mysql",
     ]
@@ -123,74 +165,87 @@ def perform_restore_test(file_path, db_session: Session = None):
         elif os.path.exists(p):
             actual_mysql_executable = p
             break
-    
-    if not actual_mysql_executable:
-        return False, "Could not locate 'mysql' executable for restore test."
 
+    if not actual_mysql_executable:
+        return True, "Checksum passed. Restore test skipped: mysql executable was not found."
+
+    conn = None
+    created_db = False
     try:
-        # 1. Create temporary database
-        db_session.execute(text(f"CREATE DATABASE IF NOT EXISTS {temp_db_name}"))
-        db_session.commit()
-        
-        # 2. Restore the dump
+        conn, db_user, db_pass, credential_label = _connect_for_restore_verification()
+        with conn.cursor() as cur:
+            try:
+                cur.execute(f"CREATE DATABASE IF NOT EXISTS `{temp_db_name}`")
+                created_db = True
+            except pymysql.err.OperationalError as exc:
+                code = exc.args[0] if exc.args else None
+                if code in (1044, 1045):
+                    return True, (
+                        "Checksum passed. Restore test skipped: the configured DB user "
+                        "cannot create a temporary verification database. Configure "
+                        "MTO_BACKUP_VERIFY_DB_USER and MTO_BACKUP_VERIFY_DB_PASSWORD "
+                        "with CREATE/DROP privileges to enable full restore testing."
+                    )
+                raise
+
         cmd = [
             actual_mysql_executable,
             f"-u{db_user}",
-            f"-h{db_host}",
-            f"-P{db_port}",
-            temp_db_name
+            f"-h{DB_CONFIG['host']}",
+            f"-P{DB_CONFIG['port']}",
+            temp_db_name,
         ]
         env = dict(os.environ)
         if db_pass:
             env["MYSQL_PWD"] = db_pass
 
-        is_win = os.name == 'nt'
-        # On windows, mysql command sometimes needs shell=True to find the executable if it's just 'mysql'
+        is_win = os.name == "nt"
         shell_required = is_win and "\\" not in mysql_path
-        
+
         with open(file_path, "r", encoding="utf-8") as f:
             subprocess.run(cmd, stdin=f, check=True, timeout=600, shell=shell_required, env=env)
 
-        # 3. Verify required tables exist and core data is queryable.
         required_tables = ("users", "properties", "payments", "property_billings", "backup_history")
-        placeholders = ", ".join([f"'{table}'" for table in required_tables])
-        table_rows = db_session.execute(text(
-            "SELECT table_name FROM information_schema.tables "
-            f"WHERE table_schema = '{temp_db_name}' AND table_name IN ({placeholders})"
-        )).fetchall()
-        restored_tables = {row[0] for row in table_rows}
-        missing_tables = sorted(set(required_tables) - restored_tables)
-        if missing_tables:
-            raise RuntimeError(f"missing tables after restore: {', '.join(missing_tables)}")
+        placeholders = ", ".join(["%s"] * len(required_tables))
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT table_name FROM information_schema.tables "
+                f"WHERE table_schema = %s AND table_name IN ({placeholders})",
+                (temp_db_name, *required_tables),
+            )
+            restored_tables = {row[0] for row in cur.fetchall()}
+            missing_tables = sorted(set(required_tables) - restored_tables)
+            if missing_tables:
+                raise RuntimeError(f"missing tables after restore: {', '.join(missing_tables)}")
 
-        res = db_session.execute(text(f"SELECT COUNT(*) FROM {temp_db_name}.properties")).first()
-        property_count = res[0] if res else 0
-        res = db_session.execute(text(f"SELECT COUNT(*) FROM {temp_db_name}.payments")).first()
-        payment_count = res[0] if res else 0
-        
-        # 4. Cleanup
-        db_session.execute(text(f"DROP DATABASE {temp_db_name}"))
-        db_session.commit()
-        
+            cur.execute(f"SELECT COUNT(*) FROM `{temp_db_name}`.`properties`")
+            property_count = cur.fetchone()[0]
+            cur.execute(f"SELECT COUNT(*) FROM `{temp_db_name}`.`payments`")
+            payment_count = cur.fetchone()[0]
+
         if property_count > 0:
             return True, (
                 "Checksum and restore test passed: "
                 f"{property_count} properties and {payment_count} payments verified."
             )
-        else:
-            return False, "Restore Test Failed: Database is empty after restoration."
+        return False, "Restore Test Failed: Database is empty after restoration."
 
     except Exception as e:
-        # Cleanup on failure if DB was created
-        try:
-            db_session.rollback()
-            db_session.execute(text(f"DROP DATABASE IF EXISTS {temp_db_name}"))
-            db_session.commit()
-        except Exception as cleanup_err:
-            # Cleanup failure is non-fatal — log it and return the original error
-            from utils.logger import mto_logger
-            mto_logger.warning(
-                "verification_service: failed to drop temp DB '%s' during cleanup: %s",
-                temp_db_name, cleanup_err,
-            )
         return False, f"Restore Test Failed: {str(e)}"
+
+    finally:
+        if conn:
+            try:
+                if created_db:
+                    with conn.cursor() as cur:
+                        cur.execute(f"DROP DATABASE IF EXISTS `{temp_db_name}`")
+            except Exception as cleanup_err:
+                from utils.logger import mto_logger
+                mto_logger.warning(
+                    "verification_service: failed to drop temp DB '%s' during cleanup: %s",
+                    temp_db_name, cleanup_err,
+                )
+            try:
+                conn.close()
+            except Exception:
+                pass

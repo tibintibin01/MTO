@@ -138,6 +138,7 @@ def get_backup_status(db_session: Session = None):
             health_display = (
                 "SUCCESS"
                 if raw_health in ("OK", "Success", "SUCCESS") or "Success" in raw_health
+                else "RESTORE SKIPPED" if raw_health == "RESTORE_SKIPPED"
                 else raw_health.replace("Issue: ", "").strip()
             )
             status = (latest.status or "UNKNOWN").upper()
@@ -258,7 +259,7 @@ async def run_hybrid_backup(user=None, db_session: Session = None):
             db_session,
             checksum,
         )
-        health = "OK" if v_success else f"Issue: {v_msg}"
+        health = "RESTORE_SKIPPED" if v_success and "skipped" in str(v_msg).lower() else ("OK" if v_success else f"Issue: {v_msg}")
         if not v_success:
             final_status = "VERIFY_FAILED"
             await report_progress(2, 0, f"ERROR: {v_msg}")

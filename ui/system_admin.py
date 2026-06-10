@@ -45,6 +45,39 @@ def _make_premium_dialog(parent, width=460, height=None):
     return dialog, outer
 
 
+
+def _show_portal_publish_result(parent, title, message, accent="#10b981"):
+    """Shows a clear publish result without relying on native message boxes."""
+    dialog, outer = _make_premium_dialog(parent, width=500, height=290)
+
+    ctk.CTkFrame(outer, height=5, fg_color=accent, corner_radius=0).pack(fill="x")
+
+    body = ctk.CTkFrame(outer, fg_color="transparent")
+    body.pack(fill="both", expand=True, padx=26, pady=(22, 12))
+
+    icon = ctk.CTkFrame(body, width=58, height=58, corner_radius=29, fg_color="#122033", border_width=2, border_color=accent)
+    icon.pack(pady=(0, 12))
+    icon.pack_propagate(False)
+    ctk.CTkLabel(icon, text="OK", font=("Segoe UI", 15, "bold"), text_color=accent).place(relx=0.5, rely=0.5, anchor="center")
+
+    ctk.CTkLabel(body, text=title, font=("Segoe UI", 17, "bold"), text_color="white").pack()
+    ctk.CTkLabel(
+        body,
+        text=message,
+        font=("Segoe UI", 11),
+        text_color="#a8b3c7",
+        justify="center",
+        wraplength=430,
+    ).pack(pady=(10, 0))
+
+    ctk.CTkFrame(outer, height=1, fg_color="#2c3e50").pack(fill="x")
+    btn_fr = ctk.CTkFrame(outer, fg_color="transparent")
+    btn_fr.pack(fill="x", padx=20, pady=14)
+    ctk.CTkButton(btn_fr, text="DONE", command=dialog.destroy, fg_color=accent, hover_color=accent, text_color="white", font=("Segoe UI", 12, "bold"), height=36, corner_radius=8, width=120).pack(side="right")
+    dialog.bind("<Return>", lambda e: dialog.destroy())
+    dialog.bind("<Escape>", lambda e: dialog.destroy())
+    dialog.focus_force()
+
 def _show_sync_info(parent, scanned, created, skipped):
     """Premium 'nothing to do' info dialog."""
     dialog, outer = _make_premium_dialog(parent, width=400, height=220)
@@ -276,6 +309,13 @@ class SystemAdminPage:
         )
         self.batch_del_btn.pack(side="left", padx=5)
 
+        self.portal_publish_status_lbl = ctk.CTkLabel(
+            card,
+            text="Portal publish: not run in this session",
+            font=("Segoe UI", 10),
+            text_color=ModernTheme.TEXT_GRAY,
+        )
+        self.portal_publish_status_lbl.pack(pady=(0, 16))
         # If a sync was running when the user navigated away, resume monitoring
         if _active_sync_job_id:
             self.sync_btn.configure(state="disabled", text="⏳ SYNCING...")
@@ -452,29 +492,60 @@ class SystemAdminPage:
             "Publish Web Portal Data",
             "This will generate a sanitized, read-only snapshot for the public web portal.\n\n"
             "The web portal cannot edit office records. Continue?",
+            parent=self.container.winfo_toplevel(),
         )
         if not proceed:
             return
 
         self.portal_publish_btn.configure(state="disabled", text="PUBLISHING...")
+        self.portal_publish_status_lbl.configure(
+            text="Portal publish: generating snapshot and uploading...",
+            text_color="#38bdf8",
+        )
 
         def run():
             try:
                 import api_clients.system_service as system_svc
                 res = system_svc.publish_portal_snapshot(dry_run=False) or {}
+                status = str(res.get("status") or "unknown")
+                uploaded = bool(res.get("uploaded")) or status == "uploaded"
                 checksum = str(res.get("checksum") or "")
                 short_checksum = checksum[:12] if checksum else "None"
-                msg = (
-                    f"Status: {res.get('status', 'unknown')}\n"
-                    f"Records: {res.get('record_count', 0):,}\n"
-                    f"Checksum: {short_checksum}\n"
-                    f"Saved: {res.get('latest_path') or res.get('snapshot_path') or 'Unknown'}\n\n"
-                    f"{res.get('message', 'Snapshot prepared successfully.')}"
-                )
+                records = int(res.get("record_count") or 0)
+                saved_path = res.get("latest_path") or res.get("snapshot_path") or "Unknown"
+                published_at = res.get("published_at") or "Unknown"
+                server_msg = res.get("message", "Snapshot prepared successfully.")
+
+                if uploaded:
+                    title = "Uploaded to Web Portal"
+                    accent = "#10b981"
+                    status_text = f"Portal publish: uploaded | {records:,} records | checksum {short_checksum}"
+                    detail = (
+                        f"The public portal received the latest read-only data.\n\n"
+                        f"Records: {records:,}\nChecksum: {short_checksum}\nPublished: {published_at}"
+                    )
+                elif status == "saved_not_uploaded":
+                    title = "Saved Locally Only"
+                    accent = "#f59e0b"
+                    status_text = f"Portal publish: saved locally only | {records:,} records | checksum {short_checksum}"
+                    detail = (
+                        "The snapshot was created, but it was not pushed to the web portal because "
+                        "publish URL/token is not configured on the server.\n\n"
+                        f"Saved file: {saved_path}\n\n{server_msg}"
+                    )
+                else:
+                    title = "Portal Upload Failed"
+                    accent = "#ef4444"
+                    status_text = f"Portal publish: failed | status {status}"
+                    detail = (
+                        f"The snapshot may have been saved locally, but the web portal did not confirm upload.\n\n"
+                        f"Status: {status}\nRecords: {records:,}\nChecksum: {short_checksum}\n\n{server_msg}"
+                    )
 
                 def done():
                     self.portal_publish_btn.configure(state="normal", text="PUBLISH PORTAL")
-                    messagebox.showinfo("Portal Snapshot", msg)
+                    self.portal_publish_status_lbl.configure(text=status_text, text_color=accent)
+                    _show_portal_publish_result(self.container.winfo_toplevel(), title, detail, accent=accent)
 
                 if self.container.winfo_exists():
                     self.container.after(0, done)
@@ -483,6 +554,7 @@ class SystemAdminPage:
 
                 def failed():
                     self.portal_publish_btn.configure(state="normal", text="PUBLISH PORTAL")
+                    self.portal_publish_status_lbl.configure(text="Portal publish: request failed", text_color="#ef4444")
                     ErrorDialog(self.container.winfo_toplevel(), "Portal Publish Failed", err)
 
                 if self.container.winfo_exists():

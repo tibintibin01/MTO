@@ -673,7 +673,6 @@ class BulkBarangayUpdateModal(ctk.CTkToplevel):
             self.lift()
             self.focus_force()
             self.attributes("-topmost", True)
-            self.after(250, lambda: self.attributes("-topmost", True) if self.winfo_exists() else None)
         except Exception:
             pass
 
@@ -683,7 +682,11 @@ class BulkBarangayUpdateModal(ctk.CTkToplevel):
         self.after(50, self._bring_to_front)
 
     def _show_success(self, updated_count, barangay):
-        self._bring_to_front()
+        try:
+            self.attributes("-topmost", False)
+        except Exception:
+            pass
+
         dlg = ctk.CTkToplevel(self)
         dlg.title("Update Complete")
         dlg.geometry("420x300")
@@ -705,7 +708,7 @@ class BulkBarangayUpdateModal(ctk.CTkToplevel):
         icon = ctk.CTkFrame(shell, width=76, height=76, corner_radius=38, fg_color="#063c32", border_width=2, border_color="#10b981")
         icon.pack(pady=(22, 12))
         icon.pack_propagate(False)
-        ctk.CTkLabel(icon, text="✓", font=("Segoe UI", 34, "bold"), text_color="#34d399").place(relx=0.5, rely=0.48, anchor="center")
+        ctk.CTkLabel(icon, text="OK", font=("Segoe UI", 20, "bold"), text_color="#34d399").place(relx=0.5, rely=0.48, anchor="center")
 
         ctk.CTkLabel(shell, text="Barangay Updated", font=("Inter", 18, "bold"), text_color="#f8fafc").pack()
         ctk.CTkLabel(
@@ -718,10 +721,17 @@ class BulkBarangayUpdateModal(ctk.CTkToplevel):
         ).pack(pady=(8, 0))
         ctk.CTkLabel(shell, text="The cleanup list has been refreshed.", font=("Inter", 10), text_color="#64748b").pack(pady=(6, 0))
 
+        def close_dialog():
+            try:
+                dlg.grab_release()
+            except Exception:
+                pass
+            dlg.destroy()
+
         btn = ctk.CTkButton(
             shell,
             text="DONE",
-            command=dlg.destroy,
+            command=close_dialog,
             width=160,
             height=40,
             corner_radius=10,
@@ -731,13 +741,24 @@ class BulkBarangayUpdateModal(ctk.CTkToplevel):
         )
         btn.pack(pady=(20, 0))
 
-        dlg.bind("<Return>", lambda _e: dlg.destroy())
-        dlg.bind("<Escape>", lambda _e: dlg.destroy())
+        def keep_dialog_front():
+            try:
+                if dlg.winfo_exists():
+                    dlg.lift()
+                    dlg.attributes("-topmost", True)
+                    dlg.after(250, keep_dialog_front)
+            except Exception:
+                pass
+
+        dlg.protocol("WM_DELETE_WINDOW", close_dialog)
+        dlg.bind("<Return>", lambda _e: close_dialog())
+        dlg.bind("<Escape>", lambda _e: close_dialog())
         dlg.update_idletasks()
-        dlg.lift(self)
+        dlg.lift()
         dlg.focus_force()
         dlg.grab_set()
         btn.focus_set()
+        keep_dialog_front()
         self.wait_window(dlg)
         self._bring_to_front()
 
