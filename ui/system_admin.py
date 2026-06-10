@@ -78,6 +78,110 @@ def _show_portal_publish_result(parent, title, message, accent="#10b981"):
     dialog.bind("<Escape>", lambda e: dialog.destroy())
     dialog.focus_force()
 
+
+def _confirm_portal_publish(parent) -> bool:
+    """Premium confirmation dialog for one-way public portal publishing."""
+    result = {"confirmed": False}
+    dialog, outer = _make_premium_dialog(parent, width=540, height=340)
+
+    ctk.CTkFrame(outer, height=5, fg_color="#0ea5e9", corner_radius=0).pack(fill="x")
+
+    header = ctk.CTkFrame(outer, fg_color="transparent")
+    header.pack(fill="x", padx=26, pady=(22, 10))
+
+    icon = ctk.CTkFrame(
+        header,
+        width=62,
+        height=62,
+        corner_radius=31,
+        fg_color="#082f49",
+        border_width=2,
+        border_color="#38bdf8",
+    )
+    icon.pack(side="left", padx=(0, 16))
+    icon.pack_propagate(False)
+    ctk.CTkLabel(icon, text="WEB", font=("Segoe UI", 13, "bold"), text_color="#7dd3fc").place(relx=0.5, rely=0.5, anchor="center")
+
+    title_fr = ctk.CTkFrame(header, fg_color="transparent")
+    title_fr.pack(side="left", fill="both", expand=True)
+    ctk.CTkLabel(
+        title_fr,
+        text="Publish Web Portal Data",
+        font=("Segoe UI", 18, "bold"),
+        text_color="#f8fafc",
+        anchor="w",
+    ).pack(fill="x")
+    ctk.CTkLabel(
+        title_fr,
+        text="Create a public, read-only snapshot from the current office database.",
+        font=("Segoe UI", 11),
+        text_color="#94a3b8",
+        anchor="w",
+        wraplength=390,
+        justify="left",
+    ).pack(fill="x", pady=(4, 0))
+
+    summary = ctk.CTkFrame(outer, fg_color="#111827", corner_radius=12, border_width=1, border_color="#1f2937")
+    summary.pack(fill="x", padx=26, pady=(8, 14))
+
+    for item_text, color in (
+        ("Sanitized taxpayer data only", "#38bdf8"),
+        ("The web portal cannot edit office records", "#10b981"),
+        ("A checksum and publish result will be shown after completion", "#f59e0b"),
+    ):
+        row = ctk.CTkFrame(summary, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=(10 if item_text.startswith("Sanitized") else 4, 6))
+        ctk.CTkFrame(row, width=8, height=8, corner_radius=4, fg_color=color).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(row, text=item_text, font=("Segoe UI", 11), text_color="#cbd5e1", anchor="w").pack(side="left", fill="x", expand=True)
+
+    ctk.CTkFrame(outer, height=1, fg_color="#243244").pack(fill="x")
+    btn_fr = ctk.CTkFrame(outer, fg_color="transparent")
+    btn_fr.pack(fill="x", padx=22, pady=16)
+
+    def cancel():
+        result["confirmed"] = False
+        dialog.destroy()
+
+    def confirm():
+        result["confirmed"] = True
+        dialog.destroy()
+
+    ctk.CTkButton(
+        btn_fr,
+        text="CANCEL",
+        command=cancel,
+        width=130,
+        height=40,
+        corner_radius=9,
+        fg_color="#1f2937",
+        hover_color="#334155",
+        border_width=1,
+        border_color="#475569",
+        text_color="#cbd5e1",
+        font=("Segoe UI", 12, "bold"),
+    ).pack(side="right", padx=(10, 0))
+    publish_btn = ctk.CTkButton(
+        btn_fr,
+        text="PUBLISH PORTAL",
+        command=confirm,
+        width=170,
+        height=40,
+        corner_radius=9,
+        fg_color="#0ea5e9",
+        hover_color="#0284c7",
+        text_color="white",
+        font=("Segoe UI", 12, "bold"),
+    )
+    publish_btn.pack(side="right")
+
+    dialog.bind("<Return>", lambda _e: confirm())
+    dialog.bind("<Escape>", lambda _e: cancel())
+    dialog.protocol("WM_DELETE_WINDOW", cancel)
+    dialog.focus_force()
+    publish_btn.focus_set()
+    parent.wait_window(dialog)
+    return result["confirmed"]
+
 def _show_sync_info(parent, scanned, created, skipped):
     """Premium 'nothing to do' info dialog."""
     dialog, outer = _make_premium_dialog(parent, width=400, height=220)
@@ -488,12 +592,7 @@ class SystemAdminPage:
         if self.portal_publish_btn.cget("state") == "disabled":
             return
 
-        proceed = messagebox.askyesno(
-            "Publish Web Portal Data",
-            "This will generate a sanitized, read-only snapshot for the public web portal.\n\n"
-            "The web portal cannot edit office records. Continue?",
-            parent=self.container.winfo_toplevel(),
-        )
+        proceed = _confirm_portal_publish(self.container.winfo_toplevel())
         if not proceed:
             return
 
