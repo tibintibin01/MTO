@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
@@ -25,7 +26,7 @@ from utils.config import config as mto_config
 from utils.logger import mto_logger
 
 DATA_START_YEAR = 2023
-SNAPSHOT_SCHEMA_VERSION = 1
+SNAPSHOT_SCHEMA_VERSION = 2
 
 
 def _peso(value: Any) -> float:
@@ -61,6 +62,45 @@ def _lookup_hash(value: str, secret: str) -> str | None:
         return None
     normalized = str(value).strip().upper()
     return hmac.new(secret.encode("utf-8"), normalized.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _owner_lookup_values(owner_name: str) -> set[str]:
+    """
+    Builds privacy-preserving owner search tokens.
+
+    The public snapshot never contains raw owner names. Instead, the web portal
+    hashes a citizen's search term with the same secret and compares it against
+    these indexed hashes. We index token prefixes only up to 5 characters plus
+    the complete token to keep the snapshot small enough for Vercel uploads.
+    """
+    if not owner_name:
+        return set()
+    normalized = str(owner_name).upper()
+    tokens = re.findall(r"[A-Z0-9]+", normalized)
+    values: set[str] = set()
+    for token in tokens:
+        if len(token) < 3:
+            continue
+        for length in range(3, min(5, len(token)) + 1):
+            values.add(token[:length])
+        values.add(token)
+    return values
+
+
+def _owner_lookup_hash(value: str, secret: str) -> str | None:
+    digest = _lookup_hash(value, secret)
+    # 96 bits is compact but still far beyond the collision risk acceptable for
+    # a 16k-record municipal lookup index.
+    return digest[:24] if digest else None
+
+
+def _add_owner_index(owner_index: dict[str, list[int]], record_index: int, owner_name: str, secret: str) -> None:
+    if not secret:
+        return
+    for value in _owner_lookup_values(owner_name):
+        digest = _owner_lookup_hash(value, secret)
+        if digest:
+            owner_index[digest].append(record_index)
 
 
 def _status_from_balance(years: list[dict], balance: float) -> str:
@@ -121,6 +161,7 @@ def generate_portal_snapshot(db_session: Session) -> dict:
     )
 
     records = []
+    owner_lookup_index: dict[str, list[int]] = defaultdict(list)
     for prop in properties:
         years = []
         total_due = 0.0
@@ -165,6 +206,8 @@ def generate_portal_snapshot(db_session: Session) -> dict:
                 "amount": _peso(latest.amount),
             }
 
+        record_index = len(records)
+        _add_owner_index(owner_lookup_index, record_index, prop.owner_name, lookup_secret)
         records.append({
             "td_number": prop.td_number,
             "td_lookup_hash": _lookup_hash(prop.td_number, lookup_secret),
@@ -199,6 +242,7 @@ def generate_portal_snapshot(db_session: Session) -> dict:
         "data_start_year": DATA_START_YEAR,
         "record_count": len(records),
         "properties": records,
+        "owner_lookup_index": {key: value for key, value in sorted(owner_lookup_index.items())},
     }
     checksum = _snapshot_checksum(snapshot)
     snapshot["checksum"] = checksum
@@ -272,6 +316,7 @@ def publish_portal_snapshot(db_session: Session, dry_run: bool = False) -> dict:
 
     with open(file_info["latest_gzip_path"], "rb") as f:
         upload_payload = f.read()
+    payload_hash = hashlib.sha256(upload_payload).hexdigest()
 
     response = requests.post(
         publish_url,
@@ -282,6 +327,7 @@ def publish_portal_snapshot(db_session: Session, dry_run: bool = False) -> dict:
             "Content-Encoding": "gzip",
             "X-MTO-Snapshot-Checksum": snapshot["checksum"],
             "X-MTO-Snapshot-Records": str(snapshot["record_count"]),
+            "X-MTO-Payload-Sha256": payload_hash,
         },
         timeout=60,
     )

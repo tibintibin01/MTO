@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 from datetime import datetime, timezone
 
 import pytest
@@ -7,7 +7,11 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
 from backend.models import Payment, Property, PropertyBilling
-from backend.services.portal_publish_service import _snapshot_checksum, generate_portal_snapshot
+from backend.services.portal_publish_service import (
+    _owner_lookup_hash,
+    _snapshot_checksum,
+    generate_portal_snapshot,
+)
 
 
 @pytest.fixture()
@@ -28,7 +32,7 @@ def db():
     eng.dispose()
 
 
-def test_generate_portal_snapshot_is_sanitized_and_checksummed(db):
+def test_generate_portal_snapshot_is_sanitized_and_checksummed(db, monkeypatch):
     prop = Property(
         td_number="06-0012-01379",
         owner_name="JUAN DELA CRUZ",
@@ -57,13 +61,23 @@ def test_generate_portal_snapshot_is_sanitized_and_checksummed(db):
     ))
     db.commit()
 
+    monkeypatch.setattr(
+        "backend.services.portal_publish_service.mto_config.PORTAL_LOOKUP_SECRET",
+        "test-lookup-secret",
+    )
+
     snapshot = generate_portal_snapshot(db)
     record = snapshot["properties"][0]
 
+    assert snapshot["schema_version"] == 2
     assert snapshot["record_count"] == 1
     assert snapshot["checksum"] == _snapshot_checksum({k: v for k, v in snapshot.items() if k != "checksum"})
     assert record["owner_name"] == "J*** D*** C***"
     assert record["pin_masked"] == "1234****7890"
+    assert record["td_lookup_hash"]
+    assert record["pin_lookup_hash"]
     assert record["payment_history"][0]["or_number"] == "781****"
+    assert _owner_lookup_hash("JUAN", "test-lookup-secret") in snapshot["owner_lookup_index"]
+    assert snapshot["owner_lookup_index"][_owner_lookup_hash("JUAN", "test-lookup-secret")] == [0]
     assert "JUAN DELA CRUZ" not in str(snapshot)
     assert "7812345" not in str(snapshot)

@@ -1,0 +1,30 @@
+import { NextRequest, NextResponse } from "next/server";
+import { findSnapshotProperty, loadPortalSnapshot, publicPaymentHistory, PortalSnapshotConfigError } from "../../../../../../../lib/portalSnapshot";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const QUERY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9\-./# ]{0,49}$/;
+
+function json(status: number, body: any) {
+  return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
+}
+
+export async function GET(_request: NextRequest, { params }: { params: { query: string } }) {
+  const query = decodeURIComponent(params.query || "").trim();
+  if (!QUERY_PATTERN.test(query)) return json(400, { detail: "Invalid query format." });
+
+  try {
+    const snapshot = await loadPortalSnapshot();
+    if (!snapshot) return json(503, { detail: "Portal data has not been published yet." });
+
+    const record = findSnapshotProperty(snapshot, query);
+    if (!record) return json(404, { detail: "Property not found." });
+
+    return json(200, publicPaymentHistory(record));
+  } catch (error) {
+    if (error instanceof PortalSnapshotConfigError) return json(503, { detail: error.message });
+    console.error("Portal payment-history lookup failed", error);
+    return json(500, { detail: "Unable to load portal data." });
+  }
+}
