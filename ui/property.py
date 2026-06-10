@@ -318,6 +318,7 @@ class PropertyEditModal(ctk.CTkToplevel):
             ("Area", "area"),
             ("Location", "location"),
             ("Kind", "kind_of_property"),
+            ("Previous TD", "prev_td_number"),
             ("Effectivity", "effectivity_date"),
             ("Assessed Value", "assessed_value"),
         ]
@@ -372,7 +373,7 @@ class PropertyEditModal(ctk.CTkToplevel):
                 entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
                 attach_autocomplete(entry, self.barangays, self.vars[key])
             else:
-                placeholder = "e.g. 2027" if key == "effectivity_date" else ""
+                placeholder = "e.g. 2027" if key == "effectivity_date" else "e.g. 06-0012-01780" if key == "prev_td_number" else ""
                 entry = ctk.CTkEntry(self.scroll_form, height=40, textvariable=self.vars[key], placeholder_text=placeholder)
                 entry.pack(fill="x", padx=10, pady=(0, 5))
                 entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
@@ -537,9 +538,9 @@ class PropertyEditModal(ctk.CTkToplevel):
             prop = prop_svc.get_property_by_id(self.property_id)
             if not prop: return
             if isinstance(prop, dict):
-                mapping = {"td_number": prop.get("td_number"), "owner_name": prop.get("owner_name"), "pin": prop.get("pin"), "lot_number": prop.get("lot_number"), "area": prop.get("area"), "location": prop.get("location"), "kind_of_property": prop.get("kind_of_property"), "effectivity_date": prop.get("effectivity_date"), "assessed_value": str(prop.get("assessed_value", "0.00")), "penalty": str(prop.get("penalty", "0.00")), "discount": str(prop.get("discount", "0.00")), "or_number": prop.get("or_number"), "or_date": str(prop.get("or_date")) if prop.get("or_date") else "", "tax_year": prop.get("tax_year"), "amount_paid": str(prop.get("amount_paid", "0.00"))}
+                mapping = {"td_number": prop.get("td_number"), "owner_name": prop.get("owner_name"), "pin": prop.get("pin"), "lot_number": prop.get("lot_number"), "area": prop.get("area"), "location": prop.get("location"), "kind_of_property": prop.get("kind_of_property"), "prev_td_number": prop.get("prev_td_number"), "effectivity_date": prop.get("effectivity_date"), "assessed_value": str(prop.get("assessed_value", "0.00")), "penalty": str(prop.get("penalty", "0.00")), "discount": str(prop.get("discount", "0.00")), "or_number": prop.get("or_number"), "or_date": str(prop.get("or_date")) if prop.get("or_date") else "", "tax_year": prop.get("tax_year"), "amount_paid": str(prop.get("amount_paid", "0.00"))}
             else:
-                mapping = {"td_number": prop[1], "owner_name": prop[2], "lot_number": prop[4], "area": prop[5], "location": prop[6], "kind_of_property": prop[7], "assessed_value": str(prop[9]), "penalty": str(prop[10]), "discount": str(prop[11]), "or_number": prop[12], "or_date": str(prop[13]) if prop[13] else "", "tax_year": prop[14], "pin": prop[18] if len(prop) > 18 else "", "effectivity_date": prop[21] if len(prop) > 21 else ""}
+                mapping = {"td_number": prop[1], "owner_name": prop[2], "lot_number": prop[4], "area": prop[5], "location": prop[6], "kind_of_property": prop[7], "assessed_value": str(prop[9]), "penalty": str(prop[10]), "discount": str(prop[11]), "or_number": prop[12], "or_date": str(prop[13]) if prop[13] else "", "tax_year": prop[14], "pin": prop[18] if len(prop) > 18 else "", "prev_td_number": prop[20] if len(prop) > 20 else "", "effectivity_date": prop[21] if len(prop) > 21 else ""}
             for k, v in mapping.items():
                 if k in self.vars: self.vars[k].set(str(v) if v is not None else "")
             self.recompute()
@@ -555,6 +556,7 @@ class PropertyEditModal(ctk.CTkToplevel):
             "area": "Area",
             "location": "Location",
             "kind_of_property": "Kind of Property",
+            "prev_td_number": "Previous TD Number",
             "effectivity_date": "Effectivity Date",
             "assessed_value": "Assessed Value",
         }
@@ -575,6 +577,31 @@ class PropertyEditModal(ctk.CTkToplevel):
 
         # Handle Barangay specifically as it's often a duplicate of Location
         data["Barangay"] = data["Location"]
+
+        prev_td = data.get("Previous TD Number", "").strip()
+        td_number = data.get("TD Number", "").strip()
+        if prev_td and td_number and prev_td.upper() == td_number.upper():
+            messagebox.showerror(
+                "Invalid Previous TD",
+                "Previous TD cannot be the same as the new TD number.",
+                parent=self,
+            )
+            return
+
+        if prev_td:
+            try:
+                existing_prev = prop_svc.find_property_by_td_number(prev_td, exclude_id=self.property_id)
+            except Exception:
+                existing_prev = None
+            if not existing_prev:
+                proceed = messagebox.askyesno(
+                    "Previous TD Not Found",
+                    "The Previous TD was not found in the system.\n\n"
+                    "Continue saving anyway?",
+                    parent=self,
+                )
+                if not proceed:
+                    return
 
         if self.payment_mode:
             required_payment_fields = ("OR Number", "OR Date", "Tax Year", "Amount Paid")
