@@ -9,9 +9,21 @@ echo.
 
 echo [1/5] Pulling latest code from GitHub...
 cd /d C:\MTO
-git pull origin master
+
+REM Client machines should not keep local dependency-lock changes. npm install
+REM can rewrite this file and block future pulls, so restore only this generated
+REM lockfile before updating. Do not touch office data or other source files.
+git diff --quiet -- frontend/package-lock.json
 if %errorlevel% neq 0 (
-    echo ERROR: Git pull failed. Check your internet connection.
+    echo Local frontend package-lock drift detected. Restoring tracked lockfile...
+    git restore -- frontend/package-lock.json
+)
+
+git pull --ff-only origin master
+if %errorlevel% neq 0 (
+    echo ERROR: Git pull failed.
+    echo This is usually caused by local source changes, a stuck Git process, or network trouble.
+    echo Run: git status --short
     pause
     exit /b 1
 )
@@ -26,7 +38,7 @@ echo.
 
 echo [3/5] Rebuilding frontend...
 cd C:\MTO\frontend
-call npm install --silent
+call npm ci --silent
 call npm run build
 if %errorlevel% neq 0 (
     echo ERROR: Frontend build failed.
