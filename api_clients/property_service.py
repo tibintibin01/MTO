@@ -27,17 +27,24 @@ def get_barangays():
 
 
 def get_property_by_id(property_id):
-    return api_request_with_cache("GET", f"/properties/{property_id}")
+    # Editors must load the current server version for optimistic concurrency.
+    return api_request("GET", f"/properties/{property_id}")
 
 
-# Placeholder for other methods that will be migrated later
 def find_property_by_td_number(td_number, exclude_id=None):
-    # This might need a specific endpoint
-    response = api_request_with_cache("GET", "/properties", params={"search": td_number})
-    results = response.get("items", [])
-    for r in results:
-        if str(r[1]).strip() == str(td_number).strip():
-            return {"id": r[0], "td_number": r[1], "owner_name": r[2]}
+    """Return an exact, fresh TD match for validation in the property editor."""
+    normalized_td = str(td_number or "").strip().upper()
+    if not normalized_td:
+        return None
+
+    # Do not use the list cache here: a newly added or recently edited TD must
+    # be visible immediately when it is selected as a Previous TD.
+    response = api_request("GET", "/properties", params={"search": normalized_td, "limit": 100})
+    for row in response.get("items", []):
+        if exclude_id is not None and str(row[0]) == str(exclude_id):
+            continue
+        if str(row[1] or "").strip().upper() == normalized_td:
+            return {"id": row[0], "td_number": row[1], "owner_name": row[2]}
     return None
 
 

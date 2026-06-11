@@ -28,12 +28,6 @@ class PropertyPage:
 
         ctk.CTkLabel(header_fr, text=tr("dashboard.nav.property").upper(), font=ModernTheme.H1).pack(side="left")
 
-        self.search_ent = ctk.CTkEntry(header_fr, placeholder_text=tr("property.search_placeholder"), width=350, font=ModernTheme.BODY)
-        self.search_ent.pack(side="right", padx=(10, 0))
-        self.search_ent.bind("<Return>", lambda e: self.refresh_table())
-
-        ctk.CTkButton(header_fr, text=f"🔍 {tr('property.btn_search')}", command=self.refresh_table, width=100, font=ModernTheme.BUTTON, fg_color=ModernTheme.SECONDARY).pack(side="right", padx=10)
-
         import api_clients.auth_service as auth
         if auth.has_permission(self.user, "property_edit"):
             ctk.CTkButton(header_fr, text=f"🧹 {tr('property.btn_cleanup')}", command=self.open_bulk_update, font=ModernTheme.BUTTON, fg_color=ModernTheme.WARNING, width=150).pack(side="right", padx=10)
@@ -43,11 +37,36 @@ class PropertyPage:
         filter_bar = ctk.CTkFrame(self.container, fg_color=ModernTheme.SECONDARY, corner_radius=8)
         filter_bar.pack(fill="x", pady=(0, 15), padx=5)
 
-        # Left group — all filters together
-        left_group = ctk.CTkFrame(filter_bar, fg_color="transparent")
-        left_group.pack(side="left", padx=(10, 0), pady=6)
+        # Keep the most-used action visible: search input and button stay together.
+        search_group = ctk.CTkFrame(filter_bar, fg_color="transparent")
+        search_group.pack(side="left", padx=(12, 8), pady=8)
+        ctk.CTkLabel(search_group, text="FIND PROPERTY", font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 8))
+        self.search_ent = ctk.CTkEntry(
+            search_group,
+            placeholder_text="TD number, previous TD, or owner name...",
+            width=310,
+            height=32,
+            font=ModernTheme.BODY,
+        )
+        self.search_ent.pack(side="left")
+        self.search_ent.bind("<Return>", lambda e: self.refresh_table())
+        ctk.CTkButton(
+            search_group,
+            text="SEARCH",
+            command=self.refresh_table,
+            width=100,
+            height=32,
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.PRIMARY,
+        ).pack(side="left", padx=(6, 0))
 
-        ctk.CTkLabel(left_group, text=tr("property.filters.barangay"), font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(5, 4))
+        ctk.CTkFrame(filter_bar, width=1, height=28, fg_color="#94a3b8").pack(side="left", padx=(2, 8), pady=8)
+
+        # Secondary filters remain grouped together beside search.
+        left_group = ctk.CTkFrame(filter_bar, fg_color="transparent")
+        left_group.pack(side="left", padx=(0, 10), pady=8)
+
+        ctk.CTkLabel(left_group, text=tr("property.filters.barangay"), font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 4))
         self.barangay_cmb = ctk.CTkComboBox(left_group, values=["ALL"], width=160, height=28, font=ModernTheme.BODY)
         self.barangay_cmb.pack(side="left", padx=(0, 12))
 
@@ -284,6 +303,8 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.user = user
         self.payment_mode = payment_mode
         self.vars = {}
+        self._loaded_version = None
+        self._original_prev_td = ""
         self.barangays = ["NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN", "BUENAVISTA", "CALAOCAN", "DIAMANEN", "DIANED", "DIARABASIN", "DIBUTUNAN", "DIMABUNO", "DINADIAWAN", "DITALE", "GUPA", "IPIL", "LABOY", "LIPIT", "LOBBOT", "MALIGAYA", "MIJARES", "MUCDOL", "PUANGI", "SALAY", "SAPANGKAWAYAN", "TOYTOYAN"]
 
         # Generate a fresh idempotency key when the form opens — NOT on submit.
@@ -538,11 +559,13 @@ class PropertyEditModal(ctk.CTkToplevel):
             prop = prop_svc.get_property_by_id(self.property_id)
             if not prop: return
             if isinstance(prop, dict):
+                self._loaded_version = prop.get("version")
                 mapping = {"td_number": prop.get("td_number"), "owner_name": prop.get("owner_name"), "pin": prop.get("pin"), "lot_number": prop.get("lot_number"), "area": prop.get("area"), "location": prop.get("location"), "kind_of_property": prop.get("kind_of_property"), "prev_td_number": prop.get("prev_td_number"), "effectivity_date": prop.get("effectivity_date"), "assessed_value": str(prop.get("assessed_value", "0.00")), "penalty": str(prop.get("penalty", "0.00")), "discount": str(prop.get("discount", "0.00")), "or_number": prop.get("or_number"), "or_date": str(prop.get("or_date")) if prop.get("or_date") else "", "tax_year": prop.get("tax_year"), "amount_paid": str(prop.get("amount_paid", "0.00"))}
             else:
                 mapping = {"td_number": prop[1], "owner_name": prop[2], "lot_number": prop[4], "area": prop[5], "location": prop[6], "kind_of_property": prop[7], "assessed_value": str(prop[9]), "penalty": str(prop[10]), "discount": str(prop[11]), "or_number": prop[12], "or_date": str(prop[13]) if prop[13] else "", "tax_year": prop[14], "pin": prop[18] if len(prop) > 18 else "", "prev_td_number": prop[20] if len(prop) > 20 else "", "effectivity_date": prop[21] if len(prop) > 21 else ""}
             for k, v in mapping.items():
                 if k in self.vars: self.vars[k].set(str(v) if v is not None else "")
+            self._original_prev_td = self.vars["prev_td_number"].get().strip().upper()
             self.recompute()
         except Exception as e: print(f"Load Error: {e}")
 
@@ -588,7 +611,7 @@ class PropertyEditModal(ctk.CTkToplevel):
             )
             return
 
-        if prev_td:
+        if prev_td and prev_td.upper() != self._original_prev_td:
             try:
                 existing_prev = prop_svc.find_property_by_td_number(prev_td, exclude_id=self.property_id)
             except Exception:
@@ -602,6 +625,9 @@ class PropertyEditModal(ctk.CTkToplevel):
                 )
                 if not proceed:
                     return
+
+        if self.property_id is not None and self._loaded_version is not None:
+            data["version"] = self._loaded_version
 
         if self.payment_mode:
             required_payment_fields = ("OR Number", "OR Date", "Tax Year", "Amount Paid")
