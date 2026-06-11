@@ -14,6 +14,7 @@ class DashboardHomePage:
         self.parent = parent
         self.user = user
         self.callbacks = callbacks # Dict: trigger_backup, get_summary, get_trend
+        self._backup_status_loaded = False
         self.setup_ui()
         self.start_data_refresh()
 
@@ -101,12 +102,26 @@ class DashboardHomePage:
         )
         self.backup_detail_lbl.pack(fill="x", padx=12, pady=(0, 8))
 
+        backup_actions = ctk.CTkFrame(self.backup_card, fg_color="transparent")
+        backup_actions.pack(fill="x", padx=20, pady=(0, 20))
         if auth.has_permission(self.user, "backup_restore"):
-            self.backup_btn = ctk.CTkButton(self.backup_card, text=tr("dashboard.backup.run_now"), command=self.trigger_manual_backup, width=200, height=35, font=ModernTheme.BUTTON)
-            self.backup_btn.pack(pady=(0, 20), padx=20, anchor="e")
+            self.backup_btn = ctk.CTkButton(
+                backup_actions,
+                text=tr("dashboard.backup.run_now"),
+                command=self.trigger_manual_backup,
+                width=220,
+                height=38,
+                font=ModernTheme.BUTTON,
+            )
+            self.backup_btn.pack(side="left")
         else:
             self.backup_btn = None
-            ctk.CTkLabel(self.backup_card, text="🛡️ Administrative credentials required to trigger manual backup.", font=("Segoe UI", 10, "italic"), text_color="gray").pack(pady=(0, 20), padx=20, anchor="e")
+            ctk.CTkLabel(
+                backup_actions,
+                text="Administrative credentials required to trigger manual backup.",
+                font=("Segoe UI", 10, "italic"),
+                text_color="gray",
+            ).pack(side="left")
 
 
     def _show_loading(self):
@@ -147,7 +162,10 @@ class DashboardHomePage:
 
     def start_data_refresh(self):
         self._show_loading()
+        self._backup_status_loaded = False
         threading.Thread(target=self.refresh_data, daemon=True).start()
+        threading.Thread(target=self.refresh_backup_status, daemon=True).start()
+        self.parent.after(16000, self._expire_backup_loading)
 
     def refresh_data(self):
         try:
@@ -180,42 +198,10 @@ class DashboardHomePage:
         self.bar_chart.draw(months, totals, chart_type="bar")
         self.trend_chart.draw(months, totals, chart_type="line")
 
-        b = summary.get("backup", {})
-        def backup_color(value):
-            upper_val = str(value or "").upper()
-            if b.get("is_running"):
-                return "#f59e0b"
-            if any(word in upper_val for word in ("FAILED", "ERROR", "ISSUE", "UNAVAILABLE")):
-                return "#e74c3c"
-            if any(word in upper_val for word in ("SUCCESS", "OK", "PROTECTED")) or (":" in upper_val and "READY:" not in upper_val):
-                return ModernTheme.SUCCESS
-            return "gray"
+        b = summary.get("backup")
+        if b:
+            self._update_backup_ui(b)
 
-        for key, fallback in (
-            ("local", "Status unavailable"),
-            ("usb", "Status unavailable"),
-            ("cloud", "Status unavailable"),
-            ("verify", "Status unavailable"),
-        ):
-            field = "last_verify" if key == "verify" else f"last_{key}"
-            value = b.get(field, fallback)
-            self.backup_labels[key].configure(text=value, text_color=backup_color(value))
-
-        summary_text = b.get("storage_status") or "Backup health unavailable"
-        checked_at = b.get("checked_at") or "unknown time"
-        last_backup = b.get("last_backup") or "No recorded backup"
-        checksum = b.get("last_checksum_short") or "None"
-        self.backup_summary_lbl.configure(
-            text=summary_text,
-            text_color=backup_color(summary_text),
-        )
-        self.backup_detail_lbl.configure(
-            text=f"Latest: {last_backup}   |   Checksum: {checksum}   |   Checked: {checked_at}"
-        )
-
-        if self.backup_btn:
-            if b.get("is_running"): self.backup_btn.configure(state="disabled", text="BACKUP IN PROGRESS...")
-            else: self.backup_btn.configure(state="normal", text="RUN HYBRID BACKUP NOW")
 
         # Update Infrastructure Health (New Phase 4 Hardening)
         stats = summary.get("infra_stats")
@@ -223,6 +209,65 @@ class DashboardHomePage:
             self._update_infra_ui(stats)
 
         show_toast(self.parent.winfo_toplevel(), "Dashboard data refreshed", type="info")
+
+    def _expire_backup_loading(self):
+        """Guarantees the backup card never remains in an endless loading state."""
+        if not self._backup_status_loaded:
+            self._show_backup_status_error("The server did not answer the backup health check within 15 seconds.")
+
+
+    def refresh_backup_status(self):
+        """Loads backup health independently so a slow check cannot block the dashboard."""
+        try:
+            status = system.get_backup_verification_status() or {}
+            self.parent.after(0, lambda b=status: self._update_backup_ui(b))
+        except Exception as exc:
+            self.parent.after(0, lambda message=str(exc): self._show_backup_status_error(message))
+
+    def _backup_color(self, value, is_running=False):
+        upper_val = str(value or "").upper()
+        if is_running:
+            return "#f59e0b"
+        if any(word in upper_val for word in ("FAILED", "ERROR", "ISSUE", "UNAVAILABLE", "MISSING")):
+            return "#e74c3c"
+        if any(word in upper_val for word in ("SUCCESS", "OK", "PROTECTED")) or (":" in upper_val and "READY:" not in upper_val):
+            return ModernTheme.SUCCESS
+        return "gray"
+
+    def _update_backup_ui(self, backup):
+        if not self.backup_card.winfo_exists():
+            return
+        self._backup_status_loaded = True
+        is_running = bool(backup.get("is_running"))
+        for key, fallback in (("local", "Status unavailable"), ("usb", "Status unavailable"), ("cloud", "Status unavailable"), ("verify", "Status unavailable")):
+            field = "last_verify" if key == "verify" else f"last_{key}"
+            value = backup.get(field, fallback)
+            self.backup_labels[key].configure(text=value, text_color=self._backup_color(value, is_running))
+
+        summary_text = backup.get("storage_status") or "Backup health unavailable"
+        checked_at = backup.get("checked_at") or "unknown time"
+        last_backup = backup.get("last_backup") or "No recorded backup"
+        checksum = backup.get("last_checksum_short") or "None"
+        self.backup_summary_lbl.configure(text=summary_text, text_color=self._backup_color(summary_text, is_running))
+        self.backup_detail_lbl.configure(text=f"Latest: {last_backup}   |   Checksum: {checksum}   |   Checked: {checked_at}")
+        if self.backup_btn:
+            if is_running:
+                self.backup_btn.configure(state="disabled", text="BACKUP IN PROGRESS...")
+            else:
+                self.backup_btn.configure(state="normal", text="RUN HYBRID BACKUP NOW")
+
+    def _show_backup_status_error(self, message):
+        if not self.backup_card.winfo_exists():
+            return
+        self._backup_status_loaded = True
+        for label in self.backup_labels.values():
+            label.configure(text="Unavailable", text_color="#e74c3c")
+        self.backup_summary_lbl.configure(text="Backup status unavailable", text_color="#e74c3c")
+        detail = "The server did not answer the backup health check within 15 seconds." if "timed out" in message.lower() else message
+        self.backup_detail_lbl.configure(text=detail)
+        if self.backup_btn:
+            self.backup_btn.configure(state="normal", text="RUN HYBRID BACKUP NOW")
+
 
     def _update_infra_ui(self, stats):
         """Updates the new infrastructure health indicators."""

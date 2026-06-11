@@ -25,7 +25,8 @@ def trigger_backup():
 
 
 def get_backup_verification_status():
-    return api_request("GET", "/system/backup/status")
+    # Health checks must fail quickly instead of leaving the dashboard loading.
+    return api_request("GET", "/system/backup/status", queue_offline=False, timeout=15)
 
 
 def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit=100, cursor=None):

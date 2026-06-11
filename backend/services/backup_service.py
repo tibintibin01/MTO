@@ -461,10 +461,26 @@ def _rotate_backups(directory, keep=7):
 
 
 def _find_usb_drive():
-    """Scans all drive letters for the secret file."""
+    """Scans connected local/removable drives without touching mapped network drives."""
     import string
 
-    for letter in string.ascii_uppercase[4:]:  # E through Z
+    letters = string.ascii_uppercase[4:]
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            drive_mask = ctypes.windll.kernel32.GetLogicalDrives()
+            get_drive_type = ctypes.windll.kernel32.GetDriveTypeW
+            # DRIVE_REMOTE (4) can block for a long time when a mapped share is offline.
+            letters = [
+                letter for letter in letters
+                if drive_mask & (1 << (ord(letter) - ord("A")))
+                and get_drive_type(f"{letter}:\\") != 4
+            ]
+        except Exception:
+            pass
+
+    for letter in letters:
         drive = f"{letter}:\\"
         if os.path.exists(os.path.join(drive, USB_SECRET_FILE)):
             return drive

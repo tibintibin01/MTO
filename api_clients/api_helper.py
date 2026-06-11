@@ -142,6 +142,7 @@ def api_request(
     raw_response=False,
     queue_offline=True,
     idempotency_key=None,
+    timeout=120,
 ):
     """
     Centralized helper for all UI-to-Backend communication.
@@ -199,7 +200,7 @@ def api_request(
             params=params,
             headers=headers,
             files=files,
-            timeout=120,
+            timeout=timeout,
             verify=verify_param,
         )
 
@@ -273,7 +274,7 @@ def api_request(
         raise Exception(f"Unexpected Error: {str(e)}")
 
 
-def api_download_file(method, endpoint, params=None):
+def api_download_file(method, endpoint, params=None, timeout=120):
     """
     Specialized helper for downloading files (PDFs) from the backend.
     Saves the response content to a temporary file and returns the path.
@@ -299,7 +300,7 @@ def api_download_file(method, endpoint, params=None):
             url,
             params=params,
             headers=headers,
-            timeout=120,
+            timeout=timeout,
             verify=verify_param,
             stream=True
         )

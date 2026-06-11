@@ -149,13 +149,6 @@ def get_dashboard_summary(db_session: Session = None):
         "collections_month": float(get_cached_stat("collections_month", db_session=db_session)),
     }
 
-    # Add backup status from backup_service
-    try:
-        from backend.services.backup_service import get_backup_status
-        summary["backup"] = get_backup_status(db_session=db_session)
-    except Exception as e:
-        mto_logger.warning("Could not fetch backup status for dashboard: %s", e)
-        summary["backup"] = {}
 
     return summary
 
