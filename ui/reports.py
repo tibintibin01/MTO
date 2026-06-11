@@ -37,12 +37,36 @@ class ReportsPage:
             font=ModernTheme.H2,
         ).pack(anchor="w", pady=(0, 20))
 
-        self.tabview = ctk.CTkTabview(self.container)
+        # A stable, equal-width report navigator is easier to scan than the
+        # compact default segmented control.
+        self.tabview = ctk.CTkTabview(
+            self.container,
+            anchor="nw",
+            corner_radius=0,
+            border_width=0,
+            fg_color="transparent",
+            segmented_button_fg_color="#334155",
+            segmented_button_selected_color=ModernTheme.PRIMARY,
+            segmented_button_selected_hover_color="#0284c7",
+            segmented_button_unselected_color="#334155",
+            segmented_button_unselected_hover_color="#475569",
+            text_color="#f8fafc",
+        )
         self.tabview.pack(fill="both", expand=True)
 
         self.collection_tab = self.tabview.add(tr("reports.tabs.collection"))
         self.receivables_tab = self.tabview.add(tr("reports.tabs.receivables"))
         self.barangay_tab = self.tabview.add(tr("reports.tabs.barangay"))
+
+        # Keep all three destinations visually balanced and comfortably clickable.
+        self.tabview._segmented_button.configure(
+            width=840,
+            height=42,
+            corner_radius=6,
+            border_width=1,
+            font=("Inter", 12, "bold"),
+            dynamic_resizing=False,
+        )
 
         self.setup_collection_tab()
         self.setup_receivables_tab()
