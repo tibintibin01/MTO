@@ -77,11 +77,29 @@ class DashboardHomePage:
         inner_backup.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         self.backup_labels = {
-            "local": self._make_backup_item(inner_backup, 0, tr("dashboard.backup.local"), "Never"),
-            "usb": self._make_backup_item(inner_backup, 1, tr("dashboard.backup.usb"), "Never"),
-            "cloud": self._make_backup_item(inner_backup, 2, tr("dashboard.backup.cloud"), "Never"),
-            "verify": self._make_backup_item(inner_backup, 3, tr("dashboard.backup.verify"), "Unknown"),
+            "local": self._make_backup_item(inner_backup, 0, tr("dashboard.backup.local"), "Loading..."),
+            "usb": self._make_backup_item(inner_backup, 1, tr("dashboard.backup.usb"), "Loading..."),
+            "cloud": self._make_backup_item(inner_backup, 2, tr("dashboard.backup.cloud"), "Loading..."),
+            "verify": self._make_backup_item(inner_backup, 3, tr("dashboard.backup.verify"), "Loading..."),
         }
+
+        self.backup_summary = ctk.CTkFrame(self.backup_card, fg_color=("#eef6ff", "#162235"), corner_radius=8)
+        self.backup_summary.pack(fill="x", padx=20, pady=(0, 12))
+        self.backup_summary_lbl = ctk.CTkLabel(
+            self.backup_summary,
+            text="Loading live backup health...",
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        )
+        self.backup_summary_lbl.pack(fill="x", padx=12, pady=(8, 2))
+        self.backup_detail_lbl = ctk.CTkLabel(
+            self.backup_summary,
+            text="Contacting the server.",
+            font=("Segoe UI", 9),
+            text_color="gray",
+            anchor="w",
+        )
+        self.backup_detail_lbl.pack(fill="x", padx=12, pady=(0, 8))
 
         if auth.has_permission(self.user, "backup_restore"):
             self.backup_btn = ctk.CTkButton(self.backup_card, text=tr("dashboard.backup.run_now"), command=self.trigger_manual_backup, width=200, height=35, font=ModernTheme.BUTTON)
@@ -167,21 +185,33 @@ class DashboardHomePage:
             upper_val = str(value or "").upper()
             if b.get("is_running"):
                 return "#f59e0b"
-            if any(word in upper_val for word in ("FAILED", "ERROR", "ISSUE")):
+            if any(word in upper_val for word in ("FAILED", "ERROR", "ISSUE", "UNAVAILABLE")):
                 return "#e74c3c"
-            if any(word in upper_val for word in ("SUCCESS", "OK")) or ":" in upper_val:
+            if any(word in upper_val for word in ("SUCCESS", "OK", "PROTECTED")) or (":" in upper_val and "READY:" not in upper_val):
                 return ModernTheme.SUCCESS
             return "gray"
 
         for key, fallback in (
-            ("local", "Never"),
-            ("usb", "Never"),
-            ("cloud", "Never"),
-            ("verify", "Unknown"),
+            ("local", "Status unavailable"),
+            ("usb", "Status unavailable"),
+            ("cloud", "Status unavailable"),
+            ("verify", "Status unavailable"),
         ):
             field = "last_verify" if key == "verify" else f"last_{key}"
             value = b.get(field, fallback)
             self.backup_labels[key].configure(text=value, text_color=backup_color(value))
+
+        summary_text = b.get("storage_status") or "Backup health unavailable"
+        checked_at = b.get("checked_at") or "unknown time"
+        last_backup = b.get("last_backup") or "No recorded backup"
+        checksum = b.get("last_checksum_short") or "None"
+        self.backup_summary_lbl.configure(
+            text=summary_text,
+            text_color=backup_color(summary_text),
+        )
+        self.backup_detail_lbl.configure(
+            text=f"Latest: {last_backup}   |   Checksum: {checksum}   |   Checked: {checked_at}"
+        )
 
         if self.backup_btn:
             if b.get("is_running"): self.backup_btn.configure(state="disabled", text="BACKUP IN PROGRESS...")

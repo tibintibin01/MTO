@@ -82,106 +82,129 @@ def _release_backup_lock(lock_id: int, final_status: str, health: str,
         db_session.commit()
 
 
+def _display_file_timestamp(path: str) -> str:
+    """Formats a file modification time in Philippine Standard Time."""
+    if not path or not os.path.exists(path):
+        return "Not yet created"
+    pst = timezone(timedelta(hours=8))
+    return datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc).astimezone(pst).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _latest_sql_file(directory: str) -> str | None:
+    files = glob.glob(os.path.join(directory, "*.sql")) if os.path.isdir(directory) else []
+    return max(files, key=os.path.getmtime) if files else None
+
+
 def get_backup_status(db_session: Session = None):
-    """Fetches the latest completed backup status from the database."""
+    """Returns live backup health, destination readiness, and latest recorded run."""
     if not db_session:
         with SessionLocal() as session:
             return get_backup_status(db_session=session)
 
     try:
-        # Exclude the lock sentinel rows and in-progress rows
         latest = (
             db_session.query(BackupHistory)
-            .filter(
-                BackupHistory.filename != "__lock__",
-                BackupHistory.status != "RUNNING",
-            )
+            .filter(BackupHistory.filename != "__lock__", BackupHistory.status != "RUNNING")
             .order_by(BackupHistory.id.desc())
             .first()
         )
-
-        # Check if a backup is currently running
         stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=BACKUP_LOCK_STALE_MINUTES)
         running = db_session.query(BackupHistory).filter(
-            BackupHistory.status == "RUNNING",
-            BackupHistory.timestamp >= stale_cutoff,
+            BackupHistory.status == "RUNNING", BackupHistory.timestamp >= stale_cutoff
         ).first()
+
+        local_file = _latest_sql_file(LOCAL_DIR)
+        if latest and latest.file_path and os.path.exists(latest.file_path):
+            local_file = latest.file_path
+        usb_path = _find_usb_drive()
+        usb_file = _latest_sql_file(os.path.join(usb_path, "MTO_Backups")) if usb_path else None
+        cloud_enabled = bool(mto_config.ENABLE_CLOUD_BACKUP)
+        try:
+            from backend.services.storage_service import storage_service
+            cloud_configured = cloud_enabled and bool(storage_service.enabled)
+        except Exception:
+            cloud_configured = False
 
         result = {
             "is_running": running is not None,
-            "last_local": "Never",
-            "last_usb":   "Never",
-            "last_cloud": "Never",
-            "last_verify": "Unknown",
+            "has_backup_history": latest is not None,
+            "last_local": _display_file_timestamp(local_file) if local_file else "Not yet created",
+            "last_usb": _display_file_timestamp(usb_file) if usb_file else (f"Ready: {usb_path}" if usb_path else "USB drive not detected"),
+            "last_cloud": "No upload recorded" if cloud_configured else ("Cloud storage not configured" if cloud_enabled else "Cloud backup disabled"),
+            "last_verify": "Not yet tested",
             "last_checksum": "None",
             "last_checksum_short": "None",
-            "health": "UNKNOWN",
-            "last_status": "UNKNOWN",
-            "last_file": None,
-            "last_backup": "Never",
-            "storage_status": "No verified backup yet",
+            "health": "IN_PROGRESS" if running else "NOT_RUN",
+            "last_status": "RUNNING" if running else "NOT_RUN",
+            "last_file": local_file,
+            "last_backup": f"Local file: {os.path.basename(local_file)}" if local_file else "No backup has been created yet",
+            "storage_status": "Backup in progress" if running else "Waiting for first verified backup",
             "backup_dir": BACKUP_BASE_DIR,
             "local_dir": LOCAL_DIR,
+            "local_ready": os.path.isdir(LOCAL_DIR) or os.path.isdir(BACKUP_BASE_DIR),
+            "usb_detected": usb_path is not None,
+            "usb_path": usb_path,
+            "cloud_enabled": cloud_enabled,
+            "cloud_configured": cloud_configured,
+            "status_source": "backup_history" if latest else ("local_files" if local_file else "configuration"),
+            "checked_at": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S"),
         }
 
         if latest:
-            # Convert UTC timestamp to Philippine Standard Time (UTC+8) for display
-            PST = timezone(timedelta(hours=8))
+            pst = timezone(timedelta(hours=8))
             ts = latest.timestamp
             if ts:
                 if ts.tzinfo is None:
                     ts = ts.replace(tzinfo=timezone.utc)
-                ts_str = ts.astimezone(PST).strftime("%Y-%m-%d %H:%M:%S")
+                ts_str = ts.astimezone(pst).strftime("%Y-%m-%d %H:%M:%S")
             else:
-                ts_str = "Never"
+                ts_str = "Timestamp unavailable"
+
             raw_health = latest.health or "UNKNOWN"
             health_display = (
-                "SUCCESS"
-                if raw_health in ("OK", "Success", "SUCCESS") or "Success" in raw_health
+                "SUCCESS" if raw_health in ("OK", "Success", "SUCCESS") or "Success" in raw_health
                 else "RESTORE SKIPPED" if raw_health == "RESTORE_SKIPPED"
                 else raw_health.replace("Issue: ", "").strip()
             )
             status = (latest.status or "UNKNOWN").upper()
             local_statuses = {"LOCAL_ONLY", "USB_ONLY", "CLOUD_ONLY", "SYNCED", "SUCCESS", "OK", "COMPLETED"}
-            local_status = ts_str if status in local_statuses else f"FAILED {ts_str}"
-            usb_status = ts_str if status in {"USB_ONLY", "SYNCED"} else "Not found"
-            cloud_status = ts_str if status in {"CLOUD_ONLY", "SYNCED"} else "Disabled"
+            local_status = ts_str if status in local_statuses else f"FAILED: {ts_str}"
+            usb_status = ts_str if status in {"USB_ONLY", "SYNCED"} else (f"Ready: {usb_path}" if usb_path else "USB drive not detected")
+            cloud_status = ts_str if status in {"CLOUD_ONLY", "SYNCED"} else ("No upload in latest run" if cloud_configured else result["last_cloud"])
             checksum = latest.checksum or "None"
-            checksum_short = (
-                f"{checksum[:12]}...{checksum[-8:]}"
-                if checksum and checksum != "None" and len(checksum) > 24
-                else checksum
-            )
+            checksum_short = f"{checksum[:12]}...{checksum[-8:]}" if checksum != "None" and len(checksum) > 24 else checksum
             storage_status = {
-                "SYNCED": "Server, USB, and cloud",
-                "CLOUD_ONLY": "Server and cloud",
-                "USB_ONLY": "Server and USB",
-                "LOCAL_ONLY": "Server only",
-                "SUCCESS": "Server",
-                "OK": "Server",
-                "COMPLETED": "Server",
-                "VERIFY_FAILED": "Verification failed",
-            }.get(status, status)
-
+                "SYNCED": "Protected on server, USB, and cloud",
+                "CLOUD_ONLY": "Protected on server and cloud",
+                "USB_ONLY": "Protected on server and USB",
+                "LOCAL_ONLY": "Protected on server only",
+                "SUCCESS": "Protected on server",
+                "OK": "Protected on server",
+                "COMPLETED": "Protected on server",
+                "VERIFY_FAILED": "Backup created but verification failed",
+                "FAILED": "Latest backup failed",
+            }.get(status, status.replace("_", " ").title())
+            if status in local_statuses and not local_file:
+                local_status = "Backup file missing"
+                storage_status = "Latest backup record exists, but the server file is missing"
+                raw_health = "FILE_MISSING"
+                health_display = "FILE MISSING"
             result.update({
-                "last_local":    local_status,
-                "last_usb":      usb_status,
-                "last_cloud":    cloud_status,
-                "last_verify":   health_display,
-                "last_checksum": checksum,
-                "last_checksum_short": checksum_short,
-                "health":        raw_health,
-                "last_status":   status,
-                "last_file":     latest.file_path,
-                "last_backup":   f"{latest.filename} @ {ts_str}",
-                "storage_status": storage_status,
+                "last_local": local_status, "last_usb": usb_status, "last_cloud": cloud_status,
+                "last_verify": health_display, "last_checksum": checksum,
+                "last_checksum_short": checksum_short, "health": raw_health,
+                "last_status": status, "last_file": latest.file_path or local_file,
+                "last_backup": f"{latest.filename} @ {ts_str}", "storage_status": storage_status,
             })
-
         return result
     except Exception as e:
         mto_logger.error(f"Error fetching backup status: {e}")
-        return {"is_running": False, "last_local": "Error", "health": "ERROR"}
-
+        return {
+            "is_running": False, "last_local": "Status unavailable", "last_usb": "Status unavailable",
+            "last_cloud": "Status unavailable", "last_verify": "Status unavailable", "health": "ERROR",
+            "last_status": "ERROR", "storage_status": "Could not load backup health",
+            "checked_at": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S"), "error": str(e),
+        }
 
 @require_permission("backup_restore")
 async def run_hybrid_backup(user=None, db_session: Session = None):
