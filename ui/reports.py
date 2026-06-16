@@ -499,16 +499,21 @@ class ReportsPage:
         treasury = metrics.get("treasury", {})
         delinquency = metrics.get("delinquency", {})
 
-        # Prefer the department metrics when available; fall back to the existing summary.
-        assessor_levy = float(assessor.get("total_billed_levy", levy) or 0)
+        # The reconciliation equation must use the same basis on all sides:
+        # beginning receivable + current assessment + adjustments = collections + ending receivable.
+        current_levy = float(assessor.get("total_billed_levy", current) or 0)
+        total_collectible = levy
         treasury_total = float(treasury.get("total_collected", collections) or 0)
-        delinquency_total = float(delinquency.get("total_unpaid", unpaid) or 0)
-        variance = assessor_levy - (treasury_total + delinquency_total)
-        abs_variance = abs(variance)
+        expected_unpaid = unpaid
+        delinquency_total = float(delinquency.get("total_unpaid", expected_unpaid) or 0)
+        equation_variance = total_collectible - (treasury_total + expected_unpaid)
+        tracker_variance = delinquency_total - expected_unpaid
+        variance = tracker_variance if abs(tracker_variance) > 1.0 else equation_variance
+        abs_variance = max(abs(equation_variance), abs(tracker_variance))
         tolerance = 1.0
         balanced = abs_variance <= tolerance
-        collection_rate = (treasury_total / assessor_levy * 100) if assessor_levy > 0 else 0
-        delinquency_rate = (delinquency_total / assessor_levy * 100) if assessor_levy > 0 else 0
+        collection_rate = (treasury_total / total_collectible * 100) if total_collectible > 0 else 0
+        delinquency_rate = (expected_unpaid / total_collectible * 100) if total_collectible > 0 else 0
 
         def money(value):
             return f"P {float(value or 0):,.2f}"
@@ -577,7 +582,7 @@ class ReportsPage:
                 ("No. of taxable properties", f"{int(assessor.get('taxable_properties', 0) or 0):,}", "#f8fafc"),
             ),
             "Total billed levy",
-            money(assessor_levy),
+            money(current_levy),
         )
         department_card(
             department_grid,
@@ -611,9 +616,9 @@ class ReportsPage:
         grid = ctk.CTkFrame(self.recon_content, fg_color="transparent")
         grid.pack(fill="x", pady=(0, 14))
         grid.grid_columnconfigure((0, 1, 2), weight=1)
-        stat_card(grid, 0, "Tax Levy / Collectible (A)", money(assessor_levy), ModernTheme.PRIMARY, f"Beginning {money(beginning)} + current {money(current)} + adjustments {money(adjustments)}")
+        stat_card(grid, 0, "Total Collectible (A)", money(total_collectible), ModernTheme.PRIMARY, f"Beginning {money(beginning)} + current {money(current)} + adjustments {money(adjustments)}")
         stat_card(grid, 1, "Collections (B)", money(treasury_total), ModernTheme.SUCCESS, f"Collection rate: {collection_rate:.1f}%")
-        stat_card(grid, 2, "Unpaid Receivables (C)", money(delinquency_total), ModernTheme.DANGER, f"Delinquency rate: {delinquency_rate:.1f}%")
+        stat_card(grid, 2, "Ending Receivable (C)", money(expected_unpaid), ModernTheme.DANGER, f"Receivable rate: {delinquency_rate:.1f}%")
 
         equation = ctk.CTkFrame(
             self.recon_content,
@@ -634,7 +639,7 @@ class ReportsPage:
         ).pack(side="left")
         ctk.CTkLabel(
             equation_top,
-            text="Tax levy should equal collections plus unpaid receivables",
+            text="Total collectible should equal collections plus ending receivable",
             font=("Inter", 10),
             text_color="#bfdbfe",
         ).pack(side="right")
@@ -643,7 +648,7 @@ class ReportsPage:
         formula.pack(fill="x", padx=16, pady=(0, 12))
         ctk.CTkLabel(
             formula,
-            text=f"{money(assessor_levy)}",
+            text=f"{money(total_collectible)}",
             font=("Consolas", 16, "bold"),
             text_color=ModernTheme.PRIMARY,
         ).pack(side="left")
@@ -657,7 +662,7 @@ class ReportsPage:
         ctk.CTkLabel(formula, text="  +  ", font=("Inter", 15, "bold"), text_color="#93a4c7").pack(side="left")
         ctk.CTkLabel(
             formula,
-            text=f"{money(delinquency_total)}",
+            text=f"{money(expected_unpaid)}",
             font=("Consolas", 16, "bold"),
             text_color=ModernTheme.DANGER,
         ).pack(side="left")
@@ -671,10 +676,12 @@ class ReportsPage:
         details = ctk.CTkFrame(self.recon_content, fg_color="transparent")
         details.pack(fill="x", pady=(0, 14))
         rows = (
-            ("Equation substitution (A = B + C)", f"{money(assessor_levy)} = {money(treasury_total)} + {money(delinquency_total)}"),
-            ("Variance [A - (B + C)]", money(variance)),
+            ("Equation substitution (A = B + C)", f"{money(total_collectible)} = {money(treasury_total)} + {money(expected_unpaid)}"),
+            ("Equation variance [A - (B + C)]", money(equation_variance)),
+            ("RPT tracker total unpaid", money(delinquency_total)),
+            ("Tracker variance [tracker - expected ending]", money(tracker_variance)),
             ("Collection rate", f"{collection_rate:.1f}%"),
-            ("Receivable / delinquency rate", f"{delinquency_rate:.1f}%"),
+            ("Ending receivable rate", f"{delinquency_rate:.1f}%"),
         )
         for label, value in rows:
             row = ctk.CTkFrame(details, fg_color="transparent")
@@ -689,9 +696,9 @@ class ReportsPage:
         result.pack(fill="x", pady=(0, 14))
         result_text = "Balanced - ready for Accounting review" if balanced else "Needs review before submission"
         detail_text = (
-            "Assessment, collection, and receivable totals agree within the system tolerance."
+            "The accounting equation and RPT tracker agree within the system tolerance."
             if balanced else
-            "The variance is outside tolerance. Review billing records, collections, adjustments, and imported data before certification."
+            "The equation uses the expected ending receivable, but the RPT tracker unpaid total does not match it. Review billing balances, posted collections, and imported data before certification."
         )
         ctk.CTkLabel(result, text=result_text, font=("Inter", 14, "bold"), text_color=result_color).pack(anchor="w", padx=18, pady=(16, 4))
         ctk.CTkLabel(result, text=f"Variance: {money(variance)}", font=("Consolas", 18, "bold"), text_color=result_color).pack(anchor="w", padx=18)
