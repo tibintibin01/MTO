@@ -512,11 +512,13 @@ class ReportsPage:
 
         year = data.get("report_year", self.recon_year_cb.get())
         beginning = float(data.get("beginning_receivable", 0) or 0)
-        current = float(data.get("current_year_assessment", 0) or 0)
+        current_net = float(data.get("current_year_net_collectible", data.get("current_year_assessment", 0)) or 0)
+        current_penalty = float(data.get("current_year_penalty", 0) or 0)
+        current_discount = float(data.get("current_year_discount", 0) or 0)
         adjustments = float(data.get("adjustments", 0) or 0)
         collections = float(data.get("collections", 0) or 0)
         unpaid = float(data.get("ending_receivable", 0) or 0)
-        levy = beginning + current + adjustments
+        levy = beginning + current_net + adjustments
         brgy_rows = brgy_rows or []
         metrics = metrics or {}
         assessor = metrics.get("assessor", {})
@@ -524,8 +526,12 @@ class ReportsPage:
         delinquency = metrics.get("delinquency", {})
 
         # The reconciliation equation must use the same basis on all sides:
-        # beginning receivable + current assessment + adjustments = collections + ending receivable.
-        current_levy = float(assessor.get("total_billed_levy", current) or 0)
+        # beginning receivable + net current collectible + adjustments = collections + ending receivable.
+        current_levy = float(assessor.get("current_year_levy", data.get("current_year_levy", current_net)) or 0)
+        current_penalty = float(assessor.get("current_year_penalty", current_penalty) or 0)
+        current_discount = float(assessor.get("current_year_discount", current_discount) or 0)
+        current_net = float(assessor.get("current_year_net_collectible", current_net) or 0)
+        levy = beginning + current_net + adjustments
         total_collectible = levy
         treasury_total = float(treasury.get("total_collected", collections) or 0)
         expected_unpaid = unpaid
@@ -606,9 +612,12 @@ class ReportsPage:
             (
                 ("Total assessed value", money(assessor.get("total_assessed_value", 0)), "#f8fafc"),
                 ("Basic tax rate", f"{float(assessor.get('tax_rate_percent', 0) or 0):.2f}%", "#f8fafc"),
+                ("Total RPT rate", f"{float(assessor.get('total_tax_rate_percent', 0) or 0):.2f}%", "#f8fafc"),
                 ("No. of taxable properties", f"{int(assessor.get('taxable_properties', 0) or 0):,}", "#f8fafc"),
+                ("Penalties / interest", money(current_penalty), "#f59e0b"),
+                ("Discounts", f"- {money(current_discount)}", "#22c55e"),
             ),
-            "Total billed levy",
+            "Current year levy",
             money(current_levy),
         )
         department_card(
@@ -643,7 +652,7 @@ class ReportsPage:
         grid = ctk.CTkFrame(self.recon_content, fg_color="transparent")
         grid.pack(fill="x", pady=(0, 14))
         grid.grid_columnconfigure((0, 1, 2), weight=1)
-        stat_card(grid, 0, "Total Collectible (A)", money(total_collectible), ModernTheme.PRIMARY, f"Beginning {money(beginning)} + current {money(current)} + adjustments {money(adjustments)}")
+        stat_card(grid, 0, "Total Collectible (A)", money(total_collectible), ModernTheme.PRIMARY, f"Beginning {money(beginning)} + net current {money(current_net)} + adjustments {money(adjustments)}")
         stat_card(grid, 1, "Collections (B)", money(treasury_total), ModernTheme.SUCCESS, f"Collection rate: {collection_rate:.1f}%")
         stat_card(grid, 2, "Ending Receivable (C)", money(delinquency_total), ModernTheme.DANGER, f"Receivable rate: {delinquency_rate:.1f}%")
 
@@ -705,6 +714,7 @@ class ReportsPage:
         rows = (
             ("Equation substitution (A = B + C)", f"{money(total_collectible)} = {money(treasury_total)} + {money(delinquency_total)}"),
             ("Equation variance [A - (B + C)]", money(equation_variance)),
+            ("Net current collectible", f"{money(current_levy)} + {money(current_penalty)} - {money(current_discount)} = {money(current_net)}"),
             ("Prior-year + current-year receivables", f"{money(prior_receivable)} + {money(current_receivable)} = {money(delinquency_total)}"),
             ("Raw RPT tracker total unpaid", money(tracker_total)),
             ("Tracker variance [tracker - expected ending]", money(tracker_variance)),
@@ -867,7 +877,10 @@ class ReportsPage:
 
         # --- DATA PREP ---
         beg = float(data.get("beginning_receivable", 0))
-        curr = float(data.get("current_year_assessment", 0))
+        curr = float(data.get("current_year_net_collectible", data.get("current_year_assessment", 0)))
+        curr_levy = float(data.get("current_year_levy", curr))
+        curr_penalty = float(data.get("current_year_penalty", 0))
+        curr_discount = float(data.get("current_year_discount", 0))
         coll = float(data.get("collections", 0))
         adj = float(data.get("adjustments", 0))
         end = float(data.get("ending_receivable", 0))
@@ -940,7 +953,8 @@ class ReportsPage:
         )
         formula_fr.pack(fill="x", pady=(0, 12))
         formula = (
-            f"{money(beg)} beginning + {money(curr)} current assessment "
+            f"{money(beg)} beginning + {money(curr_levy)} current levy "
+            f"+ {money(curr_penalty)} penalties - {money(curr_discount)} discounts "
             f"+ {money(adj)} adjustments - {money(coll)} collections = {money(end)} ending receivable"
         )
         ctk.CTkLabel(
@@ -956,11 +970,14 @@ class ReportsPage:
             grid.grid_columnconfigure(col, weight=1)
 
         metric_card(grid, "Beginning Balance", beg, "#94a3b8", "Prior-year unpaid balance").grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 8))
-        metric_card(grid, "Current Assessment", curr, ModernTheme.PRIMARY, f"New billings for {year}").grid(row=0, column=1, sticky="nsew", padx=4, pady=(0, 8))
-        metric_card(grid, "Total Collectible", total_target, "#f59e0b", "Beginning + current + adjustments").grid(row=0, column=2, sticky="nsew", padx=(8, 0), pady=(0, 8))
-        metric_card(grid, "Collections", coll, ModernTheme.SUCCESS, f"{efficiency:.1f}% of collectible amount").grid(row=1, column=0, sticky="nsew", padx=(0, 8))
-        metric_card(grid, "Adjustments", adj, "#a855f7", "Corrections and adjustments").grid(row=1, column=1, sticky="nsew", padx=4)
-        metric_card(grid, "Ending Receivable", end, ModernTheme.DANGER, f"{uncollected_rate:.1f}% remains uncollected").grid(row=1, column=2, sticky="nsew", padx=(8, 0))
+        metric_card(grid, "Current Year Levy", curr_levy, ModernTheme.PRIMARY, "Assessed value x RPT rate").grid(row=0, column=1, sticky="nsew", padx=4, pady=(0, 8))
+        metric_card(grid, "Net Current Collectible", curr, "#f59e0b", "Levy + penalties - discounts").grid(row=0, column=2, sticky="nsew", padx=(8, 0), pady=(0, 8))
+        metric_card(grid, "Collections", coll, ModernTheme.SUCCESS, f"{efficiency:.1f}% of collectible amount").grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(0, 8))
+        metric_card(grid, "Penalties / Interest", curr_penalty, "#f97316", "Shown separately from levy").grid(row=1, column=1, sticky="nsew", padx=4, pady=(0, 8))
+        metric_card(grid, "Discounts", curr_discount, "#22c55e", "Deducted from collectible").grid(row=1, column=2, sticky="nsew", padx=(8, 0), pady=(0, 8))
+        metric_card(grid, "Adjustments", adj, "#a855f7", "Corrections and adjustments").grid(row=2, column=0, sticky="nsew", padx=(0, 8))
+        metric_card(grid, "Total Collectible", total_target, "#f59e0b", "Beginning + net current + adjustments").grid(row=2, column=1, sticky="nsew", padx=4)
+        metric_card(grid, "Ending Receivable", end, ModernTheme.DANGER, f"{uncollected_rate:.1f}% remains uncollected").grid(row=2, column=2, sticky="nsew", padx=(8, 0))
 
         body = ctk.CTkFrame(self.receiv_content, fg_color="transparent")
         body.pack(fill="both", expand=True)

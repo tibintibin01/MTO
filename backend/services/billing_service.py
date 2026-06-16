@@ -493,15 +493,23 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
         PropertyBilling.tax_year < ry
     ).scalar()
     
-    # 2. Current Year Assessment
-    curr_ass = db_session.query(
-        func.coalesce(func.sum((PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount), 0)
+    # 2. Current-year levy and collectible components. The levy itself is
+    # assessed value x tax rate; penalties and discounts are tracked separately.
+    curr_row = db_session.query(
+        func.coalesce(func.sum(PropertyBilling.assessed_value * total_rate_expr), 0),
+        func.coalesce(func.sum(PropertyBilling.penalty), 0),
+        func.coalesce(func.sum(PropertyBilling.discount), 0),
+        func.coalesce(func.sum((PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount), 0),
     ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
         TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
     ).filter(
         Property.deleted_at == None,
         PropertyBilling.tax_year == ry
-    ).scalar()
+    ).one()
+    curr_levy = float(curr_row[0] or 0)
+    curr_penalty = float(curr_row[1] or 0)
+    curr_discount = float(curr_row[2] or 0)
+    curr_net = float(curr_row[3] or 0)
     
     # 3. Collections (total paid in this calendar year)
     coll = db_session.query(
@@ -512,12 +520,16 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
     ).scalar()
     
     adj = 0.0
-    end = float(beg) + float(curr_ass) - float(coll) + adj
+    end = float(beg) + curr_net - float(coll) + adj
     
     return {
         "report_year": ry,
         "beginning_receivable": float(beg),
-        "current_year_assessment": float(curr_ass),
+        "current_year_assessment": curr_net,
+        "current_year_levy": curr_levy,
+        "current_year_penalty": curr_penalty,
+        "current_year_discount": curr_discount,
+        "current_year_net_collectible": curr_net,
         "collections": float(coll),
         "adjustments": adj,
         "ending_receivable": end,
@@ -539,6 +551,9 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
     assessor_row = db_session.query(
         func.coalesce(func.sum(PropertyBilling.assessed_value), 0),
         func.count(func.distinct(PropertyBilling.property_id)),
+        func.coalesce(func.sum(PropertyBilling.assessed_value * total), 0),
+        func.coalesce(func.sum(PropertyBilling.penalty), 0),
+        func.coalesce(func.sum(PropertyBilling.discount), 0),
         func.coalesce(func.sum((PropertyBilling.assessed_value * total) + PropertyBilling.penalty - PropertyBilling.discount), 0),
         func.coalesce(func.avg(basic), 0.0100),
         func.coalesce(func.avg(total), 0.0200),
@@ -583,10 +598,14 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
         "report_year": ry,
         "assessor": {
             "total_assessed_value": float(assessor_row[0] or 0),
-            "tax_rate_percent": float(assessor_row[3] or 0) * 100,
-            "total_tax_rate_percent": float(assessor_row[4] or 0) * 100,
+            "tax_rate_percent": float(assessor_row[6] or 0) * 100,
+            "total_tax_rate_percent": float(assessor_row[7] or 0) * 100,
             "taxable_properties": int(assessor_row[1] or 0),
             "total_billed_levy": float(assessor_row[2] or 0),
+            "current_year_levy": float(assessor_row[2] or 0),
+            "current_year_penalty": float(assessor_row[3] or 0),
+            "current_year_discount": float(assessor_row[4] or 0),
+            "current_year_net_collectible": float(assessor_row[5] or 0),
         },
         "treasury": {
             "basic_tax_collected": float(treasury_row[0] or 0),
