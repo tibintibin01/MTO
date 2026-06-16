@@ -618,26 +618,55 @@ class ReportsPage:
         equation = ctk.CTkFrame(
             self.recon_content,
             fg_color=("#dbeafe", "#070b1a"),
-            corner_radius=10,
+            corner_radius=8,
             border_width=1,
             border_color=("#93c5fd", "#1e3a8a"),
         )
         equation.pack(fill="x", pady=(0, 14), padx=0)
-        equation.grid_columnconfigure((0, 2, 4), weight=1)
-        equation.grid_columnconfigure((1, 3), weight=0)
 
-        parts = (
-            (0, "TAX LEVY (A)", money(assessor_levy), ModernTheme.PRIMARY),
-            (2, "COLLECTIONS (B)", money(treasury_total), ModernTheme.SUCCESS),
-            (4, "UNPAID (C)", money(delinquency_total), ModernTheme.DANGER),
-        )
-        for col, label, value, color in parts:
-            f = ctk.CTkFrame(equation, fg_color="transparent")
-            f.grid(row=0, column=col, sticky="nsew", padx=12, pady=20)
-            ctk.CTkLabel(f, text=label, font=("Inter", 10, "bold"), text_color="#93a4c7").pack()
-            ctk.CTkLabel(f, text=value, font=("Consolas", 20, "bold"), text_color=color).pack(pady=(6, 0))
-        ctk.CTkLabel(equation, text="=", font=("Inter", 24, "bold"), text_color="#93a4c7").grid(row=0, column=1, padx=8)
-        ctk.CTkLabel(equation, text="+", font=("Inter", 24, "bold"), text_color="#93a4c7").grid(row=0, column=3, padx=8)
+        equation_top = ctk.CTkFrame(equation, fg_color="transparent")
+        equation_top.pack(fill="x", padx=16, pady=(12, 4))
+        ctk.CTkLabel(
+            equation_top,
+            text="RECONCILIATION EQUATION",
+            font=("Inter", 10, "bold"),
+            text_color="#93a4c7",
+        ).pack(side="left")
+        ctk.CTkLabel(
+            equation_top,
+            text="Tax levy should equal collections plus unpaid receivables",
+            font=("Inter", 10),
+            text_color="#bfdbfe",
+        ).pack(side="right")
+
+        formula = ctk.CTkFrame(equation, fg_color="transparent")
+        formula.pack(fill="x", padx=16, pady=(0, 12))
+        ctk.CTkLabel(
+            formula,
+            text=f"{money(assessor_levy)}",
+            font=("Consolas", 16, "bold"),
+            text_color=ModernTheme.PRIMARY,
+        ).pack(side="left")
+        ctk.CTkLabel(formula, text="  =  ", font=("Inter", 15, "bold"), text_color="#93a4c7").pack(side="left")
+        ctk.CTkLabel(
+            formula,
+            text=f"{money(treasury_total)}",
+            font=("Consolas", 16, "bold"),
+            text_color=ModernTheme.SUCCESS,
+        ).pack(side="left")
+        ctk.CTkLabel(formula, text="  +  ", font=("Inter", 15, "bold"), text_color="#93a4c7").pack(side="left")
+        ctk.CTkLabel(
+            formula,
+            text=f"{money(delinquency_total)}",
+            font=("Consolas", 16, "bold"),
+            text_color=ModernTheme.DANGER,
+        ).pack(side="left")
+        ctk.CTkLabel(
+            formula,
+            text=f"Variance: {money(variance)}",
+            font=("Consolas", 13, "bold"),
+            text_color=status_color,
+        ).pack(side="right")
 
         details = ctk.CTkFrame(self.recon_content, fg_color="transparent")
         details.pack(fill="x", pady=(0, 14))
