@@ -524,6 +524,84 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
     }
 
 
+
+def get_reconciliation_metrics(report_year, db_session: Session = None):
+    """Department-level metrics for COA reconciliation review."""
+    try:
+        ry = int(report_year)
+    except (ValueError, TypeError):
+        ry = datetime.now(timezone.utc).year
+
+    basic = basic_rate_expr()
+    sef = sef_rate_expr()
+    total = basic + sef
+
+    assessor_row = db_session.query(
+        func.coalesce(func.sum(PropertyBilling.assessed_value), 0),
+        func.count(func.distinct(PropertyBilling.property_id)),
+        func.coalesce(func.sum((PropertyBilling.assessed_value * total) + PropertyBilling.penalty - PropertyBilling.discount), 0),
+        func.coalesce(func.avg(basic), 0.0100),
+        func.coalesce(func.avg(total), 0.0200),
+    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
+    ).filter(
+        Property.deleted_at == None,
+        PropertyBilling.tax_year == ry,
+    ).one()
+
+    basic_share = case((total > 0, basic / total), else_=0.5)
+    treasury_row = db_session.query(
+        func.coalesce(func.sum(PaymentBilling.amount_paid * basic_share), 0),
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
+        func.count(func.distinct(Payment.property_id)),
+    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
+        Property, Property.id == Payment.property_id
+    ).join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
+    ).filter(
+        Property.deleted_at == None,
+        year_of(Payment.date_paid) == ry,
+    ).one()
+
+    due_expr = (PropertyBilling.assessed_value * total) + PropertyBilling.penalty - PropertyBilling.discount
+    balance_expr = due_expr - PropertyBilling.amount_paid
+    delinquency_row = db_session.query(
+        func.coalesce(func.sum(case((balance_expr > 0, balance_expr), else_=0)), 0),
+        func.coalesce(func.sum(case((and_(PropertyBilling.tax_year == ry, balance_expr > 0), balance_expr), else_=0)), 0),
+        func.count(func.distinct(case((balance_expr > 0, PropertyBilling.property_id), else_=None))),
+        func.coalesce(func.sum(case((balance_expr > 0, PropertyBilling.penalty), else_=0)), 0),
+        func.count(func.distinct(case((and_(PropertyBilling.amount_paid > 0, balance_expr > 0), PropertyBilling.property_id), else_=None))),
+    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
+    ).filter(
+        Property.deleted_at == None,
+        PropertyBilling.tax_year <= ry,
+    ).one()
+
+    return {
+        "report_year": ry,
+        "assessor": {
+            "total_assessed_value": float(assessor_row[0] or 0),
+            "tax_rate_percent": float(assessor_row[3] or 0) * 100,
+            "total_tax_rate_percent": float(assessor_row[4] or 0) * 100,
+            "taxable_properties": int(assessor_row[1] or 0),
+            "total_billed_levy": float(assessor_row[2] or 0),
+        },
+        "treasury": {
+            "basic_tax_collected": float(treasury_row[0] or 0),
+            "total_collected": float(treasury_row[1] or 0),
+            "accounts_paid": int(treasury_row[2] or 0),
+            "partial_payments": int(delinquency_row[4] or 0),
+        },
+        "delinquency": {
+            "total_delinquent_amount": float(delinquency_row[0] or 0),
+            "current_year_receivables": float(delinquency_row[1] or 0),
+            "delinquent_accounts": int(delinquency_row[2] or 0),
+            "penalties_interest": float(delinquency_row[3] or 0),
+            "total_unpaid": float(delinquency_row[0] or 0),
+        },
+    }
+
 def get_compliant_accounts(
     barangay: str = None,
     search: str = None,

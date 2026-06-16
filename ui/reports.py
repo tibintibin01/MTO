@@ -463,8 +463,9 @@ class ReportsPage:
         def worker():
             try:
                 summary = billing.get_rpt_receivables_summary(year)
+                metrics = billing.get_reconciliation_metrics(year)
                 brgy_rows = prop.get_receivables_by_barangay(year=int(year))
-                self.container.after(0, lambda: self._update_reconciliation(summary, brgy_rows))
+                self.container.after(0, lambda: self._update_reconciliation(summary, brgy_rows, metrics))
             except Exception as e:
                 self.container.after(0, lambda err=e: messagebox.showerror("Reconciliation Error", str(err)))
             finally:
@@ -472,7 +473,7 @@ class ReportsPage:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _update_reconciliation(self, data, brgy_rows=None):
+    def _update_reconciliation(self, data, brgy_rows=None, metrics=None):
         for child in self.recon_content.winfo_children():
             child.destroy()
 
@@ -492,13 +493,22 @@ class ReportsPage:
         collections = float(data.get("collections", 0) or 0)
         unpaid = float(data.get("ending_receivable", 0) or 0)
         levy = beginning + current + adjustments
-        variance = levy - (collections + unpaid)
+        brgy_rows = brgy_rows or []
+        metrics = metrics or {}
+        assessor = metrics.get("assessor", {})
+        treasury = metrics.get("treasury", {})
+        delinquency = metrics.get("delinquency", {})
+
+        # Prefer the department metrics when available; fall back to the existing summary.
+        assessor_levy = float(assessor.get("total_billed_levy", levy) or 0)
+        treasury_total = float(treasury.get("total_collected", collections) or 0)
+        delinquency_total = float(delinquency.get("total_unpaid", unpaid) or 0)
+        variance = assessor_levy - (treasury_total + delinquency_total)
         abs_variance = abs(variance)
         tolerance = 1.0
         balanced = abs_variance <= tolerance
-        collection_rate = (collections / levy * 100) if levy > 0 else 0
-        delinquency_rate = (unpaid / levy * 100) if levy > 0 else 0
-        brgy_rows = brgy_rows or []
+        collection_rate = (treasury_total / assessor_levy * 100) if assessor_levy > 0 else 0
+        delinquency_rate = (delinquency_total / assessor_levy * 100) if assessor_levy > 0 else 0
 
         def money(value):
             return f"P {float(value or 0):,.2f}"
@@ -529,12 +539,81 @@ class ReportsPage:
         status_text = "BALANCED" if balanced else "NEEDS REVIEW"
         ctk.CTkLabel(header, text=status_text, font=ModernTheme.H3, text_color=status_color).pack(side="right")
 
+        def field_row(parent, label, value, color="#f8fafc"):
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x", padx=16, pady=(0, 10))
+            ctk.CTkLabel(row, text=label, font=("Inter", 10, "bold"), text_color="#bfdbfe", anchor="w").pack(anchor="w")
+            box = ctk.CTkFrame(row, fg_color="#0f172a", corner_radius=7, border_width=1, border_color="#334155")
+            box.pack(fill="x", pady=(4, 0))
+            ctk.CTkLabel(box, text=value, font=("Consolas", 13, "bold"), text_color=color, anchor="w").pack(fill="x", padx=12, pady=8)
+
+        def department_card(parent, col, badge, title, accent, rows, footer_label, footer_value):
+            card = ctk.CTkFrame(parent, fg_color=("#e2e8f0", "#111827"), corner_radius=8, border_width=1, border_color=("#cbd5e1", "#243244"))
+            card.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 8, 0 if col == 2 else 8))
+            head = ctk.CTkFrame(card, fg_color="transparent")
+            head.pack(fill="x", padx=16, pady=(14, 8))
+            ctk.CTkLabel(head, text=badge, font=("Inter", 10, "bold"), text_color=accent, fg_color="#0f2747", corner_radius=5).pack(anchor="w")
+            ctk.CTkLabel(card, text=title, font=("Inter", 16, "bold"), text_color="#f8fafc").pack(anchor="w", padx=16, pady=(0, 12))
+            for label, value, color in rows:
+                field_row(card, label, value, color)
+            ctk.CTkFrame(card, height=1, fg_color="#243244").pack(fill="x", pady=(8, 0))
+            footer = ctk.CTkFrame(card, fg_color="transparent")
+            footer.pack(fill="x", padx=16, pady=14)
+            ctk.CTkLabel(footer, text=footer_label, font=("Inter", 11), text_color="#bfdbfe").pack(side="left")
+            ctk.CTkLabel(footer, text=footer_value, font=("Consolas", 13, "bold"), text_color=accent).pack(side="right")
+
+        department_grid = ctk.CTkFrame(self.recon_content, fg_color="transparent")
+        department_grid.pack(fill="x", pady=(0, 14))
+        department_grid.grid_columnconfigure((0, 1, 2), weight=1)
+        department_card(
+            department_grid,
+            0,
+            "Assessor's office",
+            "Tax levy data",
+            ModernTheme.PRIMARY,
+            (
+                ("Total assessed value", money(assessor.get("total_assessed_value", 0)), "#f8fafc"),
+                ("Basic tax rate", f"{float(assessor.get('tax_rate_percent', 0) or 0):.2f}%", "#f8fafc"),
+                ("No. of taxable properties", f"{int(assessor.get('taxable_properties', 0) or 0):,}", "#f8fafc"),
+            ),
+            "Total billed levy",
+            money(assessor_levy),
+        )
+        department_card(
+            department_grid,
+            1,
+            "Treasurer's office",
+            "Collection data",
+            ModernTheme.SUCCESS,
+            (
+                ("Basic tax collected", money(treasury.get("basic_tax_collected", 0)), ModernTheme.SUCCESS),
+                ("No. of accounts paid", f"{int(treasury.get('accounts_paid', 0) or 0):,}", "#f8fafc"),
+                ("No. of partial payments", f"{int(treasury.get('partial_payments', 0) or 0):,}", "#f8fafc"),
+            ),
+            "Total collected",
+            money(treasury_total),
+        )
+        department_card(
+            department_grid,
+            2,
+            "RPT tracker",
+            "Delinquency data",
+            ModernTheme.DANGER,
+            (
+                ("Total delinquent amount", money(delinquency.get("total_delinquent_amount", delinquency_total)), ModernTheme.DANGER),
+                ("Current year receivables", money(delinquency.get("current_year_receivables", 0)), "#f59e0b"),
+                ("No. of delinquent accounts", f"{int(delinquency.get('delinquent_accounts', 0) or 0):,}", "#f8fafc"),
+                ("Penalties and interest", money(delinquency.get("penalties_interest", 0)), "#f8fafc"),
+            ),
+            "Total unpaid",
+            money(delinquency_total),
+        )
         grid = ctk.CTkFrame(self.recon_content, fg_color="transparent")
         grid.pack(fill="x", pady=(0, 14))
         grid.grid_columnconfigure((0, 1, 2), weight=1)
-        stat_card(grid, 0, "Tax Levy / Collectible (A)", money(levy), ModernTheme.PRIMARY, f"Beginning {money(beginning)} + current {money(current)} + adjustments {money(adjustments)}")
-        stat_card(grid, 1, "Collections (B)", money(collections), ModernTheme.SUCCESS, f"Collection rate: {collection_rate:.1f}%")
-        stat_card(grid, 2, "Unpaid Receivables (C)", money(unpaid), ModernTheme.DANGER, f"Delinquency rate: {delinquency_rate:.1f}%")
+        stat_card(grid, 0, "Tax Levy / Collectible (A)", money(assessor_levy), ModernTheme.PRIMARY, f"Beginning {money(beginning)} + current {money(current)} + adjustments {money(adjustments)}")
+        stat_card(grid, 1, "Collections (B)", money(treasury_total), ModernTheme.SUCCESS, f"Collection rate: {collection_rate:.1f}%")
+        stat_card(grid, 2, "Unpaid Receivables (C)", money(delinquency_total), ModernTheme.DANGER, f"Delinquency rate: {delinquency_rate:.1f}%")
 
         equation = ctk.CTkFrame(
             self.recon_content,
@@ -548,9 +627,9 @@ class ReportsPage:
         equation.grid_columnconfigure((1, 3), weight=0)
 
         parts = (
-            (0, "TAX LEVY (A)", money(levy), ModernTheme.PRIMARY),
-            (2, "COLLECTIONS (B)", money(collections), ModernTheme.SUCCESS),
-            (4, "UNPAID (C)", money(unpaid), ModernTheme.DANGER),
+            (0, "TAX LEVY (A)", money(assessor_levy), ModernTheme.PRIMARY),
+            (2, "COLLECTIONS (B)", money(treasury_total), ModernTheme.SUCCESS),
+            (4, "UNPAID (C)", money(delinquency_total), ModernTheme.DANGER),
         )
         for col, label, value, color in parts:
             f = ctk.CTkFrame(equation, fg_color="transparent")
@@ -563,7 +642,7 @@ class ReportsPage:
         details = ctk.CTkFrame(self.recon_content, fg_color="transparent")
         details.pack(fill="x", pady=(0, 14))
         rows = (
-            ("Equation substitution (A = B + C)", f"{money(levy)} = {money(collections)} + {money(unpaid)}"),
+            ("Equation substitution (A = B + C)", f"{money(assessor_levy)} = {money(treasury_total)} + {money(delinquency_total)}"),
             ("Variance [A - (B + C)]", money(variance)),
             ("Collection rate", f"{collection_rate:.1f}%"),
             ("Receivable / delinquency rate", f"{delinquency_rate:.1f}%"),
