@@ -15,6 +15,7 @@ a = Analysis(
         ('utils', 'utils'),
         ('bagongpilipinas.png', '.'),
         ('office_logo.png', '.'),
+        ('server_config.json', '.'),
     ],
     hiddenimports=[
         'requests',

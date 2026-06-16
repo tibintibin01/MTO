@@ -29,6 +29,11 @@ else:
     if not CONFIG_PATH.exists():
         CONFIG_PATH = Path(__file__).resolve().parent.parent / "server_config.json"
 
+if not CONFIG_PATH.exists() and getattr(sys, "frozen", False):
+    bundled_config = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent)) / "server_config.json"
+    if bundled_config.exists():
+        CONFIG_PATH = bundled_config
+
 if CONFIG_PATH.exists():
     try:
         with open(CONFIG_PATH, "r") as f:
