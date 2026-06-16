@@ -304,6 +304,19 @@ class SystemAdminPage:
             tab = self.tabview.add(tr("admin.tabs.db"))
             self.setup_db_tab(tab)
 
+        # System Health and Rate Limits are admin tools; keep them inside Settings.
+        if any(auth.has_permission(self.user, p) for p in ["manage_users", "view_logs"]):
+            from ui.system_health import SystemHealthPage
+            tab = self.tabview.add("System Health")
+            self.health_page = SystemHealthPage(tab, self.user)
+            self.pages.append(self.health_page)
+
+        if auth.get_user_role(self.user).lower() == "admin":
+            from ui.rate_limiting import RateLimitingPage
+            tab = self.tabview.add("Rate Limits")
+            self.rate_limit_page = RateLimitingPage(tab, self.user)
+            self.pages.append(self.rate_limit_page)
+
         # Tax Policy Tab — Admin only
         if auth.has_permission(self.user, "manage_users"):
             tab = self.tabview.add("Tax Policy")

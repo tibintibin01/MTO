@@ -57,10 +57,11 @@ class ReportsPage:
         self.collection_tab = self.tabview.add(tr("reports.tabs.collection"))
         self.receivables_tab = self.tabview.add(tr("reports.tabs.receivables"))
         self.barangay_tab = self.tabview.add(tr("reports.tabs.barangay"))
+        self.reconciliation_tab = self.tabview.add(tr("reports.tabs.reconciliation"))
 
-        # Keep all three destinations visually balanced and comfortably clickable.
+        # Keep all report destinations visually balanced and comfortably clickable.
         self.tabview._segmented_button.configure(
-            width=840,
+            width=1040,
             height=42,
             corner_radius=6,
             border_width=1,
@@ -71,6 +72,7 @@ class ReportsPage:
         self.setup_collection_tab()
         self.setup_receivables_tab()
         self.setup_barangay_tab()
+        self.setup_reconciliation_tab()
 
     def _show_loading(self):
         try:
@@ -402,6 +404,209 @@ class ReportsPage:
             text_color="white",
         )
         self.brgy_total_lbl.pack(side="right", padx=30, pady=10)
+
+    def setup_reconciliation_tab(self):
+        rec_fr = ctk.CTkFrame(self.reconciliation_tab, fg_color="transparent")
+        rec_fr.pack(fill="both", expand=True, padx=10, pady=10)
+
+        top_fr = ctk.CTkFrame(rec_fr, fg_color="transparent")
+        top_fr.pack(fill="x", pady=(0, 12))
+
+        title_fr = ctk.CTkFrame(top_fr, fg_color="transparent")
+        title_fr.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(
+            title_fr,
+            text="INTER-DEPARTMENT RECONCILIATION",
+            font=ModernTheme.H2,
+            text_color=ModernTheme.PRIMARY,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            title_fr,
+            text="COA-ready check: assessed levy should equal collections plus remaining receivables.",
+            font=("Inter", 11),
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(anchor="w", pady=(2, 0))
+
+        controls = ctk.CTkFrame(top_fr, fg_color="transparent")
+        controls.pack(side="right")
+        curr_y = datetime.now().year
+        self.recon_year_cb = ctk.CTkComboBox(
+            controls,
+            values=[str(y) for y in range(curr_y - 10, curr_y + 3)],
+            width=120,
+        )
+        self.recon_year_cb.set(str(curr_y))
+        self.recon_year_cb.pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            controls,
+            text="LOAD CHECK",
+            command=self.generate_reconciliation_report,
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.PRIMARY,
+            height=34,
+            width=130,
+        ).pack(side="left")
+
+        self.recon_content = ctk.CTkFrame(rec_fr, fg_color="transparent")
+        self.recon_content.pack(fill="both", expand=True)
+        ctk.CTkLabel(
+            self.recon_content,
+            text="Select a fiscal year, then load the reconciliation check.",
+            font=ModernTheme.BODY,
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(pady=60)
+
+    def generate_reconciliation_report(self):
+        year = self.recon_year_cb.get()
+        self._show_loading()
+
+        def worker():
+            try:
+                summary = billing.get_rpt_receivables_summary(year)
+                brgy_rows = prop.get_receivables_by_barangay(year=int(year))
+                self.container.after(0, lambda: self._update_reconciliation(summary, brgy_rows))
+            except Exception as e:
+                self.container.after(0, lambda err=e: messagebox.showerror("Reconciliation Error", str(err)))
+            finally:
+                self.container.after(0, self._hide_loading)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _update_reconciliation(self, data, brgy_rows=None):
+        for child in self.recon_content.winfo_children():
+            child.destroy()
+
+        if not data:
+            ctk.CTkLabel(
+                self.recon_content,
+                text="No reconciliation data available for the selected year.",
+                font=ModernTheme.BODY,
+                text_color=ModernTheme.TEXT_GRAY,
+            ).pack(pady=60)
+            return
+
+        year = data.get("report_year", self.recon_year_cb.get())
+        beginning = float(data.get("beginning_receivable", 0) or 0)
+        current = float(data.get("current_year_assessment", 0) or 0)
+        adjustments = float(data.get("adjustments", 0) or 0)
+        collections = float(data.get("collections", 0) or 0)
+        unpaid = float(data.get("ending_receivable", 0) or 0)
+        levy = beginning + current + adjustments
+        variance = levy - (collections + unpaid)
+        abs_variance = abs(variance)
+        tolerance = 1.0
+        balanced = abs_variance <= tolerance
+        collection_rate = (collections / levy * 100) if levy > 0 else 0
+        delinquency_rate = (unpaid / levy * 100) if levy > 0 else 0
+        brgy_rows = brgy_rows or []
+
+        def money(value):
+            return f"P {float(value or 0):,.2f}"
+
+        def stat_card(parent, col, label, value, color, subtitle):
+            card = ctk.CTkFrame(
+                parent,
+                fg_color=("#e2e8f0", "#111827"),
+                corner_radius=8,
+                border_width=1,
+                border_color=("#cbd5e1", "#243244"),
+            )
+            card.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 8, 0 if col == 2 else 8))
+            ctk.CTkLabel(card, text=label.upper(), font=("Inter", 10, "bold"), text_color=ModernTheme.TEXT_GRAY).pack(anchor="w", padx=16, pady=(14, 4))
+            ctk.CTkLabel(card, text=value, font=("Inter", 22, "bold"), text_color=color).pack(anchor="w", padx=16)
+            ctk.CTkLabel(card, text=subtitle, font=("Inter", 10), text_color=ModernTheme.TEXT_GRAY, wraplength=310, justify="left").pack(anchor="w", padx=16, pady=(4, 14))
+            return card
+
+        header = ctk.CTkFrame(self.recon_content, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(
+            header,
+            text=f"FISCAL YEAR {year} RECONCILIATION CHECK",
+            font=ModernTheme.H2,
+            text_color=ModernTheme.PRIMARY,
+        ).pack(side="left")
+        status_color = ModernTheme.SUCCESS if balanced else ModernTheme.DANGER
+        status_text = "BALANCED" if balanced else "NEEDS REVIEW"
+        ctk.CTkLabel(header, text=status_text, font=ModernTheme.H3, text_color=status_color).pack(side="right")
+
+        grid = ctk.CTkFrame(self.recon_content, fg_color="transparent")
+        grid.pack(fill="x", pady=(0, 14))
+        grid.grid_columnconfigure((0, 1, 2), weight=1)
+        stat_card(grid, 0, "Tax Levy / Collectible (A)", money(levy), ModernTheme.PRIMARY, f"Beginning {money(beginning)} + current {money(current)} + adjustments {money(adjustments)}")
+        stat_card(grid, 1, "Collections (B)", money(collections), ModernTheme.SUCCESS, f"Collection rate: {collection_rate:.1f}%")
+        stat_card(grid, 2, "Unpaid Receivables (C)", money(unpaid), ModernTheme.DANGER, f"Delinquency rate: {delinquency_rate:.1f}%")
+
+        equation = ctk.CTkFrame(
+            self.recon_content,
+            fg_color=("#dbeafe", "#070b1a"),
+            corner_radius=10,
+            border_width=1,
+            border_color=("#93c5fd", "#1e3a8a"),
+        )
+        equation.pack(fill="x", pady=(0, 14), padx=0)
+        equation.grid_columnconfigure((0, 2, 4), weight=1)
+        equation.grid_columnconfigure((1, 3), weight=0)
+
+        parts = (
+            (0, "TAX LEVY (A)", money(levy), ModernTheme.PRIMARY),
+            (2, "COLLECTIONS (B)", money(collections), ModernTheme.SUCCESS),
+            (4, "UNPAID (C)", money(unpaid), ModernTheme.DANGER),
+        )
+        for col, label, value, color in parts:
+            f = ctk.CTkFrame(equation, fg_color="transparent")
+            f.grid(row=0, column=col, sticky="nsew", padx=12, pady=20)
+            ctk.CTkLabel(f, text=label, font=("Inter", 10, "bold"), text_color="#93a4c7").pack()
+            ctk.CTkLabel(f, text=value, font=("Consolas", 20, "bold"), text_color=color).pack(pady=(6, 0))
+        ctk.CTkLabel(equation, text="=", font=("Inter", 24, "bold"), text_color="#93a4c7").grid(row=0, column=1, padx=8)
+        ctk.CTkLabel(equation, text="+", font=("Inter", 24, "bold"), text_color="#93a4c7").grid(row=0, column=3, padx=8)
+
+        details = ctk.CTkFrame(self.recon_content, fg_color="transparent")
+        details.pack(fill="x", pady=(0, 14))
+        rows = (
+            ("Equation substitution (A = B + C)", f"{money(levy)} = {money(collections)} + {money(unpaid)}"),
+            ("Variance [A - (B + C)]", money(variance)),
+            ("Collection rate", f"{collection_rate:.1f}%"),
+            ("Receivable / delinquency rate", f"{delinquency_rate:.1f}%"),
+        )
+        for label, value in rows:
+            row = ctk.CTkFrame(details, fg_color="transparent")
+            row.pack(fill="x", pady=2)
+            ctk.CTkLabel(row, text=label, font=("Inter", 11), text_color="#bfdbfe", anchor="w").pack(side="left")
+            ctk.CTkLabel(row, text=value, font=("Consolas", 11, "bold"), text_color="#f8fafc", anchor="e").pack(side="right")
+            ctk.CTkFrame(details, height=1, fg_color="#1f2937").pack(fill="x")
+
+        result_color = "#10b981" if balanced else "#f59e0b"
+        result_bg = "#0f302c" if balanced else "#30240f"
+        result = ctk.CTkFrame(self.recon_content, fg_color=result_bg, corner_radius=8, border_width=1, border_color=result_color)
+        result.pack(fill="x", pady=(0, 14))
+        result_text = "Balanced - ready for Accounting review" if balanced else "Needs review before submission"
+        detail_text = (
+            "Assessment, collection, and receivable totals agree within the system tolerance."
+            if balanced else
+            "The variance is outside tolerance. Review billing records, collections, adjustments, and imported data before certification."
+        )
+        ctk.CTkLabel(result, text=result_text, font=("Inter", 14, "bold"), text_color=result_color).pack(anchor="w", padx=18, pady=(16, 4))
+        ctk.CTkLabel(result, text=f"Variance: {money(variance)}", font=("Consolas", 18, "bold"), text_color=result_color).pack(anchor="w", padx=18)
+        ctk.CTkLabel(result, text=detail_text, font=("Inter", 11), text_color="#cbd5e1", wraplength=900, justify="left").pack(anchor="w", padx=18, pady=(6, 16))
+
+        if brgy_rows:
+            review = ctk.CTkFrame(self.recon_content, fg_color=("#e2e8f0", "#111827"), corner_radius=8, border_width=1, border_color=("#cbd5e1", "#243244"))
+            review.pack(fill="both", expand=True)
+            ctk.CTkLabel(review, text="TOP BARANGAYS TO REVIEW", font=("Inter", 11, "bold"), text_color=ModernTheme.TEXT_GRAY).pack(anchor="w", padx=16, pady=(14, 8))
+            cols = ("Barangay", "Tax Due", "Collected", "Receivable", "Rate")
+            tree = ttk.Treeview(review, columns=cols, show="headings", height=6)
+            for col in cols:
+                tree.heading(col, text=col.upper())
+                tree.column(col, anchor="center", width=120)
+            tree.column("Barangay", anchor="w", width=200)
+            tree.pack(fill="both", expand=True, padx=16, pady=(0, 14))
+            top_rows = sorted(brgy_rows, key=lambda row: float(row[6] or 0), reverse=True)[:6]
+            for idx, row in enumerate(top_rows):
+                due = float(row[2] or 0)
+                collected = float(row[5] or 0)
+                receivable = float(row[6] or 0)
+                rate = (collected / due * 100) if due > 0 else 0
+                tree.insert("", "end", values=(row[0], money(due), money(collected), money(receivable), f"{rate:.1f}%"))
 
     def generate_collection_report(self):
         # Reset to page 1 on a new search

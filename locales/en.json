@@ -159,7 +159,8 @@
         "tabs": {
             "collection": "Collection Report",
             "receivables": "RPT Receivables Summary",
-            "barangay": "Receivables by Barangay"
+            "barangay": "Receivables by Barangay",
+            "reconciliation": "Reconciliation"
         },
         "collection": {
             "filter_label": "Filter by Month/Year",

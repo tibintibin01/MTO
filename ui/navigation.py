@@ -207,21 +207,10 @@ class NavigationSidebar(ctk.CTkFrame):
             self._add_nav("assessment", tr("dashboard.nav.assessment"),
                           lambda: self._navigate("assessment", AssessmentRollPage))
 
-        if auth.has_permission(self.user_data, "view_logs"):
-            self._add_nav("audit", tr("dashboard.nav.audit"),
-                          lambda: self._navigate("audit", AuditTrailPage))
-
         if any(auth.has_permission(self.user_data, p)
-               for p in ["manage_users", "view_logs"]):
-            from ui.system_health import SystemHealthPage
-            self._add_nav("health", "SYSTEM HEALTH",
-                          lambda: self._navigate("health", SystemHealthPage))
+               for p in ["manage_users", "view_logs", "recycle_manage", "backup_restore"]):
             self._add_nav("settings", tr("dashboard.nav.settings"),
                           lambda: self._navigate("settings", SystemAdminPage))
-            if auth.get_user_role(self.user_data).lower() == "admin":
-                from ui.rate_limiting import RateLimitingPage
-                self._add_nav("rate_limiting", "RATE LIMITS",
-                              lambda: self._navigate("rate_limiting", RateLimitingPage))
 
         # ── Section label ────────────────────────────────────────────────────
         self._section_label("SYSTEM HELP")
