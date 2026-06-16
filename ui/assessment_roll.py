@@ -91,6 +91,8 @@ class AssessmentRollPage:
         )
         self.brgy_cb.pack(side="left")
         self.brgy_cb.configure(command=lambda e: self.refresh_table())
+        self.brgy_cb.bind("<Return>", lambda e: self.refresh_table())
+        self.brgy_cb.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         # Active assessment roll year
         ctk.CTkLabel(
@@ -103,6 +105,8 @@ class AssessmentRollPage:
             filters_fr, width=80, placeholder_text="YYYY"
         )
         self.as_of_year_ent.pack(side="left")
+        self.as_of_year_ent.bind("<Return>", lambda e: self.refresh_table())
+        self.as_of_year_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         ctk.CTkButton(
             filters_fr,

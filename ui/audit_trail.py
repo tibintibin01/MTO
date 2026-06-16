@@ -53,6 +53,8 @@ class AuditTrailPage:
             filter_bar, values=["ALL"], width=150, height=28, font=ModernTheme.BODY
         )
         self.user_cmb.pack(side="left", padx=5, pady=8)
+        self.user_cmb.bind("<Return>", lambda e: self.refresh_table())
+        self.user_cmb.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         # Keyword Search
         ctk.CTkLabel(
@@ -61,6 +63,7 @@ class AuditTrailPage:
         self.search_ent = ctk.CTkEntry(filter_bar, placeholder_text=tr("audit.filters.search_placeholder"), width=200, height=28, font=ModernTheme.BODY)
         self.search_ent.pack(side="left", padx=5)
         self.search_ent.bind("<Return>", lambda e: self.refresh_table())
+        self.search_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         # Date Range
         ctk.CTkLabel(
@@ -68,12 +71,16 @@ class AuditTrailPage:
         ).pack(side="left", padx=(15, 5))
         self.date_from_ent = ctk.CTkEntry(filter_bar, placeholder_text="YYYY-MM-DD", width=100, height=28, font=ModernTheme.BODY)
         self.date_from_ent.pack(side="left", padx=5)
+        self.date_from_ent.bind("<Return>", lambda e: self.refresh_table())
+        self.date_from_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         ctk.CTkLabel(
             filter_bar, text=tr("audit.filters.to"), font=ModernTheme.BODY_BOLD, text_color="white"
         ).pack(side="left", padx=(5, 5))
         self.date_to_ent = ctk.CTkEntry(filter_bar, placeholder_text="YYYY-MM-DD", width=100, height=28, font=ModernTheme.BODY)
         self.date_to_ent.pack(side="left", padx=5)
+        self.date_to_ent.bind("<Return>", lambda e: self.refresh_table())
+        self.date_to_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         ctk.CTkButton(
             filter_bar,

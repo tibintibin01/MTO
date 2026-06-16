@@ -88,6 +88,25 @@ class ReportsPage:
         except Exception:
             pass
 
+    def _bind_enter(self, widget, callback):
+        def submit(_event=None):
+            callback()
+            return "break"
+
+        try:
+            widget.bind("<Return>", submit)
+            widget.bind("<KP_Enter>", submit)
+        except Exception:
+            pass
+
+        inner_entry = getattr(widget, "_entry", None)
+        if inner_entry is not None:
+            try:
+                inner_entry.bind("<Return>", submit)
+                inner_entry.bind("<KP_Enter>", submit)
+            except Exception:
+                pass
+
     def setup_collection_tab(self):
         filter_fr = ctk.CTkFrame(self.collection_tab, fg_color=ModernTheme.SECONDARY, corner_radius=8)
         filter_fr.pack(fill="x", padx=10, pady=10)
@@ -110,6 +129,8 @@ class ReportsPage:
         )
         self.year_cb.set(str(current_year))
         self.year_cb.pack(side="left", padx=5)
+        self._bind_enter(self.month_cb, self.generate_collection_report)
+        self._bind_enter(self.year_cb, self.generate_collection_report)
 
         ctk.CTkButton(
             filter_fr, text=tr("reports.collection.btn_generate"), command=self.generate_collection_report,
@@ -239,6 +260,7 @@ class ReportsPage:
         )
         self.receiv_year_cb.set(str(curr_y))
         self.receiv_year_cb.pack(side="left", padx=10)
+        self._bind_enter(self.receiv_year_cb, self.generate_receivables_report)
 
         ctk.CTkButton(
             filter_fr, text=tr("reports.receivables.btn_load"), command=self.generate_receivables_report,
@@ -306,6 +328,7 @@ class ReportsPage:
         )
         self.brgy_year_cb.set(str(curr_y))
         self.brgy_year_cb.pack(side="left", padx=(0, 8))
+        self._bind_enter(self.brgy_year_cb, self.generate_barangay_receivables)
 
 
 
@@ -437,6 +460,7 @@ class ReportsPage:
         )
         self.recon_year_cb.set(str(curr_y))
         self.recon_year_cb.pack(side="left", padx=(0, 8))
+        self._bind_enter(self.recon_year_cb, self.generate_reconciliation_report)
         ctk.CTkButton(
             controls,
             text="LOAD CHECK",
@@ -1279,10 +1303,14 @@ class SignatoriesModal(ctk.CTkToplevel):
         self.officer_ent = ctk.CTkEntry(body, height=36, fg_color="#2d2d4e", border_color="#4a4a6e", text_color="white")
         self.officer_ent.insert(0, default_officer)
         self.officer_ent.pack(fill="x", pady=(4, 12))
+        self.officer_ent.bind("<Return>", lambda _e: self.on_export())
+        self.officer_ent.bind("<KP_Enter>", lambda _e: self.on_export())
         
         ctk.CTkLabel(body, text="Municipal Treasurer", font=("Segoe UI", 11, "bold"), text_color="#a0aec0").pack(anchor="w")
         self.treasurer_ent = ctk.CTkEntry(body, height=36, fg_color="#2d2d4e", border_color="#4a4a6e", text_color="white")
         self.treasurer_ent.pack(fill="x", pady=(4, 16))
+        self.treasurer_ent.bind("<Return>", lambda _e: self.on_export())
+        self.treasurer_ent.bind("<KP_Enter>", lambda _e: self.on_export())
         
         btn_fr = ctk.CTkFrame(body, fg_color="transparent")
         btn_fr.pack(fill="x")
@@ -1353,18 +1381,26 @@ class ManageDepositsModal(ctk.CTkToplevel):
         self.date_ent = ctk.CTkEntry(form_fr, height=32, fg_color="#1a1a2e", border_color="#4a4a6e", text_color="white")
         self.date_ent.insert(0, datetime.now().strftime("%Y-%m-%d"))
         self.date_ent.pack(fill="x", padx=15, pady=(4, 10))
+        self.date_ent.bind("<Return>", lambda _e: self.save_deposit())
+        self.date_ent.bind("<KP_Enter>", lambda _e: self.save_deposit())
         
         ctk.CTkLabel(form_fr, text="Bank Name / Branch", font=("Segoe UI", 10), text_color="#a0aec0").pack(anchor="w", padx=15)
         self.bank_ent = ctk.CTkEntry(form_fr, placeholder_text="e.g. Landbank", height=32, fg_color="#1a1a2e", border_color="#4a4a6e", text_color="white")
         self.bank_ent.pack(fill="x", padx=15, pady=(4, 10))
+        self.bank_ent.bind("<Return>", lambda _e: self.save_deposit())
+        self.bank_ent.bind("<KP_Enter>", lambda _e: self.save_deposit())
         
         ctk.CTkLabel(form_fr, text="Reference / Slip No.", font=("Segoe UI", 10), text_color="#a0aec0").pack(anchor="w", padx=15)
         self.ref_ent = ctk.CTkEntry(form_fr, placeholder_text="e.g. DS-12345", height=32, fg_color="#1a1a2e", border_color="#4a4a6e", text_color="white")
         self.ref_ent.pack(fill="x", padx=15, pady=(4, 10))
+        self.ref_ent.bind("<Return>", lambda _e: self.save_deposit())
+        self.ref_ent.bind("<KP_Enter>", lambda _e: self.save_deposit())
         
         ctk.CTkLabel(form_fr, text="Amount (₱)", font=("Segoe UI", 10), text_color="#a0aec0").pack(anchor="w", padx=15)
         self.amt_ent = ctk.CTkEntry(form_fr, placeholder_text="e.g. 50000.00", height=32, fg_color="#1a1a2e", border_color="#4a4a6e", text_color="white")
         self.amt_ent.pack(fill="x", padx=15, pady=(4, 15))
+        self.amt_ent.bind("<Return>", lambda _e: self.save_deposit())
+        self.amt_ent.bind("<KP_Enter>", lambda _e: self.save_deposit())
         
         ctk.CTkButton(form_fr, text="➕ Save Deposit", command=self.save_deposit,
                       fg_color=ModernTheme.PRIMARY, hover_color="#2c6ea1", text_color="white",

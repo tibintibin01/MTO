@@ -50,6 +50,7 @@ class PropertyPage:
         )
         self.search_ent.pack(side="left")
         self.search_ent.bind("<Return>", lambda e: self.refresh_table())
+        self.search_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
         ctk.CTkButton(
             search_group,
             text="SEARCH",
@@ -69,14 +70,20 @@ class PropertyPage:
         ctk.CTkLabel(left_group, text=tr("property.filters.barangay"), font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 4))
         self.barangay_cmb = ctk.CTkComboBox(left_group, values=["ALL"], width=160, height=28, font=ModernTheme.BODY)
         self.barangay_cmb.pack(side="left", padx=(0, 12))
+        self.barangay_cmb.bind("<Return>", lambda e: self.refresh_table())
+        self.barangay_cmb.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         ctk.CTkLabel(left_group, text="YEAR FROM:", font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 4))
         self.year_start_ent = ctk.CTkEntry(left_group, width=70, height=28, placeholder_text="e.g. 2020", font=ModernTheme.BODY)
         self.year_start_ent.pack(side="left", padx=(0, 6))
+        self.year_start_ent.bind("<Return>", lambda e: self.refresh_table())
+        self.year_start_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         ctk.CTkLabel(left_group, text="TO:", font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 4))
         self.year_end_ent = ctk.CTkEntry(left_group, width=70, height=28, placeholder_text="e.g. 2024", font=ModernTheme.BODY)
         self.year_end_ent.pack(side="left", padx=(0, 12))
+        self.year_end_ent.bind("<Return>", lambda e: self.refresh_table())
+        self.year_end_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         ctk.CTkButton(left_group, text=f"🎯 {tr('property.filters.apply')}", command=self.refresh_table, width=130, height=28, font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.SUCCESS).pack(side="left", padx=(0, 5))
 

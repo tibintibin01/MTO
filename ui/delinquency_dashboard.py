@@ -107,10 +107,13 @@ class DelinquencyDashboardPage:
         )
         self.search_ent.pack(side="left", padx=(12, 8), pady=10)
         self.search_ent.bind("<Return>", lambda _e: self.refresh_table(reset=True))
+        self.search_ent.bind("<KP_Enter>", lambda _e: self.refresh_table(reset=True))
 
         self.barangay_cmb = ctk.CTkComboBox(filters, values=["ALL"], width=170, height=32, font=ModernTheme.BODY)
         self.barangay_cmb.set("ALL")
         self.barangay_cmb.pack(side="left", padx=8, pady=10)
+        self.barangay_cmb.bind("<Return>", lambda _e: self.refresh_table(reset=True))
+        self.barangay_cmb.bind("<KP_Enter>", lambda _e: self.refresh_table(reset=True))
 
         self.age_cmb = ctk.CTkComboBox(
             filters,
@@ -121,6 +124,8 @@ class DelinquencyDashboardPage:
         )
         self.age_cmb.set("ALL AGES")
         self.age_cmb.pack(side="left", padx=8, pady=10)
+        self.age_cmb.bind("<Return>", lambda _e: self.refresh_table(reset=True))
+        self.age_cmb.bind("<KP_Enter>", lambda _e: self.refresh_table(reset=True))
 
         self.status_cmb = ctk.CTkComboBox(
             filters,
@@ -131,6 +136,8 @@ class DelinquencyDashboardPage:
         )
         self.status_cmb.set("ALL")
         self.status_cmb.pack(side="left", padx=8, pady=10)
+        self.status_cmb.bind("<Return>", lambda _e: self.refresh_table(reset=True))
+        self.status_cmb.bind("<KP_Enter>", lambda _e: self.refresh_table(reset=True))
 
         self.min_balance_ent = ctk.CTkEntry(
             filters,
@@ -140,6 +147,8 @@ class DelinquencyDashboardPage:
             font=ModernTheme.BODY,
         )
         self.min_balance_ent.pack(side="left", padx=8, pady=10)
+        self.min_balance_ent.bind("<Return>", lambda _e: self.refresh_table(reset=True))
+        self.min_balance_ent.bind("<KP_Enter>", lambda _e: self.refresh_table(reset=True))
 
         ctk.CTkButton(
             filters,
