@@ -529,9 +529,12 @@ class ReportsPage:
         total_collectible = levy
         treasury_total = float(treasury.get("total_collected", collections) or 0)
         expected_unpaid = unpaid
-        delinquency_total = float(delinquency.get("total_unpaid", expected_unpaid) or 0)
-        equation_variance = total_collectible - (treasury_total + expected_unpaid)
-        tracker_variance = delinquency_total - expected_unpaid
+        tracker_total = float(delinquency.get("total_unpaid", expected_unpaid) or 0)
+        current_receivable = float(delinquency.get("current_year_receivables", 0) or 0)
+        prior_receivable = max(expected_unpaid - current_receivable, 0)
+        delinquency_total = prior_receivable + current_receivable
+        equation_variance = total_collectible - (treasury_total + delinquency_total)
+        tracker_variance = tracker_total - expected_unpaid
         variance = tracker_variance if abs(tracker_variance) > 1.0 else equation_variance
         abs_variance = max(abs(equation_variance), abs(tracker_variance))
         tolerance = 1.0
@@ -629,12 +632,12 @@ class ReportsPage:
             "Delinquency data",
             ModernTheme.DANGER,
             (
-                ("Total delinquent amount", money(delinquency.get("total_delinquent_amount", delinquency_total)), ModernTheme.DANGER),
-                ("Current year receivables", money(delinquency.get("current_year_receivables", 0)), "#f59e0b"),
+                ("Prior-year receivables", money(prior_receivable), ModernTheme.DANGER),
+                ("Current year receivables", money(current_receivable), "#f59e0b"),
                 ("No. of delinquent accounts", f"{int(delinquency.get('delinquent_accounts', 0) or 0):,}", "#f8fafc"),
                 ("Penalties and interest", money(delinquency.get("penalties_interest", 0)), "#f8fafc"),
             ),
-            "Total unpaid",
+            "Ending receivable",
             money(delinquency_total),
         )
         grid = ctk.CTkFrame(self.recon_content, fg_color="transparent")
@@ -642,7 +645,7 @@ class ReportsPage:
         grid.grid_columnconfigure((0, 1, 2), weight=1)
         stat_card(grid, 0, "Total Collectible (A)", money(total_collectible), ModernTheme.PRIMARY, f"Beginning {money(beginning)} + current {money(current)} + adjustments {money(adjustments)}")
         stat_card(grid, 1, "Collections (B)", money(treasury_total), ModernTheme.SUCCESS, f"Collection rate: {collection_rate:.1f}%")
-        stat_card(grid, 2, "Ending Receivable (C)", money(expected_unpaid), ModernTheme.DANGER, f"Receivable rate: {delinquency_rate:.1f}%")
+        stat_card(grid, 2, "Ending Receivable (C)", money(delinquency_total), ModernTheme.DANGER, f"Receivable rate: {delinquency_rate:.1f}%")
 
         equation = ctk.CTkFrame(
             self.recon_content,
@@ -686,7 +689,7 @@ class ReportsPage:
         ctk.CTkLabel(formula, text="  +  ", font=("Inter", 15, "bold"), text_color="#93a4c7").pack(side="left")
         ctk.CTkLabel(
             formula,
-            text=f"{money(expected_unpaid)}",
+            text=f"{money(delinquency_total)}",
             font=("Consolas", 16, "bold"),
             text_color=ModernTheme.DANGER,
         ).pack(side="left")
@@ -700,9 +703,10 @@ class ReportsPage:
         details = ctk.CTkFrame(self.recon_content, fg_color="transparent")
         details.pack(fill="x", pady=(0, 14))
         rows = (
-            ("Equation substitution (A = B + C)", f"{money(total_collectible)} = {money(treasury_total)} + {money(expected_unpaid)}"),
+            ("Equation substitution (A = B + C)", f"{money(total_collectible)} = {money(treasury_total)} + {money(delinquency_total)}"),
             ("Equation variance [A - (B + C)]", money(equation_variance)),
-            ("RPT tracker total unpaid", money(delinquency_total)),
+            ("Prior-year + current-year receivables", f"{money(prior_receivable)} + {money(current_receivable)} = {money(delinquency_total)}"),
+            ("Raw RPT tracker total unpaid", money(tracker_total)),
             ("Tracker variance [tracker - expected ending]", money(tracker_variance)),
             ("Collection rate", f"{collection_rate:.1f}%"),
             ("Ending receivable rate", f"{delinquency_rate:.1f}%"),

@@ -568,6 +568,7 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
     delinquency_row = db_session.query(
         func.coalesce(func.sum(case((balance_expr > 0, balance_expr), else_=0)), 0),
         func.coalesce(func.sum(case((and_(PropertyBilling.tax_year == ry, balance_expr > 0), balance_expr), else_=0)), 0),
+        func.coalesce(func.sum(case((and_(PropertyBilling.tax_year < ry, balance_expr > 0), balance_expr), else_=0)), 0),
         func.count(func.distinct(case((balance_expr > 0, PropertyBilling.property_id), else_=None))),
         func.coalesce(func.sum(case((balance_expr > 0, PropertyBilling.penalty), else_=0)), 0),
         func.count(func.distinct(case((and_(PropertyBilling.amount_paid > 0, balance_expr > 0), PropertyBilling.property_id), else_=None))),
@@ -591,13 +592,14 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
             "basic_tax_collected": float(treasury_row[0] or 0),
             "total_collected": float(treasury_row[1] or 0),
             "accounts_paid": int(treasury_row[2] or 0),
-            "partial_payments": int(delinquency_row[4] or 0),
+            "partial_payments": int(delinquency_row[5] or 0),
         },
         "delinquency": {
             "total_delinquent_amount": float(delinquency_row[0] or 0),
             "current_year_receivables": float(delinquency_row[1] or 0),
-            "delinquent_accounts": int(delinquency_row[2] or 0),
-            "penalties_interest": float(delinquency_row[3] or 0),
+            "prior_year_receivables": float(delinquency_row[2] or 0),
+            "delinquent_accounts": int(delinquency_row[3] or 0),
+            "penalties_interest": float(delinquency_row[4] or 0),
             "total_unpaid": float(delinquency_row[0] or 0),
         },
     }
