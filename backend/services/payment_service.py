@@ -443,6 +443,132 @@ def save_receipt_record(
     return {"id": rh.id}
 
 
+
+@require_permission("payment_post")
+def update_payment_record(payment_id, data, user_name, db_session: Session = None, **kwargs):
+    """Update a single payment row and keep PropertyBilling totals in sync."""
+    from datetime import datetime
+    from backend.services.system_service import log_action
+    from backend.services.billing_service import recalculate_billing_balances, sync_payment_billings
+
+    payment = db_session.query(Payment).filter(Payment.id == payment_id).with_for_update().first()
+    if not payment:
+        raise Exception("Payment record not found.")
+
+    links = db_session.query(PaymentBilling).filter(PaymentBilling.payment_id == payment.id).all()
+    if len(links) > 1:
+        raise Exception("This payment is allocated to multiple tax years. Please delete and repost it instead of editing in-place.")
+
+    prop = db_session.query(Property).filter(Property.id == payment.property_id).first()
+    if not prop:
+        raise Exception("Linked property was not found.")
+
+    or_number = str(data.get("or_number") or "").strip()
+    tax_year_text = format_tax_years(data.get("tax_year"))
+    if not or_number or not tax_year_text:
+        raise Exception("OR Number and Tax Year are required.")
+    years = [part.strip() for part in tax_year_text.split(",") if part.strip()]
+    if len(years) != 1 or not years[0].isdigit():
+        raise Exception("Edit Payment supports one tax year at a time. For multi-year corrections, delete and repost the payment.")
+    tax_year = int(years[0])
+
+    date_text = normalize_date_input(data.get("date_paid") or data.get("or_date"))
+    if not date_text:
+        raise Exception("Invalid OR Date. Use YYYY-MM-DD.")
+    date_paid = datetime.strptime(date_text, "%Y-%m-%d")
+
+    amount = _d(data.get("amount") if data.get("amount") is not None else data.get("amount_paid"))
+    penalty = _d(data.get("penalty"))
+    discount = _d(data.get("discount"))
+    if amount < 0 or penalty < 0 or discount < 0:
+        raise Exception("Amount, penalty, and discount cannot be negative.")
+
+    duplicate = find_duplicate_payment(
+        payment.property_id,
+        or_number,
+        tax_year_text,
+        exclude_payment_id=payment.id,
+        db_session=db_session,
+    )
+    if duplicate:
+        raise Exception(f"Another payment already uses OR {or_number} for tax year {tax_year_text}.")
+
+    old_or = payment.or_number
+    old_amount = _d(payment.amount)
+    old_penalty = _d(payment.penalty)
+    old_discount = _d(payment.discount)
+    old_billing_ids = [link.billing_id for link in links if link.billing_id]
+    if not old_billing_ids and str(payment.tax_year or "").strip().isdigit():
+        legacy_billing = db_session.query(PropertyBilling).filter(
+            PropertyBilling.property_id == payment.property_id,
+            PropertyBilling.tax_year == int(str(payment.tax_year).strip()),
+        ).with_for_update().first()
+        if legacy_billing:
+            old_billing_ids.append(legacy_billing.id)
+
+    try:
+        for billing_id in dict.fromkeys(old_billing_ids):
+            billing = db_session.query(PropertyBilling).filter(PropertyBilling.id == billing_id).with_for_update().first()
+            if billing:
+                billing.penalty = max(_d(0), _d(billing.penalty) - old_penalty)
+                billing.discount = max(_d(0), _d(billing.discount) - old_discount)
+
+        db_session.query(PaymentBilling).filter(PaymentBilling.payment_id == payment.id).delete()
+        recalculate_billing_balances(old_billing_ids, db_session=db_session)
+
+        billing = db_session.query(PropertyBilling).filter(
+            PropertyBilling.property_id == payment.property_id,
+            PropertyBilling.tax_year == tax_year,
+        ).with_for_update().first()
+        if not billing:
+            billing = PropertyBilling(
+                property_id=payment.property_id,
+                tax_year=tax_year,
+                assessed_value=_d(prop.assessed_value),
+                penalty=0,
+                discount=0,
+                amount_paid=0,
+            )
+            db_session.add(billing)
+            db_session.flush()
+
+        billing.penalty = _d(billing.penalty) + penalty
+        billing.discount = _d(billing.discount) + discount
+
+        payment.or_number = or_number
+        payment.date_paid = date_paid
+        payment.tax_year = tax_year_text
+        payment.amount = amount
+        payment.penalty = penalty
+        payment.discount = discount
+        payment.posted_by = get_username(user_name)
+
+        db_session.flush()
+        sync_payment_billings(
+            payment.id,
+            [{"billing_id": billing.id, "tax_year": tax_year, "applied_amount": amount}],
+            db_session=db_session,
+        )
+
+        log_action(
+            user_name,
+            f"Edited Payment OR {old_or} -> {or_number} (Amount: {old_amount} -> {amount}).",
+            db_session=db_session,
+        )
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        raise
+
+    try:
+        from backend.services.stats_service import refresh_system_stats
+        refresh_system_stats(db_session=db_session)
+    except Exception as stats_err:
+        from utils import log_error_to_file
+        log_error_to_file("Stats refresh failed after payment edit", stats_err)
+
+    return {"success": True, "message": "Payment updated successfully."}
+
 @require_permission("payment_delete")
 def delete_payment_record(payment_id, user_name, db_session: Session = None, **kwargs):
     """

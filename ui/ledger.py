@@ -80,6 +80,10 @@ class LedgerPage:
                                         font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY, width=120, height=35)
         self.import_btn.pack(side="right", padx=5)
 
+        if auth.has_permission(self.user, "payment_post"):
+            self.edit_btn = ctk.CTkButton(toolbar, text="EDIT", command=self.edit_payment,
+                                          font=ModernTheme.BUTTON, fg_color=ModernTheme.SECONDARY, width=110, height=35, state="disabled")
+            self.edit_btn.pack(side="right", padx=5)
         if auth.has_permission(self.user, "payment_delete"):
             self.del_btn = ctk.CTkButton(toolbar, text="🗑️ DELETE", command=self.delete_payment,
                                          font=ModernTheme.BUTTON, fg_color=ModernTheme.DANGER, width=120, height=35, state="disabled")
@@ -152,6 +156,8 @@ class LedgerPage:
                 state if auth.has_permission(self.user, "receipt_generate") else "disabled"
             )
             self.regen_btn.configure(state=regen_state)
+        if hasattr(self, "edit_btn"):
+            self.edit_btn.configure(state=state)
         if hasattr(self, "del_btn"):
             self.del_btn.configure(state=state)
 
@@ -342,6 +348,28 @@ class LedgerPage:
             
         export_data_to_excel(data, self.cols, filename_prefix="LedgerExport")
 
+    def edit_payment(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        pay_id = self.tree.item(sel[0])["values"][0]
+        overlay = LoadingOverlay(self.container, "Loading Payment...")
+
+        def worker():
+            try:
+                details = payment.get_payment_receipt_details(pay_id)
+                self.container.after(0, lambda: PaymentEditModal(
+                    self.container.winfo_toplevel(),
+                    pay_id,
+                    details,
+                    self.load_ledger,
+                ))
+            except Exception as e:
+                self.container.after(0, lambda err=e: messagebox.showerror("Edit Payment", str(err)))
+            finally:
+                self.container.after(0, lambda: overlay.hide())
+
+        threading.Thread(target=worker, daemon=True).start()
     def delete_payment(self):
         sel = self.tree.selection()
         if not sel: return
@@ -365,5 +393,116 @@ class LedgerPage:
                 self.container.after(0, lambda: messagebox.showerror("Error", err_msg))
             finally:
                 self.container.after(0, lambda: overlay.hide())
+
+        threading.Thread(target=worker, daemon=True).start()
+
+class PaymentEditModal(ctk.CTkToplevel):
+    def __init__(self, parent, payment_id, details, callback):
+        super().__init__(parent)
+        self.payment_id = payment_id
+        self.details = details or {}
+        self.callback = callback
+        self.title("Edit Payment")
+        self.geometry("480x560")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+        self.configure(fg_color="#0f172a")
+        self._build_ui()
+        self.update_idletasks()
+        x = parent.winfo_rootx() + max(0, (parent.winfo_width() - 480) // 2)
+        y = parent.winfo_rooty() + max(0, (parent.winfo_height() - 560) // 2)
+        self.geometry(f"+{x}+{y}")
+
+    def _date_text(self, value):
+        text = str(value or "").strip()
+        if "T" in text:
+            return text.split("T", 1)[0]
+        if " " in text:
+            return text.split(" ", 1)[0]
+        return text
+
+    def _money_text(self, key):
+        try:
+            return f"{float(self.details.get(key, 0) or 0):.2f}"
+        except Exception:
+            return "0.00"
+
+    def _build_ui(self):
+        body = ctk.CTkFrame(self, fg_color="#111827", corner_radius=8)
+        body.pack(fill="both", expand=True, padx=20, pady=20)
+
+        ctk.CTkLabel(body, text="Edit Payment", font=("Segoe UI", 20, "bold"), text_color="white").pack(anchor="w", padx=18, pady=(18, 4))
+        title = f"{self.details.get('td_number', '')}  |  {self.details.get('owner_name', '')}"
+        ctk.CTkLabel(body, text=title, font=("Segoe UI", 11), text_color="#94a3b8", wraplength=410, justify="left").pack(anchor="w", padx=18, pady=(0, 16))
+
+        self.vars = {
+            "date_paid": tk.StringVar(value=self._date_text(self.details.get("date_paid"))),
+            "or_number": tk.StringVar(value=str(self.details.get("or_number") or "")),
+            "tax_year": tk.StringVar(value=str(self.details.get("tax_year") or "")),
+            "penalty": tk.StringVar(value=self._money_text("penalty")),
+            "discount": tk.StringVar(value=self._money_text("discount")),
+            "amount": tk.StringVar(value=self._money_text("amount")),
+        }
+
+        fields = (
+            ("OR Date", "date_paid", "YYYY-MM-DD"),
+            ("OR Number", "or_number", ""),
+            ("Tax Year", "tax_year", "e.g. 2026"),
+            ("Penalty", "penalty", "0.00"),
+            ("Discount", "discount", "0.00"),
+            ("Total Paid", "amount", "0.00"),
+        )
+        for label, key, placeholder in fields:
+            ctk.CTkLabel(body, text=label.upper(), font=("Segoe UI", 10, "bold"), text_color="#94a3b8").pack(anchor="w", padx=18)
+            ent = ctk.CTkEntry(body, textvariable=self.vars[key], placeholder_text=placeholder, height=36, fg_color="#1f2937", border_color="#475569", text_color="white")
+            ent.pack(fill="x", padx=18, pady=(4, 12))
+            ent.bind("<Return>", lambda _e: self.save())
+            ent.bind("<KP_Enter>", lambda _e: self.save())
+
+        hint = "Changing this record recalculates the linked billing balance. Regenerate the receipt after saving if the PDF should reflect the correction."
+        ctk.CTkLabel(body, text=hint, font=("Segoe UI", 10), text_color="#fbbf24", wraplength=410, justify="left").pack(anchor="w", padx=18, pady=(0, 12))
+
+        footer = ctk.CTkFrame(body, fg_color="transparent")
+        footer.pack(fill="x", padx=18, pady=(0, 18))
+        ctk.CTkButton(footer, text="CANCEL", command=self.destroy, fg_color="#64748b", width=120, height=36).pack(side="left")
+        self.save_btn = ctk.CTkButton(footer, text="SAVE CHANGES", command=self.save, fg_color=ModernTheme.SUCCESS, width=160, height=36)
+        self.save_btn.pack(side="right")
+
+    def _amount(self, key):
+        text = self.vars[key].get().replace(",", "").strip()
+        return float(text or 0)
+
+    def save(self):
+        try:
+            data = {
+                "date_paid": self.vars["date_paid"].get().strip(),
+                "or_number": self.vars["or_number"].get().strip(),
+                "tax_year": self.vars["tax_year"].get().strip(),
+                "penalty": self._amount("penalty"),
+                "discount": self._amount("discount"),
+                "amount": self._amount("amount"),
+            }
+        except ValueError:
+            messagebox.showerror("Invalid Amount", "Penalty, discount, and total paid must be valid numbers.", parent=self)
+            return
+
+        missing = [label for label, key in (("OR Date", "date_paid"), ("OR Number", "or_number"), ("Tax Year", "tax_year")) if not data[key]]
+        if missing:
+            messagebox.showerror("Missing Details", f"Please fill in: {', '.join(missing)}.", parent=self)
+            return
+
+        self.save_btn.configure(state="disabled", text="SAVING...")
+
+        def worker():
+            try:
+                res = payment.update_payment(self.payment_id, data)
+                self.after(0, lambda: messagebox.showinfo("Payment Updated", res.get("message", "Payment updated successfully."), parent=self))
+                if self.callback:
+                    self.after(0, self.callback)
+                self.after(0, self.destroy)
+            except Exception as e:
+                self.after(0, lambda err=e: messagebox.showerror("Edit Payment", str(err), parent=self))
+                self.after(0, lambda: self.save_btn.configure(state="normal", text="SAVE CHANGES"))
 
         threading.Thread(target=worker, daemon=True).start()

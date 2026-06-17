@@ -3,7 +3,7 @@ import asyncio
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from backend.deps import get_current_user, write_access, get_db, Session
 from backend.schemas import ReceiptRecordSchema
 from backend.models import Payment, Property
@@ -14,6 +14,13 @@ from utils.logger import mto_logger
 
 router = APIRouter(prefix="/payments", tags=["Financial"])
 
+class PaymentUpdateRequest(BaseModel):
+    or_number: str = Field(..., min_length=1)
+    date_paid: str = Field(..., min_length=1)
+    tax_year: str = Field(..., min_length=4)
+    amount: float
+    penalty: float = 0.0
+    discount: float = 0.0
 @router.get("/recent")
 async def get_recent_payments(
     limit: int = 8, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
@@ -118,6 +125,20 @@ async def generate_receipt_pdf(
         mto_logger.warning(f"Failed to update receipt_history: {save_err}")
 
     return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
+
+
+@router.put("/{payment_id}")
+async def update_payment(
+    payment_id: int,
+    data: PaymentUpdateRequest,
+    current_user: dict = Depends(write_access),
+    db_session: Session = Depends(get_db),
+):
+    try:
+        return pay_svc.update_payment_record(payment_id, data.model_dump(), current_user, db_session=db_session)
+    except Exception as e:
+        mto_logger.error(f"Payment update failed for id={payment_id}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.delete("/{payment_id}")
 async def delete_payment(
