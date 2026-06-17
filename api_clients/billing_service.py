@@ -108,6 +108,10 @@ def get_reconciliation_metrics(year):
     return api_request("GET", "/billing/reconciliation-metrics", params={"year": year})
 
 
+def get_reconciliation_diagnostics(year, limit=50):
+    return api_request("GET", "/billing/reconciliation-diagnostics", params={"year": year, "limit": limit})
+
+
 def get_delinquent_accounts(limit=100, offset=0):
     """Returns the items list from the cursor-paginated delinquent accounts endpoint."""
     result = api_request(

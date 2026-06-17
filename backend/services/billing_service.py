@@ -623,6 +623,167 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
         },
     }
 
+
+def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = None):
+    """Return audit drilldown rows that can explain reconciliation variance."""
+    try:
+        ry = int(report_year)
+    except (ValueError, TypeError):
+        ry = datetime.now(timezone.utc).year
+
+    safe_limit = max(5, min(int(limit or 50), 200))
+    total = total_rate_expr()
+    due_expr = (PropertyBilling.assessed_value * total) + PropertyBilling.penalty - PropertyBilling.discount
+    balance_expr = due_expr - PropertyBilling.amount_paid
+    linked_paid_expr = db_session.query(
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
+    ).filter(
+        PaymentBilling.billing_id == PropertyBilling.id
+    ).correlate(PropertyBilling).scalar_subquery()
+    payment_gap_expr = PropertyBilling.amount_paid - linked_paid_expr
+
+    summary = get_rpt_receivables_summary(ry, db_session=db_session)
+    metrics = get_reconciliation_metrics(ry, db_session=db_session)
+    expected_end = float(summary.get("ending_receivable", 0) or 0)
+    tracker_total = float(metrics.get("delinquency", {}).get("total_unpaid", 0) or 0)
+    tracker_variance = tracker_total - expected_end
+
+    def money_float(value):
+        return float(value or 0)
+
+    def billing_row(row, issue):
+        return {
+            "issue": issue,
+            "td_number": row[0],
+            "owner_name": row[1],
+            "barangay": row[2],
+            "tax_year": int(row[3] or 0),
+            "total_due": money_float(row[4]),
+            "recorded_paid": money_float(row[5]),
+            "linked_paid": money_float(row[6]) if len(row) > 6 else None,
+            "balance": money_float(row[7]) if len(row) > 7 else None,
+            "difference": money_float(row[8]) if len(row) > 8 else None,
+        }
+
+    payment_link_rows = db_session.query(
+        Property.td_number,
+        Property.owner_name,
+        Property.barangay,
+        PropertyBilling.tax_year,
+        due_expr,
+        PropertyBilling.amount_paid,
+        linked_paid_expr,
+        balance_expr,
+        payment_gap_expr,
+    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
+    ).filter(
+        Property.deleted_at == None,
+        PropertyBilling.tax_year <= ry,
+        func.abs(payment_gap_expr) > 0.01,
+    ).order_by(func.abs(payment_gap_expr).desc()).limit(safe_limit).all()
+
+    overpaid_rows = db_session.query(
+        Property.td_number,
+        Property.owner_name,
+        Property.barangay,
+        PropertyBilling.tax_year,
+        due_expr,
+        PropertyBilling.amount_paid,
+        linked_paid_expr,
+        balance_expr,
+        balance_expr,
+    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
+    ).filter(
+        Property.deleted_at == None,
+        PropertyBilling.tax_year <= ry,
+        balance_expr < -0.01,
+    ).order_by(balance_expr.asc()).limit(safe_limit).all()
+
+    largest_balance_rows = db_session.query(
+        Property.td_number,
+        Property.owner_name,
+        Property.barangay,
+        PropertyBilling.tax_year,
+        due_expr,
+        PropertyBilling.amount_paid,
+        linked_paid_expr,
+        balance_expr,
+        balance_expr,
+    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
+    ).filter(
+        Property.deleted_at == None,
+        PropertyBilling.tax_year <= ry,
+        balance_expr > 0.01,
+    ).order_by(balance_expr.desc()).limit(safe_limit).all()
+
+    def payment_group_rows(year_filter, issue):
+        rows = db_session.query(
+            PropertyBilling.tax_year,
+            func.count(PaymentBilling.id),
+            func.count(func.distinct(PropertyBilling.property_id)),
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
+        ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
+            PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
+        ).join(Property, Property.id == PropertyBilling.property_id).filter(
+            Property.deleted_at == None,
+            year_of(Payment.date_paid) == ry,
+            year_filter,
+        ).group_by(PropertyBilling.tax_year).order_by(PropertyBilling.tax_year).all()
+        return [
+            {
+                "issue": issue,
+                "tax_year": int(row[0] or 0),
+                "payment_rows": int(row[1] or 0),
+                "properties": int(row[2] or 0),
+                "amount": money_float(row[3]),
+            }
+            for row in rows
+        ]
+
+    prior_year_collections = payment_group_rows(PropertyBilling.tax_year < ry, "Collections posted this year for prior tax years")
+    future_year_collections = payment_group_rows(PropertyBilling.tax_year > ry, "Collections posted this year for future tax years / prepayments")
+
+    outside_rows = db_session.query(
+        PropertyBilling.tax_year,
+        year_of(Payment.date_paid),
+        func.count(PaymentBilling.id),
+        func.count(func.distinct(PropertyBilling.property_id)),
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
+    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
+        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
+    ).join(Property, Property.id == PropertyBilling.property_id).filter(
+        Property.deleted_at == None,
+        PropertyBilling.tax_year == ry,
+        or_(Payment.date_paid == None, year_of(Payment.date_paid) != ry),
+    ).group_by(PropertyBilling.tax_year, year_of(Payment.date_paid)).order_by(year_of(Payment.date_paid)).all()
+
+    current_year_paid_outside = [
+        {
+            "issue": "Payments for selected tax year posted outside selected calendar year",
+            "tax_year": int(row[0] or 0),
+            "payment_year": int(row[1] or 0) if row[1] else None,
+            "payment_rows": int(row[2] or 0),
+            "properties": int(row[3] or 0),
+            "amount": money_float(row[4]),
+        }
+        for row in outside_rows
+    ]
+
+    return {
+        "report_year": ry,
+        "expected_ending_receivable": expected_end,
+        "tracker_total_unpaid": tracker_total,
+        "tracker_variance": tracker_variance,
+        "payment_link_mismatches": [billing_row(row, "Recorded paid does not match linked payment allocations") for row in payment_link_rows],
+        "overpaid_or_credit_rows": [billing_row(row, "Overpaid / credit balance row") for row in overpaid_rows],
+        "largest_open_balances": [billing_row(row, "Largest open receivable row") for row in largest_balance_rows],
+        "prior_year_collections": prior_year_collections,
+        "future_year_collections": future_year_collections,
+        "current_year_paid_outside_selected_year": current_year_paid_outside,
+    }
 def get_compliant_accounts(
     barangay: str = None,
     search: str = None,

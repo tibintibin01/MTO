@@ -471,7 +471,12 @@ class ReportsPage:
             width=130,
         ).pack(side="left")
 
-        self.recon_content = ctk.CTkFrame(rec_fr, fg_color="transparent")
+        self.recon_content = ctk.CTkScrollableFrame(
+            rec_fr,
+            fg_color="transparent",
+            scrollbar_button_color="#334155",
+            scrollbar_button_hover_color="#475569",
+        )
         self.recon_content.pack(fill="both", expand=True)
         ctk.CTkLabel(
             self.recon_content,
@@ -488,8 +493,9 @@ class ReportsPage:
             try:
                 summary = billing.get_rpt_receivables_summary(year)
                 metrics = billing.get_reconciliation_metrics(year)
+                diagnostics = billing.get_reconciliation_diagnostics(year, limit=25)
                 brgy_rows = prop.get_receivables_by_barangay(year=int(year))
-                self.container.after(0, lambda: self._update_reconciliation(summary, brgy_rows, metrics))
+                self.container.after(0, lambda: self._update_reconciliation(summary, brgy_rows, metrics, diagnostics))
             except Exception as e:
                 self.container.after(0, lambda err=e: messagebox.showerror("Reconciliation Error", str(err)))
             finally:
@@ -497,7 +503,7 @@ class ReportsPage:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _update_reconciliation(self, data, brgy_rows=None, metrics=None):
+    def _update_reconciliation(self, data, brgy_rows=None, metrics=None, diagnostics=None):
         for child in self.recon_content.winfo_children():
             child.destroy()
 
@@ -521,6 +527,7 @@ class ReportsPage:
         levy = beginning + current_net + adjustments
         brgy_rows = brgy_rows or []
         metrics = metrics or {}
+        diagnostics = diagnostics or {}
         assessor = metrics.get("assessor", {})
         treasury = metrics.get("treasury", {})
         delinquency = metrics.get("delinquency", {})
@@ -742,6 +749,60 @@ class ReportsPage:
         ctk.CTkLabel(result, text=f"Variance: {money(variance)}", font=("Consolas", 18, "bold"), text_color=result_color).pack(anchor="w", padx=18)
         ctk.CTkLabel(result, text=detail_text, font=("Inter", 11), text_color="#cbd5e1", wraplength=900, justify="left").pack(anchor="w", padx=18, pady=(6, 16))
 
+        diag = ctk.CTkFrame(self.recon_content, fg_color=("#e2e8f0", "#111827"), corner_radius=8, border_width=1, border_color=("#cbd5e1", "#243244"))
+        diag.pack(fill="x", pady=(0, 14))
+        ctk.CTkLabel(diag, text="RECONCILIATION DIAGNOSTIC", font=("Inter", 11, "bold"), text_color=ModernTheme.TEXT_GRAY).pack(anchor="w", padx=16, pady=(14, 4))
+        ctk.CTkLabel(
+            diag,
+            text="Rows and categories that can explain why collectible, collections, and receivable totals do not tie exactly.",
+            font=("Inter", 10),
+            text_color="#bfdbfe",
+            wraplength=1100,
+            justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 10))
+
+        diag_summary = ctk.CTkFrame(diag, fg_color="transparent")
+        diag_summary.pack(fill="x", padx=16, pady=(0, 10))
+        diag_summary.grid_columnconfigure((0, 1, 2, 3), weight=1)
+
+        def diag_chip(parent, col, title, value, color):
+            chip = ctk.CTkFrame(parent, fg_color="#0f172a", corner_radius=7, border_width=1, border_color="#334155")
+            chip.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 6, 0 if col == 3 else 6))
+            ctk.CTkLabel(chip, text=title.upper(), font=("Inter", 9, "bold"), text_color=ModernTheme.TEXT_GRAY).pack(anchor="w", padx=10, pady=(8, 2))
+            ctk.CTkLabel(chip, text=value, font=("Consolas", 12, "bold"), text_color=color).pack(anchor="w", padx=10, pady=(0, 8))
+
+        diag_chip(diag_summary, 0, "Tracker variance", money(diagnostics.get("tracker_variance", variance)), status_color)
+        diag_chip(diag_summary, 1, "Payment link gaps", str(len(diagnostics.get("payment_link_mismatches", []))), "#f59e0b")
+        diag_chip(diag_summary, 2, "Overpaid / credits", str(len(diagnostics.get("overpaid_or_credit_rows", []))), "#22c55e")
+        diag_chip(diag_summary, 3, "Timing/prepayment groups", str(len(diagnostics.get("prior_year_collections", [])) + len(diagnostics.get("future_year_collections", [])) + len(diagnostics.get("current_year_paid_outside_selected_year", []))), "#38bdf8")
+
+        diag_rows = []
+        for item in diagnostics.get("payment_link_mismatches", [])[:8]:
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("difference", 0)))
+        for item in diagnostics.get("overpaid_or_credit_rows", [])[:8]:
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("balance", 0)))
+        for item in diagnostics.get("prior_year_collections", []):
+            diag_rows.append((item.get("issue"), "Grouped", item.get("tax_year"), f"{item.get('properties', 0):,} properties", item.get("amount", 0)))
+        for item in diagnostics.get("future_year_collections", []):
+            diag_rows.append((item.get("issue"), "Grouped", item.get("tax_year"), f"{item.get('properties', 0):,} properties", item.get("amount", 0)))
+        for item in diagnostics.get("current_year_paid_outside_selected_year", [])[:8]:
+            payment_year = item.get("payment_year") or "No date"
+            diag_rows.append((item.get("issue"), f"Paid in {payment_year}", item.get("tax_year"), f"{item.get('properties', 0):,} properties", item.get("amount", 0)))
+        if not diag_rows:
+            for item in diagnostics.get("largest_open_balances", [])[:10]:
+                diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("balance", 0)))
+
+        cols = ("Issue", "TD / Group", "Year", "Barangay / Scope", "Amount")
+        diag_tree = ttk.Treeview(diag, columns=cols, show="headings", height=min(8, max(3, len(diag_rows))))
+        widths = {"Issue": 360, "TD / Group": 160, "Year": 80, "Barangay / Scope": 190, "Amount": 150}
+        for col in cols:
+            diag_tree.heading(col, text=col.upper())
+            diag_tree.column(col, width=widths[col], anchor="e" if col == "Amount" else "center")
+        diag_tree.column("Issue", anchor="w")
+        diag_tree.column("Barangay / Scope", anchor="w")
+        for row in diag_rows:
+            diag_tree.insert("", "end", values=(row[0], row[1], row[2], row[3], money(row[4])))
+        diag_tree.pack(fill="x", padx=16, pady=(0, 14))
         if brgy_rows:
             review = ctk.CTkFrame(self.recon_content, fg_color=("#e2e8f0", "#111827"), corner_radius=8, border_width=1, border_color=("#cbd5e1", "#243244"))
             review.pack(fill="both", expand=True)

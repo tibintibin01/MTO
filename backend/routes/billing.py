@@ -94,6 +94,16 @@ async def get_reconciliation_metrics(
 ):
     return bill_svc.get_reconciliation_metrics(year, db_session=db_session)
 
+
+@router.get("/billing/reconciliation-diagnostics")
+async def get_reconciliation_diagnostics(
+    year: str,
+    limit: int = 50,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    return bill_svc.get_reconciliation_diagnostics(year, limit=limit, db_session=db_session)
+
 @router.get("/billing/delinquents")
 async def get_delinquent_list(
     limit: int = 50,
