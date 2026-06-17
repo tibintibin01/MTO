@@ -403,15 +403,18 @@ class PaymentEditModal(ctk.CTkToplevel):
         self.details = details or {}
         self.callback = callback
         self.title("Edit Payment")
-        self.geometry("480x560")
-        self.resizable(False, False)
+        self._modal_width = 500
+        self._modal_height = 640
+        self.geometry(f"{self._modal_width}x{self._modal_height}")
+        self.minsize(480, 560)
+        self.resizable(True, True)
         self.transient(parent)
         self.grab_set()
         self.configure(fg_color="#0f172a")
         self._build_ui()
         self.update_idletasks()
-        x = parent.winfo_rootx() + max(0, (parent.winfo_width() - 480) // 2)
-        y = parent.winfo_rooty() + max(0, (parent.winfo_height() - 560) // 2)
+        x = parent.winfo_rootx() + max(0, (parent.winfo_width() - self._modal_width) // 2)
+        y = parent.winfo_rooty() + max(0, (parent.winfo_height() - self._modal_height) // 2)
         self.geometry(f"+{x}+{y}")
 
     def _date_text(self, value):
@@ -431,10 +434,23 @@ class PaymentEditModal(ctk.CTkToplevel):
     def _build_ui(self):
         body = ctk.CTkFrame(self, fg_color="#111827", corner_radius=8)
         body.pack(fill="both", expand=True, padx=20, pady=20)
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_rowconfigure(1, weight=1)
 
-        ctk.CTkLabel(body, text="Edit Payment", font=("Segoe UI", 20, "bold"), text_color="white").pack(anchor="w", padx=18, pady=(18, 4))
+        header = ctk.CTkFrame(body, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 8))
+        ctk.CTkLabel(header, text="Edit Payment", font=("Segoe UI", 20, "bold"), text_color="white").pack(anchor="w")
         title = f"{self.details.get('td_number', '')}  |  {self.details.get('owner_name', '')}"
-        ctk.CTkLabel(body, text=title, font=("Segoe UI", 11), text_color="#94a3b8", wraplength=410, justify="left").pack(anchor="w", padx=18, pady=(0, 16))
+        ctk.CTkLabel(header, text=title, font=("Segoe UI", 11), text_color="#94a3b8", wraplength=430, justify="left").pack(anchor="w", pady=(4, 0))
+
+        content = ctk.CTkScrollableFrame(
+            body,
+            fg_color="transparent",
+            scrollbar_button_color="#334155",
+            scrollbar_button_hover_color="#475569",
+        )
+        content.grid(row=1, column=0, sticky="nsew", padx=(18, 10), pady=(0, 12))
+        content.grid_columnconfigure(0, weight=1)
 
         self.vars = {
             "date_paid": tk.StringVar(value=self._date_text(self.details.get("date_paid"))),
@@ -453,21 +469,27 @@ class PaymentEditModal(ctk.CTkToplevel):
             ("Discount", "discount", "0.00"),
             ("Total Paid", "amount", "0.00"),
         )
+        self._field_entries = []
         for label, key, placeholder in fields:
-            ctk.CTkLabel(body, text=label.upper(), font=("Segoe UI", 10, "bold"), text_color="#94a3b8").pack(anchor="w", padx=18)
-            ent = ctk.CTkEntry(body, textvariable=self.vars[key], placeholder_text=placeholder, height=36, fg_color="#1f2937", border_color="#475569", text_color="white")
-            ent.pack(fill="x", padx=18, pady=(4, 12))
+            ctk.CTkLabel(content, text=label.upper(), font=("Segoe UI", 10, "bold"), text_color="#94a3b8").pack(anchor="w", fill="x")
+            ent = ctk.CTkEntry(content, textvariable=self.vars[key], placeholder_text=placeholder, height=36, fg_color="#1f2937", border_color="#475569", text_color="white")
+            ent.pack(fill="x", pady=(4, 12))
             ent.bind("<Return>", lambda _e: self.save())
             ent.bind("<KP_Enter>", lambda _e: self.save())
+            self._field_entries.append(ent)
 
         hint = "Changing this record recalculates the linked billing balance. Regenerate the receipt after saving if the PDF should reflect the correction."
-        ctk.CTkLabel(body, text=hint, font=("Segoe UI", 10), text_color="#fbbf24", wraplength=410, justify="left").pack(anchor="w", padx=18, pady=(0, 12))
+        ctk.CTkLabel(content, text=hint, font=("Segoe UI", 10), text_color="#fbbf24", wraplength=430, justify="left").pack(anchor="w", fill="x", pady=(0, 8))
 
-        footer = ctk.CTkFrame(body, fg_color="transparent")
-        footer.pack(fill="x", padx=18, pady=(0, 18))
-        ctk.CTkButton(footer, text="CANCEL", command=self.destroy, fg_color="#64748b", width=120, height=36).pack(side="left")
+        footer = ctk.CTkFrame(body, fg_color="#111827")
+        footer.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 18))
+        footer.grid_columnconfigure(1, weight=1)
+        ctk.CTkButton(footer, text="CANCEL", command=self.destroy, fg_color="#64748b", width=120, height=36).grid(row=0, column=0, sticky="w")
         self.save_btn = ctk.CTkButton(footer, text="SAVE CHANGES", command=self.save, fg_color=ModernTheme.SUCCESS, width=160, height=36)
-        self.save_btn.pack(side="right")
+        self.save_btn.grid(row=0, column=2, sticky="e")
+
+        if self._field_entries:
+            self._field_entries[0].focus_set()
 
     def _amount(self, key):
         text = self.vars[key].get().replace(",", "").strip()
