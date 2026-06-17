@@ -772,6 +772,39 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
         for row in outside_rows
     ]
 
+
+    outside_detail_rows = db_session.query(
+        Property.td_number,
+        Property.owner_name,
+        Property.barangay,
+        PropertyBilling.tax_year,
+        year_of(Payment.date_paid),
+        Payment.date_paid,
+        Payment.or_number,
+        PaymentBilling.amount_paid,
+    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
+        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
+    ).join(Property, Property.id == PropertyBilling.property_id).filter(
+        Property.deleted_at == None,
+        PropertyBilling.tax_year == ry,
+        or_(Payment.date_paid == None, year_of(Payment.date_paid) != ry),
+    ).order_by(year_of(Payment.date_paid), PaymentBilling.amount_paid.desc()).limit(safe_limit).all()
+
+    current_year_paid_outside_details = [
+        {
+            "issue": "Selected tax year paid outside selected calendar year",
+            "td_number": row[0],
+            "owner_name": row[1],
+            "barangay": row[2],
+            "tax_year": int(row[3] or 0),
+            "payment_year": int(row[4] or 0) if row[4] else None,
+            "payment_date": row[5].strftime("%Y-%m-%d") if row[5] else None,
+            "or_number": row[6],
+            "amount": money_float(row[7]),
+        }
+        for row in outside_detail_rows
+    ]
+
     return {
         "report_year": ry,
         "expected_ending_receivable": expected_end,
@@ -783,6 +816,7 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
         "prior_year_collections": prior_year_collections,
         "future_year_collections": future_year_collections,
         "current_year_paid_outside_selected_year": current_year_paid_outside,
+        "current_year_paid_outside_details": current_year_paid_outside_details,
     }
 def get_compliant_accounts(
     barangay: str = None,

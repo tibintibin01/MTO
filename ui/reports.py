@@ -785,9 +785,15 @@ class ReportsPage:
             diag_rows.append((item.get("issue"), "Grouped", item.get("tax_year"), f"{item.get('properties', 0):,} properties", item.get("amount", 0)))
         for item in diagnostics.get("future_year_collections", []):
             diag_rows.append((item.get("issue"), "Grouped", item.get("tax_year"), f"{item.get('properties', 0):,} properties", item.get("amount", 0)))
+        for item in diagnostics.get("current_year_paid_outside_details", [])[:12]:
+            payment_year = item.get("payment_year") or "No date"
+            payment_date = item.get("payment_date") or f"Paid in {payment_year}"
+            or_number = item.get("or_number") or "No OR"
+            scope = f"{item.get('barangay') or '-'} | {payment_date} | OR {or_number}"
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), scope, item.get("amount", 0)))
         for item in diagnostics.get("current_year_paid_outside_selected_year", [])[:8]:
             payment_year = item.get("payment_year") or "No date"
-            diag_rows.append((item.get("issue"), f"Paid in {payment_year}", item.get("tax_year"), f"{item.get('properties', 0):,} properties", item.get("amount", 0)))
+            diag_rows.append((item.get("issue"), f"Grouped paid in {payment_year}", item.get("tax_year"), f"{item.get('properties', 0):,} properties", item.get("amount", 0)))
         if not diag_rows:
             for item in diagnostics.get("largest_open_balances", [])[:10]:
                 diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("balance", 0)))
