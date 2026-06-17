@@ -369,12 +369,24 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
         
         # 5. Financial Sync
         _sync_financial_records(prop.id, data, db_session)
+
+        billing_sync = {"updated": 0, "years": []}
+        old_assessed = clean_currency(before_data.get("assessed_value")) if before_data else None
+        new_assessed = clean_currency(prop.assessed_value)
+        if old_assessed is None or abs(old_assessed - new_assessed) > 0.009:
+            billing_sync = billing.sync_existing_billing_assessed_value(
+                prop.id,
+                prop.assessed_value,
+                effective_year=prop.effectivity_date or prop.tax_year,
+                db_session=db_session,
+            )
         
         db_session.commit()
         return {
             "ok": True,
             "property_id": prop.id,
-            "new_version": prop.version
+            "new_version": prop.version,
+            "billing_sync": billing_sync,
         }
 
     except Exception as e:

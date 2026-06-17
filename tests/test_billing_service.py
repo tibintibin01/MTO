@@ -9,6 +9,7 @@ from backend.services.billing_service import (
     calculate_penalty,
     get_compliant_summary_by_barangay,
     get_total_due,
+    sync_existing_billing_assessed_value,
 )
 
 
@@ -110,3 +111,39 @@ def test_compliant_summary_excludes_unassigned_barangay_rows(db):
     assert [row["barangay"] for row in summary] == ["NORTH POBLACION"]
     assert summary[0]["total_properties"] == 1
     assert summary[0]["compliant_count"] == 1
+
+def test_sync_existing_billing_assessed_value_respects_effectivity_year(db):
+    prop = Property(
+        td_number="TD-SYNC",
+        owner_name="Owner Sync",
+        barangay="DINADIAWAN",
+        assessed_value=1_139_960.0,
+        effectivity_date="2024-01-01",
+    )
+    db.add(prop)
+    db.flush()
+
+    db.add_all([
+        PropertyBilling(property_id=prop.id, tax_year=2023, assessed_value=180_000.0, amount_paid=0, is_archived=False),
+        PropertyBilling(property_id=prop.id, tax_year=2024, assessed_value=180_000.0, amount_paid=18_239.36, is_archived=False),
+        PropertyBilling(property_id=prop.id, tax_year=2025, assessed_value=180_000.0, amount_paid=20_519.28, is_archived=False),
+    ])
+    db.flush()
+
+    result = sync_existing_billing_assessed_value(
+        prop.id,
+        prop.assessed_value,
+        effective_year=prop.effectivity_date,
+        db_session=db,
+    )
+
+    rows = {
+        row.tax_year: float(row.assessed_value)
+        for row in db.query(PropertyBilling).filter(PropertyBilling.property_id == prop.id).all()
+    }
+
+    assert result == {"updated": 2, "years": [2024, 2025]}
+    assert rows[2023] == 180_000.0
+    assert rows[2024] == 1_139_960.0
+    assert rows[2025] == 1_139_960.0
+

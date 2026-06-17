@@ -127,6 +127,69 @@ def sync_property_billing(
     }
 
 
+def _year_from_value(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    match = re.search(r"(19|20|21|22)\d{2}", text)
+    if not match:
+        return None
+    try:
+        return int(match.group(0))
+    except (TypeError, ValueError):
+        return None
+
+
+def sync_existing_billing_assessed_value(
+    property_id,
+    assessed_value,
+    effective_year=None,
+    db_session: Session = None,
+):
+    """
+    Keeps existing PropertyBilling assessment snapshots aligned after an
+    assessment-roll/property AV correction.
+
+    Billing rows are historical snapshots, so the update starts at the
+    property's effectivity year when available. Payment allocations, penalties,
+    and discounts are not touched; only the assessed value used for levy and
+    reconciliation is corrected.
+    """
+    if not db_session or not property_id:
+        return {"updated": 0, "years": []}
+
+    new_value = Decimal(str(assessed_value or 0)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    if new_value <= Decimal("0.00"):
+        return {"updated": 0, "years": []}
+
+    start_year = _year_from_value(effective_year)
+    query = db_session.query(PropertyBilling).filter(
+        PropertyBilling.property_id == property_id,
+        PropertyBilling.is_archived == False,
+    )
+    if start_year:
+        query = query.filter(PropertyBilling.tax_year >= start_year)
+
+    updated_years = []
+    for row in query.with_for_update().all():
+        current = Decimal(str(row.assessed_value or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        if current != new_value:
+            row.assessed_value = new_value
+            row.updated_at = datetime.now(timezone.utc)
+            updated_years.append(int(row.tax_year))
+
+    if updated_years:
+        db_session.flush()
+
+    return {"updated": len(updated_years), "years": sorted(updated_years)}
+
+
 def allocate_payment_amount(billing_rows, amount_paid):
     remaining = Decimal(str(amount_paid or 0))
     allocated = []

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from backend.models import Property, PropertyAssessmentHistory, Payment, PropertyBilling
 from backend.database import SessionLocal
 from utils.logger import mto_logger
+import backend.services.billing_service as billing
 
 
 class DataCleanser:
@@ -375,6 +376,12 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                     prop.area = row["area"]
                     prop.lot_number = row.get("lot_number")
                     prop.block_number = row.get("block_number")
+                    billing.sync_existing_billing_assessed_value(
+                        prop.id,
+                        prop.assessed_value,
+                        effective_year=prop.effectivity_date or prop.tax_year or row.get("tax_year"),
+                        db_session=db_session,
+                    )
                     updated += 1
 
                 else:
@@ -585,6 +592,12 @@ def import_assessment_roll_from_excel(file_path, user, db_session: Session = Non
                         prop.assessed_value = val
                         prop.lot_number = lot_val
                         prop.block_number = "" # Discard the second part as requested
+                        billing.sync_existing_billing_assessed_value(
+                            prop.id,
+                            prop.assessed_value,
+                            effective_year=prop.effectivity_date or prop.tax_year,
+                            db_session=db_session,
+                        )
                         updated += 1
 
                     else:
