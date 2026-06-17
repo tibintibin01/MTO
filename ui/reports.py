@@ -799,16 +799,34 @@ class ReportsPage:
                 diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("balance", 0)))
 
         cols = ("Issue", "TD / Group", "Year", "Barangay / Scope", "Amount")
-        diag_tree = ttk.Treeview(diag, columns=cols, show="headings", height=min(8, max(3, len(diag_rows))))
-        widths = {"Issue": 360, "TD / Group": 160, "Year": 80, "Barangay / Scope": 190, "Amount": 150}
+        diag_table = ctk.CTkFrame(diag, fg_color="transparent")
+        diag_table.pack(fill="x", padx=16, pady=(0, 14))
+
+        diag_scroll_y = ttk.Scrollbar(diag_table, orient="vertical")
+        diag_scroll_x = ttk.Scrollbar(diag_table, orient="horizontal")
+        diag_tree = ttk.Treeview(
+            diag_table,
+            columns=cols,
+            show="headings",
+            height=min(7, max(3, len(diag_rows))),
+            yscrollcommand=diag_scroll_y.set,
+            xscrollcommand=diag_scroll_x.set,
+        )
+        diag_scroll_y.configure(command=diag_tree.yview)
+        diag_scroll_x.configure(command=diag_tree.xview)
+
+        widths = {"Issue": 430, "TD / Group": 170, "Year": 90, "Barangay / Scope": 360, "Amount": 150}
         for col in cols:
             diag_tree.heading(col, text=col.upper())
-            diag_tree.column(col, width=widths[col], anchor="e" if col == "Amount" else "center")
+            diag_tree.column(col, width=widths[col], minwidth=widths[col], anchor="e" if col == "Amount" else "center", stretch=False)
         diag_tree.column("Issue", anchor="w")
         diag_tree.column("Barangay / Scope", anchor="w")
         for row in diag_rows:
             diag_tree.insert("", "end", values=(row[0], row[1], row[2], row[3], money(row[4])))
-        diag_tree.pack(fill="x", padx=16, pady=(0, 14))
+
+        diag_scroll_y.pack(side="right", fill="y")
+        diag_tree.pack(side="top", fill="x", expand=True)
+        diag_scroll_x.pack(side="bottom", fill="x")
         if brgy_rows:
             review = ctk.CTkFrame(self.recon_content, fg_color=("#e2e8f0", "#111827"), corner_radius=8, border_width=1, border_color=("#cbd5e1", "#243244"))
             review.pack(fill="both", expand=True)
