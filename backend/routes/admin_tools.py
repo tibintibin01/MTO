@@ -402,6 +402,48 @@ async def update_tax_policy(
 
 
 # ---------------------------------------------------------------------------
+# Billing AV Snapshot Repair
+# ---------------------------------------------------------------------------
+
+@router.post("/system/repair-billing-av", dependencies=[Depends(admin_only)])
+async def repair_billing_assessed_values(
+    dry_run: bool = True,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """Repairs stale PropertyBilling assessed_value snapshots after AV updates."""
+    from backend.services.billing_service import repair_billing_assessed_value_snapshots
+    from backend.services.system_service import log_action
+
+    result = repair_billing_assessed_value_snapshots(
+        dry_run=dry_run,
+        db_session=db_session,
+    )
+
+    if dry_run:
+        return result
+
+    if result.get("rows_updated", 0):
+        log_action(
+            current_user,
+            (
+                "Billing AV snapshot repair: "
+                f"{result.get('rows_updated', 0)} row(s) updated across "
+                f"{result.get('properties_affected', 0)} property/properties."
+            ),
+            db_session=db_session,
+        )
+    db_session.commit()
+    mto_logger.info(
+        "Billing AV snapshot repair completed",
+        user=current_user.get("username"),
+        rows_updated=result.get("rows_updated", 0),
+        properties_affected=result.get("properties_affected", 0),
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Billing Year Sync
 # ---------------------------------------------------------------------------
 

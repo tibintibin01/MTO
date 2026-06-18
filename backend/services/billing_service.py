@@ -190,6 +190,101 @@ def sync_existing_billing_assessed_value(
     return {"updated": len(updated_years), "years": sorted(updated_years)}
 
 
+def repair_billing_assessed_value_snapshots(
+    dry_run=True,
+    sample_limit=100,
+    db_session: Session = None,
+):
+    """
+    Finds PropertyBilling assessed-value snapshots that no longer match the
+    active property master value, then optionally repairs them.
+
+    Scope is intentionally conservative:
+      - active properties only
+      - positive current property AV only
+      - non-archived billing rows only
+      - from effectivity year onward when effectivity is available
+
+    This fixes reconciliation rows where ledger payments are correct but
+    stale billing snapshots still use an old AV.
+    """
+    if not db_session:
+        return {
+            "dry_run": bool(dry_run),
+            "properties_scanned": 0,
+            "properties_affected": 0,
+            "rows_to_update": 0,
+            "rows_updated": 0,
+            "sample": [],
+        }
+
+    sample_limit = max(1, min(int(sample_limit or 100), 500))
+    props = db_session.query(Property).filter(
+        Property.deleted_at == None,
+        Property.assessed_value != None,
+        Property.assessed_value > 0,
+    ).order_by(Property.id.asc()).all()
+
+    sample = []
+    affected_property_ids = set()
+    rows_to_update = 0
+    rows_updated = 0
+
+    for prop in props:
+        new_value = Decimal(str(prop.assessed_value or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        if new_value <= Decimal("0.00"):
+            continue
+
+        start_year = _year_from_value(prop.effectivity_date or prop.tax_year)
+        query = db_session.query(PropertyBilling).filter(
+            PropertyBilling.property_id == prop.id,
+            PropertyBilling.is_archived == False,
+        )
+        if start_year:
+            query = query.filter(PropertyBilling.tax_year >= start_year)
+
+        for row in query.order_by(PropertyBilling.tax_year.asc()).all():
+            current = Decimal(str(row.assessed_value or 0)).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            if current == new_value:
+                continue
+
+            rows_to_update += 1
+            affected_property_ids.add(prop.id)
+            if len(sample) < sample_limit:
+                sample.append({
+                    "property_id": prop.id,
+                    "billing_id": row.id,
+                    "td_number": prop.td_number,
+                    "owner_name": prop.owner_name,
+                    "barangay": prop.barangay,
+                    "tax_year": int(row.tax_year or 0),
+                    "old_assessed_value": float(current),
+                    "new_assessed_value": float(new_value),
+                    "effectivity_year": start_year,
+                })
+
+            if not dry_run:
+                row.assessed_value = new_value
+                row.updated_at = datetime.now(timezone.utc)
+                rows_updated += 1
+
+    if not dry_run and rows_updated:
+        db_session.flush()
+
+    return {
+        "dry_run": bool(dry_run),
+        "properties_scanned": len(props),
+        "properties_affected": len(affected_property_ids),
+        "rows_to_update": rows_to_update,
+        "rows_updated": rows_updated,
+        "sample": sample,
+    }
+
+
 def allocate_payment_amount(billing_rows, amount_paid):
     remaining = Decimal(str(amount_paid or 0))
     allocated = []

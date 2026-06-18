@@ -9,6 +9,7 @@ from backend.services.billing_service import (
     calculate_penalty,
     get_compliant_summary_by_barangay,
     get_total_due,
+    repair_billing_assessed_value_snapshots,
     sync_existing_billing_assessed_value,
 )
 
@@ -146,4 +147,44 @@ def test_sync_existing_billing_assessed_value_respects_effectivity_year(db):
     assert rows[2023] == 180_000.0
     assert rows[2024] == 1_139_960.0
     assert rows[2025] == 1_139_960.0
+
+def test_repair_billing_assessed_value_snapshots_previews_and_applies(db):
+    prop = Property(
+        td_number="TD-REPAIR",
+        owner_name="Owner Repair",
+        barangay="DINADIAWAN",
+        assessed_value=1_139_960.0,
+        effectivity_date="2025-01-01",
+    )
+    db.add(prop)
+    db.flush()
+
+    db.add_all([
+        PropertyBilling(property_id=prop.id, tax_year=2024, assessed_value=180_000.0, amount_paid=0, is_archived=False),
+        PropertyBilling(property_id=prop.id, tax_year=2025, assessed_value=180_000.0, amount_paid=20_519.28, is_archived=False),
+        PropertyBilling(property_id=prop.id, tax_year=2026, assessed_value=180_000.0, amount_paid=18_239.36, is_archived=False),
+    ])
+    db.flush()
+
+    preview = repair_billing_assessed_value_snapshots(dry_run=True, db_session=db)
+
+    rows_after_preview = {
+        row.tax_year: float(row.assessed_value)
+        for row in db.query(PropertyBilling).filter(PropertyBilling.property_id == prop.id).all()
+    }
+    assert preview["rows_to_update"] == 2
+    assert preview["rows_updated"] == 0
+    assert rows_after_preview[2025] == 180_000.0
+
+    applied = repair_billing_assessed_value_snapshots(dry_run=False, db_session=db)
+    rows_after_apply = {
+        row.tax_year: float(row.assessed_value)
+        for row in db.query(PropertyBilling).filter(PropertyBilling.property_id == prop.id).all()
+    }
+
+    assert applied["rows_to_update"] == 2
+    assert applied["rows_updated"] == 2
+    assert rows_after_apply[2024] == 180_000.0
+    assert rows_after_apply[2025] == 1_139_960.0
+    assert rows_after_apply[2026] == 1_139_960.0
 

@@ -349,8 +349,13 @@ class SystemAdminPage:
             text_color=ModernTheme.TEXT_GRAY,
         ).pack(pady=(0, 20))
 
-        btn_fr = ctk.CTkFrame(card, fg_color="transparent")
-        btn_fr.pack(pady=(0, 30))
+        actions_fr = ctk.CTkFrame(card, fg_color="transparent")
+        actions_fr.pack(pady=(0, 30))
+        primary_btn_fr = ctk.CTkFrame(actions_fr, fg_color="transparent")
+        primary_btn_fr.pack(pady=(0, 8))
+        data_btn_fr = ctk.CTkFrame(actions_fr, fg_color="transparent")
+        data_btn_fr.pack()
+        btn_fr = primary_btn_fr
 
         self.backup_btn = ctk.CTkButton(
             btn_fr,
@@ -377,6 +382,8 @@ class SystemAdminPage:
         )
         self.restart_btn.pack(side="left", padx=5)
 
+        btn_fr = data_btn_fr
+
         self.sync_btn = ctk.CTkButton(
             btn_fr,
             text="📅 SYNC BILLING YEARS",
@@ -388,6 +395,18 @@ class SystemAdminPage:
             hover_color="#9b59b6",
         )
         self.sync_btn.pack(side="left", padx=5)
+
+        self.repair_av_btn = ctk.CTkButton(
+            btn_fr,
+            text="REPAIR BILLING AV",
+            command=self.repair_billing_av,
+            height=45,
+            width=190,
+            font=ModernTheme.BUTTON,
+            fg_color="#2563eb",
+            hover_color="#1d4ed8",
+        )
+        self.repair_av_btn.pack(side="left", padx=5)
 
         
         self.portal_publish_btn = ctk.CTkButton(
@@ -971,6 +990,92 @@ class SystemAdminPage:
                         ))
                 except Exception:
                     pass
+
+        threading.Thread(target=preview, daemon=True).start()
+
+
+    def repair_billing_av(self):
+        """Preview and repair stale PropertyBilling assessed-value snapshots."""
+        import threading
+        import api_clients.system_service as system_svc
+
+        def reset_button():
+            if self.container.winfo_exists():
+                self.repair_av_btn.configure(state="normal", text="REPAIR BILLING AV")
+
+        self.repair_av_btn.configure(state="disabled", text="PREVIEWING...")
+
+        def preview():
+            try:
+                res = system_svc.repair_billing_av(dry_run=True)
+                rows = int(res.get("rows_to_update", 0) or 0)
+                props = int(res.get("properties_affected", 0) or 0)
+                scanned = int(res.get("properties_scanned", 0) or 0)
+                sample = res.get("sample", []) or []
+
+                if rows <= 0:
+                    def show_none():
+                        messagebox.showinfo(
+                            "Billing AV Repair",
+                            f"No stale billing AV snapshots found.\n\nProperties scanned: {scanned:,}",
+                            parent=self.container.winfo_toplevel(),
+                        )
+                        reset_button()
+                    self.container.after(0, show_none)
+                    return
+
+                examples = []
+                for item in sample[:5]:
+                    examples.append(
+                        f"{item.get('td_number')} | {item.get('tax_year')} | "
+                        f"{item.get('old_assessed_value', 0):,.2f} -> "
+                        f"{item.get('new_assessed_value', 0):,.2f}"
+                    )
+                example_text = "\n".join(examples)
+                msg = (
+                    "Repair stale billing assessed values?\n\n"
+                    f"Properties scanned: {scanned:,}\n"
+                    f"Properties affected: {props:,}\n"
+                    f"Billing rows to update: {rows:,}\n\n"
+                    "Examples:\n"
+                    f"{example_text}\n\n"
+                    "This updates billing assessed values only. Payments, OR numbers, "
+                    "penalties, and discounts will not be changed."
+                )
+
+                def ask_confirm():
+                    if messagebox.askyesno("Confirm Billing AV Repair", msg, parent=self.container.winfo_toplevel()):
+                        self.repair_av_btn.configure(state="disabled", text="REPAIRING...")
+                        threading.Thread(target=apply_repair, daemon=True).start()
+                    else:
+                        reset_button()
+
+                self.container.after(0, ask_confirm)
+            except Exception as e:
+                def show_error(err=str(e)):
+                    messagebox.showerror("Billing AV Repair", err)
+                    reset_button()
+                self.container.after(0, show_error)
+
+        def apply_repair():
+            try:
+                res = system_svc.repair_billing_av(dry_run=False)
+                updated = int(res.get("rows_updated", 0) or 0)
+                props = int(res.get("properties_affected", 0) or 0)
+                def show_done():
+                    messagebox.showinfo(
+                        "Billing AV Repair Complete",
+                        f"Updated {updated:,} billing row(s) across {props:,} property/properties.\n\n"
+                        "Reload Reconciliation to confirm the variance list.",
+                        parent=self.container.winfo_toplevel(),
+                    )
+                    reset_button()
+                self.container.after(0, show_done)
+            except Exception as e:
+                def show_error(err=str(e)):
+                    messagebox.showerror("Billing AV Repair", err)
+                    reset_button()
+                self.container.after(0, show_error)
 
         threading.Thread(target=preview, daemon=True).start()
 

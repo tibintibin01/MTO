@@ -169,6 +169,15 @@ def get_job_status(job_id: str):
     return api_request("GET", f"/jobs/{job_id}")
 
 
+def repair_billing_av(dry_run: bool = True):
+    """Preview or repair stale billing assessed-value snapshots. Admin only."""
+    return api_request(
+        "POST",
+        f"/system/repair-billing-av?dry_run={'true' if dry_run else 'false'}",
+        timeout=180,
+    )
+
+
 def audit_td_numbers():
     """
     Scans all active properties and returns those whose TD number
