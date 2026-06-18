@@ -350,100 +350,113 @@ class SystemAdminPage:
         ).pack(pady=(0, 20))
 
         actions_fr = ctk.CTkFrame(card, fg_color="transparent")
-        actions_fr.pack(pady=(0, 30))
+        actions_fr.pack(pady=(0, 18))
+        actions_fr.grid_columnconfigure(0, weight=1)
+
         primary_btn_fr = ctk.CTkFrame(actions_fr, fg_color="transparent")
-        primary_btn_fr.pack(pady=(0, 8))
+        primary_btn_fr.grid(row=0, column=0, pady=(0, 10))
+
         data_btn_fr = ctk.CTkFrame(actions_fr, fg_color="transparent")
-        data_btn_fr.pack()
-        btn_fr = primary_btn_fr
+        data_btn_fr.grid(row=1, column=0)
+
+        primary_button_width = 220
+        data_button_width = 185
+        button_height = 44
 
         self.backup_btn = ctk.CTkButton(
-            btn_fr,
-            text=f"🚀 {tr('admin.db.btn_start')}",
+            primary_btn_fr,
+            text="START HYBRID BACKUP",
             command=self.trigger_backup,
-            height=45,
-            width=220,
+            height=button_height,
+            width=primary_button_width,
             font=ModernTheme.BUTTON,
             fg_color=ModernTheme.SUCCESS,
         )
-        self.backup_btn.pack(side="left", padx=5)
+        self.backup_btn.grid(row=0, column=0, padx=6)
 
-        # Restart Server button — lets admin apply updates from any client PC
-        # without needing physical access to the server machine.
+        # Restart Server button lets admin apply updates from any client PC.
         self.restart_btn = ctk.CTkButton(
-            btn_fr,
-            text="🔄 RESTART SERVER",
+            primary_btn_fr,
+            text="RESTART SERVER",
             command=self.restart_server,
-            height=45,
-            width=180,
+            height=button_height,
+            width=primary_button_width,
             font=ModernTheme.BUTTON,
             fg_color="#c0392b",
             hover_color="#e74c3c",
         )
-        self.restart_btn.pack(side="left", padx=5)
-
-        btn_fr = data_btn_fr
+        self.restart_btn.grid(row=0, column=1, padx=6)
 
         self.sync_btn = ctk.CTkButton(
-            btn_fr,
-            text="📅 SYNC BILLING YEARS",
+            data_btn_fr,
+            text="SYNC BILLING YEARS",
             command=self.sync_billing_years,
-            height=45,
-            width=200,
+            height=button_height,
+            width=data_button_width,
             font=ModernTheme.BUTTON,
             fg_color="#8e44ad",
             hover_color="#9b59b6",
         )
-        self.sync_btn.pack(side="left", padx=5)
+        self.sync_btn.grid(row=0, column=0, padx=5)
 
         self.repair_av_btn = ctk.CTkButton(
-            btn_fr,
+            data_btn_fr,
             text="REPAIR BILLING AV",
             command=self.repair_billing_av,
-            height=45,
-            width=190,
+            height=button_height,
+            width=data_button_width,
             font=ModernTheme.BUTTON,
             fg_color="#2563eb",
             hover_color="#1d4ed8",
         )
-        self.repair_av_btn.pack(side="left", padx=5)
+        self.repair_av_btn.grid(row=0, column=1, padx=5)
 
-        
         self.portal_publish_btn = ctk.CTkButton(
-            btn_fr,
+            data_btn_fr,
             text="PUBLISH PORTAL",
             command=self.publish_portal_snapshot,
-            height=45,
-            width=190,
+            height=button_height,
+            width=data_button_width,
             font=ModernTheme.BUTTON,
             fg_color="#0f766e",
             hover_color="#115e59",
         )
-        self.portal_publish_btn.pack(side="left", padx=5)
+        self.portal_publish_btn.grid(row=0, column=2, padx=5)
 
         self.td_audit_btn = ctk.CTkButton(
-            btn_fr,
-            text="🔍 AUDIT TD NUMBERS",
+            data_btn_fr,
+            text="AUDIT TD NUMBERS",
             command=self.audit_td_numbers,
-            height=45,
-            width=190,
+            height=button_height,
+            width=data_button_width,
             font=ModernTheme.BUTTON,
             fg_color="#c0392b",
             hover_color="#e74c3c",
         )
-        self.td_audit_btn.pack(side="left", padx=5)
+        self.td_audit_btn.grid(row=0, column=3, padx=5)
 
         self.batch_del_btn = ctk.CTkButton(
-            btn_fr,
-            text="🗑️ BATCH DELETE PAYMENTS",
+            data_btn_fr,
+            text="BATCH DELETE PAYMENTS",
             command=lambda: BatchDeletePaymentsModal(self.container, self.user),
-            height=45,
-            width=220,
+            height=button_height,
+            width=data_button_width + 25,
             font=ModernTheme.BUTTON,
             fg_color="#7c3aed",
             hover_color="#6d28d9",
         )
-        self.batch_del_btn.pack(side="left", padx=5)
+        self.batch_del_btn.grid(row=0, column=4, padx=5)
+
+        self.restore_btn = ctk.CTkButton(
+            data_btn_fr,
+            text=f"RESTORE",
+            command=self.restore_backup,
+            height=button_height,
+            width=130,
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.TEXT_GRAY,
+        )
+        self.restore_btn.grid(row=0, column=5, padx=5)
 
         self.portal_publish_status_lbl = ctk.CTkLabel(
             card,
@@ -454,24 +467,13 @@ class SystemAdminPage:
         self.portal_publish_status_lbl.pack(pady=(0, 16))
         # If a sync was running when the user navigated away, resume monitoring
         if _active_sync_job_id:
-            self.sync_btn.configure(state="disabled", text="⏳ SYNCING...")
+            self.sync_btn.configure(state="disabled", text="SYNCING...")
             import threading
             threading.Thread(
                 target=self._resume_sync_monitoring,
                 args=(_active_sync_job_id,),
                 daemon=True
             ).start()
-
-        self.restore_btn = ctk.CTkButton(
-            btn_fr,
-            text=f"⏮️ {tr('admin.db.btn_restore')}",
-            command=self.restore_backup,
-            height=45,
-            width=120,
-            font=ModernTheme.BUTTON,
-            fg_color=ModernTheme.TEXT_GRAY,
-        )
-        self.restore_btn.pack(side="left", padx=5)
 
         # Status Panel
         status_fr = ctk.CTkFrame(
