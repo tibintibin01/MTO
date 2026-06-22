@@ -225,13 +225,15 @@ def generate_assessment_roll_pdf(items, base_dir, barangay_filter=None, as_of_ye
     c = canvas.Canvas(output_path, pagesize=landscape(A4))
 
     columns = [
-        ("TD Number",         32 * mm),
-        ("PIN",               32 * mm),
-        ("Owner / Taxpayer",  55 * mm),
-        ("Barangay",          35 * mm),
-        ("Classification",    30 * mm),
-        ("Assessed Value",    35 * mm),
-        ("Effectivity",       25 * mm),
+        ("TD NO.",            28 * mm),
+        ("PIN",               24 * mm),
+        ("LOT & BLK",         30 * mm),
+        ("PROPERTY OWNER",    50 * mm),
+        ("LOCATION",          29 * mm),
+        ("CLASSIFICATION",    29 * mm),
+        ("ASSESSED VALUE",    30 * mm),
+        ("PREVIOUS TD",       28 * mm),
+        ("EFFECTIVITY",       23 * mm),
     ]
 
     filter_label = f"Barangay: {barangay_filter}" if barangay_filter else "All Barangays"
@@ -262,24 +264,32 @@ def generate_assessment_roll_pdf(items, base_dir, barangay_filter=None, as_of_ye
             cur_y = _draw_table_header_row(c, margin_x, cur_y, columns)
 
         if isinstance(item, dict):
-            td   = safe_text(item.get("td_number"))
-            pin  = safe_text(item.get("pin", ""))
+            td = safe_text(item.get("td_number"))
+            pin = safe_text(item.get("pin", ""))
+            lot = safe_text(item.get("lot_number", ""))
+            block = safe_text(item.get("block_number", ""))
+            lot_blk = f"{lot} / {block}" if lot and block else (lot or block)
             owner = safe_text(item.get("owner_name"))
-            brgy  = safe_text(item.get("barangay"))
-            kind  = safe_text(item.get("kind_of_property"))
+            brgy = safe_text(item.get("barangay") or item.get("location", ""))
+            kind = safe_text(item.get("kind_of_property"))
             av_raw = item.get("assessed_value", 0)
-            eff   = safe_text(item.get("tax_year") or item.get("effectivity_date", ""))
+            prev = safe_text(item.get("prev_td_number", ""))
+            eff = safe_text(item.get("effectivity_date") or item.get("tax_year", ""))
         else:
             # tuple/list from search_properties
-            td    = safe_text(item[1] if len(item) > 1 else "")
-            pin   = safe_text(item[18] if len(item) > 18 else "")
+            td = safe_text(item[1] if len(item) > 1 else "")
+            pin = safe_text(item[18] if len(item) > 18 else "")
+            lot = safe_text(item[4] if len(item) > 4 else "")
+            block = safe_text(item[19] if len(item) > 19 else "")
+            lot_blk = f"{lot} / {block}" if lot and block else (lot or block)
             owner = safe_text(item[2] if len(item) > 2 else "")
-            brgy  = safe_text(item[22] if len(item) > 22 else (item[6] if len(item) > 6 else ""))
-            kind  = safe_text(item[7] if len(item) > 7 else "")
+            brgy = safe_text(item[22] if len(item) > 22 and item[22] else (item[6] if len(item) > 6 else ""))
+            kind = safe_text(item[7] if len(item) > 7 else "")
             av_raw = item[9] if len(item) > 9 else 0
-            eff   = safe_text(item[21] if len(item) > 21 else "")
-            if eff and len(eff) >= 4:
-                eff = eff[:4]
+            prev = safe_text(item[20] if len(item) > 20 else "")
+            eff = safe_text(item[21] if len(item) > 21 else "")
+        if eff and len(eff) >= 4:
+            eff = eff[:4]
 
         try:
             av_val = float(av_raw or 0)
@@ -287,14 +297,24 @@ def generate_assessment_roll_pdf(items, base_dir, barangay_filter=None, as_of_ye
         except (TypeError, ValueError):
             av_val = 0.0
 
-        values = [td, pin, owner, brgy, kind, fmt_currency(av_val), eff]
+        values = [td, pin, lot_blk, owner, brgy, kind, fmt_currency(av_val), prev, eff]
         cur_y = _draw_data_row(c, margin_x, cur_y, columns, values, i)
 
     # Grand total row
     if cur_y < 20 * mm:
         c.showPage()
         cur_y = new_page()
-    blank = ["TOTAL ASSESSED VALUE", "", f"{len(items or [])} Records", "", "", fmt_currency(total_av), ""]
+    blank = [
+        "TOTAL ASSESSED VALUE",
+        "",
+        "",
+        f"{len(items or [])} Records",
+        "",
+        "",
+        fmt_currency(total_av),
+        "",
+        "",
+    ]
     _draw_totals_row(c, margin_x, cur_y, columns, blank)
 
     # Footer

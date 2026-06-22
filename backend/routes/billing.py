@@ -794,13 +794,22 @@ async def export_billing_excel(
                 year_lbl = f"    Effectivity Years: {year_from}-{year_to}"
             ws["A2"] = f"{brgy_lbl}{year_lbl}    Generated: {date_str}"
             ws["A2"].font = Font(italic=True, size=10)
-            ws.merge_cells("A1:F1")
-            ws.merge_cells("A2:F2")
+            headers = [
+                "TD NO.",
+                "PIN",
+                "LOT & BLK",
+                "PROPERTY OWNER",
+                "LOCATION",
+                "CLASSIFICATION",
+                "ASSESSED VALUE",
+                "PREVIOUS TD",
+                "EFFECTIVITY",
+            ]
+            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+            ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
             ws["A1"].alignment = center_align
             ws["A2"].alignment = center_align
 
-            headers = ["TD Number", "Owner Name", "Barangay", "Kind of Property",
-                       "Assessed Value", "Tax Year"]
             for col_idx, h in enumerate(headers, 1):
                 ws.cell(row=4, column=col_idx, value=h)
             style_header_row(ws, 4, len(headers))
@@ -818,19 +827,27 @@ async def export_billing_excel(
                 if eff_year and len(str(eff_year)) >= 4:
                     eff_year = str(eff_year)[:4]
 
+                lot = item[4] if len(item) > 4 and item[4] else ""
+                block = item[19] if len(item) > 19 and item[19] else ""
+                lot_blk = f"{lot} / {block}" if lot and block else (lot or block or "")
+                location = item[22] if len(item) > 22 and item[22] else (item[6] if len(item) > 6 else "")
+
                 vals = [
                     item[1] or "",
+                    item[18] if len(item) > 18 and item[18] else "",
+                    lot_blk,
                     item[2] or "",
-                    item[22] if len(item) > 22 else "",
-                    item[7] if len(item) > 7 else "",
+                    location,
+                    item[7] if len(item) > 7 and item[7] else "",
                     float(item[9] or 0),
+                    item[20] if len(item) > 20 and item[20] else "",
                     eff_year or "",
                 ]
 
                 for col_idx, val in enumerate(vals, 1):
                     cell = ws.cell(row=row_idx, column=col_idx, value=val)
                     cell.border = thin_border
-                    if col_idx == 5:
+                    if col_idx == 7:
                         cell.number_format = currency_fmt
                         cell.alignment = right_align
 
