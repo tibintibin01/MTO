@@ -500,8 +500,13 @@ def soft_delete_property(property_id, user=None, ip_address=None, db_session: Se
         )
         db_session.add(audit)
         
+    deleted_at = prop.deleted_at
     db_session.commit()
-    return 1
+    return {
+        "id": prop.id,
+        "td_number": prop.td_number,
+        "deleted_at": deleted_at.strftime("%Y-%m-%d %H:%M") if deleted_at else None,
+    }
 
 
 def get_deleted_properties(limit=50, cursor=None, db_session: Session = None):

@@ -295,10 +295,17 @@ class PropertyPage:
             return
 
         try:
-            prop_svc.delete_property(vals[0], user=self.user)
+            res = prop_svc.delete_property(vals[0], user=self.user)
+            if not isinstance(res, dict) or res.get("status") != "deleted":
+                raise Exception("Delete was not confirmed by the server. Please try again.")
             self.refresh_table()
+            deleted_at = res.get("deleted_at") or "now"
+            messagebox.showinfo(
+                "Moved to Recycle Bin",
+                f"{owner_name}\n{td_number}\n\nDeleted at: {deleted_at}",
+            )
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            messagebox.showerror("Delete Failed", str(e))
 
 class PropertyEditModal(ctk.CTkToplevel):
     def __init__(self, parent, title, property_id, callback, user=None, payment_mode=False):

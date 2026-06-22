@@ -133,4 +133,6 @@ def bulk_update_barangay(ids, barangay):
 
 
 def delete_property(property_id, **kwargs):
-    return api_request("DELETE", f"/properties/{property_id}")
+    # Deleting land records must be confirmed by the server immediately.
+    # Offline queueing can make the UI look successful while Recycle Bin stays unchanged.
+    return api_request("DELETE", f"/properties/{property_id}", queue_offline=False)

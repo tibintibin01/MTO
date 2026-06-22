@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
 from backend.models import Property
-from backend.services.property_service import get_deleted_properties
+from backend.services.property_service import get_deleted_properties, soft_delete_property
 
 
 @pytest.fixture()
@@ -57,3 +57,46 @@ def test_recycle_bin_orders_by_recently_deleted_first(db):
     assert rows[0][1] == "TD-NEWER-DELETE"
     assert rows[0][5] == "2026-06-01 08:00"
     assert rows[1][1] == "TD-OLDER-DELETE"
+
+def test_soft_delete_returns_confirmation_payload(db):
+    prop = Property(
+        td_number="TD-SOFT-DELETE-CONFIRM",
+        owner_name="Delete Confirm Owner",
+        barangay="DINADIAWAN",
+        assessed_value=50_000.0,
+    )
+    db.add(prop)
+    db.commit()
+
+    result = soft_delete_property(
+        prop.id,
+        user={"id": 1, "username": "admin", "role": "admin"},
+        db_session=db,
+    )
+
+    assert result["id"] == prop.id
+    assert result["td_number"] == "TD-SOFT-DELETE-CONFIRM"
+    assert result["deleted_at"]
+    assert db.query(Property).filter(Property.id == prop.id).first().deleted_at is not None
+
+
+def test_property_delete_client_requires_live_server(monkeypatch):
+    import api_clients.property_service as client
+
+    captured = {}
+
+    def fake_api_request(method, endpoint, **kwargs):
+        captured["method"] = method
+        captured["endpoint"] = endpoint
+        captured.update(kwargs)
+        return {"status": "deleted"}
+
+    monkeypatch.setattr(client, "api_request", fake_api_request)
+
+    result = client.delete_property(123)
+
+    assert result == {"status": "deleted"}
+    assert captured["method"] == "DELETE"
+    assert captured["endpoint"] == "/properties/123"
+    assert captured["queue_offline"] is False
+

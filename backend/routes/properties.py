@@ -187,7 +187,7 @@ async def delete_property(
     res = prop_svc.soft_delete_property(property_id, user=current_user, ip_address=ip, db_session=db_session)
     if not res:
         raise HTTPException(status_code=400, detail="Failed to delete property")
-    return {"status": "deleted"}
+    return {"status": "deleted", **res}
 
 @router.post("/bulk-update-barangay")
 async def bulk_update_barangay(data: BulkUpdateBarangaySchema, current_user: dict = Depends(write_access), db_session: Session = Depends(get_db)):
