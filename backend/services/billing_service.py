@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import re
 from sqlalchemy import or_, and_, func, case
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 from backend.models import Property, PropertyBilling, PaymentBilling, Payment, TaxPolicy
 from decimal import Decimal, ROUND_HALF_UP
 from utils.db_compat import greatest, year_of, month_of
@@ -66,6 +66,26 @@ def tax_rate_subquery(db_session: Session, billing_tax_year_col):
         .scalar_subquery(),
         0.02
     )
+
+
+def _paid_to_billing_expr(db_session: Session, *, year_lt=None, year_lte=None, year_eq=None):
+    """Payments applied to the outer PropertyBilling row, filtered by OR date year."""
+    pb_pay = aliased(PaymentBilling)
+    pay = aliased(Payment)
+    query = db_session.query(func.coalesce(func.sum(pb_pay.amount_paid), 0)).join(
+        pay, pay.id == pb_pay.payment_id
+    ).filter(
+        pb_pay.billing_id == PropertyBilling.id,
+        pay.date_paid != None,
+    )
+    paid_year = year_of(pay.date_paid)
+    if year_lt is not None:
+        query = query.filter(paid_year < int(year_lt))
+    if year_lte is not None:
+        query = query.filter(paid_year <= int(year_lte))
+    if year_eq is not None:
+        query = query.filter(paid_year == int(year_eq))
+    return query.correlate(PropertyBilling).scalar_subquery()
 
 def sync_property_billing(
     property_id, tax_year, assessed_value, penalty, discount=0.0, has_payment=False, db_session: Session = None
@@ -640,59 +660,104 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
     basic_rate_expr = func.coalesce(TaxPolicy.basic_rate, 0.0100)
     sef_rate_expr = func.coalesce(TaxPolicy.sef_rate, 0.0100)
     total_rate_expr = basic_rate_expr + sef_rate_expr
+    due_expr = (PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount
+    paid_before_year = _paid_to_billing_expr(db_session, year_lt=ry)
+    paid_through_year = _paid_to_billing_expr(db_session, year_lte=ry)
 
-    # 1. Beginning Receivable (sum of balances for tax years < report_year)
+    # Beginning receivable is a point-in-time balance at the start of the selected fiscal year.
+    # It must not include payments posted after that year, even if PropertyBilling.amount_paid is cumulative today.
     beg = db_session.query(
-        func.coalesce(func.sum(((PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount) - PropertyBilling.amount_paid), 0)
+        func.coalesce(func.sum(greatest(due_expr - paid_before_year, 0)), 0)
     ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
         TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
     ).filter(
         Property.deleted_at == None,
-        PropertyBilling.tax_year < ry
+        PropertyBilling.tax_year < ry,
     ).scalar()
-    
-    # 2. Current-year levy and collectible components. The levy itself is
-    # assessed value x tax rate; penalties and discounts are tracked separately.
+
     curr_row = db_session.query(
         func.coalesce(func.sum(PropertyBilling.assessed_value * total_rate_expr), 0),
         func.coalesce(func.sum(PropertyBilling.penalty), 0),
         func.coalesce(func.sum(PropertyBilling.discount), 0),
-        func.coalesce(func.sum((PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount), 0),
+        func.coalesce(func.sum(due_expr), 0),
     ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
         TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
     ).filter(
         Property.deleted_at == None,
-        PropertyBilling.tax_year == ry
+        PropertyBilling.tax_year == ry,
     ).one()
     curr_levy = float(curr_row[0] or 0)
     curr_penalty = float(curr_row[1] or 0)
     curr_discount = float(curr_row[2] or 0)
     curr_net = float(curr_row[3] or 0)
-    
-    # 3. Collections (total paid in this calendar year)
-    coll = db_session.query(
+
+    calendar_applicable_collections = db_session.query(
         func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
-    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(Property, Property.id == Payment.property_id).filter(
+    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
+        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
+    ).join(Property, Property.id == Payment.property_id).filter(
         Property.deleted_at == None,
-        year_of(Payment.date_paid) == ry
+        Payment.date_paid != None,
+        year_of(Payment.date_paid) == ry,
+        PropertyBilling.tax_year <= ry,
     ).scalar()
-    
+
+    prepaid_current_year = db_session.query(
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
+    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
+        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
+    ).join(Property, Property.id == Payment.property_id).filter(
+        Property.deleted_at == None,
+        Payment.date_paid != None,
+        year_of(Payment.date_paid) < ry,
+        PropertyBilling.tax_year == ry,
+    ).scalar()
+
+    future_year_prepayments = db_session.query(
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
+    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
+        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
+    ).join(Property, Property.id == Payment.property_id).filter(
+        Property.deleted_at == None,
+        Payment.date_paid != None,
+        year_of(Payment.date_paid) == ry,
+        PropertyBilling.tax_year > ry,
+    ).scalar()
+
+    end = db_session.query(
+        func.coalesce(func.sum(greatest(due_expr - paid_through_year, 0)), 0)
+    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
+    ).filter(
+        Property.deleted_at == None,
+        PropertyBilling.tax_year <= ry,
+    ).scalar()
+
+    calendar_applicable_collections = float(calendar_applicable_collections or 0)
+    prepaid_current_year = float(prepaid_current_year or 0)
+    applied_collections = calendar_applicable_collections + prepaid_current_year
+    future_year_prepayments = float(future_year_prepayments or 0)
     adj = 0.0
-    end = float(beg) + curr_net - float(coll) + adj
-    
+    expected_end = float(beg or 0) + curr_net - applied_collections + adj
+
     return {
         "report_year": ry,
-        "beginning_receivable": float(beg),
+        "beginning_receivable": float(beg or 0),
         "current_year_assessment": curr_net,
         "current_year_levy": curr_levy,
         "current_year_penalty": curr_penalty,
         "current_year_discount": curr_discount,
         "current_year_net_collectible": curr_net,
-        "collections": float(coll),
+        "collections": calendar_applicable_collections,
+        "calendar_applicable_collections": calendar_applicable_collections,
+        "prepaid_current_year": prepaid_current_year,
+        "applied_collections": applied_collections,
+        "future_year_prepayments": future_year_prepayments,
         "adjustments": adj,
-        "ending_receivable": end,
+        "ending_receivable": float(end or 0),
+        "expected_ending_receivable": expected_end,
+        "equation_variance": expected_end - float(end or 0),
     }
-
 
 
 def get_reconciliation_metrics(report_year, db_session: Session = None):
@@ -705,6 +770,9 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
     basic = basic_rate_expr()
     sef = sef_rate_expr()
     total = basic + sef
+    due_expr = (PropertyBilling.assessed_value * total) + PropertyBilling.penalty - PropertyBilling.discount
+    paid_through_year = _paid_to_billing_expr(db_session, year_lte=ry)
+    balance_as_of_expr = due_expr - paid_through_year
 
     assessor_row = db_session.query(
         func.coalesce(func.sum(PropertyBilling.assessed_value), 0),
@@ -712,7 +780,7 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
         func.coalesce(func.sum(PropertyBilling.assessed_value * total), 0),
         func.coalesce(func.sum(PropertyBilling.penalty), 0),
         func.coalesce(func.sum(PropertyBilling.discount), 0),
-        func.coalesce(func.sum((PropertyBilling.assessed_value * total) + PropertyBilling.penalty - PropertyBilling.discount), 0),
+        func.coalesce(func.sum(due_expr), 0),
         func.coalesce(func.avg(basic), 0.0100),
         func.coalesce(func.avg(total), 0.0200),
     ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
@@ -723,6 +791,10 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
     ).one()
 
     basic_share = case((total > 0, basic / total), else_=0.5)
+    applied_filter = or_(
+        and_(year_of(Payment.date_paid) == ry, PropertyBilling.tax_year <= ry),
+        and_(year_of(Payment.date_paid) < ry, PropertyBilling.tax_year == ry),
+    )
     treasury_row = db_session.query(
         func.coalesce(func.sum(PaymentBilling.amount_paid * basic_share), 0),
         func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
@@ -733,18 +805,60 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
         TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
     ).filter(
         Property.deleted_at == None,
-        year_of(Payment.date_paid) == ry,
+        Payment.date_paid != None,
+        applied_filter,
     ).one()
 
-    due_expr = (PropertyBilling.assessed_value * total) + PropertyBilling.penalty - PropertyBilling.discount
-    balance_expr = due_expr - PropertyBilling.amount_paid
+    cash_collected_this_year = db_session.query(
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
+    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
+        Property, Property.id == Payment.property_id
+    ).filter(
+        Property.deleted_at == None,
+        Payment.date_paid != None,
+        year_of(Payment.date_paid) == ry,
+    ).scalar()
+
+    calendar_applicable_collections = db_session.query(
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
+    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
+        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
+    ).join(Property, Property.id == Payment.property_id).filter(
+        Property.deleted_at == None,
+        Payment.date_paid != None,
+        year_of(Payment.date_paid) == ry,
+        PropertyBilling.tax_year <= ry,
+    ).scalar()
+
+    prepaid_current_year = db_session.query(
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
+    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
+        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
+    ).join(Property, Property.id == Payment.property_id).filter(
+        Property.deleted_at == None,
+        Payment.date_paid != None,
+        year_of(Payment.date_paid) < ry,
+        PropertyBilling.tax_year == ry,
+    ).scalar()
+
+    future_year_prepayments = db_session.query(
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
+    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
+        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
+    ).join(Property, Property.id == Payment.property_id).filter(
+        Property.deleted_at == None,
+        Payment.date_paid != None,
+        year_of(Payment.date_paid) == ry,
+        PropertyBilling.tax_year > ry,
+    ).scalar()
+
     delinquency_row = db_session.query(
-        func.coalesce(func.sum(case((balance_expr > 0, balance_expr), else_=0)), 0),
-        func.coalesce(func.sum(case((and_(PropertyBilling.tax_year == ry, balance_expr > 0), balance_expr), else_=0)), 0),
-        func.coalesce(func.sum(case((and_(PropertyBilling.tax_year < ry, balance_expr > 0), balance_expr), else_=0)), 0),
-        func.count(func.distinct(case((balance_expr > 0, PropertyBilling.property_id), else_=None))),
-        func.coalesce(func.sum(case((balance_expr > 0, PropertyBilling.penalty), else_=0)), 0),
-        func.count(func.distinct(case((and_(PropertyBilling.amount_paid > 0, balance_expr > 0), PropertyBilling.property_id), else_=None))),
+        func.coalesce(func.sum(case((balance_as_of_expr > 0, balance_as_of_expr), else_=0)), 0),
+        func.coalesce(func.sum(case((and_(PropertyBilling.tax_year == ry, balance_as_of_expr > 0), balance_as_of_expr), else_=0)), 0),
+        func.coalesce(func.sum(case((and_(PropertyBilling.tax_year < ry, balance_as_of_expr > 0), balance_as_of_expr), else_=0)), 0),
+        func.count(func.distinct(case((balance_as_of_expr > 0, PropertyBilling.property_id), else_=None))),
+        func.coalesce(func.sum(case((balance_as_of_expr > 0, PropertyBilling.penalty), else_=0)), 0),
+        func.count(func.distinct(case((and_(paid_through_year > 0, balance_as_of_expr > 0), PropertyBilling.property_id), else_=None))),
     ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
         TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
     ).filter(
@@ -770,6 +884,10 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
             "total_collected": float(treasury_row[1] or 0),
             "accounts_paid": int(treasury_row[2] or 0),
             "partial_payments": int(delinquency_row[5] or 0),
+            "cash_collected_this_year": float(cash_collected_this_year or 0),
+            "calendar_applicable_collections": float(calendar_applicable_collections or 0),
+            "prepaid_current_year": float(prepaid_current_year or 0),
+            "future_year_prepayments": float(future_year_prepayments or 0),
         },
         "delinquency": {
             "total_delinquent_amount": float(delinquency_row[0] or 0),
@@ -792,7 +910,9 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
     safe_limit = max(5, min(int(limit or 50), 200))
     total = total_rate_expr()
     due_expr = (PropertyBilling.assessed_value * total) + PropertyBilling.penalty - PropertyBilling.discount
-    balance_expr = due_expr - PropertyBilling.amount_paid
+    paid_through_year = _paid_to_billing_expr(db_session, year_lte=ry)
+    balance_expr = due_expr - paid_through_year
+    raw_cumulative_balance_expr = due_expr - PropertyBilling.amount_paid
     linked_paid_expr = db_session.query(
         func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
     ).filter(
@@ -802,9 +922,19 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
 
     summary = get_rpt_receivables_summary(ry, db_session=db_session)
     metrics = get_reconciliation_metrics(ry, db_session=db_session)
-    expected_end = float(summary.get("ending_receivable", 0) or 0)
+    expected_end = float(summary.get("expected_ending_receivable", summary.get("ending_receivable", 0)) or 0)
     tracker_total = float(metrics.get("delinquency", {}).get("total_unpaid", 0) or 0)
     tracker_variance = tracker_total - expected_end
+    raw_tracker_total = db_session.query(
+        func.coalesce(func.sum(case((raw_cumulative_balance_expr > 0, raw_cumulative_balance_expr), else_=0)), 0)
+    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
+    ).filter(
+        Property.deleted_at == None,
+        PropertyBilling.tax_year <= ry,
+    ).scalar()
+    raw_tracker_total = float(raw_tracker_total or 0)
+    raw_tracker_variance = raw_tracker_total - expected_end
 
     def money_float(value):
         return float(value or 0)
@@ -968,6 +1098,8 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
         "expected_ending_receivable": expected_end,
         "tracker_total_unpaid": tracker_total,
         "tracker_variance": tracker_variance,
+        "raw_tracker_total_unpaid": raw_tracker_total,
+        "raw_tracker_variance": raw_tracker_variance,
         "payment_link_mismatches": [billing_row(row, "Recorded paid does not match linked payment allocations") for row in payment_link_rows],
         "overpaid_or_credit_rows": [billing_row(row, "Overpaid / credit balance row") for row in overpaid_rows],
         "largest_open_balances": [billing_row(row, "Largest open receivable row") for row in largest_balance_rows],

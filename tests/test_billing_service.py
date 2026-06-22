@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 import pytest
+from datetime import datetime
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
-from backend.models import Property, PropertyBilling
+from backend.models import Payment, PaymentBilling, Property, PropertyBilling
 from backend.services.billing_service import (
     calculate_penalty,
     get_compliant_summary_by_barangay,
+    get_reconciliation_diagnostics,
+    get_rpt_receivables_summary,
     get_total_due,
     repair_billing_assessed_value_snapshots,
     sync_existing_billing_assessed_value,
@@ -187,4 +190,94 @@ def test_repair_billing_assessed_value_snapshots_previews_and_applies(db):
     assert rows_after_apply[2024] == 180_000.0
     assert rows_after_apply[2025] == 1_139_960.0
     assert rows_after_apply[2026] == 1_139_960.0
+
+def _payment_for_billing(db, prop, billing, amount, date_paid, or_number):
+    payment = Payment(
+        property_id=prop.id,
+        amount=amount,
+        or_number=or_number,
+        date_paid=date_paid,
+        tax_year=str(billing.tax_year),
+    )
+    db.add(payment)
+    db.flush()
+    db.add(PaymentBilling(
+        payment_id=payment.id,
+        billing_id=billing.id,
+        tax_year=billing.tax_year,
+        amount_paid=amount,
+    ))
+    billing.amount_paid = float(billing.amount_paid or 0) + amount
+    db.flush()
+    return payment
+
+
+def test_reconciliation_is_time_aware_for_prepayments_and_future_postings(db):
+    prepaid_prop = Property(
+        td_number="TD-PREPAID-2026",
+        owner_name="Prepaid Owner",
+        barangay="DINADIAWAN",
+        assessed_value=100_000.0,
+    )
+    late_prop = Property(
+        td_number="TD-LATE-POSTED-2026",
+        owner_name="Late Posted Owner",
+        barangay="DINADIAWAN",
+        assessed_value=100_000.0,
+    )
+    db.add_all([prepaid_prop, late_prop])
+    db.flush()
+
+    prepaid_billing = PropertyBilling(
+        property_id=prepaid_prop.id,
+        tax_year=2026,
+        assessed_value=100_000.0,
+        penalty=0,
+        discount=0,
+        amount_paid=0,
+    )
+    late_billing = PropertyBilling(
+        property_id=late_prop.id,
+        tax_year=2026,
+        assessed_value=100_000.0,
+        penalty=0,
+        discount=0,
+        amount_paid=0,
+    )
+    db.add_all([prepaid_billing, late_billing])
+    db.flush()
+
+    _payment_for_billing(
+        db,
+        prepaid_prop,
+        prepaid_billing,
+        2_000.0,
+        datetime(2025, 12, 20),
+        "OR-PREPAID",
+    )
+    _payment_for_billing(
+        db,
+        late_prop,
+        late_billing,
+        2_000.0,
+        datetime(2029, 1, 19),
+        "OR-FUTURE-DATED",
+    )
+    db.commit()
+
+    summary = get_rpt_receivables_summary(2026, db_session=db)
+    diagnostics = get_reconciliation_diagnostics(2026, db_session=db)
+
+    assert summary["current_year_net_collectible"] == pytest.approx(4_000.0)
+    assert summary["prepaid_current_year"] == pytest.approx(2_000.0)
+    assert summary["applied_collections"] == pytest.approx(2_000.0)
+    assert summary["ending_receivable"] == pytest.approx(2_000.0)
+    assert summary["equation_variance"] == pytest.approx(0.0)
+
+    assert diagnostics["tracker_variance"] == pytest.approx(0.0)
+    assert diagnostics["raw_tracker_variance"] == pytest.approx(-2_000.0)
+    assert any(
+        row["td_number"] == "TD-LATE-POSTED-2026" and row["payment_year"] == 2029
+        for row in diagnostics["current_year_paid_outside_details"]
+    )
 

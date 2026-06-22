@@ -523,6 +523,9 @@ class ReportsPage:
         current_discount = float(data.get("current_year_discount", 0) or 0)
         adjustments = float(data.get("adjustments", 0) or 0)
         collections = float(data.get("collections", 0) or 0)
+        calendar_applicable_collections = float(data.get("calendar_applicable_collections", collections) or 0)
+        prepaid_current_year = float(data.get("prepaid_current_year", 0) or 0)
+        future_year_prepayments = float(data.get("future_year_prepayments", 0) or 0)
         unpaid = float(data.get("ending_receivable", 0) or 0)
         levy = beginning + current_net + adjustments
         brgy_rows = brgy_rows or []
@@ -540,15 +543,20 @@ class ReportsPage:
         current_net = float(assessor.get("current_year_net_collectible", current_net) or 0)
         levy = beginning + current_net + adjustments
         total_collectible = levy
-        treasury_total = float(treasury.get("total_collected", collections) or 0)
-        expected_unpaid = unpaid
-        tracker_total = float(delinquency.get("total_unpaid", expected_unpaid) or 0)
+        cash_collected_this_year = float(treasury.get("cash_collected_this_year", collections) or 0)
+        calendar_applicable_collections = float(treasury.get("calendar_applicable_collections", calendar_applicable_collections) or 0)
+        prepaid_current_year = float(treasury.get("prepaid_current_year", prepaid_current_year) or 0)
+        future_year_prepayments = float(treasury.get("future_year_prepayments", future_year_prepayments) or 0)
+        treasury_total = float(treasury.get("total_collected", data.get("applied_collections", calendar_applicable_collections + prepaid_current_year)) or 0)
+        expected_unpaid = float(data.get("expected_ending_receivable", unpaid) or 0)
+        tracker_total = float(delinquency.get("total_unpaid", unpaid) or 0)
         current_receivable = float(delinquency.get("current_year_receivables", 0) or 0)
-        prior_receivable = max(expected_unpaid - current_receivable, 0)
-        delinquency_total = prior_receivable + current_receivable
+        prior_receivable = float(delinquency.get("prior_year_receivables", max(tracker_total - current_receivable, 0)) or 0)
+        delinquency_total = float(delinquency.get("total_unpaid", prior_receivable + current_receivable) or 0)
         equation_variance = total_collectible - (treasury_total + delinquency_total)
-        tracker_variance = tracker_total - expected_unpaid
-        variance = tracker_variance if abs(tracker_variance) > 1.0 else equation_variance
+        tracker_variance = float(diagnostics.get("tracker_variance", tracker_total - expected_unpaid) or 0)
+        raw_tracker_variance = float(diagnostics.get("raw_tracker_variance", tracker_variance) or 0)
+        variance = equation_variance if abs(equation_variance) > 1.0 else tracker_variance
         abs_variance = max(abs(equation_variance), abs(tracker_variance))
         tolerance = 1.0
         balanced = abs_variance <= tolerance
@@ -634,11 +642,14 @@ class ReportsPage:
             "Collection data",
             ModernTheme.SUCCESS,
             (
-                ("Basic tax collected", money(treasury.get("basic_tax_collected", 0)), ModernTheme.SUCCESS),
+                ("Basic tax collected / credited", money(treasury.get("basic_tax_collected", 0)), ModernTheme.SUCCESS),
+                ("Cash collected this fiscal year", money(cash_collected_this_year), "#f8fafc"),
+                ("Current-year tax prepaid before year", money(prepaid_current_year), "#38bdf8"),
+                ("Future prepayments excluded", money(future_year_prepayments), "#f59e0b"),
                 ("No. of accounts paid", f"{int(treasury.get('accounts_paid', 0) or 0):,}", "#f8fafc"),
                 ("No. of partial payments", f"{int(treasury.get('partial_payments', 0) or 0):,}", "#f8fafc"),
             ),
-            "Total collected",
+            "Applied collections / credits",
             money(treasury_total),
         )
         department_card(
@@ -660,7 +671,7 @@ class ReportsPage:
         grid.pack(fill="x", pady=(0, 14))
         grid.grid_columnconfigure((0, 1, 2), weight=1)
         stat_card(grid, 0, "Total Collectible (A)", money(total_collectible), ModernTheme.PRIMARY, f"Beginning {money(beginning)} + net current {money(current_net)} + adjustments {money(adjustments)}")
-        stat_card(grid, 1, "Collections (B)", money(treasury_total), ModernTheme.SUCCESS, f"Collection rate: {collection_rate:.1f}%")
+        stat_card(grid, 1, "Collections / Credits (B)", money(treasury_total), ModernTheme.SUCCESS, f"Cash applied {money(calendar_applicable_collections)} + prepayments {money(prepaid_current_year)}")
         stat_card(grid, 2, "Ending Receivable (C)", money(delinquency_total), ModernTheme.DANGER, f"Receivable rate: {delinquency_rate:.1f}%")
 
         equation = ctk.CTkFrame(
@@ -722,9 +733,11 @@ class ReportsPage:
             ("Equation substitution (A = B + C)", f"{money(total_collectible)} = {money(treasury_total)} + {money(delinquency_total)}"),
             ("Equation variance [A - (B + C)]", money(equation_variance)),
             ("Net current collectible", f"{money(current_levy)} + {money(current_penalty)} - {money(current_discount)} = {money(current_net)}"),
+            ("Collections / credits applied", f"{money(calendar_applicable_collections)} + {money(prepaid_current_year)} = {money(treasury_total)}"),
+            ("Future-year prepayments excluded from equation", money(future_year_prepayments)),
             ("Prior-year + current-year receivables", f"{money(prior_receivable)} + {money(current_receivable)} = {money(delinquency_total)}"),
-            ("Raw RPT tracker total unpaid", money(tracker_total)),
-            ("Tracker variance [tracker - expected ending]", money(tracker_variance)),
+            ("As-of tracker variance [tracker - expected ending]", money(tracker_variance)),
+            ("Raw cumulative tracker drift", money(raw_tracker_variance)),
             ("Collection rate", f"{collection_rate:.1f}%"),
             ("Ending receivable rate", f"{delinquency_rate:.1f}%"),
         )
@@ -743,7 +756,7 @@ class ReportsPage:
         detail_text = (
             "The accounting equation and RPT tracker agree within the system tolerance."
             if balanced else
-            "The equation uses the expected ending receivable, but the RPT tracker unpaid total does not match it. Review billing balances, posted collections, and imported data before certification."
+            "Review the diagnostic rows before certification. Timing rows are usually advance or late-posted payments; link gaps and credit rows need data cleanup before Accounting/COA reporting."
         )
         ctk.CTkLabel(result, text=result_text, font=("Inter", 14, "bold"), text_color=result_color).pack(anchor="w", padx=18, pady=(16, 4))
         ctk.CTkLabel(result, text=f"Variance: {money(variance)}", font=("Consolas", 18, "bold"), text_color=result_color).pack(anchor="w", padx=18)
@@ -763,18 +776,19 @@ class ReportsPage:
 
         diag_summary = ctk.CTkFrame(diag, fg_color="transparent")
         diag_summary.pack(fill="x", padx=16, pady=(0, 10))
-        diag_summary.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        diag_summary.grid_columnconfigure((0, 1, 2, 3, 4), weight=1)
 
         def diag_chip(parent, col, title, value, color):
             chip = ctk.CTkFrame(parent, fg_color="#0f172a", corner_radius=7, border_width=1, border_color="#334155")
-            chip.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 6, 0 if col == 3 else 6))
+            chip.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 6, 0 if col == 4 else 6))
             ctk.CTkLabel(chip, text=title.upper(), font=("Inter", 9, "bold"), text_color=ModernTheme.TEXT_GRAY).pack(anchor="w", padx=10, pady=(8, 2))
             ctk.CTkLabel(chip, text=value, font=("Consolas", 12, "bold"), text_color=color).pack(anchor="w", padx=10, pady=(0, 8))
 
-        diag_chip(diag_summary, 0, "Tracker variance", money(diagnostics.get("tracker_variance", variance)), status_color)
-        diag_chip(diag_summary, 1, "Payment link gaps", str(len(diagnostics.get("payment_link_mismatches", []))), "#f59e0b")
-        diag_chip(diag_summary, 2, "Overpaid / credits", str(len(diagnostics.get("overpaid_or_credit_rows", []))), "#22c55e")
-        diag_chip(diag_summary, 3, "Timing/prepayment groups", str(len(diagnostics.get("prior_year_collections", [])) + len(diagnostics.get("future_year_collections", [])) + len(diagnostics.get("current_year_paid_outside_selected_year", []))), "#38bdf8")
+        diag_chip(diag_summary, 0, "Equation variance", money(equation_variance), status_color)
+        diag_chip(diag_summary, 1, "Raw tracker drift", money(raw_tracker_variance), "#f59e0b")
+        diag_chip(diag_summary, 2, "Payment link gaps", str(len(diagnostics.get("payment_link_mismatches", []))), "#f59e0b")
+        diag_chip(diag_summary, 3, "Overpaid / credits", str(len(diagnostics.get("overpaid_or_credit_rows", []))), "#22c55e")
+        diag_chip(diag_summary, 4, "Timing/prepayment groups", str(len(diagnostics.get("prior_year_collections", [])) + len(diagnostics.get("future_year_collections", [])) + len(diagnostics.get("current_year_paid_outside_selected_year", []))), "#38bdf8")
 
         diag_rows = []
         for item in diagnostics.get("payment_link_mismatches", [])[:8]:
