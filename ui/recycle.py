@@ -40,7 +40,8 @@ class RecycleBinPage:
             tr("recycle.table.td"),
             tr("recycle.table.owner"),
             tr("recycle.table.location"),
-            tr("recycle.table.value")
+            tr("recycle.table.value"),
+            "DELETED AT"
         )
         self.tree = ttk.Treeview(table_fr, columns=self.cols, show="headings", style="Recycle.Treeview")
         
@@ -50,6 +51,7 @@ class RecycleBinPage:
         
         self.tree.column(tr("recycle.table.id"), width=0, stretch=tk.NO)
         self.tree.column(tr("recycle.table.owner"), width=300, anchor="w")
+        self.tree.column("DELETED AT", width=150, anchor="center")
         
         scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrolly.set)
@@ -96,7 +98,7 @@ class RecycleBinPage:
         for r in self.tree.get_children(): self.tree.delete(r)
         for i, row in enumerate(rows):
             tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-            # (id, td_number, owner_name, location, total)
+            # (id, td_number, owner_name, location/barangay, assessed_value, deleted_at)
             self.tree.insert("", "end", values=row, tags=(tag,))
         self.on_selection_change()
 

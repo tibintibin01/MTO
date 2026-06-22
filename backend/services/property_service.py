@@ -512,7 +512,7 @@ def get_deleted_properties(limit=50, cursor=None, db_session: Session = None):
     if cursor:
         query = query.filter(Property.id < int(cursor))
 
-    rows = query.order_by(Property.id.desc()).limit(safe_limit + 1).all()
+    rows = query.order_by(Property.deleted_at.desc(), Property.id.desc()).limit(safe_limit + 1).all()
 
     has_more = len(rows) > safe_limit
     items = rows[:safe_limit]
@@ -520,7 +520,14 @@ def get_deleted_properties(limit=50, cursor=None, db_session: Session = None):
 
     return {
         "items": [
-            (prop.id, prop.td_number, prop.owner_name, prop.location, prop.assessed_value)
+            (
+                prop.id,
+                prop.td_number,
+                prop.owner_name,
+                prop.barangay or prop.location,
+                prop.assessed_value,
+                prop.deleted_at.strftime("%Y-%m-%d %H:%M") if prop.deleted_at else "",
+            )
             for prop in items
         ],
         "next_cursor": next_cursor,
