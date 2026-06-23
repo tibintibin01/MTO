@@ -13,6 +13,7 @@ from backend.services.billing_service import (
     get_rpt_receivables_summary,
     get_total_due,
     repair_billing_assessed_value_snapshots,
+    repair_payment_billing_allocations,
     sync_existing_billing_assessed_value,
 )
 
@@ -281,3 +282,92 @@ def test_reconciliation_is_time_aware_for_prepayments_and_future_postings(db):
         for row in diagnostics["current_year_paid_outside_details"]
     )
 
+
+
+def test_reconciliation_flags_unlinked_ledger_payment(db):
+    prop = Property(
+        td_number="TD-UNLINKED",
+        owner_name="Unlinked Owner",
+        barangay="IPIL",
+        assessed_value=65_820.0,
+    )
+    db.add(prop)
+    db.flush()
+
+    billing = PropertyBilling(
+        property_id=prop.id,
+        tax_year=2026,
+        assessed_value=65_820.0,
+        penalty=0,
+        discount=0,
+        amount_paid=0,
+    )
+    db.add(billing)
+    payment = Payment(
+        property_id=prop.id,
+        amount=1_448.04,
+        penalty=131.64,
+        discount=0,
+        or_number="8333352",
+        date_paid=datetime(2026, 5, 14),
+        tax_year="2026",
+    )
+    db.add(payment)
+    db.commit()
+
+    diagnostics = get_reconciliation_diagnostics(2026, db_session=db)
+
+    assert any(
+        row["td_number"] == "TD-UNLINKED" and row["or_number"] == "8333352"
+        for row in diagnostics["unlinked_payments"]
+    )
+
+
+def test_repair_payment_billing_allocations_links_payment_and_recalculates(db):
+    prop = Property(
+        td_number="TD-REPAIR-LINK",
+        owner_name="Repair Link Owner",
+        barangay="IPIL",
+        assessed_value=65_820.0,
+    )
+    db.add(prop)
+    db.flush()
+
+    billing = PropertyBilling(
+        property_id=prop.id,
+        tax_year=2026,
+        assessed_value=65_820.0,
+        penalty=0,
+        discount=0,
+        amount_paid=0,
+    )
+    db.add(billing)
+    payment = Payment(
+        property_id=prop.id,
+        amount=1_448.04,
+        penalty=131.64,
+        discount=0,
+        or_number="8333352",
+        date_paid=datetime(2026, 5, 14),
+        tax_year="2026",
+    )
+    db.add(payment)
+    db.commit()
+
+    preview = repair_payment_billing_allocations(dry_run=True, db_session=db)
+    assert preview["missing_links"] == 1
+    assert db.query(PaymentBilling).count() == 0
+
+    applied = repair_payment_billing_allocations(dry_run=False, db_session=db)
+    db.commit()
+
+    assert applied["missing_links"] == 1
+    assert applied["billing_rows_recalculated"] == 1
+    link = db.query(PaymentBilling).filter(PaymentBilling.payment_id == payment.id).one()
+    assert link.billing_id == billing.id
+    assert float(link.amount_paid) == pytest.approx(1_448.04)
+    db.refresh(billing)
+    assert float(billing.amount_paid) == pytest.approx(1_448.04)
+
+    diagnostics = get_reconciliation_diagnostics(2026, db_session=db)
+    assert not any(row["td_number"] == "TD-REPAIR-LINK" for row in diagnostics["unlinked_payments"])

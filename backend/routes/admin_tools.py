@@ -443,6 +443,47 @@ async def repair_billing_assessed_values(
     return result
 
 
+@router.post("/system/repair-payment-links", dependencies=[Depends(admin_only)])
+async def repair_payment_billing_links(
+    dry_run: bool = True,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """Repairs missing/stale payment-to-billing allocation links."""
+    from backend.services.billing_service import repair_payment_billing_allocations
+    from backend.services.system_service import log_action
+
+    result = repair_payment_billing_allocations(
+        dry_run=dry_run,
+        db_session=db_session,
+    )
+
+    if dry_run:
+        return result
+
+    changed = int(result.get("missing_links", 0) or 0) + int(result.get("billing_rows_recalculated", 0) or 0)
+    if changed:
+        log_action(
+            current_user,
+            (
+                "Payment allocation repair: "
+                f"{result.get('missing_links', 0)} missing link(s), "
+                f"{result.get('billing_rows_recalculated', 0)} billing row(s) recalculated across "
+                f"{result.get('properties_affected', 0)} property/properties."
+            ),
+            db_session=db_session,
+        )
+    db_session.commit()
+    mto_logger.info(
+        "Payment allocation repair completed",
+        user=current_user.get("username"),
+        missing_links=result.get("missing_links", 0),
+        billing_rows_recalculated=result.get("billing_rows_recalculated", 0),
+        properties_affected=result.get("properties_affected", 0),
+    )
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Billing Year Sync
 # ---------------------------------------------------------------------------

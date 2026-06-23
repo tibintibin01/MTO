@@ -178,6 +178,15 @@ def repair_billing_av(dry_run: bool = True):
     )
 
 
+def repair_payment_links(dry_run: bool = True):
+    """Preview or repair missing/stale payment allocation links. Admin only."""
+    return api_request(
+        "POST",
+        f"/system/repair-payment-links?dry_run={'true' if dry_run else 'false'}",
+        timeout=180,
+    )
+
+
 def audit_td_numbers():
     """
     Scans all active properties and returns those whose TD number

@@ -519,6 +519,163 @@ def sync_payment_billings(payment_id, billing_rows, db_session: Session = None):
     recalculate_billing_balances(affected_billing_ids, db_session=db_session)
 
 
+def repair_payment_billing_allocations(
+    dry_run=True,
+    sample_limit=100,
+    db_session: Session = None,
+):
+    """
+    Repairs the accounting bridge between payments and yearly billings.
+
+    The visible ledger reads from payments, while reconciliation reads from
+    payment_billings plus property_billings. Older imports/manual edits can
+    leave a payment row without its allocation link, or leave
+    PropertyBilling.amount_paid stale after links changed. This function fixes
+    only unambiguous cases:
+      - active property only
+      - payment tax_year resolves to exactly one numeric year
+      - payment has no existing PaymentBilling rows
+
+    It never changes OR numbers, payment dates, or payment amounts.
+    """
+    empty = {
+        "dry_run": bool(dry_run),
+        "payments_scanned": 0,
+        "missing_links": 0,
+        "ambiguous_payments_skipped": 0,
+        "billing_rows_to_recalculate": 0,
+        "billing_rows_recalculated": 0,
+        "billing_rows_created": 0,
+        "properties_affected": 0,
+        "sample": [],
+    }
+    if not db_session:
+        return empty
+
+    sample_limit = max(1, min(int(sample_limit or 100), 500))
+
+    linked_paid_expr = db_session.query(
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
+    ).filter(
+        PaymentBilling.billing_id == PropertyBilling.id
+    ).correlate(PropertyBilling).scalar_subquery()
+
+    mismatch_rows = db_session.query(PropertyBilling.id, PropertyBilling.property_id).join(
+        Property, Property.id == PropertyBilling.property_id
+    ).filter(
+        Property.deleted_at == None,
+        func.abs(PropertyBilling.amount_paid - linked_paid_expr) > 0.01,
+    ).all()
+    mismatch_billing_ids = {int(row[0]) for row in mismatch_rows if row[0]}
+    affected_property_ids = {int(row[1]) for row in mismatch_rows if row[1]}
+
+    has_links = db_session.query(PaymentBilling.id).filter(
+        PaymentBilling.payment_id == Payment.id
+    ).exists()
+    payment_rows = db_session.query(Payment, Property).join(
+        Property, Property.id == Payment.property_id
+    ).filter(
+        Property.deleted_at == None,
+        Payment.amount != None,
+        ~has_links,
+    ).order_by(Payment.id.asc()).all()
+
+    sample = []
+    missing_links = 0
+    skipped = 0
+    created_billings = 0
+    affected_billing_ids = set(mismatch_billing_ids)
+
+    for payment, prop in payment_rows:
+        years = []
+        for part in normalize_tax_years(payment.tax_year):
+            part = str(part).strip()
+            if part.isdigit():
+                years.append(int(part))
+        if len(years) != 1:
+            skipped += 1
+            if len(sample) < sample_limit:
+                sample.append({
+                    "action": "skipped_ambiguous_tax_year",
+                    "td_number": prop.td_number,
+                    "owner_name": prop.owner_name,
+                    "or_number": payment.or_number,
+                    "tax_year": payment.tax_year,
+                    "amount": float(Decimal(str(payment.amount or 0))),
+                })
+            continue
+
+        tax_year = years[0]
+        amount = Decimal(str(payment.amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if amount <= Decimal("0.00"):
+            skipped += 1
+            continue
+
+        billing = db_session.query(PropertyBilling).filter(
+            PropertyBilling.property_id == prop.id,
+            PropertyBilling.tax_year == tax_year,
+        ).first()
+
+        missing_links += 1
+        affected_property_ids.add(int(prop.id))
+        if len(sample) < sample_limit:
+            sample.append({
+                "action": "create_payment_billing_link",
+                "td_number": prop.td_number,
+                "owner_name": prop.owner_name,
+                "or_number": payment.or_number,
+                "payment_id": payment.id,
+                "tax_year": tax_year,
+                "amount": float(amount),
+                "billing_exists": bool(billing),
+            })
+
+        if dry_run:
+            continue
+
+        if not billing:
+            billing = PropertyBilling(
+                property_id=prop.id,
+                tax_year=tax_year,
+                assessed_value=Decimal(str(prop.assessed_value or 0)),
+                penalty=Decimal("0.00"),
+                discount=Decimal("0.00"),
+                amount_paid=Decimal("0.00"),
+                is_archived=False,
+            )
+            db_session.add(billing)
+            db_session.flush()
+            created_billings += 1
+
+        db_session.add(PaymentBilling(
+            payment_id=payment.id,
+            billing_id=billing.id,
+            tax_year=tax_year,
+            amount_paid=amount,
+        ))
+        affected_billing_ids.add(int(billing.id))
+
+    rows_to_recalculate = len(affected_billing_ids)
+    rows_recalculated = 0
+    if not dry_run and affected_billing_ids:
+        db_session.flush()
+        recalculate_billing_balances(sorted(affected_billing_ids), db_session=db_session)
+        rows_recalculated = rows_to_recalculate
+        db_session.flush()
+
+    return {
+        "dry_run": bool(dry_run),
+        "payments_scanned": len(payment_rows),
+        "missing_links": missing_links,
+        "ambiguous_payments_skipped": skipped,
+        "billing_rows_to_recalculate": rows_to_recalculate,
+        "billing_rows_recalculated": rows_recalculated,
+        "billing_rows_created": created_billings,
+        "properties_affected": len(affected_property_ids),
+        "sample": sample,
+    }
+
+
 def get_property_billing_history(property_id=None, term=None, limit=50, db_session: Session = None):
     safe_limit = max(1, int(limit))
     
@@ -1093,6 +1250,57 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
         for row in outside_detail_rows
     ]
 
+    unlinked_raw_rows = db_session.query(
+        Payment.id,
+        Property.td_number,
+        Property.owner_name,
+        Property.barangay,
+        Payment.tax_year,
+        Payment.date_paid,
+        Payment.or_number,
+        Payment.amount,
+    ).join(Property, Property.id == Payment.property_id).outerjoin(
+        PaymentBilling, PaymentBilling.payment_id == Payment.id
+    ).filter(
+        Property.deleted_at == None,
+        Payment.amount != None,
+    ).group_by(
+        Payment.id,
+        Property.td_number,
+        Property.owner_name,
+        Property.barangay,
+        Payment.tax_year,
+        Payment.date_paid,
+        Payment.or_number,
+        Payment.amount,
+    ).having(func.count(PaymentBilling.id) == 0).order_by(
+        Payment.date_paid.desc(), Payment.id.desc()
+    ).limit(safe_limit * 4).all()
+
+    unlinked_payments = []
+    for row in unlinked_raw_rows:
+        years = []
+        for part in normalize_tax_years(row[4]):
+            part = str(part).strip()
+            if part.isdigit():
+                years.append(int(part))
+        if years and not any(year <= ry for year in years):
+            continue
+        display_year = years[0] if len(years) == 1 else (str(row[4] or "") or None)
+        unlinked_payments.append({
+            "issue": "Payment exists in ledger but has no billing allocation link",
+            "payment_id": int(row[0]),
+            "td_number": row[1],
+            "owner_name": row[2],
+            "barangay": row[3],
+            "tax_year": display_year,
+            "payment_date": row[5].strftime("%Y-%m-%d") if row[5] else None,
+            "or_number": row[6],
+            "amount": money_float(row[7]),
+        })
+        if len(unlinked_payments) >= safe_limit:
+            break
+
     return {
         "report_year": ry,
         "expected_ending_receivable": expected_end,
@@ -1101,6 +1309,7 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
         "raw_tracker_total_unpaid": raw_tracker_total,
         "raw_tracker_variance": raw_tracker_variance,
         "payment_link_mismatches": [billing_row(row, "Recorded paid does not match linked payment allocations") for row in payment_link_rows],
+        "unlinked_payments": unlinked_payments,
         "overpaid_or_credit_rows": [billing_row(row, "Overpaid / credit balance row") for row in overpaid_rows],
         "largest_open_balances": [billing_row(row, "Largest open receivable row") for row in largest_balance_rows],
         "prior_year_collections": prior_year_collections,

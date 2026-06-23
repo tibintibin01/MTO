@@ -786,11 +786,17 @@ class ReportsPage:
 
         diag_chip(diag_summary, 0, "Equation variance", money(equation_variance), status_color)
         diag_chip(diag_summary, 1, "Raw tracker drift", money(raw_tracker_variance), "#f59e0b")
-        diag_chip(diag_summary, 2, "Payment link gaps", str(len(diagnostics.get("payment_link_mismatches", []))), "#f59e0b")
+        link_issue_count = len(diagnostics.get("payment_link_mismatches", [])) + len(diagnostics.get("unlinked_payments", []))
+        diag_chip(diag_summary, 2, "Payment link issues", str(link_issue_count), "#f59e0b")
         diag_chip(diag_summary, 3, "Overpaid / credits", str(len(diagnostics.get("overpaid_or_credit_rows", []))), "#22c55e")
         diag_chip(diag_summary, 4, "Timing/prepayment groups", str(len(diagnostics.get("prior_year_collections", [])) + len(diagnostics.get("future_year_collections", [])) + len(diagnostics.get("current_year_paid_outside_selected_year", []))), "#38bdf8")
 
         diag_rows = []
+        for item in diagnostics.get("unlinked_payments", [])[:10]:
+            payment_date = item.get("payment_date") or "No date"
+            or_number = item.get("or_number") or "No OR"
+            scope = f"{item.get('barangay') or '-'} | {payment_date} | OR {or_number}"
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), scope, item.get("amount", 0)))
         for item in diagnostics.get("payment_link_mismatches", [])[:8]:
             diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("difference", 0)))
         for item in diagnostics.get("overpaid_or_credit_rows", [])[:8]:

@@ -411,6 +411,18 @@ class SystemAdminPage:
         )
         self.repair_av_btn.grid(row=0, column=1, padx=5)
 
+        self.repair_links_btn = ctk.CTkButton(
+            data_btn_fr,
+            text="REPAIR PAYMENT LINKS",
+            command=self.repair_payment_links,
+            height=button_height,
+            width=data_button_width + 35,
+            font=ModernTheme.BUTTON,
+            fg_color="#0891b2",
+            hover_color="#0e7490",
+        )
+        self.repair_links_btn.grid(row=1, column=1, padx=5, pady=(8, 0))
+
         self.portal_publish_btn = ctk.CTkButton(
             data_btn_fr,
             text="PUBLISH PORTAL",
@@ -1076,6 +1088,98 @@ class SystemAdminPage:
             except Exception as e:
                 def show_error(err=str(e)):
                     messagebox.showerror("Billing AV Repair", err)
+                    reset_button()
+                self.container.after(0, show_error)
+
+        threading.Thread(target=preview, daemon=True).start()
+
+    def repair_payment_links(self):
+        """Preview and repair missing/stale PaymentBilling allocation links."""
+        import threading
+        import api_clients.system_service as system_svc
+
+        def reset_button():
+            if self.container.winfo_exists():
+                self.repair_links_btn.configure(state="normal", text="REPAIR PAYMENT LINKS")
+
+        self.repair_links_btn.configure(state="disabled", text="PREVIEWING...")
+
+        def preview():
+            try:
+                res = system_svc.repair_payment_links(dry_run=True)
+                missing = int(res.get("missing_links", 0) or 0)
+                recalc = int(res.get("billing_rows_to_recalculate", 0) or 0)
+                skipped = int(res.get("ambiguous_payments_skipped", 0) or 0)
+                props = int(res.get("properties_affected", 0) or 0)
+                sample = res.get("sample", []) or []
+
+                if missing <= 0 and recalc <= 0:
+                    def show_none():
+                        messagebox.showinfo(
+                            "Payment Link Repair",
+                            "No missing payment links or stale paid totals found.",
+                            parent=self.container.winfo_toplevel(),
+                        )
+                        reset_button()
+                    self.container.after(0, show_none)
+                    return
+
+                examples = []
+                for item in sample[:6]:
+                    examples.append(
+                        f"{item.get('td_number')} | OR {item.get('or_number') or '-'} | "
+                        f"{item.get('tax_year') or '-'} | {float(item.get('amount', 0) or 0):,.2f}"
+                    )
+                example_text = "\n".join(examples) or "No examples available."
+                msg = (
+                    "Repair payment allocation links?\n\n"
+                    f"Missing payment links: {missing:,}\n"
+                    f"Billing paid totals to recalculate: {recalc:,}\n"
+                    f"Properties affected: {props:,}\n"
+                    f"Ambiguous payments skipped: {skipped:,}\n\n"
+                    "Examples:\n"
+                    f"{example_text}\n\n"
+                    "This does not change OR numbers, payment dates, or payment amounts. "
+                    "It links payments to their billing year and recalculates paid totals."
+                )
+
+                def ask_confirm():
+                    if messagebox.askyesno("Confirm Payment Link Repair", msg, parent=self.container.winfo_toplevel()):
+                        self.repair_links_btn.configure(state="disabled", text="REPAIRING...")
+                        threading.Thread(target=apply_repair, daemon=True).start()
+                    else:
+                        reset_button()
+
+                self.container.after(0, ask_confirm)
+            except Exception as e:
+                def show_error(err=str(e)):
+                    messagebox.showerror("Payment Link Repair", err, parent=self.container.winfo_toplevel())
+                    reset_button()
+                self.container.after(0, show_error)
+
+        def apply_repair():
+            try:
+                res = system_svc.repair_payment_links(dry_run=False)
+                missing = int(res.get("missing_links", 0) or 0)
+                recalc = int(res.get("billing_rows_recalculated", 0) or 0)
+                created = int(res.get("billing_rows_created", 0) or 0)
+                props = int(res.get("properties_affected", 0) or 0)
+
+                def show_done():
+                    messagebox.showinfo(
+                        "Payment Link Repair Complete",
+                        f"Created {missing:,} payment link(s).\n"
+                        f"Created {created:,} missing billing row(s).\n"
+                        f"Recalculated {recalc:,} billing paid total(s).\n"
+                        f"Properties affected: {props:,}.\n\n"
+                        "Reload Reconciliation to confirm the diagnostic list.",
+                        parent=self.container.winfo_toplevel(),
+                    )
+                    reset_button()
+                self.container.after(0, show_done)
+            except Exception as e:
+                def show_error(err=str(e)):
+                    messagebox.showerror("Payment Link Repair", err, parent=self.container.winfo_toplevel())
                     reset_button()
                 self.container.after(0, show_error)
 
