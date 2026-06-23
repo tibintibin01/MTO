@@ -371,3 +371,66 @@ def test_repair_payment_billing_allocations_links_payment_and_recalculates(db):
 
     diagnostics = get_reconciliation_diagnostics(2026, db_session=db)
     assert not any(row["td_number"] == "TD-REPAIR-LINK" for row in diagnostics["unlinked_payments"])
+
+
+def test_repair_payment_billing_allocations_fixes_stale_credit_amounts(db):
+    prop = Property(
+        td_number="TD-STALE-CREDIT",
+        owner_name="Stale Credit Owner",
+        barangay="MALIGAYA",
+        assessed_value=12_220.0,
+    )
+    db.add(prop)
+    db.flush()
+
+    billing = PropertyBilling(
+        property_id=prop.id,
+        tax_year=2026,
+        assessed_value=12_220.0,
+        penalty=0,
+        discount=224.44,
+        amount_paid=2_019.96,
+    )
+    db.add(billing)
+    payment = Payment(
+        property_id=prop.id,
+        amount=219.96,
+        penalty=0,
+        discount=24.44,
+        or_number="5970936",
+        date_paid=datetime(2026, 1, 13),
+        tax_year="2026",
+    )
+    db.add(payment)
+    db.flush()
+    db.add(PaymentBilling(
+        payment_id=payment.id,
+        billing_id=billing.id,
+        tax_year=2026,
+        amount_paid=2_019.96,
+    ))
+    db.commit()
+
+    diagnostics_before = get_reconciliation_diagnostics(2026, db_session=db)
+    assert any(
+        row["td_number"] == "TD-STALE-CREDIT" and row["balance"] == pytest.approx(-2_000.0)
+        for row in diagnostics_before["overpaid_or_credit_rows"]
+    )
+
+    preview = repair_payment_billing_allocations(dry_run=True, db_session=db)
+    assert preview["stale_link_amounts"] == 1
+    assert preview["stale_billing_summaries"] == 1
+
+    applied = repair_payment_billing_allocations(dry_run=False, db_session=db)
+    db.commit()
+
+    assert applied["stale_link_amounts"] == 1
+    assert applied["stale_billing_summaries"] == 1
+    db.refresh(billing)
+    link = db.query(PaymentBilling).filter(PaymentBilling.payment_id == payment.id).one()
+    assert float(link.amount_paid) == pytest.approx(219.96)
+    assert float(billing.amount_paid) == pytest.approx(219.96)
+    assert float(billing.discount) == pytest.approx(24.44)
+
+    diagnostics_after = get_reconciliation_diagnostics(2026, db_session=db)
+    assert not any(row["td_number"] == "TD-STALE-CREDIT" for row in diagnostics_after["overpaid_or_credit_rows"])

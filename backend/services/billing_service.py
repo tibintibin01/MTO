@@ -529,12 +529,12 @@ def repair_payment_billing_allocations(
 
     The visible ledger reads from payments, while reconciliation reads from
     payment_billings plus property_billings. Older imports/manual edits can
-    leave a payment row without its allocation link, or leave
-    PropertyBilling.amount_paid stale after links changed. This function fixes
-    only unambiguous cases:
+    leave a payment row without its allocation link, leave the link amount
+    stale, or leave billing paid/penalty/discount summaries stale. This
+    function fixes only unambiguous cases:
       - active property only
-      - payment tax_year resolves to exactly one numeric year
-      - payment has no existing PaymentBilling rows
+      - missing links: payment tax_year resolves to exactly one numeric year
+      - stale single-link payments: payment has one link and one tax year
 
     It never changes OR numbers, payment dates, or payment amounts.
     """
@@ -542,6 +542,8 @@ def repair_payment_billing_allocations(
         "dry_run": bool(dry_run),
         "payments_scanned": 0,
         "missing_links": 0,
+        "stale_link_amounts": 0,
+        "stale_billing_summaries": 0,
         "ambiguous_payments_skipped": 0,
         "billing_rows_to_recalculate": 0,
         "billing_rows_recalculated": 0,
@@ -553,6 +555,18 @@ def repair_payment_billing_allocations(
         return empty
 
     sample_limit = max(1, min(int(sample_limit or 100), 500))
+    sample = []
+    affected_property_ids = set()
+    affected_billing_ids = set()
+    missing_links = 0
+    stale_link_amounts = 0
+    stale_billing_summaries = 0
+    skipped = 0
+    created_billings = 0
+
+    def add_sample(item):
+        if len(sample) < sample_limit:
+            sample.append(item)
 
     linked_paid_expr = db_session.query(
         func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
@@ -566,8 +580,11 @@ def repair_payment_billing_allocations(
         Property.deleted_at == None,
         func.abs(PropertyBilling.amount_paid - linked_paid_expr) > 0.01,
     ).all()
-    mismatch_billing_ids = {int(row[0]) for row in mismatch_rows if row[0]}
-    affected_property_ids = {int(row[1]) for row in mismatch_rows if row[1]}
+    for billing_id, property_id in mismatch_rows:
+        if billing_id:
+            affected_billing_ids.add(int(billing_id))
+        if property_id:
+            affected_property_ids.add(int(property_id))
 
     has_links = db_session.query(PaymentBilling.id).filter(
         PaymentBilling.payment_id == Payment.id
@@ -580,12 +597,6 @@ def repair_payment_billing_allocations(
         ~has_links,
     ).order_by(Payment.id.asc()).all()
 
-    sample = []
-    missing_links = 0
-    skipped = 0
-    created_billings = 0
-    affected_billing_ids = set(mismatch_billing_ids)
-
     for payment, prop in payment_rows:
         years = []
         for part in normalize_tax_years(payment.tax_year):
@@ -594,15 +605,14 @@ def repair_payment_billing_allocations(
                 years.append(int(part))
         if len(years) != 1:
             skipped += 1
-            if len(sample) < sample_limit:
-                sample.append({
-                    "action": "skipped_ambiguous_tax_year",
-                    "td_number": prop.td_number,
-                    "owner_name": prop.owner_name,
-                    "or_number": payment.or_number,
-                    "tax_year": payment.tax_year,
-                    "amount": float(Decimal(str(payment.amount or 0))),
-                })
+            add_sample({
+                "action": "skipped_ambiguous_tax_year",
+                "td_number": prop.td_number,
+                "owner_name": prop.owner_name,
+                "or_number": payment.or_number,
+                "tax_year": payment.tax_year,
+                "amount": float(Decimal(str(payment.amount or 0))),
+            })
             continue
 
         tax_year = years[0]
@@ -618,17 +628,16 @@ def repair_payment_billing_allocations(
 
         missing_links += 1
         affected_property_ids.add(int(prop.id))
-        if len(sample) < sample_limit:
-            sample.append({
-                "action": "create_payment_billing_link",
-                "td_number": prop.td_number,
-                "owner_name": prop.owner_name,
-                "or_number": payment.or_number,
-                "payment_id": payment.id,
-                "tax_year": tax_year,
-                "amount": float(amount),
-                "billing_exists": bool(billing),
-            })
+        add_sample({
+            "action": "create_payment_billing_link",
+            "td_number": prop.td_number,
+            "owner_name": prop.owner_name,
+            "or_number": payment.or_number,
+            "payment_id": payment.id,
+            "tax_year": tax_year,
+            "amount": float(amount),
+            "billing_exists": bool(billing),
+        })
 
         if dry_run:
             continue
@@ -655,6 +664,104 @@ def repair_payment_billing_allocations(
         ))
         affected_billing_ids.add(int(billing.id))
 
+    single_link_rows = db_session.query(Payment, PaymentBilling, PropertyBilling, Property).join(
+        PaymentBilling, PaymentBilling.payment_id == Payment.id
+    ).join(
+        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
+    ).join(
+        Property, Property.id == Payment.property_id
+    ).filter(
+        Property.deleted_at == None,
+        Payment.amount != None,
+    ).all()
+
+    link_counts = {}
+    for payment, _link, _billing, _prop in single_link_rows:
+        link_counts[payment.id] = link_counts.get(payment.id, 0) + 1
+
+    for payment, link, billing, prop in single_link_rows:
+        if link_counts.get(payment.id, 0) != 1:
+            continue
+        years = [int(str(part).strip()) for part in normalize_tax_years(payment.tax_year) if str(part).strip().isdigit()]
+        if len(years) != 1 or years[0] != int(billing.tax_year):
+            continue
+
+        expected_amount = Decimal(str(payment.amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        current_amount = Decimal(str(link.amount_paid or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if abs(expected_amount - current_amount) <= Decimal("0.01"):
+            continue
+
+        stale_link_amounts += 1
+        affected_property_ids.add(int(prop.id))
+        affected_billing_ids.add(int(billing.id))
+        add_sample({
+            "action": "fix_stale_link_amount",
+            "td_number": prop.td_number,
+            "owner_name": prop.owner_name,
+            "or_number": payment.or_number,
+            "payment_id": payment.id,
+            "tax_year": int(billing.tax_year),
+            "old_amount": float(current_amount),
+            "amount": float(expected_amount),
+        })
+        if not dry_run:
+            link.amount_paid = expected_amount
+
+    summary_rows = db_session.query(
+        PropertyBilling,
+        Property,
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
+        func.coalesce(func.sum(Payment.penalty), 0),
+        func.coalesce(func.sum(Payment.discount), 0),
+        func.count(PaymentBilling.id),
+    ).join(
+        Property, Property.id == PropertyBilling.property_id
+    ).outerjoin(
+        PaymentBilling, PaymentBilling.billing_id == PropertyBilling.id
+    ).outerjoin(
+        Payment, Payment.id == PaymentBilling.payment_id
+    ).filter(
+        Property.deleted_at == None,
+    ).group_by(PropertyBilling.id, Property.id).all()
+
+    for billing, prop, linked_paid, linked_penalty, linked_discount, link_count in summary_rows:
+        if int(link_count or 0) <= 0:
+            continue
+        expected_paid = Decimal(str(linked_paid or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        expected_penalty = Decimal(str(linked_penalty or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        expected_discount = Decimal(str(linked_discount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        current_paid = Decimal(str(billing.amount_paid or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        current_penalty = Decimal(str(billing.penalty or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        current_discount = Decimal(str(billing.discount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        if (
+            abs(current_paid - expected_paid) <= Decimal("0.01")
+            and abs(current_penalty - expected_penalty) <= Decimal("0.01")
+            and abs(current_discount - expected_discount) <= Decimal("0.01")
+        ):
+            continue
+
+        stale_billing_summaries += 1
+        affected_property_ids.add(int(prop.id))
+        affected_billing_ids.add(int(billing.id))
+        add_sample({
+            "action": "fix_billing_summary",
+            "td_number": prop.td_number,
+            "owner_name": prop.owner_name,
+            "tax_year": int(billing.tax_year),
+            "old_paid": float(current_paid),
+            "amount": float(expected_paid),
+            "old_penalty": float(current_penalty),
+            "new_penalty": float(expected_penalty),
+            "old_discount": float(current_discount),
+            "new_discount": float(expected_discount),
+        })
+        if not dry_run:
+            billing.amount_paid = expected_paid
+            billing.penalty = expected_penalty
+            billing.discount = expected_discount
+            billing.updated_at = datetime.now(timezone.utc)
+
     rows_to_recalculate = len(affected_billing_ids)
     rows_recalculated = 0
     if not dry_run and affected_billing_ids:
@@ -665,8 +772,10 @@ def repair_payment_billing_allocations(
 
     return {
         "dry_run": bool(dry_run),
-        "payments_scanned": len(payment_rows),
+        "payments_scanned": len(payment_rows) + len(single_link_rows),
         "missing_links": missing_links,
+        "stale_link_amounts": stale_link_amounts,
+        "stale_billing_summaries": stale_billing_summaries,
         "ambiguous_payments_skipped": skipped,
         "billing_rows_to_recalculate": rows_to_recalculate,
         "billing_rows_recalculated": rows_recalculated,

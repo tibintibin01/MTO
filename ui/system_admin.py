@@ -1108,12 +1108,14 @@ class SystemAdminPage:
             try:
                 res = system_svc.repair_payment_links(dry_run=True)
                 missing = int(res.get("missing_links", 0) or 0)
+                stale_links = int(res.get("stale_link_amounts", 0) or 0)
+                stale_summaries = int(res.get("stale_billing_summaries", 0) or 0)
                 recalc = int(res.get("billing_rows_to_recalculate", 0) or 0)
                 skipped = int(res.get("ambiguous_payments_skipped", 0) or 0)
                 props = int(res.get("properties_affected", 0) or 0)
                 sample = res.get("sample", []) or []
 
-                if missing <= 0 and recalc <= 0:
+                if missing <= 0 and stale_links <= 0 and stale_summaries <= 0 and recalc <= 0:
                     def show_none():
                         messagebox.showinfo(
                             "Payment Link Repair",
@@ -1134,6 +1136,8 @@ class SystemAdminPage:
                 msg = (
                     "Repair payment allocation links?\n\n"
                     f"Missing payment links: {missing:,}\n"
+                    f"Stale link amounts: {stale_links:,}\n"
+                    f"Stale billing summaries: {stale_summaries:,}\n"
                     f"Billing paid totals to recalculate: {recalc:,}\n"
                     f"Properties affected: {props:,}\n"
                     f"Ambiguous payments skipped: {skipped:,}\n\n"
@@ -1161,6 +1165,8 @@ class SystemAdminPage:
             try:
                 res = system_svc.repair_payment_links(dry_run=False)
                 missing = int(res.get("missing_links", 0) or 0)
+                stale_links = int(res.get("stale_link_amounts", 0) or 0)
+                stale_summaries = int(res.get("stale_billing_summaries", 0) or 0)
                 recalc = int(res.get("billing_rows_recalculated", 0) or 0)
                 created = int(res.get("billing_rows_created", 0) or 0)
                 props = int(res.get("properties_affected", 0) or 0)
@@ -1169,6 +1175,8 @@ class SystemAdminPage:
                     messagebox.showinfo(
                         "Payment Link Repair Complete",
                         f"Created {missing:,} payment link(s).\n"
+                        f"Fixed {stale_links:,} stale link amount(s).\n"
+                        f"Fixed {stale_summaries:,} stale billing summary row(s).\n"
                         f"Created {created:,} missing billing row(s).\n"
                         f"Recalculated {recalc:,} billing paid total(s).\n"
                         f"Properties affected: {props:,}.\n\n"
