@@ -350,133 +350,186 @@ class SystemAdminPage:
         ).pack(pady=(0, 20))
 
         actions_fr = ctk.CTkFrame(card, fg_color="transparent")
-        actions_fr.pack(pady=(0, 18))
-        actions_fr.grid_columnconfigure(0, weight=1)
+        actions_fr.pack(fill="x", padx=24, pady=(0, 18))
+        actions_fr.grid_columnconfigure((0, 1), weight=1, uniform="db_action_groups")
 
-        primary_btn_fr = ctk.CTkFrame(actions_fr, fg_color="transparent")
-        primary_btn_fr.grid(row=0, column=0, pady=(0, 10))
+        button_height = 38
+        grouped_button_width = 235
 
-        data_btn_fr = ctk.CTkFrame(actions_fr, fg_color="transparent")
-        data_btn_fr.grid(row=1, column=0)
+        def action_group(row, col, title, subtitle):
+            group = ctk.CTkFrame(
+                actions_fr,
+                fg_color=("#f8fafc", "#111827"),
+                corner_radius=12,
+                border_width=1,
+                border_color=("#d6dde8", "#243244"),
+            )
+            group.grid(row=row, column=col, sticky="nsew", padx=8, pady=8)
+            group.grid_columnconfigure(0, weight=1)
 
-        primary_button_width = 220
-        data_button_width = 185
-        button_height = 44
+            ctk.CTkLabel(
+                group,
+                text=title.upper(),
+                font=("Segoe UI", 11, "bold"),
+                text_color=ModernTheme.PRIMARY,
+                anchor="w",
+            ).grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 2))
+            ctk.CTkLabel(
+                group,
+                text=subtitle,
+                font=("Segoe UI", 10),
+                text_color=ModernTheme.TEXT_GRAY,
+                anchor="w",
+                wraplength=430,
+                justify="left",
+            ).grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 10))
+
+            btn_grid = ctk.CTkFrame(group, fg_color="transparent")
+            btn_grid.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 14))
+            btn_grid.grid_columnconfigure((0, 1), weight=1, uniform="db_buttons")
+            return btn_grid
+
+        backup_tools = action_group(
+            0,
+            0,
+            "Backup & Recovery",
+            "Protect the database, restore from backup, or restart the server after updates.",
+        )
+        data_tools = action_group(
+            0,
+            1,
+            "Data Integrity",
+            "Repair records that affect billing, payments, and reconciliation accuracy.",
+        )
+        publish_tools = action_group(
+            1,
+            0,
+            "Portal Publishing",
+            "Create the read-only taxpayer snapshot for the public web portal.",
+        )
+        correction_tools = action_group(
+            1,
+            1,
+            "Correction Tools",
+            "Use these only when investigating imports, TD formats, or payment cleanup.",
+        )
 
         self.backup_btn = ctk.CTkButton(
-            primary_btn_fr,
+            backup_tools,
             text="START HYBRID BACKUP",
             command=self.trigger_backup,
             height=button_height,
-            width=primary_button_width,
+            width=grouped_button_width,
             font=ModernTheme.BUTTON,
             fg_color=ModernTheme.SUCCESS,
         )
-        self.backup_btn.grid(row=0, column=0, padx=6)
+        self.backup_btn.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+
+        self.restore_btn = ctk.CTkButton(
+            backup_tools,
+            text="RESTORE BACKUP",
+            command=self.restore_backup,
+            height=button_height,
+            width=grouped_button_width,
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.TEXT_GRAY,
+        )
+        self.restore_btn.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
         # Restart Server button lets admin apply updates from any client PC.
         self.restart_btn = ctk.CTkButton(
-            primary_btn_fr,
+            backup_tools,
             text="RESTART SERVER",
             command=self.restart_server,
             height=button_height,
-            width=primary_button_width,
+            width=grouped_button_width,
             font=ModernTheme.BUTTON,
             fg_color="#c0392b",
             hover_color="#e74c3c",
         )
-        self.restart_btn.grid(row=0, column=1, padx=6)
+        self.restart_btn.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
 
         self.sync_btn = ctk.CTkButton(
-            data_btn_fr,
+            data_tools,
             text="SYNC BILLING YEARS",
             command=self.sync_billing_years,
             height=button_height,
-            width=data_button_width,
+            width=grouped_button_width,
             font=ModernTheme.BUTTON,
             fg_color="#8e44ad",
             hover_color="#9b59b6",
         )
-        self.sync_btn.grid(row=0, column=0, padx=5)
+        self.sync_btn.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
 
         self.repair_av_btn = ctk.CTkButton(
-            data_btn_fr,
+            data_tools,
             text="REPAIR BILLING AV",
             command=self.repair_billing_av,
             height=button_height,
-            width=data_button_width,
+            width=grouped_button_width,
             font=ModernTheme.BUTTON,
             fg_color="#2563eb",
             hover_color="#1d4ed8",
         )
-        self.repair_av_btn.grid(row=0, column=1, padx=5)
+        self.repair_av_btn.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
         self.repair_links_btn = ctk.CTkButton(
-            data_btn_fr,
+            data_tools,
             text="REPAIR PAYMENT LINKS",
             command=self.repair_payment_links,
             height=button_height,
-            width=data_button_width + 35,
+            width=grouped_button_width,
             font=ModernTheme.BUTTON,
             fg_color="#0891b2",
             hover_color="#0e7490",
         )
-        self.repair_links_btn.grid(row=1, column=1, padx=5, pady=(8, 0))
+        self.repair_links_btn.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
 
         self.portal_publish_btn = ctk.CTkButton(
-            data_btn_fr,
+            publish_tools,
             text="PUBLISH PORTAL",
             command=self.publish_portal_snapshot,
             height=button_height,
-            width=data_button_width,
+            width=grouped_button_width,
             font=ModernTheme.BUTTON,
             fg_color="#0f766e",
             hover_color="#115e59",
         )
-        self.portal_publish_btn.grid(row=0, column=2, padx=5)
+        self.portal_publish_btn.grid(row=0, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+
+        self.portal_publish_status_lbl = ctk.CTkLabel(
+            publish_tools,
+            text="Portal publish: not run in this session",
+            font=("Segoe UI", 10),
+            text_color=ModernTheme.TEXT_GRAY,
+            anchor="w",
+        )
+        self.portal_publish_status_lbl.grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(4, 6))
 
         self.td_audit_btn = ctk.CTkButton(
-            data_btn_fr,
+            correction_tools,
             text="AUDIT TD NUMBERS",
             command=self.audit_td_numbers,
             height=button_height,
-            width=data_button_width,
+            width=grouped_button_width,
             font=ModernTheme.BUTTON,
             fg_color="#c0392b",
             hover_color="#e74c3c",
         )
-        self.td_audit_btn.grid(row=0, column=3, padx=5)
+        self.td_audit_btn.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
 
         self.batch_del_btn = ctk.CTkButton(
-            data_btn_fr,
+            correction_tools,
             text="BATCH DELETE PAYMENTS",
             command=lambda: BatchDeletePaymentsModal(self.container, self.user),
             height=button_height,
-            width=data_button_width + 25,
+            width=grouped_button_width,
             font=ModernTheme.BUTTON,
             fg_color="#7c3aed",
             hover_color="#6d28d9",
         )
-        self.batch_del_btn.grid(row=0, column=4, padx=5)
+        self.batch_del_btn.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
-        self.restore_btn = ctk.CTkButton(
-            data_btn_fr,
-            text=f"RESTORE",
-            command=self.restore_backup,
-            height=button_height,
-            width=130,
-            font=ModernTheme.BUTTON,
-            fg_color=ModernTheme.TEXT_GRAY,
-        )
-        self.restore_btn.grid(row=0, column=5, padx=5)
-
-        self.portal_publish_status_lbl = ctk.CTkLabel(
-            card,
-            text="Portal publish: not run in this session",
-            font=("Segoe UI", 10),
-            text_color=ModernTheme.TEXT_GRAY,
-        )
-        self.portal_publish_status_lbl.pack(pady=(0, 16))
         # If a sync was running when the user navigated away, resume monitoring
         if _active_sync_job_id:
             self.sync_btn.configure(state="disabled", text="SYNCING...")
