@@ -34,6 +34,22 @@ class ComputePaymentRequest(BaseModel):
     quarter: int = 0
 
 
+def _count_annual_penalty_months(tax_year: int, paid_date) -> int:
+    """
+    Count penalty months for annual RPT payments.
+
+    Dipaculao MTO's calculator starts delinquency after the regular payment
+    period, not immediately after January. A payment for 2024 made on
+    2026-06-20 is therefore 23 months late (46% at 2% per month).
+    """
+    from datetime import date
+
+    penalty_start = date(tax_year, 7, 1)
+    if paid_date <= penalty_start:
+        return 0
+    return max(0, (paid_date.year - penalty_start.year) * 12 + (paid_date.month - penalty_start.month))
+
+
 @router.post("/system/compute-payment")
 async def compute_payment(
     data: ComputePaymentRequest,
@@ -84,13 +100,8 @@ async def compute_payment(
     if discount_rate > 0:
         penalty_label = "No penalty (paid within discount period)"
     else:
-        annual_deadline = date(tax_year, 1, 31)
-        if paid_date > annual_deadline:
-            from_date = date(tax_year, 2, 1)
-            months_late = (paid_date.year - from_date.year) * 12 + (paid_date.month - from_date.month)
-            if paid_date.day >= from_date.day:
-                months_late += 1
-            months_late = max(1, months_late)
+        months_late = _count_annual_penalty_months(tax_year, paid_date)
+        if months_late > 0:
             penalty_months = months_late
             penalty_amount = (total_tax * penalty_rate * Decimal(str(months_late))).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP)
