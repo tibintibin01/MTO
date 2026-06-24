@@ -195,10 +195,7 @@ export default function AdminDashboard() {
           </div>
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">Treasury Collection Efficiency</p>
           <h3 className="text-2xl font-black text-white mt-1">
-            {(summary.total_receivables > 0
-              ? ((summary.total_collected / summary.total_receivables) * 100)
-              : 0
-            ).toFixed(2)} %
+            {(summary.collection_rate || 0).toFixed(2)} %
           </h3>
           <YoyBadge current={summary.collection_rate || 0} previous={lastYear.collection_rate || 0} />
         </div>
