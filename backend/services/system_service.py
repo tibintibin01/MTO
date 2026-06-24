@@ -348,16 +348,27 @@ def get_system_stats(db_session: Session = None):
             if sample.name.endswith("_total")
         )
 
-        # Error count = requests with status 4xx or 5xx
-        error_requests = sum(
+        # Split request issues from true server errors. 4xx responses are often
+        # expected user/search/auth outcomes; 5xx responses indicate backend failure.
+        client_error_requests = sum(
             sample.value
             for metric in REQUEST_COUNT.collect()
             for sample in metric.samples
             if sample.name.endswith("_total")
-            and str(sample.labels.get("status", "")).startswith(("4", "5"))
+            and str(sample.labels.get("status", "")).startswith("4")
         )
+        server_error_requests = sum(
+            sample.value
+            for metric in REQUEST_COUNT.collect()
+            for sample in metric.samples
+            if sample.name.endswith("_total")
+            and str(sample.labels.get("status", "")).startswith("5")
+        )
+        error_requests = client_error_requests + server_error_requests
 
         error_rate = round((error_requests / total_requests * 100), 2) if total_requests > 0 else 0.0
+        client_error_rate = round((client_error_requests / total_requests * 100), 2) if total_requests > 0 else 0.0
+        server_error_rate = round((server_error_requests / total_requests * 100), 2) if total_requests > 0 else 0.0
 
         # Average latency from histogram sum/count
         latency_sum = sum(
@@ -381,11 +392,19 @@ def get_system_stats(db_session: Session = None):
     except Exception:
         avg_latency_ms = 0.0
         error_rate = 0.0
+        client_error_rate = 0.0
+        server_error_rate = 0.0
+        client_error_requests = 0
+        server_error_requests = 0
         rpm = 0.0
 
     api_data = {
         "avg_latency": avg_latency_ms,
         "error_rate": error_rate,
+        "client_error_rate": client_error_rate,
+        "server_error_rate": server_error_rate,
+        "client_error_requests": int(client_error_requests) if "client_error_requests" in locals() else 0,
+        "server_error_requests": int(server_error_requests) if "server_error_requests" in locals() else 0,
         "rpm": rpm,
         "total_requests": int(total_requests) if "total_requests" in locals() else 0,
     }

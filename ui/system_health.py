@@ -98,7 +98,7 @@ class SystemHealthPage:
             title="API Performance",
             subtitle="Latency, traffic, and error behavior",
             accent="#22c55e",
-            metrics=("Average Latency", "Error Rate", "Requests / min", "Uptime"),
+            metrics=("Average Latency", "Server Errors", "Request Issues", "Requests / min"),
             has_bar=True,
         )
         self._make_card(
@@ -258,15 +258,18 @@ class SystemHealthPage:
 
         a = stats.get("api", {})
         latency = float(a.get("avg_latency", 0) or 0)
-        error_rate = float(a.get("error_rate", 0) or 0)
+        legacy_error_rate = float(a.get("error_rate", 0) or 0)
+        client_error_rate = float(a.get("client_error_rate", 0) or 0)
+        server_error_rate = float(a.get("server_error_rate", legacy_error_rate) or 0)
         rpm = a.get("rpm", 0)
-        api_ok = latency < 500 and error_rate < 5
-        self._set_badge("api", "STABLE" if api_ok else "REVIEW", "#22c55e" if api_ok else "#ef4444")
+        api_ok = latency < 500 and server_error_rate < 1
+        api_warn = latency >= 500 or server_error_rate >= 1
+        self._set_badge("api", "STABLE" if api_ok else "SERVER REVIEW", "#22c55e" if api_ok else "#ef4444")
         self._set_metric("api", "Average Latency", f"{latency:.1f} ms", "#22c55e" if latency < 250 else "#f59e0b")
-        self._set_metric("api", "Error Rate", f"{error_rate:.1f}%", "#22c55e" if error_rate < 5 else "#ef4444")
+        self._set_metric("api", "Server Errors", f"{server_error_rate:.1f}%", "#22c55e" if server_error_rate < 1 else "#ef4444")
+        self._set_metric("api", "Request Issues", f"{client_error_rate:.1f}%", "#f59e0b" if client_error_rate >= 5 else "#bfdbfe")
         self._set_metric("api", "Requests / min", rpm, "#f8fafc")
-        self._set_metric("api", "Uptime", stats.get("uptime", "N/A"), "#bfdbfe")
-        self.bars["api"].set(min(1, error_rate / 25))
+        self.bars["api"].set(min(1, server_error_rate / 10))
 
         c = stats.get("cache", {})
         namespaces_val = c.get("namespaces", 0)
@@ -309,9 +312,9 @@ class SystemHealthPage:
         self._set_metric("pool", "Pool Size", "--", "#ef4444")
         self._set_metric("pool", "Overflow", "--", "#ef4444")
         self._set_metric("api", "Average Latency", "No response", "#ef4444")
-        self._set_metric("api", "Error Rate", "--", "#ef4444")
+        self._set_metric("api", "Server Errors", "--", "#ef4444")
+        self._set_metric("api", "Request Issues", "--", "#ef4444")
         self._set_metric("api", "Requests / min", "--", "#ef4444")
-        self._set_metric("api", "Uptime", "--", "#ef4444")
         self._set_metric("cache", "Provider", "Unavailable", "#ef4444")
         self._set_metric("security", "Integrity", "Unknown", "#ef4444")
         self.last_refresh_lbl.configure(text=f"Diagnostics failed: {message[:120]}")
