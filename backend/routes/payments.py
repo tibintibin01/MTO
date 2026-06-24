@@ -162,6 +162,20 @@ class BatchDeleteCommitRequest(BaseModel):
     payment_ids: list
 
 
+@router.get("/cleanup-candidates")
+async def payment_cleanup_candidates(
+    year: int = 2026,
+    limit: int = 500,
+    current_user: dict = Depends(write_access),
+    db_session: Session = Depends(get_db),
+):
+    """
+    Preview payment rows that may explain reconciliation drift.
+    This does not delete or modify anything.
+    """
+    return pay_svc.get_payment_cleanup_candidates(year=year, limit=limit, db_session=db_session)
+
+
 @router.post("/batch-delete/preview")
 async def batch_delete_preview(
     data: BatchDeletePreviewRequest,

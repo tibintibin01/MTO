@@ -93,6 +93,11 @@ def batch_delete_preview_by_ids(payment_ids: list):
     return api_request("POST", "/payments/batch-delete/preview-by-ids",
                        data={"payment_ids": payment_ids})
 
+def get_cleanup_candidates(year=2026, limit=500):
+    """Load suspicious payment rows for review before cleanup/re-import."""
+    return api_request("GET", "/payments/cleanup-candidates",
+                       params={"year": year, "limit": limit})
+
 
 def batch_delete_commit(payment_ids: list):
     """Delete the confirmed payment IDs and reverse their billing balances."""

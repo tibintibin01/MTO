@@ -6,7 +6,7 @@ from backend.models import ReceiptHistory
 from sqlalchemy import or_, func, cast
 from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
-from backend.models import Payment, Property, PropertyBilling, PaymentBilling
+from backend.models import Payment, Property, PropertyBilling, PaymentBilling, TaxPolicy
 from backend.services.auth_service import get_username, require_permission
 from backend.services.billing_service import format_tax_years, normalize_date_input
 from utils.db_compat import year_of, month_of, today
@@ -569,6 +569,177 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
 
     return {"success": True, "message": "Payment updated successfully."}
 
+
+def _extract_single_year(value):
+    years = [int(match) for match in re.findall(r"(?:19|20)\d{2}", str(value or ""))]
+    unique_years = []
+    for year in years:
+        if year not in unique_years:
+            unique_years.append(year)
+    return unique_years[0] if len(unique_years) == 1 else None
+
+
+def get_payment_cleanup_candidates(year=None, limit=500, db_session: Session = None):
+    """
+    Preview payment rows that can explain reconciliation drift.
+
+    These are review candidates, not automatic deletion targets. Reasons include
+    visible year vs billing-link mismatch, impossible OR dates, duplicate-looking
+    rows, stale allocation years, and overpaid billing rows.
+    """
+    if db_session is None:
+        return {"year": year, "found": 0, "total_candidates": 0, "summary": {}, "preview": []}
+
+    safe_limit = max(1, min(int(limit or 500), 1000))
+    review_year = int(year or today().year)
+    candidates = {}
+
+    def add_candidate(payment, prop, reason, link=None, billing=None, credit_amount=0, severity=50):
+        if not payment or not prop:
+            return
+        key = int(payment.id)
+        item = candidates.setdefault(key, {
+            "payment_id": int(payment.id),
+            "or_number": payment.or_number,
+            "tax_year": payment.tax_year,
+            "amount": float(_d(payment.amount)),
+            "discount": float(_d(payment.discount)),
+            "penalty": float(_d(payment.penalty)),
+            "date_paid": payment.date_paid.strftime("%Y-%m-%d") if payment.date_paid else None,
+            "td_number": prop.td_number,
+            "owner_name": prop.owner_name,
+            "barangay": prop.barangay,
+            "link_tax_year": int(link.tax_year) if link and link.tax_year is not None else None,
+            "billing_tax_year": int(billing.tax_year) if billing and billing.tax_year is not None else None,
+            "linked_amount": float(_d(link.amount_paid)) if link else 0.0,
+            "credit_amount": float(abs(credit_amount or 0)),
+            "cleanup_reason": reason,
+            "_severity": severity,
+        })
+        reasons = {part.strip() for part in str(item.get("cleanup_reason") or "").split(";") if part.strip()}
+        reasons.add(reason)
+        item["cleanup_reason"] = "; ".join(sorted(reasons))
+        item["credit_amount"] = max(float(item.get("credit_amount") or 0), float(abs(credit_amount or 0)))
+        item["_severity"] = max(int(item.get("_severity", 0)), int(severity))
+
+    rows = (
+        db_session.query(Payment, Property, PaymentBilling, PropertyBilling)
+        .join(Property, Property.id == Payment.property_id)
+        .outerjoin(PaymentBilling, PaymentBilling.payment_id == Payment.id)
+        .outerjoin(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .filter(Property.deleted_at == None)
+        .order_by(Payment.id.desc())
+        .limit(25000)
+        .all()
+    )
+
+    duplicate_seen = {}
+    for payment, prop, link, billing in rows:
+        visible_year = _extract_single_year(payment.tax_year)
+        billing_year = int(billing.tax_year) if billing and billing.tax_year is not None else None
+        link_year = int(link.tax_year) if link and link.tax_year is not None else None
+
+        if visible_year and billing_year and visible_year != billing_year:
+            add_candidate(
+                payment, prop,
+                f"Visible year {visible_year} is linked to billing year {billing_year}",
+                link=link, billing=billing, severity=95,
+            )
+        if link_year and billing_year and link_year != billing_year:
+            add_candidate(
+                payment, prop,
+                f"Allocation year {link_year} does not match billing year {billing_year}",
+                link=link, billing=billing, severity=90,
+            )
+        if payment.date_paid and (payment.date_paid.year < 1900 or payment.date_paid.year > review_year + 3):
+            add_candidate(
+                payment, prop,
+                f"Unusual OR date {payment.date_paid.strftime('%Y-%m-%d')}",
+                link=link, billing=billing, severity=85,
+            )
+
+        duplicate_key = (
+            int(payment.property_id or 0),
+            str(payment.or_number or "").strip(),
+            payment.date_paid.date().isoformat() if payment.date_paid else "",
+            str(payment.tax_year or "").strip(),
+            str(_d(payment.amount).quantize(Decimal("0.01"))),
+        )
+        duplicate_seen.setdefault(duplicate_key, []).append((payment, prop, link, billing))
+
+    for group in duplicate_seen.values():
+        if len(group) <= 1:
+            continue
+        for payment, prop, link, billing in group:
+            add_candidate(
+                payment, prop,
+                f"Possible duplicate receipt row ({len(group)} same property/OR/date/year/amount)",
+                link=link, billing=billing, severity=75,
+            )
+
+    rate_expr = func.coalesce(TaxPolicy.basic_rate, 0.01) + func.coalesce(TaxPolicy.sef_rate, 0.01)
+    credit_expr = PropertyBilling.amount_paid - (
+        (PropertyBilling.assessed_value * rate_expr) + PropertyBilling.penalty - PropertyBilling.discount
+    )
+    overpaid_rows = (
+        db_session.query(PropertyBilling.id, credit_expr.label("credit_amount"))
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year <= review_year,
+            credit_expr > 0.01,
+        )
+        .order_by(credit_expr.desc())
+        .limit(1000)
+        .all()
+    )
+    overpaid_by_billing = {int(row[0]): float(row[1] or 0) for row in overpaid_rows if row[0]}
+    if overpaid_by_billing:
+        linked_overpaid = (
+            db_session.query(Payment, Property, PaymentBilling, PropertyBilling)
+            .join(Property, Property.id == Payment.property_id)
+            .join(PaymentBilling, PaymentBilling.payment_id == Payment.id)
+            .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+            .filter(PaymentBilling.billing_id.in_(list(overpaid_by_billing.keys())))
+            .order_by(PropertyBilling.tax_year.desc(), Payment.amount.desc())
+            .limit(2500)
+            .all()
+        )
+        for payment, prop, link, billing in linked_overpaid:
+            add_candidate(
+                payment, prop,
+                f"Billing year {int(billing.tax_year)} has credit balance",
+                link=link,
+                billing=billing,
+                credit_amount=overpaid_by_billing.get(int(billing.id), 0),
+                severity=60,
+            )
+
+    preview = sorted(
+        candidates.values(),
+        key=lambda item: (-int(item.get("_severity", 0)), -float(item.get("credit_amount") or 0), item.get("td_number") or ""),
+    )[:safe_limit]
+    for item in preview:
+        item.pop("_severity", None)
+
+    summary = {
+        "visible_link_mismatch": sum(1 for item in candidates.values() if "Visible year" in item.get("cleanup_reason", "")),
+        "allocation_year_mismatch": sum(1 for item in candidates.values() if "Allocation year" in item.get("cleanup_reason", "")),
+        "unusual_dates": sum(1 for item in candidates.values() if "Unusual OR date" in item.get("cleanup_reason", "")),
+        "possible_duplicates": sum(1 for item in candidates.values() if "Possible duplicate" in item.get("cleanup_reason", "")),
+        "credit_balance_rows": len(overpaid_by_billing),
+    }
+    return {
+        "year": review_year,
+        "found": len(preview),
+        "total_candidates": len(candidates),
+        "limit": safe_limit,
+        "summary": summary,
+        "preview": preview,
+    }
+
+
 @require_permission("payment_delete")
 def delete_payment_record(payment_id, user_name, db_session: Session = None, **kwargs):
     """
@@ -584,26 +755,39 @@ def delete_payment_record(payment_id, user_name, db_session: Session = None, **k
         raise Exception("Payment record not found.")
 
     prop_id = payment.property_id
-    tax_year = payment.tax_year
     amt = _d(payment.amount)
     pen = _d(payment.penalty)
     disc = _d(payment.discount)
     or_no = payment.or_number
+    links = db_session.query(PaymentBilling).filter(PaymentBilling.payment_id == payment.id).all()
+    billing_ids = [link.billing_id for link in links if link.billing_id]
 
     try:
-        # 2. Reverse Billing Balances (if billing exists)
-        billing = db_session.query(PropertyBilling).filter(
-            PropertyBilling.property_id == prop_id,
-            PropertyBilling.tax_year == tax_year
-        ).with_for_update().first()
+        # 2. Reverse summary adjustments on the linked billing row.
+        # Amount paid is recalculated from PaymentBilling links after deletion,
+        # so rows like "3RD QTR 2024" do not depend on parsing payment.tax_year.
+        if not billing_ids:
+            visible_year = _extract_single_year(payment.tax_year)
+            if visible_year:
+                billing = db_session.query(PropertyBilling).filter(
+                    PropertyBilling.property_id == prop_id,
+                    PropertyBilling.tax_year == visible_year
+                ).with_for_update().first()
+                if billing:
+                    billing_ids.append(billing.id)
 
-        if billing:
-            billing.amount_paid = max(_d(0), _d(billing.amount_paid) - amt)
-            billing.penalty = max(_d(0), _d(billing.penalty) - pen)
-            billing.discount = max(_d(0), _d(billing.discount) - disc)
+        unique_billing_ids = list(dict.fromkeys(billing_ids))
+        if len(unique_billing_ids) == 1:
+            billing = db_session.query(PropertyBilling).filter(PropertyBilling.id == unique_billing_ids[0]).with_for_update().first()
+            if billing:
+                billing.penalty = max(_d(0), _d(billing.penalty) - pen)
+                billing.discount = max(_d(0), _d(billing.discount) - disc)
 
         # 3. Delete Payment (cascade handles ReceiptHistory and PaymentBilling)
         db_session.delete(payment)
+        db_session.flush()
+        from backend.services.billing_service import recalculate_billing_balances
+        recalculate_billing_balances(unique_billing_ids, db_session=db_session)
 
         # 4. Stage audit log — same transaction as the deletion and billing reversal
         log_action(user_name, f"Deleted Payment OR {or_no} (Amount: {amt}) and reversed billing.", db_session=db_session)

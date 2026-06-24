@@ -8,7 +8,7 @@ import csv
 import os
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, simpledialog
 
 import customtkinter as ctk
 
@@ -108,6 +108,14 @@ class BatchDeletePaymentsModal(ctk.CTkToplevel):
         )
         self._mode_id_btn.pack(side="left")
 
+        self._cleanup_btn = ctk.CTkButton(
+            mode_row, text="🧭  FIND CLEANUP CANDIDATES",
+            command=self._load_cleanup_candidates,
+            width=240, height=34, font=ModernTheme.BUTTON_SMALL,
+            fg_color="#0f766e", hover_color="#115e59",
+        )
+        self._cleanup_btn.pack(side="left", padx=(8, 0))
+
         # Mode description label
         self._mode_desc = ctk.CTkLabel(
             step1,
@@ -190,16 +198,17 @@ class BatchDeletePaymentsModal(ctk.CTkToplevel):
         )
         style.map("BatchDel.Treeview", background=[("selected", _ROW_SEL)])
 
-        cols = ("PAY ID", "OR NUMBER", "TD NUMBER", "OWNER", "YEAR", "AMOUNT", "DISCOUNT", "DATE PAID")
+        cols = ("PAY ID", "REASON", "OR NUMBER", "TD NUMBER", "OWNER", "YEAR", "AMOUNT", "CREDIT", "DATE PAID")
         self._tree = ttk.Treeview(tree_fr, columns=cols, show="headings",
                                   style="BatchDel.Treeview")
         self._tree.column("PAY ID",    width=70,  anchor="center")
+        self._tree.column("REASON",    width=300, anchor="w")
         self._tree.column("OR NUMBER", width=110, anchor="w")
         self._tree.column("TD NUMBER", width=130, anchor="w")
-        self._tree.column("OWNER",     width=200, anchor="w")
+        self._tree.column("OWNER",     width=180, anchor="w")
         self._tree.column("YEAR",      width=60,  anchor="center")
         self._tree.column("AMOUNT",    width=110, anchor="e")
-        self._tree.column("DISCOUNT",  width=100, anchor="e")
+        self._tree.column("CREDIT",    width=100, anchor="e")
         self._tree.column("DATE PAID", width=100, anchor="center")
         for col in cols:
             self._tree.heading(col, text=col)
@@ -416,6 +425,64 @@ class BatchDeletePaymentsModal(ctk.CTkToplevel):
 
     # ── Preview ───────────────────────────────────────────────────────────────
 
+    def _load_cleanup_candidates(self):
+        year = simpledialog.askinteger(
+            "Cleanup Candidate Year",
+            "Review suspicious payments up to fiscal year:",
+            initialvalue=2026,
+            minvalue=1900,
+            maxvalue=2100,
+            parent=self,
+        )
+        if not year:
+            return
+
+        self._cleanup_btn.configure(state="disabled", text="LOADING CANDIDATES...")
+        self._preview_btn.configure(state="disabled")
+        self._delete_btn.configure(state="disabled")
+
+        def worker():
+            try:
+                result = pay_svc.get_cleanup_candidates(year=year, limit=500)
+                self.after(0, lambda r=result: self._render_cleanup_candidates(r))
+            except Exception as e:
+                self.after(0, lambda err=e: messagebox.showerror("Cleanup Preview Error", str(err), parent=self))
+            finally:
+                if self.winfo_exists():
+                    self.after(0, lambda: self._cleanup_btn.configure(
+                        state="normal", text="🧭  FIND CLEANUP CANDIDATES"
+                    ))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _render_cleanup_candidates(self, result: dict):
+        preview = result.get("preview", [])
+        ids = [int(row["payment_id"]) for row in preview if row.get("payment_id")]
+        self._mode = "id"
+        self._or_numbers = []
+        self._payment_ids = ids
+        self._mode_or_btn.configure(fg_color=ModernTheme.SECONDARY)
+        self._mode_id_btn.configure(fg_color="#7c3aed")
+        self._loaded_lbl.configure(
+            text=f"Loaded {len(ids):,} cleanup candidate payment IDs for FY {result.get('year')}",
+            text_color="#f59e0b" if ids else ModernTheme.TEXT_GRAY,
+        )
+        self._preview_btn.configure(state="normal" if ids else "disabled")
+        self._render_preview({
+            "found": len(preview),
+            "not_found_count": 0,
+            "not_found": [],
+            "preview": preview,
+        })
+        summary = result.get("summary") or {}
+        self._summary_lbl.configure(
+            text=(
+                f"Candidates: {result.get('total_candidates', len(preview)):,} | "
+                f"Shown: {len(preview):,} | Credit rows: {summary.get('credit_balance_rows', 0):,}"
+            ),
+            text_color="#f59e0b" if preview else ModernTheme.TEXT_GRAY,
+        )
+
     def _load_preview(self):
         self._preview_btn.configure(state="disabled", text="⏳ LOADING...")
 
@@ -451,12 +518,13 @@ class BatchDeletePaymentsModal(ctk.CTkToplevel):
             tag = "evenrow" if i % 2 == 0 else "oddrow"
             self._tree.insert("", "end", tags=(tag,), values=(
                 p["payment_id"],
+                p.get("cleanup_reason", ""),
                 p["or_number"],
                 p["td_number"],
                 p["owner_name"],
                 p["tax_year"],
                 format_curr(p["amount"]),
-                format_curr(p["discount"]),
+                format_curr(p.get("credit_amount", 0)),
                 p["date_paid"] or "—",
             ))
 
