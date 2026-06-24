@@ -16,6 +16,7 @@ from backend.services.billing_service import (
     repair_payment_billing_allocations,
     sync_existing_billing_assessed_value,
 )
+from backend.services.property_service import get_receivables_by_barangay
 
 
 @pytest.fixture()
@@ -54,6 +55,82 @@ def test_calculate_penalty_cap():
     months_late = 40 # 80% penalty
     penalty = calculate_penalty(principal, months_late)
     assert penalty == 800.0
+
+
+def test_receivables_by_barangay_collections_use_billing_year_allocations(db):
+    prop = Property(
+        td_number="06-0012-TEST1",
+        owner_name="Timing Test",
+        barangay="DINADIAWAN",
+        assessed_value=100_000.0,
+        penalty=0,
+        discount=0,
+    )
+    db.add(prop)
+    db.flush()
+
+    billing_2026 = PropertyBilling(
+        property_id=prop.id,
+        tax_year=2026,
+        assessed_value=100_000.0,
+        penalty=0,
+        discount=0,
+        amount_paid=0,
+    )
+    billing_2027 = PropertyBilling(
+        property_id=prop.id,
+        tax_year=2027,
+        assessed_value=100_000.0,
+        penalty=0,
+        discount=0,
+        amount_paid=0,
+    )
+    db.add_all([billing_2026, billing_2027])
+    db.flush()
+
+    future_year_prepayment = Payment(
+        property_id=prop.id,
+        amount=700.0,
+        penalty=0,
+        discount=0,
+        or_number="PREPAY",
+        date_paid=datetime(2026, 5, 10),
+        tax_year="2027",
+    )
+    late_posted_selected_year = Payment(
+        property_id=prop.id,
+        amount=500.0,
+        penalty=0,
+        discount=0,
+        or_number="LATE2026",
+        date_paid=datetime(2027, 1, 10),
+        tax_year="2026",
+    )
+    db.add_all([future_year_prepayment, late_posted_selected_year])
+    db.flush()
+
+    db.add_all([
+        PaymentBilling(
+            payment_id=future_year_prepayment.id,
+            billing_id=billing_2027.id,
+            tax_year=2027,
+            amount_paid=700.0,
+        ),
+        PaymentBilling(
+            payment_id=late_posted_selected_year.id,
+            billing_id=billing_2026.id,
+            tax_year=2026,
+            amount_paid=500.0,
+        ),
+    ])
+    db.commit()
+
+    rows = get_receivables_by_barangay(report_year=2026, db_session=db)
+    row = next(r for r in rows if r[0] == "DINADIAWAN")
+
+    assert row[2] == pytest.approx(2_000.0)
+    assert row[5] == pytest.approx(500.0)
+    assert row[6] == pytest.approx(1_500.0)
 
 def test_get_total_due_logic(mock_db_session):
     """Test the orchestration of total due calculation including basic, SEF, and penalties."""

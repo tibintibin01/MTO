@@ -774,7 +774,7 @@ def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 
         close_session = True
 
     try:
-        from backend.models import Payment, PaymentBilling
+        from backend.models import PaymentBilling
 
         year_filter = str(report_year) if report_year else None
 
@@ -813,32 +813,25 @@ def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 
 
         due_results = due_query.group_by(Property.barangay).all()
 
-        # 2. Total Collected per barangay — sum payments where date_paid falls
-        # within the selected year range. Uses cast to Date for reliable comparison
-        # and explicitly excludes NULL date_paid rows.
-        from sqlalchemy import cast
-        from datetime import date as pydate
-
+        # 2. Total Collected per barangay.
+        #
+        # Keep this on the same basis as Total Due: billing tax years. Using
+        # Payment.date_paid here mixes cash posting date with billing-year due,
+        # which lets future-year prepayments or imported date mistakes distort
+        # receivable balances by barangay.
         coll_query = (
             db_session.query(
                 func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
-                func.sum(Payment.amount).label("total_collected"),
+                func.sum(PaymentBilling.amount_paid).label("total_collected"),
             )
-            .join(Property, Property.id == Payment.property_id)
-            .filter(
-                Property.deleted_at == None,
-                Payment.date_paid != None,  # exclude null dates
-            )
+            .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+            .join(PaymentBilling, PaymentBilling.billing_id == PropertyBilling.id)
+            .filter(Property.deleted_at == None)
         )
         if year_filter:
-            # Use a direct date boundary comparison — more reliable than
-            # extract(year) which can behave inconsistently across DB drivers.
-            # "Payments made on or before Dec 31 of the selected year"
-            year_end = pydate(int(year_filter), 12, 31)
-            coll_query = coll_query.filter(Payment.date_paid <= year_end)
+            coll_query = coll_query.filter(PropertyBilling.tax_year <= year_filter)
         # Also apply data_start_year floor to collections
-        year_start = pydate(data_start_year, 1, 1)
-        coll_query = coll_query.filter(Payment.date_paid >= year_start)
+        coll_query = coll_query.filter(PropertyBilling.tax_year >= str(data_start_year))
 
         coll_results = coll_query.group_by(Property.barangay).all()
 
