@@ -737,7 +737,7 @@ class ReportsPage:
             ("Future-year prepayments excluded from equation", money(future_year_prepayments)),
             ("Prior-year + current-year receivables", f"{money(prior_receivable)} + {money(current_receivable)} = {money(delinquency_total)}"),
             ("As-of tracker variance [tracker - expected ending]", money(tracker_variance)),
-            ("Raw cumulative tracker drift", money(raw_tracker_variance)),
+            ("All-time vs as-of difference", money(raw_tracker_variance)),
             ("Collection rate", f"{collection_rate:.1f}%"),
             ("Ending receivable rate", f"{delinquency_rate:.1f}%"),
         )
@@ -767,7 +767,10 @@ class ReportsPage:
         ctk.CTkLabel(diag, text="RECONCILIATION DIAGNOSTIC", font=("Inter", 11, "bold"), text_color=ModernTheme.TEXT_GRAY).pack(anchor="w", padx=16, pady=(14, 4))
         ctk.CTkLabel(
             diag,
-            text="Rows and categories that can explain why collectible, collections, and receivable totals do not tie exactly.",
+            text=(
+                "Rows and categories that can explain why collectible, collections, and receivable totals do not tie exactly. "
+                "All-time vs as-of compares today's raw billing balances against the selected fiscal-year reporting view."
+            ),
             font=("Inter", 10),
             text_color="#bfdbfe",
             wraplength=1100,
@@ -785,7 +788,7 @@ class ReportsPage:
             ctk.CTkLabel(chip, text=value, font=("Consolas", 12, "bold"), text_color=color).pack(anchor="w", padx=10, pady=(0, 8))
 
         diag_chip(diag_summary, 0, "Equation variance", money(equation_variance), status_color)
-        diag_chip(diag_summary, 1, "Raw tracker drift", money(raw_tracker_variance), "#f59e0b")
+        diag_chip(diag_summary, 1, "All-time vs as-of", money(raw_tracker_variance), "#f59e0b")
         link_issue_count = len(diagnostics.get("payment_link_mismatches", [])) + len(diagnostics.get("unlinked_payments", []))
         diag_chip(diag_summary, 2, "Payment link issues", str(link_issue_count), "#f59e0b")
         diag_chip(diag_summary, 3, "Overpaid / credits", str(len(diagnostics.get("overpaid_or_credit_rows", []))), "#22c55e")
