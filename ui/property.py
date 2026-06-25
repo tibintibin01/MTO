@@ -2,6 +2,8 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
+import sys
+from pathlib import Path
 import api_clients.property_service as prop_svc
 import api_clients.api_helper as api
 from ui.dossier import PropertyDossierModal
@@ -9,6 +11,10 @@ from ui.import_wizard import ImportWizardModal
 from theme_manager import ModernTheme
 from utils import tr, format_curr
 from ui_components import LoadingOverlay, ErrorDialog, AutocompleteComboBox, attach_autocomplete
+
+def _resource_path(relative_path: str) -> Path:
+    base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    return base_dir / relative_path
 
 class PropertyPage:
     def __init__(self, parent, user=None):
@@ -319,6 +325,8 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.vars = {}
         self._loaded_version = None
         self._original_prev_td = ""
+        self._first_input = None
+        self._last_input = None
         self.barangays = ["NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN", "BUENAVISTA", "CALAOCAN", "DIAMANEN", "DIANED", "DIARABASIN", "DIBUTUNAN", "DIMABUNO", "DINADIAWAN", "DITALE", "GUPA", "IPIL", "LABOY", "LIPIT", "LOBBOT", "MALIGAYA", "MIJARES", "MUCDOL", "PUANGI", "SALAY", "SAPANGKAWAYAN", "TOYTOYAN"]
 
         # Generate a fresh idempotency key when the form opens — NOT on submit.
@@ -333,12 +341,33 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.transient(parent.winfo_toplevel())
         self.grab_set()
         self.attributes("-topmost", True)
+        self._apply_window_icon()
         self.setup_ui()
+        self._bind_keyboard_shortcuts()
         if self.property_id:
             self.load_data()
             if self.payment_mode:
                 self._prepare_payment_entry()
         else: self.recompute()
+
+    def _apply_window_icon(self):
+        icon_path = _resource_path("assets/official/app_icon.ico")
+        if not icon_path.exists():
+            return
+
+        def set_icon():
+            if self.winfo_exists():
+                try:
+                    self.iconbitmap(str(icon_path))
+                except Exception:
+                    pass
+
+        self.after(50, set_icon)
+
+    def _focus_widget(self, widget):
+        if widget and widget.winfo_exists():
+            widget.focus_set()
+        return "break"
 
     def setup_ui(self):
         self.configure(fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK))
@@ -416,6 +445,9 @@ class PropertyEditModal(ctk.CTkToplevel):
                     self.vars[key].trace_add("write", lambda *a: self.recompute())
                 else:
                     self.vars[key].trace_add("write", lambda *a: self.validate())
+            if self._first_input is None:
+                self._first_input = entry
+            self._last_input = entry
 
         self.calc_box = ctk.CTkFrame(self.scroll_form, fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK), corner_radius=8)
         self.calc_box.pack(fill="x", padx=10, pady=15)
@@ -450,9 +482,32 @@ class PropertyEditModal(ctk.CTkToplevel):
 
         footer = ctk.CTkFrame(self, fg_color="transparent")
         footer.pack(fill="x", padx=20, pady=20)
-        ctk.CTkButton(footer, text="CANCEL", command=self.destroy, fg_color="#95a5a6", width=120).pack(side="left")
+        self.cancel_btn = ctk.CTkButton(footer, text="CANCEL", command=self.destroy, fg_color="#95a5a6", width=120)
+        self.cancel_btn.pack(side="left")
         self.save_btn = ctk.CTkButton(footer, text="SAVE PROPERTY", command=self.save, fg_color="#2ecc71", width=200, state="disabled")
         self.save_btn.pack(side="right")
+
+        if self._last_input:
+            self._last_input.bind("<Tab>", lambda e: self._focus_widget(self.cancel_btn))
+        self.cancel_btn.bind("<Tab>", lambda e: self._focus_widget(self.save_btn))
+        self.cancel_btn.bind("<Shift-Tab>", lambda e: self._focus_widget(self._last_input))
+        self.save_btn.bind("<Tab>", lambda e: self._focus_widget(self._first_input))
+        self.save_btn.bind("<Shift-Tab>", lambda e: self._focus_widget(self.cancel_btn))
+        self.save_btn.bind("<Return>", lambda e: self._submit_from_keyboard())
+        self.save_btn.bind("<KP_Enter>", lambda e: self._submit_from_keyboard())
+
+    def _bind_keyboard_shortcuts(self):
+        self.bind("<Return>", lambda e: self._submit_from_keyboard())
+        self.bind("<KP_Enter>", lambda e: self._submit_from_keyboard())
+
+    def _submit_from_keyboard(self):
+        try:
+            if self.save_btn.cget("state") == "disabled":
+                return "break"
+        except Exception:
+            pass
+        self.save()
+        return "break"
 
     def _prepare_payment_entry(self):
         """Reuse the property editor as a clean payment-posting form."""
