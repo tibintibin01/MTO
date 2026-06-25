@@ -18,6 +18,7 @@ class ReportsPage:
     def __init__(self, parent, user):
         self.parent = parent
         self.user = user
+        self._last_reconciliation_payload = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -470,6 +471,28 @@ class ReportsPage:
             height=34,
             width=130,
         ).pack(side="left")
+        self.recon_export_excel_btn = ctk.CTkButton(
+            controls,
+            text="EXPORT EXCEL",
+            command=self._export_reconciliation_excel,
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.SUCCESS,
+            height=34,
+            width=130,
+            state="disabled",
+        )
+        self.recon_export_excel_btn.pack(side="left", padx=(8, 0))
+        self.recon_export_pdf_btn = ctk.CTkButton(
+            controls,
+            text="PRINT PDF",
+            command=self._export_reconciliation_pdf,
+            font=ModernTheme.BUTTON,
+            fg_color=ModernTheme.DANGER,
+            height=34,
+            width=110,
+            state="disabled",
+        )
+        self.recon_export_pdf_btn.pack(side="left", padx=(8, 0))
 
         self.recon_content = ctk.CTkScrollableFrame(
             rec_fr,
@@ -508,6 +531,9 @@ class ReportsPage:
             child.destroy()
 
         if not data:
+            self._last_reconciliation_payload = None
+            self.recon_export_excel_btn.configure(state="disabled")
+            self.recon_export_pdf_btn.configure(state="disabled")
             ctk.CTkLabel(
                 self.recon_content,
                 text="No reconciliation data available for the selected year.",
@@ -531,6 +557,11 @@ class ReportsPage:
         brgy_rows = brgy_rows or []
         metrics = metrics or {}
         diagnostics = diagnostics or {}
+        self._last_reconciliation_payload = self._build_reconciliation_payload(
+            data, brgy_rows, metrics, diagnostics
+        )
+        self.recon_export_excel_btn.configure(state="normal")
+        self.recon_export_pdf_btn.configure(state="normal")
         assessor = metrics.get("assessor", {})
         treasury = metrics.get("treasury", {})
         delinquency = metrics.get("delinquency", {})
@@ -868,6 +899,442 @@ class ReportsPage:
                 receivable = float(row[6] or 0)
                 rate = (collected / due * 100) if due > 0 else 0
                 tree.insert("", "end", values=(row[0], money(due), money(collected), money(receivable), f"{rate:.1f}%"))
+
+    def _recon_money(self, value):
+        return f"P {float(value or 0):,.2f}"
+
+    def _build_reconciliation_diag_rows(self, diagnostics, full=False):
+        diagnostics = diagnostics or {}
+        diag_rows = []
+
+        def take(items, limit):
+            items = items or []
+            return items if full else items[:limit]
+
+        for item in take(diagnostics.get("unlinked_payments"), 10):
+            payment_date = item.get("payment_date") or "No date"
+            or_number = item.get("or_number") or "No OR"
+            scope = f"{item.get('barangay') or '-'} | {payment_date} | OR {or_number}"
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), scope, item.get("amount", 0)))
+        for item in take(diagnostics.get("payment_link_mismatches"), 8):
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("difference", 0)))
+        for item in take(diagnostics.get("overpaid_or_credit_rows"), 8):
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("balance", 0)))
+        for item in diagnostics.get("prior_year_collections", []) or []:
+            diag_rows.append((item.get("issue"), "Grouped", item.get("tax_year"), f"{item.get('properties', 0):,} properties", item.get("amount", 0)))
+        for item in diagnostics.get("future_year_collections", []) or []:
+            diag_rows.append((item.get("issue"), "Grouped", item.get("tax_year"), f"{item.get('properties', 0):,} properties", item.get("amount", 0)))
+        for item in take(diagnostics.get("current_year_paid_outside_details"), 12):
+            payment_year = item.get("payment_year") or "No date"
+            payment_date = item.get("payment_date") or f"Paid in {payment_year}"
+            or_number = item.get("or_number") or "No OR"
+            scope = f"{item.get('barangay') or '-'} | {payment_date} | OR {or_number}"
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), scope, item.get("amount", 0)))
+        for item in take(diagnostics.get("current_year_paid_outside_selected_year"), 8):
+            payment_year = item.get("payment_year") or "No date"
+            diag_rows.append((item.get("issue"), f"Grouped paid in {payment_year}", item.get("tax_year"), f"{item.get('properties', 0):,} properties", item.get("amount", 0)))
+        if not diag_rows:
+            for item in take(diagnostics.get("largest_open_balances"), 10):
+                diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("balance", 0)))
+        return diag_rows
+
+    def _build_reconciliation_payload(self, data, brgy_rows, metrics, diagnostics, full_diagnostics=False):
+        data = data or {}
+        brgy_rows = brgy_rows or []
+        metrics = metrics or {}
+        diagnostics = diagnostics or {}
+        assessor = metrics.get("assessor", {})
+        treasury = metrics.get("treasury", {})
+        delinquency = metrics.get("delinquency", {})
+
+        year = data.get("report_year", self.recon_year_cb.get())
+        beginning = float(data.get("beginning_receivable", 0) or 0)
+        adjustments = float(data.get("adjustments", 0) or 0)
+        collections = float(data.get("collections", 0) or 0)
+        current_levy = float(assessor.get("current_year_levy", data.get("current_year_levy", data.get("current_year_assessment", 0))) or 0)
+        current_penalty = float(assessor.get("current_year_penalty", data.get("current_year_penalty", 0)) or 0)
+        current_discount = float(assessor.get("current_year_discount", data.get("current_year_discount", 0)) or 0)
+        current_net = float(assessor.get("current_year_net_collectible", data.get("current_year_net_collectible", data.get("current_year_assessment", 0))) or 0)
+        total_collectible = beginning + current_net + adjustments
+
+        calendar_applicable_collections = float(treasury.get("calendar_applicable_collections", data.get("calendar_applicable_collections", collections)) or 0)
+        cash_collected_this_year = float(treasury.get("cash_collected_this_year", collections) or 0)
+        prepaid_current_year = float(treasury.get("prepaid_current_year", data.get("prepaid_current_year", 0)) or 0)
+        future_year_prepayments = float(treasury.get("future_year_prepayments", data.get("future_year_prepayments", 0)) or 0)
+        treasury_total = float(treasury.get("total_collected", data.get("applied_collections", calendar_applicable_collections + prepaid_current_year)) or 0)
+
+        expected_unpaid = float(data.get("expected_ending_receivable", data.get("ending_receivable", 0)) or 0)
+        tracker_total = float(delinquency.get("total_unpaid", data.get("ending_receivable", 0)) or 0)
+        current_receivable = float(delinquency.get("current_year_receivables", 0) or 0)
+        prior_receivable = float(delinquency.get("prior_year_receivables", max(tracker_total - current_receivable, 0)) or 0)
+        delinquency_total = float(delinquency.get("total_unpaid", prior_receivable + current_receivable) or 0)
+
+        equation_variance = total_collectible - (treasury_total + delinquency_total)
+        tracker_variance = float(diagnostics.get("tracker_variance", tracker_total - expected_unpaid) or 0)
+        raw_tracker_variance = float(diagnostics.get("raw_tracker_variance", tracker_variance) or 0)
+        variance = equation_variance if abs(equation_variance) > 1.0 else tracker_variance
+        balanced = max(abs(equation_variance), abs(tracker_variance)) <= 1.0
+
+        top_barangays = []
+        for row in sorted(brgy_rows, key=lambda item: float(item[6] or 0), reverse=True)[:20]:
+            due = float(row[2] or 0)
+            collected = float(row[5] or 0)
+            receivable = float(row[6] or 0)
+            rate = (collected / due * 100) if due > 0 else 0
+            top_barangays.append((row[0], due, collected, receivable, rate))
+
+        return {
+            "year": year,
+            "prepared_at": datetime.now().strftime("%Y-%m-%d %I:%M %p"),
+            "status": "BALANCED" if balanced else "NEEDS REVIEW",
+            "balanced": balanced,
+            "assessor": {
+                "total_assessed_value": float(assessor.get("total_assessed_value", 0) or 0),
+                "basic_tax_rate": float(assessor.get("tax_rate_percent", 0) or 0),
+                "total_rpt_rate": float(assessor.get("total_tax_rate_percent", 0) or 0),
+                "taxable_properties": int(assessor.get("taxable_properties", 0) or 0),
+                "current_levy": current_levy,
+                "current_penalty": current_penalty,
+                "current_discount": current_discount,
+                "current_net": current_net,
+            },
+            "treasury": {
+                "basic_tax_collected": float(treasury.get("basic_tax_collected", 0) or 0),
+                "cash_collected_this_year": cash_collected_this_year,
+                "calendar_applicable_collections": calendar_applicable_collections,
+                "prepaid_current_year": prepaid_current_year,
+                "future_year_prepayments": future_year_prepayments,
+                "accounts_paid": int(treasury.get("accounts_paid", 0) or 0),
+                "partial_payments": int(treasury.get("partial_payments", 0) or 0),
+                "total_collected": treasury_total,
+            },
+            "delinquency": {
+                "prior_year_receivables": prior_receivable,
+                "current_year_receivables": current_receivable,
+                "delinquent_accounts": int(delinquency.get("delinquent_accounts", 0) or 0),
+                "penalties_interest": float(delinquency.get("penalties_interest", 0) or 0),
+                "ending_receivable": delinquency_total,
+            },
+            "equation": {
+                "beginning_receivable": beginning,
+                "adjustments": adjustments,
+                "total_collectible": total_collectible,
+                "collections": treasury_total,
+                "ending_receivable": delinquency_total,
+                "equation_variance": equation_variance,
+                "tracker_variance": tracker_variance,
+                "raw_tracker_variance": raw_tracker_variance,
+                "variance": variance,
+                "collection_rate": (treasury_total / total_collectible * 100) if total_collectible > 0 else 0,
+                "receivable_rate": (expected_unpaid / total_collectible * 100) if total_collectible > 0 else 0,
+            },
+            "diagnostic_counts": {
+                "payment_link_issues": len(diagnostics.get("payment_link_mismatches", [])) + len(diagnostics.get("unlinked_payments", [])),
+                "overpaid_credits": len(diagnostics.get("overpaid_or_credit_rows", [])),
+                "timing_prepayment_groups": len(diagnostics.get("prior_year_collections", [])) + len(diagnostics.get("future_year_collections", [])) + len(diagnostics.get("current_year_paid_outside_selected_year", [])),
+            },
+            "diagnostic_rows": self._build_reconciliation_diag_rows(diagnostics, full=full_diagnostics),
+            "top_barangays": top_barangays,
+        }
+
+    def _fetch_reconciliation_export_payload(self, year):
+        summary = billing.get_rpt_receivables_summary(year)
+        metrics = billing.get_reconciliation_metrics(year)
+        diagnostics = billing.get_reconciliation_diagnostics(year, limit=500)
+        brgy_rows = prop.get_receivables_by_barangay(year=int(year))
+        return self._build_reconciliation_payload(
+            summary, brgy_rows, metrics, diagnostics, full_diagnostics=True
+        )
+
+    def _export_reconciliation_excel(self):
+        year = self.recon_year_cb.get()
+        dest = filedialog.asksaveasfilename(
+            title="Save Reconciliation Working Paper",
+            initialfile=f"Reconciliation_Working_Paper_{year}.xlsx",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+        )
+        if not dest:
+            return
+        self._run_reconciliation_export(
+            self.recon_export_excel_btn,
+            "EXPORT EXCEL",
+            lambda: self._write_reconciliation_excel(self._fetch_reconciliation_export_payload(year), dest),
+            dest,
+        )
+
+    def _export_reconciliation_pdf(self):
+        year = self.recon_year_cb.get()
+        dest = filedialog.asksaveasfilename(
+            title="Save Reconciliation PDF",
+            initialfile=f"Reconciliation_Working_Paper_{year}.pdf",
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+        )
+        if not dest:
+            return
+        self._run_reconciliation_export(
+            self.recon_export_pdf_btn,
+            "PRINT PDF",
+            lambda: self._write_reconciliation_pdf(self._fetch_reconciliation_export_payload(year), dest),
+            dest,
+        )
+
+    def _run_reconciliation_export(self, button, original_text, worker_fn, dest):
+        button.configure(text="GENERATING...", state="disabled")
+        self._show_loading()
+
+        def worker():
+            try:
+                worker_fn()
+
+                def done():
+                    self._hide_loading()
+                    button.configure(text=original_text, state="normal")
+                    if messagebox.askyesno("Export Successful", f"Reconciliation report saved to:\n{dest}\n\nOpen it now?"):
+                        self._open_file(dest)
+
+                self.container.after(0, done)
+            except Exception as exc:
+                self.container.after(
+                    0,
+                    lambda e=exc: (
+                        self._hide_loading(),
+                        button.configure(text=original_text, state="normal"),
+                        messagebox.showerror("Export Failed", str(e)),
+                    ),
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _write_reconciliation_excel(self, payload, dest):
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Summary"
+        blue = "1e40af"
+        dark = "0f172a"
+        gray = "e2e8f0"
+        green = "059669"
+        red = "dc2626"
+        thin = Side(style="thin", color="94a3b8")
+
+        def write_title(sheet, title, subtitle):
+            sheet.merge_cells("A1:F1")
+            sheet["A1"] = title
+            sheet["A1"].font = Font(size=16, bold=True, color="FFFFFF")
+            sheet["A1"].fill = PatternFill("solid", fgColor=blue)
+            sheet["A1"].alignment = Alignment(horizontal="center")
+            sheet.merge_cells("A2:F2")
+            sheet["A2"] = subtitle
+            sheet["A2"].font = Font(size=10, italic=True, color="475569")
+            sheet["A2"].alignment = Alignment(horizontal="center")
+
+        def style_row(sheet, row_idx, fill=None):
+            for cell in sheet[row_idx]:
+                cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
+                cell.alignment = Alignment(vertical="center")
+                if fill:
+                    cell.fill = PatternFill("solid", fgColor=fill)
+
+        write_title(ws, "INTER-DEPARTMENT RECONCILIATION WORKING PAPER", f"Fiscal Year {payload['year']} | Generated {payload['prepared_at']}")
+        ws.append([])
+        ws.append(["Status", payload["status"], "", "", "Variance", payload["equation"]["variance"]])
+        ws.append([])
+        ws.append(["Reconciliation Equation", "Amount"])
+        equation_rows = [
+            ("Beginning receivable", payload["equation"]["beginning_receivable"]),
+            ("Current year net collectible", payload["assessor"]["current_net"]),
+            ("Adjustments", payload["equation"]["adjustments"]),
+            ("Total collectible (A)", payload["equation"]["total_collectible"]),
+            ("Collections / credits (B)", payload["equation"]["collections"]),
+            ("Ending receivable (C)", payload["equation"]["ending_receivable"]),
+            ("Equation variance [A - (B + C)]", payload["equation"]["equation_variance"]),
+            ("As-of tracker variance", payload["equation"]["tracker_variance"]),
+            ("All-time vs as-of difference", payload["equation"]["raw_tracker_variance"]),
+        ]
+        for label, value in equation_rows:
+            ws.append([label, value])
+
+        ws.append([])
+        ws.append(["Assessor's Office", "Value", "Treasurer's Office", "Value", "RPT Tracker", "Value"])
+        sections = [
+            ("Total assessed value", payload["assessor"]["total_assessed_value"], "Basic tax collected", payload["treasury"]["basic_tax_collected"], "Prior-year receivables", payload["delinquency"]["prior_year_receivables"]),
+            ("Basic tax rate", f"{payload['assessor']['basic_tax_rate']:.2f}%", "Cash collected this year", payload["treasury"]["cash_collected_this_year"], "Current year receivables", payload["delinquency"]["current_year_receivables"]),
+            ("Total RPT rate", f"{payload['assessor']['total_rpt_rate']:.2f}%", "Current-year prepayments", payload["treasury"]["prepaid_current_year"], "Delinquent accounts", payload["delinquency"]["delinquent_accounts"]),
+            ("Taxable properties", payload["assessor"]["taxable_properties"], "Future prepayments excluded", payload["treasury"]["future_year_prepayments"], "Penalties and interest", payload["delinquency"]["penalties_interest"]),
+            ("Penalties / interest", payload["assessor"]["current_penalty"], "Accounts paid", payload["treasury"]["accounts_paid"], "Ending receivable", payload["delinquency"]["ending_receivable"]),
+            ("Discounts", payload["assessor"]["current_discount"], "Partial payments", payload["treasury"]["partial_payments"], "", ""),
+            ("Current year levy", payload["assessor"]["current_levy"], "Applied collections / credits", payload["treasury"]["total_collected"], "", ""),
+        ]
+        for row in sections:
+            ws.append(list(row))
+
+        for row in ws.iter_rows():
+            for cell in row:
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
+                if isinstance(cell.value, (int, float)) and cell.column in (2, 4, 6):
+                    cell.number_format = '#,##0.00'
+        for idx in (6, 17):
+            style_row(ws, idx, gray)
+            for cell in ws[idx]:
+                cell.font = Font(bold=True, color=dark)
+        ws["B4"].font = Font(bold=True, color=green if payload["balanced"] else red)
+        ws["F4"].font = Font(bold=True, color=green if payload["balanced"] else red)
+        for col in range(1, 7):
+            ws.column_dimensions[get_column_letter(col)].width = 26
+
+        diag = wb.create_sheet("Diagnostics")
+        write_title(diag, "RECONCILIATION DIAGNOSTICS", "Rows that explain timing, credit, or payment-allocation differences")
+        diag.append([])
+        diag.append(["Payment link issues", payload["diagnostic_counts"]["payment_link_issues"], "Overpaid / credits", payload["diagnostic_counts"]["overpaid_credits"], "Timing / prepayment groups", payload["diagnostic_counts"]["timing_prepayment_groups"]])
+        diag.append([])
+        diag.append(["Issue", "TD / Group", "Year", "Barangay / Scope", "Amount"])
+        for row in payload["diagnostic_rows"]:
+            diag.append(list(row))
+        style_row(diag, 6, gray)
+        for cell in diag[6]:
+            cell.font = Font(bold=True, color=dark)
+        for row in diag.iter_rows(min_row=7):
+            row[4].number_format = '#,##0.00'
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+                cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
+        widths = [46, 22, 12, 46, 16]
+        for idx, width in enumerate(widths, start=1):
+            diag.column_dimensions[get_column_letter(idx)].width = width
+
+        brgy = wb.create_sheet("Barangay Review")
+        write_title(brgy, "TOP BARANGAYS TO REVIEW", "Sorted by ending receivable")
+        brgy.append([])
+        brgy.append(["Barangay", "Tax Due", "Collected", "Receivable", "Collection Rate"])
+        for row in payload["top_barangays"]:
+            brgy.append(list(row))
+        style_row(brgy, 4, gray)
+        for cell in brgy[4]:
+            cell.font = Font(bold=True, color=dark)
+        for row in brgy.iter_rows(min_row=5):
+            for cell in row[1:4]:
+                cell.number_format = '#,##0.00'
+            row[4].number_format = '0.0'
+        for idx, width in enumerate([26, 18, 18, 18, 16], start=1):
+            brgy.column_dimensions[get_column_letter(idx)].width = width
+
+        sign = wb.create_sheet("Certification")
+        write_title(sign, "CERTIFICATION", "For review and signature")
+        sign.append([])
+        sign.append(["Prepared by:", "", "Date:", ""])
+        sign.append([])
+        sign.append(["Reviewed by:", "", "Date:", ""])
+        sign.append([])
+        sign.append(["Noted by:", "", "Date:", ""])
+        sign.append([])
+        sign.append(["Remarks:", ""])
+        sign.merge_cells("B10:F14")
+        for col in range(1, 7):
+            sign.column_dimensions[get_column_letter(col)].width = 22
+
+        wb.save(dest)
+        return dest
+
+    def _write_reconciliation_pdf(self, payload, dest):
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+        doc = SimpleDocTemplate(dest, pagesize=landscape(A4), rightMargin=12 * mm, leftMargin=12 * mm, topMargin=10 * mm, bottomMargin=10 * mm)
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle("ReconTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=15, textColor=colors.HexColor("#1e40af"), spaceAfter=4)
+        small = ParagraphStyle("Small", parent=styles["BodyText"], fontSize=8, leading=10)
+        header = ParagraphStyle("Header", parent=styles["Heading2"], fontSize=10, textColor=colors.HexColor("#0f172a"), spaceBefore=6, spaceAfter=4)
+
+        def money(value):
+            return self._recon_money(value)
+
+        story = [
+            Paragraph("INTER-DEPARTMENT RECONCILIATION WORKING PAPER", title_style),
+            Paragraph(f"Fiscal Year {payload['year']} | Generated {payload['prepared_at']} | Status: <b>{payload['status']}</b>", small),
+            Spacer(1, 5),
+        ]
+
+        summary_rows = [
+            ["Total Collectible (A)", money(payload["equation"]["total_collectible"]), "Collections / Credits (B)", money(payload["equation"]["collections"]), "Ending Receivable (C)", money(payload["equation"]["ending_receivable"])],
+            ["Equation", f"{money(payload['equation']['total_collectible'])} = {money(payload['equation']['collections'])} + {money(payload['equation']['ending_receivable'])}", "Variance", money(payload["equation"]["variance"]), "Review Status", payload["status"]],
+        ]
+        story.append(Table(summary_rows, colWidths=[38 * mm, 42 * mm, 38 * mm, 42 * mm, 38 * mm, 42 * mm], style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e2e8f0")),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#94a3b8")),
+            ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ])))
+        story.append(Spacer(1, 6))
+
+        story.append(Paragraph("Department Data", header))
+        department_rows = [
+            ["Assessor's Office", "Value", "Treasurer's Office", "Value", "RPT Tracker", "Value"],
+            ["Total assessed value", money(payload["assessor"]["total_assessed_value"]), "Basic tax collected", money(payload["treasury"]["basic_tax_collected"]), "Prior-year receivables", money(payload["delinquency"]["prior_year_receivables"])],
+            ["Taxable properties", f"{payload['assessor']['taxable_properties']:,}", "Accounts paid", f"{payload['treasury']['accounts_paid']:,}", "Current year receivables", money(payload["delinquency"]["current_year_receivables"])],
+            ["Current year levy", money(payload["assessor"]["current_levy"]), "Applied collections / credits", money(payload["treasury"]["total_collected"]), "Ending receivable", money(payload["delinquency"]["ending_receivable"])],
+            ["Penalties / discounts", f"{money(payload['assessor']['current_penalty'])} / -{money(payload['assessor']['current_discount'])}", "Future prepayments excluded", money(payload["treasury"]["future_year_prepayments"]), "Delinquent accounts", f"{payload['delinquency']['delinquent_accounts']:,}"],
+        ]
+        story.append(Table(department_rows, colWidths=[35 * mm, 42 * mm, 38 * mm, 42 * mm, 38 * mm, 42 * mm], repeatRows=1, style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e40af")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#94a3b8")),
+            ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ])))
+        story.append(Spacer(1, 6))
+
+        story.append(Paragraph("Diagnostic Summary", header))
+        diag_count_rows = [[
+            "Payment link issues", payload["diagnostic_counts"]["payment_link_issues"],
+            "Overpaid / credits", payload["diagnostic_counts"]["overpaid_credits"],
+            "Timing / prepayment groups", payload["diagnostic_counts"]["timing_prepayment_groups"],
+        ]]
+        story.append(Table(diag_count_rows, colWidths=[42 * mm, 18 * mm, 42 * mm, 18 * mm, 50 * mm, 18 * mm], style=TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#94a3b8")),
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ])))
+        story.append(Spacer(1, 4))
+
+        diag_rows = [["Issue", "TD / Group", "Year", "Barangay / Scope", "Amount"]]
+        for issue, td, tax_year, scope, amount in payload["diagnostic_rows"][:40]:
+            diag_rows.append([
+                Paragraph(str(issue or ""), small),
+                str(td or ""),
+                str(tax_year or ""),
+                Paragraph(str(scope or ""), small),
+                money(amount),
+            ])
+        story.append(Table(diag_rows, colWidths=[70 * mm, 32 * mm, 18 * mm, 70 * mm, 30 * mm], repeatRows=1, style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#334155")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#94a3b8")),
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ])))
+        story.append(Spacer(1, 8))
+
+        story.append(Paragraph("Certification", header))
+        sign_rows = [
+            ["Prepared by / Date", "", "Reviewed by / Date", "", "Noted by / Date", ""],
+            ["", "", "", "", "", ""],
+        ]
+        story.append(Table(sign_rows, colWidths=[35 * mm, 45 * mm, 35 * mm, 45 * mm, 35 * mm, 45 * mm], rowHeights=[8 * mm, 14 * mm], style=TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#94a3b8")),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ])))
+        doc.build(story)
+        return dest
 
     def generate_collection_report(self):
         # Reset to page 1 on a new search
