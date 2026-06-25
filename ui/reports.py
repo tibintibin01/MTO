@@ -1113,38 +1113,129 @@ class ReportsPage:
         from openpyxl.utils import get_column_letter
 
         wb = Workbook()
+        wb.properties.title = f"Reconciliation Working Paper {payload['year']}"
+        wb.properties.subject = "Inter-Department Reconciliation"
+        wb.properties.creator = "MTO Treasury System"
         ws = wb.active
         ws.title = "Summary"
-        blue = "1e40af"
-        dark = "0f172a"
-        gray = "e2e8f0"
-        green = "059669"
-        red = "dc2626"
-        thin = Side(style="thin", color="94a3b8")
 
-        def write_title(sheet, title, subtitle):
-            sheet.merge_cells("A1:F1")
-            sheet["A1"] = title
-            sheet["A1"].font = Font(size=16, bold=True, color="FFFFFF")
-            sheet["A1"].fill = PatternFill("solid", fgColor=blue)
+        navy = "17365D"
+        blue = "1F4E78"
+        light_blue = "D9EAF7"
+        pale_blue = "EEF5FB"
+        dark = "1F2937"
+        gray = "E7E6E6"
+        light_gray = "F7F9FB"
+        green = "008000"
+        red = "C00000"
+        amber = "B45F06"
+        white = "FFFFFF"
+        border_color = "A6A6A6"
+        thin = Side(style="thin", color=border_color)
+        medium = Side(style="medium", color=navy)
+        money_fmt = 'P #,##0.00;[Red]-P #,##0.00'
+        number_fmt = '#,##0'
+        percent_fmt = '0.0%'
+
+        def setup_sheet(sheet, tab_color=blue):
+            sheet.sheet_view.showGridLines = False
+            sheet.sheet_properties.tabColor = tab_color
+            sheet.freeze_panes = "A8"
+            sheet.page_setup.orientation = "landscape"
+            sheet.page_setup.paperSize = sheet.PAPERSIZE_A4
+            sheet.page_margins.left = 0.25
+            sheet.page_margins.right = 0.25
+            sheet.page_margins.top = 0.5
+            sheet.page_margins.bottom = 0.5
+
+        def border_range(sheet, cell_range, side=thin):
+            rows = list(sheet[cell_range])
+            for row in rows:
+                for cell in row:
+                    cell.border = Border(top=side, left=side, right=side, bottom=side)
+
+        def fill_range(sheet, cell_range, fill_color):
+            fill = PatternFill("solid", fgColor=fill_color)
+            for row in sheet[cell_range]:
+                for cell in row:
+                    cell.fill = fill
+
+        def merge_label(sheet, cell_range, text, fill_color=blue, font_color=white, size=11):
+            sheet.merge_cells(cell_range)
+            cell = sheet[cell_range.split(":")[0]]
+            cell.value = text
+            cell.font = Font(name="Calibri", size=size, bold=True, color=font_color)
+            cell.fill = PatternFill("solid", fgColor=fill_color)
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+            border_range(sheet, cell_range, medium)
+
+        def write_value(cell, value, kind="money"):
+            cell.value = value
+            cell.font = Font(name="Calibri", size=10, bold=True, color=dark)
+            cell.alignment = Alignment(horizontal="right", vertical="center")
+            if kind == "money":
+                cell.number_format = money_fmt
+            elif kind == "number":
+                cell.number_format = number_fmt
+            elif kind == "percent":
+                cell.number_format = percent_fmt
+
+        def write_header(sheet, subtitle):
+            sheet.merge_cells("A1:H1")
+            sheet["A1"] = "REPUBLIC OF THE PHILIPPINES"
+            sheet["A1"].font = Font(name="Calibri", size=10, bold=True, color=dark)
             sheet["A1"].alignment = Alignment(horizontal="center")
-            sheet.merge_cells("A2:F2")
-            sheet["A2"] = subtitle
-            sheet["A2"].font = Font(size=10, italic=True, color="475569")
+            sheet.merge_cells("A2:H2")
+            sheet["A2"] = "PROVINCE OF AURORA | MUNICIPALITY OF DIPACULAO"
+            sheet["A2"].font = Font(name="Calibri", size=10, bold=True, color=dark)
             sheet["A2"].alignment = Alignment(horizontal="center")
+            sheet.merge_cells("A3:H3")
+            sheet["A3"] = "MUNICIPAL TREASURY OFFICE"
+            sheet["A3"].font = Font(name="Calibri", size=11, bold=True, color=dark)
+            sheet["A3"].alignment = Alignment(horizontal="center")
+            sheet.merge_cells("A4:H4")
+            sheet["A4"] = "INTER-DEPARTMENT RECONCILIATION WORKING PAPER"
+            sheet["A4"].font = Font(name="Calibri", size=16, bold=True, color=white)
+            sheet["A4"].fill = PatternFill("solid", fgColor=navy)
+            sheet["A4"].alignment = Alignment(horizontal="center", vertical="center")
+            sheet.merge_cells("A5:H5")
+            sheet["A5"] = subtitle
+            sheet["A5"].font = Font(name="Calibri", size=10, italic=True, color="475569")
+            sheet["A5"].alignment = Alignment(horizontal="center")
+            sheet.row_dimensions[4].height = 24
 
-        def style_row(sheet, row_idx, fill=None):
-            for cell in sheet[row_idx]:
-                cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
-                cell.alignment = Alignment(vertical="center")
-                if fill:
-                    cell.fill = PatternFill("solid", fgColor=fill)
+        setup_sheet(ws)
+        write_header(ws, f"Fiscal Year {payload['year']} | Generated {payload['prepared_at']}")
+        for col, width in {
+            "A": 28, "B": 18, "C": 3, "D": 30, "E": 18, "F": 3, "G": 30, "H": 18
+        }.items():
+            ws.column_dimensions[col].width = width
 
-        write_title(ws, "INTER-DEPARTMENT RECONCILIATION WORKING PAPER", f"Fiscal Year {payload['year']} | Generated {payload['prepared_at']}")
-        ws.append([])
-        ws.append(["Status", payload["status"], "", "", "Variance", payload["equation"]["variance"]])
-        ws.append([])
-        ws.append(["Reconciliation Equation", "Amount"])
+        merge_label(ws, "A7:H7", "CONTROL SUMMARY")
+        summary_rows = [
+            ("Status", payload["status"], "Variance", payload["equation"]["variance"], "Collection Rate", payload["equation"]["collection_rate"] / 100),
+            ("Total Collectible (A)", payload["equation"]["total_collectible"], "Collections / Credits (B)", payload["equation"]["collections"], "Ending Receivable (C)", payload["equation"]["ending_receivable"]),
+        ]
+        start = 8
+        for idx, row in enumerate(summary_rows, start=start):
+            ws[f"A{idx}"], ws[f"D{idx}"], ws[f"G{idx}"]
+            labels = (("A", row[0]), ("D", row[2]), ("G", row[4]))
+            values = (("B", row[1]), ("E", row[3]), ("H", row[5]))
+            for col, label in labels:
+                ws[f"{col}{idx}"] = label
+                ws[f"{col}{idx}"].font = Font(bold=True, color=dark)
+                ws[f"{col}{idx}"].fill = PatternFill("solid", fgColor=light_blue)
+            for col, value in values:
+                kind = "percent" if col == "H" and idx == start else "money"
+                if col == "B" and idx == start:
+                    ws[f"{col}{idx}"] = value
+                    ws[f"{col}{idx}"].font = Font(bold=True, color=green if payload["balanced"] else red)
+                    ws[f"{col}{idx}"].alignment = Alignment(horizontal="center", vertical="center")
+                else:
+                    write_value(ws[f"{col}{idx}"], value, kind)
+            border_range(ws, f"A{idx}:H{idx}")
+
+        merge_label(ws, "A12:H12", "RECONCILIATION EQUATION")
         equation_rows = [
             ("Beginning receivable", payload["equation"]["beginning_receivable"]),
             ("Current year net collectible", payload["assessor"]["current_net"]),
@@ -1156,86 +1247,148 @@ class ReportsPage:
             ("As-of tracker variance", payload["equation"]["tracker_variance"]),
             ("All-time vs as-of difference", payload["equation"]["raw_tracker_variance"]),
         ]
-        for label, value in equation_rows:
-            ws.append([label, value])
+        for idx, (label, value) in enumerate(equation_rows, start=13):
+            ws.merge_cells(start_row=idx, start_column=1, end_row=idx, end_column=4)
+            ws.cell(idx, 1).value = label
+            ws.cell(idx, 1).font = Font(color=dark, bold=label.endswith("(A)") or label.endswith("(B)") or label.endswith("(C)"))
+            ws.merge_cells(start_row=idx, start_column=5, end_row=idx, end_column=8)
+            write_value(ws.cell(idx, 5), value)
+            border_range(ws, f"A{idx}:H{idx}")
+            if label.startswith("Total collectible") or label.startswith("Equation variance"):
+                fill_range(ws, f"A{idx}:H{idx}", pale_blue)
 
-        ws.append([])
-        ws.append(["Assessor's Office", "Value", "Treasurer's Office", "Value", "RPT Tracker", "Value"])
+        merge_label(ws, "A24:H24", "DEPARTMENT RECONCILIATION DATA")
+        section_headers = [("A25:B25", "ASSESSOR'S OFFICE"), ("D25:E25", "TREASURER'S OFFICE"), ("G25:H25", "RPT TRACKER")]
+        for cell_range, title in section_headers:
+            merge_label(ws, cell_range, title, fill_color=blue, size=10)
         sections = [
-            ("Total assessed value", payload["assessor"]["total_assessed_value"], "Basic tax collected", payload["treasury"]["basic_tax_collected"], "Prior-year receivables", payload["delinquency"]["prior_year_receivables"]),
-            ("Basic tax rate", f"{payload['assessor']['basic_tax_rate']:.2f}%", "Cash collected this year", payload["treasury"]["cash_collected_this_year"], "Current year receivables", payload["delinquency"]["current_year_receivables"]),
-            ("Total RPT rate", f"{payload['assessor']['total_rpt_rate']:.2f}%", "Current-year prepayments", payload["treasury"]["prepaid_current_year"], "Delinquent accounts", payload["delinquency"]["delinquent_accounts"]),
-            ("Taxable properties", payload["assessor"]["taxable_properties"], "Future prepayments excluded", payload["treasury"]["future_year_prepayments"], "Penalties and interest", payload["delinquency"]["penalties_interest"]),
-            ("Penalties / interest", payload["assessor"]["current_penalty"], "Accounts paid", payload["treasury"]["accounts_paid"], "Ending receivable", payload["delinquency"]["ending_receivable"]),
-            ("Discounts", payload["assessor"]["current_discount"], "Partial payments", payload["treasury"]["partial_payments"], "", ""),
-            ("Current year levy", payload["assessor"]["current_levy"], "Applied collections / credits", payload["treasury"]["total_collected"], "", ""),
+            ("Total assessed value", payload["assessor"]["total_assessed_value"], "money", "Basic tax collected", payload["treasury"]["basic_tax_collected"], "money", "Prior-year receivables", payload["delinquency"]["prior_year_receivables"], "money"),
+            ("Basic tax rate", payload["assessor"]["basic_tax_rate"] / 100, "percent", "Cash collected this year", payload["treasury"]["cash_collected_this_year"], "money", "Current year receivables", payload["delinquency"]["current_year_receivables"], "money"),
+            ("Total RPT rate", payload["assessor"]["total_rpt_rate"] / 100, "percent", "Current-year prepayments", payload["treasury"]["prepaid_current_year"], "money", "Delinquent accounts", payload["delinquency"]["delinquent_accounts"], "number"),
+            ("Taxable properties", payload["assessor"]["taxable_properties"], "number", "Future prepayments excluded", payload["treasury"]["future_year_prepayments"], "money", "Penalties and interest", payload["delinquency"]["penalties_interest"], "money"),
+            ("Penalties / interest", payload["assessor"]["current_penalty"], "money", "Accounts paid", payload["treasury"]["accounts_paid"], "number", "Ending receivable", payload["delinquency"]["ending_receivable"], "money"),
+            ("Discounts", payload["assessor"]["current_discount"], "money", "Partial payments", payload["treasury"]["partial_payments"], "number", "", "", "text"),
+            ("Current year levy", payload["assessor"]["current_levy"], "money", "Applied collections / credits", payload["treasury"]["total_collected"], "money", "", "", "text"),
         ]
-        for row in sections:
-            ws.append(list(row))
+        for idx, row in enumerate(sections, start=26):
+            for label_col, value_col, label, value, kind in (
+                ("A", "B", row[0], row[1], row[2]),
+                ("D", "E", row[3], row[4], row[5]),
+                ("G", "H", row[6], row[7], row[8]),
+            ):
+                ws[f"{label_col}{idx}"] = label
+                ws[f"{label_col}{idx}"].font = Font(color=dark)
+                if kind != "text":
+                    write_value(ws[f"{value_col}{idx}"], value, kind)
+                else:
+                    ws[f"{value_col}{idx}"] = value
+            border_range(ws, f"A{idx}:B{idx}")
+            border_range(ws, f"D{idx}:E{idx}")
+            border_range(ws, f"G{idx}:H{idx}")
 
-        for row in ws.iter_rows():
-            for cell in row:
-                cell.alignment = Alignment(vertical="center", wrap_text=True)
-                if isinstance(cell.value, (int, float)) and cell.column in (2, 4, 6):
-                    cell.number_format = '#,##0.00'
-        for idx in (6, 17):
-            style_row(ws, idx, gray)
-            for cell in ws[idx]:
-                cell.font = Font(bold=True, color=dark)
-        ws["B4"].font = Font(bold=True, color=green if payload["balanced"] else red)
-        ws["F4"].font = Font(bold=True, color=green if payload["balanced"] else red)
-        for col in range(1, 7):
-            ws.column_dimensions[get_column_letter(col)].width = 26
+        merge_label(ws, "A35:H35", "REVIEW NOTES", fill_color="595959")
+        ws.merge_cells("A36:H39")
+        ws["A36"] = (
+            "This working paper supports reconciliation between assessed collectible amounts, "
+            "Treasury collections/credits, and RPT receivable balances. Diagnostic rows should be reviewed "
+            "before Accounting or COA submission when the status is NEEDS REVIEW."
+        )
+        ws["A36"].alignment = Alignment(wrap_text=True, vertical="top")
+        ws["A36"].font = Font(color=dark)
+        border_range(ws, "A36:H39")
+
+        ws.print_area = "A1:H39"
 
         diag = wb.create_sheet("Diagnostics")
-        write_title(diag, "RECONCILIATION DIAGNOSTICS", "Rows that explain timing, credit, or payment-allocation differences")
-        diag.append([])
-        diag.append(["Payment link issues", payload["diagnostic_counts"]["payment_link_issues"], "Overpaid / credits", payload["diagnostic_counts"]["overpaid_credits"], "Timing / prepayment groups", payload["diagnostic_counts"]["timing_prepayment_groups"]])
+        setup_sheet(diag, tab_color=amber)
+        write_header(diag, "Diagnostic rows that explain timing, credit, or payment-allocation differences")
+        for col, width in {"A": 48, "B": 22, "C": 12, "D": 48, "E": 18}.items():
+            diag.column_dimensions[col].width = width
+        merge_label(diag, "A7:E7", "DIAGNOSTIC SUMMARY", fill_color=amber)
+        diag.append(["Payment link issues", payload["diagnostic_counts"]["payment_link_issues"], "Overpaid / credits", payload["diagnostic_counts"]["overpaid_credits"], "Timing / prepayment groups"])
+        diag["F8"] = payload["diagnostic_counts"]["timing_prepayment_groups"]
+        border_range(diag, "A8:F8")
+        fill_range(diag, "A8:F8", pale_blue)
         diag.append([])
         diag.append(["Issue", "TD / Group", "Year", "Barangay / Scope", "Amount"])
         for row in payload["diagnostic_rows"]:
             diag.append(list(row))
-        style_row(diag, 6, gray)
-        for cell in diag[6]:
-            cell.font = Font(bold=True, color=dark)
-        for row in diag.iter_rows(min_row=7):
+        for cell in diag[10]:
+            cell.font = Font(bold=True, color=white)
+            cell.fill = PatternFill("solid", fgColor=navy)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        diag.auto_filter.ref = f"A10:E{max(10, diag.max_row)}"
+        diag.freeze_panes = "A11"
+        for row in diag.iter_rows(min_row=11):
             row[4].number_format = '#,##0.00'
             for cell in row:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
                 cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
-        widths = [46, 22, 12, 46, 16]
-        for idx, width in enumerate(widths, start=1):
-            diag.column_dimensions[get_column_letter(idx)].width = width
 
         brgy = wb.create_sheet("Barangay Review")
-        write_title(brgy, "TOP BARANGAYS TO REVIEW", "Sorted by ending receivable")
-        brgy.append([])
+        setup_sheet(brgy, tab_color=green)
+        write_header(brgy, "Top barangays sorted by ending receivable")
+        for col, width in {"A": 28, "B": 18, "C": 18, "D": 18, "E": 16}.items():
+            brgy.column_dimensions[col].width = width
+        merge_label(brgy, "A7:E7", "TOP BARANGAYS TO REVIEW", fill_color=green)
         brgy.append(["Barangay", "Tax Due", "Collected", "Receivable", "Collection Rate"])
         for row in payload["top_barangays"]:
             brgy.append(list(row))
-        style_row(brgy, 4, gray)
-        for cell in brgy[4]:
-            cell.font = Font(bold=True, color=dark)
-        for row in brgy.iter_rows(min_row=5):
+        for cell in brgy[8]:
+            cell.font = Font(bold=True, color=white)
+            cell.fill = PatternFill("solid", fgColor=navy)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        brgy.auto_filter.ref = f"A8:E{max(8, brgy.max_row)}"
+        brgy.freeze_panes = "A9"
+        for row in brgy.iter_rows(min_row=9):
             for cell in row[1:4]:
-                cell.number_format = '#,##0.00'
-            row[4].number_format = '0.0'
-        for idx, width in enumerate([26, 18, 18, 18, 16], start=1):
-            brgy.column_dimensions[get_column_letter(idx)].width = width
+                cell.number_format = money_fmt
+            row[4].number_format = '0.0%'
+            row[4].value = (row[4].value or 0) / 100
+            for cell in row:
+                cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
 
         sign = wb.create_sheet("Certification")
-        write_title(sign, "CERTIFICATION", "For review and signature")
-        sign.append([])
-        sign.append(["Prepared by:", "", "Date:", ""])
-        sign.append([])
-        sign.append(["Reviewed by:", "", "Date:", ""])
-        sign.append([])
-        sign.append(["Noted by:", "", "Date:", ""])
-        sign.append([])
-        sign.append(["Remarks:", ""])
-        sign.merge_cells("B10:F14")
-        for col in range(1, 7):
-            sign.column_dimensions[get_column_letter(col)].width = 22
+        setup_sheet(sign, tab_color="595959")
+        write_header(sign, "Certification and sign-off")
+        for col, width in {"A": 24, "B": 24, "C": 24, "D": 24, "E": 24, "F": 24, "G": 24, "H": 24}.items():
+            sign.column_dimensions[col].width = width
+        merge_label(sign, "A7:H7", "CERTIFICATION", fill_color="595959")
+        sign.merge_cells("A9:H11")
+        sign["A9"] = (
+            "I certify that this reconciliation working paper was generated from the MTO Treasury System "
+            "for review by the Municipal Treasury Office, Accounting Office, and COA audit requirements."
+        )
+        sign["A9"].alignment = Alignment(wrap_text=True, vertical="top")
+        sign["A9"].font = Font(color=dark)
+        border_range(sign, "A9:H11")
+        signature_rows = [
+            (14, "Prepared by", "Reviewed by", "Noted by"),
+            (18, "Date", "Date", "Date"),
+        ]
+        for row_idx, left, mid, right in signature_rows:
+            for start_col, label in ((1, left), (4, mid), (7, right)):
+                end_col = start_col + 1
+                sign.merge_cells(start_row=row_idx, start_column=start_col, end_row=row_idx, end_column=end_col)
+                sign.cell(row_idx, start_col).value = label
+                sign.cell(row_idx, start_col).font = Font(bold=True, color=dark)
+                sign.cell(row_idx, start_col).alignment = Alignment(horizontal="center")
+                sign.merge_cells(start_row=row_idx + 1, start_column=start_col, end_row=row_idx + 1, end_column=end_col)
+                border_range(sign, f"{get_column_letter(start_col)}{row_idx + 1}:{get_column_letter(end_col)}{row_idx + 1}", medium)
+        merge_label(sign, "A22:H22", "REMARKS", fill_color="595959")
+        sign.merge_cells("A23:H29")
+        border_range(sign, "A23:H29")
+
+        for sheet in wb.worksheets:
+            for row in sheet.iter_rows():
+                for cell in row:
+                    cell.alignment = Alignment(
+                        horizontal=cell.alignment.horizontal or "left",
+                        vertical=cell.alignment.vertical or "center",
+                        wrap_text=cell.alignment.wrap_text,
+                    )
+                    if cell.font == Font():
+                        cell.font = Font(name="Calibri", size=10, color=dark)
 
         wb.save(dest)
         return dest
