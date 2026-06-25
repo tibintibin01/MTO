@@ -579,6 +579,16 @@ def _extract_single_year(value):
     return unique_years[0] if len(unique_years) == 1 else None
 
 
+def _date_key(value):
+    if not value:
+        return ""
+    if hasattr(value, "date"):
+        return value.date().isoformat()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
 def get_payment_cleanup_candidates(year=None, limit=500, db_session: Session = None):
     """
     Preview payment rows that can explain reconciliation drift.
@@ -661,7 +671,7 @@ def get_payment_cleanup_candidates(year=None, limit=500, db_session: Session = N
         duplicate_key = (
             int(payment.property_id or 0),
             str(payment.or_number or "").strip(),
-            payment.date_paid.date().isoformat() if payment.date_paid else "",
+            _date_key(payment.date_paid),
             str(payment.tax_year or "").strip(),
             str(_d(payment.amount).quantize(Decimal("0.01"))),
         )
