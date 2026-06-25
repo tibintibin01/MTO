@@ -475,7 +475,7 @@ class SystemAdminPage:
 
         self.repair_links_btn = ctk.CTkButton(
             data_tools,
-            text="REPAIR PAYMENT LINKS",
+            text="REPAIR RAW TRACKER DRIFT",
             command=self.repair_payment_links,
             height=button_height,
             width=grouped_button_width,
@@ -1147,13 +1147,13 @@ class SystemAdminPage:
         threading.Thread(target=preview, daemon=True).start()
 
     def repair_payment_links(self):
-        """Preview and repair missing/stale PaymentBilling allocation links."""
+        """Preview and repair Raw Tracker Drift caused by stale payment allocations."""
         import threading
         import api_clients.system_service as system_svc
 
         def reset_button():
             if self.container.winfo_exists():
-                self.repair_links_btn.configure(state="normal", text="REPAIR PAYMENT LINKS")
+                self.repair_links_btn.configure(state="normal", text="REPAIR RAW TRACKER DRIFT")
 
         self.repair_links_btn.configure(state="disabled", text="PREVIEWING...")
 
@@ -1171,8 +1171,9 @@ class SystemAdminPage:
                 if missing <= 0 and stale_links <= 0 and stale_summaries <= 0 and recalc <= 0:
                     def show_none():
                         messagebox.showinfo(
-                            "Payment Link Repair",
-                            "No missing payment links or stale paid totals found.",
+                            "Raw Tracker Drift Repair",
+                            "No payment allocation drift found.\n\n"
+                            "The stored billing paid totals already match the linked payment allocations.",
                             parent=self.container.winfo_toplevel(),
                         )
                         reset_button()
@@ -1187,7 +1188,10 @@ class SystemAdminPage:
                     )
                 example_text = "\n".join(examples) or "No examples available."
                 msg = (
-                    "Repair payment allocation links?\n\n"
+                    "Repair Raw Tracker Drift?\n\n"
+                    "This fixes the data behind the Reconciliation diagnostic named "
+                    "'Raw Tracker Drift'. It compares the old stored billing paid totals "
+                    "against the real payment allocation links.\n\n"
                     f"Missing payment links: {missing:,}\n"
                     f"Stale link amounts: {stale_links:,}\n"
                     f"Stale billing summaries: {stale_summaries:,}\n"
@@ -1197,11 +1201,11 @@ class SystemAdminPage:
                     "Examples:\n"
                     f"{example_text}\n\n"
                     "This does not change OR numbers, payment dates, or payment amounts. "
-                    "It links payments to their billing year and recalculates paid totals."
+                    "It rebuilds payment-to-billing links where safe and recalculates billing paid totals."
                 )
 
                 def ask_confirm():
-                    if messagebox.askyesno("Confirm Payment Link Repair", msg, parent=self.container.winfo_toplevel()):
+                    if messagebox.askyesno("Confirm Raw Tracker Drift Repair", msg, parent=self.container.winfo_toplevel()):
                         self.repair_links_btn.configure(state="disabled", text="REPAIRING...")
                         threading.Thread(target=apply_repair, daemon=True).start()
                     else:
@@ -1210,7 +1214,7 @@ class SystemAdminPage:
                 self.container.after(0, ask_confirm)
             except Exception as e:
                 def show_error(err=str(e)):
-                    messagebox.showerror("Payment Link Repair", err, parent=self.container.winfo_toplevel())
+                    messagebox.showerror("Raw Tracker Drift Repair", err, parent=self.container.winfo_toplevel())
                     reset_button()
                 self.container.after(0, show_error)
 
@@ -1226,21 +1230,21 @@ class SystemAdminPage:
 
                 def show_done():
                     messagebox.showinfo(
-                        "Payment Link Repair Complete",
+                        "Raw Tracker Drift Repair Complete",
                         f"Created {missing:,} payment link(s).\n"
                         f"Fixed {stale_links:,} stale link amount(s).\n"
                         f"Fixed {stale_summaries:,} stale billing summary row(s).\n"
                         f"Created {created:,} missing billing row(s).\n"
                         f"Recalculated {recalc:,} billing paid total(s).\n"
                         f"Properties affected: {props:,}.\n\n"
-                        "Reload Reconciliation to confirm the diagnostic list.",
+                        "Reload Reconciliation to confirm Raw Tracker Drift is reduced or cleared.",
                         parent=self.container.winfo_toplevel(),
                     )
                     reset_button()
                 self.container.after(0, show_done)
             except Exception as e:
                 def show_error(err=str(e)):
-                    messagebox.showerror("Payment Link Repair", err, parent=self.container.winfo_toplevel())
+                    messagebox.showerror("Raw Tracker Drift Repair", err, parent=self.container.winfo_toplevel())
                     reset_button()
                 self.container.after(0, show_error)
 
