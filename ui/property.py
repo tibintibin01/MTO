@@ -435,7 +435,8 @@ class PropertyEditModal(ctk.CTkToplevel):
                                      placeholder_text="Type barangay name...")
                 entry.pack(fill="x", padx=10, pady=(0, 5))
                 entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
-                attach_autocomplete(entry, self.barangays, self.vars[key])
+                if not self.payment_mode:
+                    attach_autocomplete(entry, self.barangays, self.vars[key])
             else:
                 placeholder = "e.g. 2027" if key == "effectivity_date" else "e.g. 06-0012-01780" if key == "prev_td_number" else ""
                 entry = ctk.CTkEntry(self.scroll_form, height=40, textvariable=self.vars[key], placeholder_text=placeholder)
