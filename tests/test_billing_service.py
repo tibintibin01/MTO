@@ -290,6 +290,89 @@ def _payment_for_billing(db, prop, billing, amount, date_paid, or_number):
     return payment
 
 
+def test_reconciliation_flags_prior_year_gap_before_later_payment(db):
+    prop = Property(
+        td_number="TD-SEQUENCE-GAP",
+        owner_name="Sequence Gap Owner",
+        barangay="NORTH POBLACION",
+        assessed_value=100_000.0,
+        effectivity_date="2023-01-01",
+    )
+    db.add(prop)
+    db.flush()
+
+    billings = {}
+    for year in range(2023, 2027):
+        billing = PropertyBilling(
+            property_id=prop.id,
+            tax_year=year,
+            assessed_value=100_000.0,
+            penalty=0,
+            discount=0,
+            amount_paid=0,
+        )
+        db.add(billing)
+        billings[year] = billing
+    db.flush()
+
+    for year in (2023, 2024, 2026):
+        _payment_for_billing(
+            db,
+            prop,
+            billings[year],
+            2_000.0,
+            datetime(year, 1, 15),
+            f"OR-{year}",
+        )
+    db.commit()
+
+    diagnostics = get_reconciliation_diagnostics(2026, db_session=db)
+    gaps = [
+        row for row in diagnostics["payment_sequence_gaps"]
+        if row["td_number"] == "TD-SEQUENCE-GAP"
+    ]
+
+    assert diagnostics["payment_sequence_gap_count"] == 1
+    assert len(gaps) == 1
+    assert gaps[0]["tax_year"] == 2025
+    assert gaps[0]["gap_status"] == "unpaid"
+    assert gaps[0]["later_paid_year"] == 2026
+    assert gaps[0]["outstanding"] == pytest.approx(2_000.0)
+
+
+def test_reconciliation_payment_sequence_respects_effectivity_year(db):
+    prop = Property(
+        td_number="TD-NEW-IN-2025",
+        owner_name="New TD Owner",
+        barangay="PUANGI",
+        assessed_value=50_000.0,
+        effectivity_date="2025",
+    )
+    db.add(prop)
+    db.flush()
+
+    for year in (2025, 2026):
+        billing = PropertyBilling(
+            property_id=prop.id,
+            tax_year=year,
+            assessed_value=50_000.0,
+            penalty=0,
+            discount=0,
+            amount_paid=0,
+        )
+        db.add(billing)
+        db.flush()
+        _payment_for_billing(db, prop, billing, 1_000.0, datetime(year, 1, 15), f"NEW-{year}")
+    db.commit()
+
+    diagnostics = get_reconciliation_diagnostics(2026, db_session=db)
+
+    assert not any(
+        row["td_number"] == "TD-NEW-IN-2025"
+        for row in diagnostics["payment_sequence_gaps"]
+    )
+
+
 def test_reconciliation_is_time_aware_for_prepayments_and_future_postings(db):
     prepaid_prop = Property(
         td_number="TD-PREPAID-2026",

@@ -1359,6 +1359,103 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
         for row in outside_detail_rows
     ]
 
+    # Flag out-of-order payment histories. A later tax year with a linked
+    # payment should not normally coexist with a missing or incomplete prior
+    # year. Work from linked allocations (the accounting source of truth), not
+    # the free-form tax-year label displayed on the payment row.
+    sequence_rows = db_session.query(
+        Property.id,
+        Property.td_number,
+        Property.owner_name,
+        Property.barangay,
+        Property.effectivity_date,
+        PropertyBilling.tax_year,
+        due_expr,
+        linked_paid_expr,
+    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
+        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
+    ).filter(
+        Property.deleted_at == None,
+        Property.archived == False,
+        PropertyBilling.is_archived == False,
+        PropertyBilling.tax_year <= ry,
+    ).order_by(Property.id.asc(), PropertyBilling.tax_year.asc()).all()
+
+    sequence_by_property = {}
+    for row in sequence_rows:
+        bucket = sequence_by_property.setdefault(int(row[0]), {
+            "td_number": row[1],
+            "owner_name": row[2],
+            "barangay": row[3],
+            "effectivity_year": _year_from_value(row[4]),
+            "years": {},
+        })
+        bucket["years"][int(row[5])] = {
+            "total_due": money_float(row[6]),
+            "linked_paid": money_float(row[7]),
+        }
+
+    payment_sequence_gaps = []
+    for bucket in sequence_by_property.values():
+        year_rows = bucket["years"]
+        paid_years = sorted(
+            year for year, values in year_rows.items()
+            if values["linked_paid"] > 0.01
+        )
+        if not paid_years:
+            continue
+
+        latest_paid_year = paid_years[-1]
+        first_billed_year = min(year_rows)
+        start_year = bucket["effectivity_year"] or first_billed_year
+        start_year = max(2023, int(start_year))
+        if latest_paid_year <= start_year:
+            continue
+
+        for gap_year in range(start_year, latest_paid_year):
+            values = year_rows.get(gap_year)
+            if values is None:
+                issue = "Missing billing/payment year before a later paid year"
+                total_due_value = None
+                linked_paid_value = 0.0
+                outstanding = None
+                status = "missing_billing"
+            else:
+                total_due_value = values["total_due"]
+                linked_paid_value = values["linked_paid"]
+                outstanding = max(0.0, total_due_value - linked_paid_value)
+                if total_due_value <= 0.01 or outstanding <= 0.01:
+                    continue
+                status = "unpaid" if linked_paid_value <= 0.01 else "partial"
+                issue = (
+                    "Unpaid prior year before a later paid year"
+                    if status == "unpaid"
+                    else "Partially paid prior year before a later paid year"
+                )
+
+            payment_sequence_gaps.append({
+                "issue": issue,
+                "td_number": bucket["td_number"],
+                "owner_name": bucket["owner_name"],
+                "barangay": bucket["barangay"],
+                "tax_year": gap_year,
+                "gap_status": status,
+                "total_due": total_due_value,
+                "linked_paid": linked_paid_value,
+                "outstanding": outstanding,
+                "later_paid_year": latest_paid_year,
+            })
+
+    payment_sequence_gaps.sort(
+        key=lambda item: (
+            item["tax_year"],
+            -(item["outstanding"] or 0),
+            item["td_number"] or "",
+        )
+    )
+    payment_sequence_gap_count = len(payment_sequence_gaps)
+    payment_sequence_gaps = payment_sequence_gaps[:safe_limit]
+
     unlinked_raw_rows = db_session.query(
         Payment.id,
         Property.td_number,
@@ -1425,6 +1522,8 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
         "future_year_collections": future_year_collections,
         "current_year_paid_outside_selected_year": current_year_paid_outside,
         "current_year_paid_outside_details": current_year_paid_outside_details,
+        "payment_sequence_gap_count": payment_sequence_gap_count,
+        "payment_sequence_gaps": payment_sequence_gaps,
     }
 def get_compliant_accounts(
     barangay: str = None,

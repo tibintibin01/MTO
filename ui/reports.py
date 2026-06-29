@@ -810,11 +810,11 @@ class ReportsPage:
 
         diag_summary = ctk.CTkFrame(diag, fg_color="transparent")
         diag_summary.pack(fill="x", padx=16, pady=(0, 10))
-        diag_summary.grid_columnconfigure((0, 1, 2, 3, 4), weight=1)
+        diag_summary.grid_columnconfigure((0, 1, 2, 3, 4, 5), weight=1)
 
         def diag_chip(parent, col, title, value, color):
             chip = ctk.CTkFrame(parent, fg_color="#0f172a", corner_radius=7, border_width=1, border_color="#334155")
-            chip.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 6, 0 if col == 4 else 6))
+            chip.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 4, 0 if col == 5 else 4))
             ctk.CTkLabel(chip, text=title.upper(), font=("Inter", 9, "bold"), text_color=ModernTheme.TEXT_GRAY).pack(anchor="w", padx=10, pady=(8, 2))
             ctk.CTkLabel(chip, text=value, font=("Consolas", 12, "bold"), text_color=color).pack(anchor="w", padx=10, pady=(0, 8))
 
@@ -823,7 +823,8 @@ class ReportsPage:
         link_issue_count = len(diagnostics.get("payment_link_mismatches", [])) + len(diagnostics.get("unlinked_payments", []))
         diag_chip(diag_summary, 2, "Payment link issues", str(link_issue_count), "#f59e0b")
         diag_chip(diag_summary, 3, "Overpaid / credits", str(len(diagnostics.get("overpaid_or_credit_rows", []))), "#22c55e")
-        diag_chip(diag_summary, 4, "Timing/prepayment groups", str(len(diagnostics.get("prior_year_collections", [])) + len(diagnostics.get("future_year_collections", [])) + len(diagnostics.get("current_year_paid_outside_selected_year", []))), "#38bdf8")
+        diag_chip(diag_summary, 4, "Payment-year gaps", str(diagnostics.get("payment_sequence_gap_count", len(diagnostics.get("payment_sequence_gaps", []))) or 0), "#ef4444")
+        diag_chip(diag_summary, 5, "Timing/prepayment groups", str(len(diagnostics.get("prior_year_collections", [])) + len(diagnostics.get("future_year_collections", [])) + len(diagnostics.get("current_year_paid_outside_selected_year", []))), "#38bdf8")
 
         diag_rows = []
         for item in diagnostics.get("unlinked_payments", [])[:10]:
@@ -835,6 +836,11 @@ class ReportsPage:
             diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("difference", 0)))
         for item in diagnostics.get("overpaid_or_credit_rows", [])[:8]:
             diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("balance", 0)))
+        for item in diagnostics.get("payment_sequence_gaps", [])[:20]:
+            later_year = item.get("later_paid_year") or "-"
+            status = str(item.get("gap_status") or "gap").replace("_", " ").title()
+            scope = f"{item.get('barangay') or '-'} | {status} | Later paid: {later_year}"
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), scope, item.get("outstanding") or 0))
         for item in diagnostics.get("prior_year_collections", []):
             diag_rows.append((item.get("issue"), "Grouped", item.get("tax_year"), f"{item.get('properties', 0):,} properties", item.get("amount", 0)))
         for item in diagnostics.get("future_year_collections", []):
@@ -920,6 +926,11 @@ class ReportsPage:
             diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("difference", 0)))
         for item in take(diagnostics.get("overpaid_or_credit_rows"), 8):
             diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("balance", 0)))
+        for item in take(diagnostics.get("payment_sequence_gaps"), 20):
+            later_year = item.get("later_paid_year") or "-"
+            status = str(item.get("gap_status") or "gap").replace("_", " ").title()
+            scope = f"{item.get('barangay') or '-'} | {status} | Later paid: {later_year}"
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), scope, item.get("outstanding") or 0))
         for item in diagnostics.get("prior_year_collections", []) or []:
             diag_rows.append((item.get("issue"), "Grouped", item.get("tax_year"), f"{item.get('properties', 0):,} properties", item.get("amount", 0)))
         for item in diagnostics.get("future_year_collections", []) or []:
@@ -1031,6 +1042,7 @@ class ReportsPage:
             "diagnostic_counts": {
                 "payment_link_issues": len(diagnostics.get("payment_link_mismatches", [])) + len(diagnostics.get("unlinked_payments", [])),
                 "overpaid_credits": len(diagnostics.get("overpaid_or_credit_rows", [])),
+                "payment_year_gaps": int(diagnostics.get("payment_sequence_gap_count", len(diagnostics.get("payment_sequence_gaps", []))) or 0),
                 "timing_prepayment_groups": len(diagnostics.get("prior_year_collections", [])) + len(diagnostics.get("future_year_collections", [])) + len(diagnostics.get("current_year_paid_outside_selected_year", [])),
             },
             "diagnostic_rows": self._build_reconciliation_diag_rows(diagnostics, full=full_diagnostics),
@@ -1302,13 +1314,17 @@ class ReportsPage:
         diag = wb.create_sheet("Diagnostics")
         setup_sheet(diag, tab_color=amber)
         write_header(diag, "Diagnostic rows that explain timing, credit, or payment-allocation differences")
-        for col, width in {"A": 48, "B": 22, "C": 12, "D": 48, "E": 18}.items():
+        for col, width in {"A": 48, "B": 22, "C": 12, "D": 48, "E": 18, "F": 14, "G": 30, "H": 14}.items():
             diag.column_dimensions[col].width = width
-        merge_label(diag, "A7:E7", "DIAGNOSTIC SUMMARY", fill_color=amber)
-        diag.append(["Payment link issues", payload["diagnostic_counts"]["payment_link_issues"], "Overpaid / credits", payload["diagnostic_counts"]["overpaid_credits"], "Timing / prepayment groups"])
-        diag["F8"] = payload["diagnostic_counts"]["timing_prepayment_groups"]
-        border_range(diag, "A8:F8")
-        fill_range(diag, "A8:F8", pale_blue)
+        merge_label(diag, "A7:H7", "DIAGNOSTIC SUMMARY", fill_color=amber)
+        diag.append([
+            "Payment link issues", payload["diagnostic_counts"]["payment_link_issues"],
+            "Overpaid / credits", payload["diagnostic_counts"]["overpaid_credits"],
+            "Payment-year gaps", payload["diagnostic_counts"]["payment_year_gaps"],
+            "Timing / prepayment groups", payload["diagnostic_counts"]["timing_prepayment_groups"],
+        ])
+        border_range(diag, "A8:H8")
+        fill_range(diag, "A8:H8", pale_blue)
         diag.append([])
         diag.append(["Issue", "TD / Group", "Year", "Barangay / Scope", "Amount"])
         for row in payload["diagnostic_rows"]:
@@ -1446,12 +1462,11 @@ class ReportsPage:
         story.append(Spacer(1, 6))
 
         story.append(Paragraph("Diagnostic Summary", header))
-        diag_count_rows = [[
-            "Payment link issues", payload["diagnostic_counts"]["payment_link_issues"],
-            "Overpaid / credits", payload["diagnostic_counts"]["overpaid_credits"],
-            "Timing / prepayment groups", payload["diagnostic_counts"]["timing_prepayment_groups"],
-        ]]
-        story.append(Table(diag_count_rows, colWidths=[42 * mm, 18 * mm, 42 * mm, 18 * mm, 50 * mm, 18 * mm], style=TableStyle([
+        diag_count_rows = [
+            ["Payment link issues", payload["diagnostic_counts"]["payment_link_issues"], "Overpaid / credits", payload["diagnostic_counts"]["overpaid_credits"]],
+            ["Payment-year gaps", payload["diagnostic_counts"]["payment_year_gaps"], "Timing / prepayment groups", payload["diagnostic_counts"]["timing_prepayment_groups"]],
+        ]
+        story.append(Table(diag_count_rows, colWidths=[58 * mm, 24 * mm, 58 * mm, 24 * mm], style=TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#94a3b8")),
             ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
             ("FONTSIZE", (0, 0), (-1, -1), 8),
