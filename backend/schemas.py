@@ -1,5 +1,5 @@
 from decimal import Decimal
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, ValidationInfo, field_validator
 from typing import Optional, List, Any
 from utils.sanitizer import sanitize_string, sanitize_numeric_string
 
@@ -7,8 +7,10 @@ class BaseSanitizedModel(BaseModel):
     """Base class that automatically sanitizes all string fields."""
     @field_validator("*", mode="before")
     @classmethod
-    def sanitize_all_strings(cls, v: Any) -> Any:
+    def sanitize_all_strings(cls, v: Any, info: ValidationInfo) -> Any:
         if isinstance(v, str):
+            if "password" in str(info.field_name or "").lower():
+                return v
             return sanitize_string(v)
         return v
 

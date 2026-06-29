@@ -9,6 +9,7 @@ from backend.services.auth_service import get_username, require_permission
 import backend.services.billing_service as billing
 import backend.services.payment_service as payment
 from fastapi import HTTPException
+from utils.sanitizer import sanitize_string
 
 
 # ---------------------------------------------------------------------------
@@ -310,7 +311,9 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             before_data = None
 
         # 3. Map Fields (Normalize)
-        def _up(v): return str(v).strip().upper() if v else None
+        def _up(v):
+            cleaned = sanitize_string(v)
+            return cleaned.upper() if cleaned else None
 
         new_td_number = _up(data.get("TD Number", prop.td_number))
         duplicate_query = db_session.query(Property).filter(Property.td_number == new_td_number)

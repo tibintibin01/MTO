@@ -485,6 +485,18 @@ class SystemAdminPage:
         )
         self.repair_links_btn.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
 
+        self.normalize_names_btn = ctk.CTkButton(
+            data_tools,
+            text="CLEAN OWNER NAME ENCODING",
+            command=self.normalize_property_names,
+            height=button_height,
+            width=grouped_button_width,
+            font=ModernTheme.BUTTON,
+            fg_color="#475569",
+            hover_color="#334155",
+        )
+        self.normalize_names_btn.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
+
         self.portal_publish_btn = ctk.CTkButton(
             publish_tools,
             text="PUBLISH PORTAL",
@@ -1250,6 +1262,101 @@ class SystemAdminPage:
             except Exception as e:
                 def show_error(err=str(e)):
                     messagebox.showerror("Payment Allocation Drift Repair", err, parent=self.container.winfo_toplevel())
+                    reset_button()
+                self.container.after(0, show_error)
+
+        threading.Thread(target=preview, daemon=True).start()
+
+    def normalize_property_names(self):
+        """Preview and decode HTML entities in stored owner/payor names."""
+        import threading
+        import api_clients.system_service as system_svc
+
+        def reset_button():
+            if self.container.winfo_exists():
+                self.normalize_names_btn.configure(
+                    state="normal", text="CLEAN OWNER NAME ENCODING"
+                )
+
+        self.normalize_names_btn.configure(state="disabled", text="SCANNING...")
+
+        def preview():
+            try:
+                res = system_svc.normalize_property_names(dry_run=True)
+                scanned = int(res.get("properties_scanned", 0) or 0)
+                affected = int(res.get("properties_affected", 0) or 0)
+                fields = int(res.get("fields_changed", 0) or 0)
+                sample = res.get("sample", []) or []
+
+                if affected <= 0:
+                    def show_none():
+                        messagebox.showinfo(
+                            "Owner Name Cleanup",
+                            f"No encoded owner/payor names found.\n\nProperties scanned: {scanned:,}",
+                            parent=self.container.winfo_toplevel(),
+                        )
+                        reset_button()
+                    self.container.after(0, show_none)
+                    return
+
+                examples = "\n".join(
+                    f"{item.get('td_number')} | {item.get('before')} -> {item.get('after')}"
+                    for item in sample[:6]
+                )
+                message = (
+                    "Decode stored owner/payor names?\n\n"
+                    f"Properties scanned: {scanned:,}\n"
+                    f"Properties affected: {affected:,}\n"
+                    f"Name fields to update: {fields:,}\n\n"
+                    f"Examples:\n{examples}\n\n"
+                    "Only owner and payor text will change. TD numbers, assessed values, "
+                    "billings, payments, OR numbers, and dates are not modified."
+                )
+
+                def ask_confirm():
+                    if messagebox.askyesno(
+                        "Confirm Owner Name Cleanup",
+                        message,
+                        parent=self.container.winfo_toplevel(),
+                    ):
+                        self.normalize_names_btn.configure(state="disabled", text="CLEANING...")
+                        threading.Thread(target=apply_cleanup, daemon=True).start()
+                    else:
+                        reset_button()
+
+                self.container.after(0, ask_confirm)
+            except Exception as exc:
+                def show_error(err=str(exc)):
+                    messagebox.showerror(
+                        "Owner Name Cleanup",
+                        err,
+                        parent=self.container.winfo_toplevel(),
+                    )
+                    reset_button()
+                self.container.after(0, show_error)
+
+        def apply_cleanup():
+            try:
+                res = system_svc.normalize_property_names(dry_run=False)
+                affected = int(res.get("properties_affected", 0) or 0)
+                fields = int(res.get("fields_changed", 0) or 0)
+
+                def show_done():
+                    messagebox.showinfo(
+                        "Owner Name Cleanup Complete",
+                        f"Normalized {fields:,} name field(s) across {affected:,} properties.\n\n"
+                        "Refresh Property Records and republish the web portal to show the corrected names.",
+                        parent=self.container.winfo_toplevel(),
+                    )
+                    reset_button()
+                self.container.after(0, show_done)
+            except Exception as exc:
+                def show_error(err=str(exc)):
+                    messagebox.showerror(
+                        "Owner Name Cleanup",
+                        err,
+                        parent=self.container.winfo_toplevel(),
+                    )
                     reset_button()
                 self.container.after(0, show_error)
 

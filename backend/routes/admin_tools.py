@@ -348,6 +348,72 @@ async def shadow_duplicate_cleanup(
             "deleted_list": deleted, "skipped_list": skipped[:50]}
 
 
+@router.post("/system/normalize-property-names")
+async def normalize_property_names(
+    dry_run: bool = True,
+    current_user: dict = Depends(admin_only),
+    db_session: Session = Depends(get_db),
+):
+    """Preview or decode HTML entities stored in property owner/payor names."""
+    from backend.models import Property
+    from backend.services.history_service import log_data_change
+    from utils.sanitizer import sanitize_string
+
+    properties = db_session.query(Property).order_by(Property.id.asc()).all()
+    affected = 0
+    fields_changed = 0
+    sample = []
+
+    for prop in properties:
+        changes = {}
+        for field_name in ("owner_name", "payor_name"):
+            old_value = getattr(prop, field_name, None)
+            if old_value is None:
+                continue
+            new_value = sanitize_string(old_value)
+            if new_value != old_value:
+                changes[field_name] = {"before": old_value, "after": new_value}
+
+        if not changes:
+            continue
+
+        affected += 1
+        fields_changed += len(changes)
+        if len(sample) < 25:
+            sample.append({
+                "property_id": prop.id,
+                "td_number": prop.td_number,
+                "before": changes.get("owner_name", {}).get("before", prop.owner_name),
+                "after": changes.get("owner_name", {}).get("after", prop.owner_name),
+                "fields": sorted(changes),
+            })
+
+        if not dry_run:
+            for field_name, values in changes.items():
+                setattr(prop, field_name, values["after"])
+
+    if not dry_run and affected:
+        log_data_change(
+            user_id=current_user.get("id", 0),
+            table_name="properties",
+            record_id=0,
+            action="NORMALIZE_PROPERTY_NAME_ENTITIES",
+            before={"properties_affected": affected, "fields_changed": fields_changed},
+            after={"properties_normalized": affected, "fields_changed": fields_changed},
+            username=current_user.get("username", "system"),
+            db_session=db_session,
+        )
+        db_session.commit()
+
+    return {
+        "dry_run": bool(dry_run),
+        "properties_scanned": len(properties),
+        "properties_affected": affected,
+        "fields_changed": fields_changed,
+        "sample": sample,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Tax Policy
 # ---------------------------------------------------------------------------

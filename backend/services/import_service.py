@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from backend.models import Property, PropertyAssessmentHistory, Payment, PropertyBilling
 from backend.database import SessionLocal
 from utils.logger import mto_logger
+from utils.sanitizer import sanitize_string
 import backend.services.billing_service as billing
 
 
@@ -31,7 +32,7 @@ class DataCleanser:
     @staticmethod
     def to_str(val):
         if pd.isna(val): return ""
-        return str(val).strip()
+        return sanitize_string(val) or ""
 
     @staticmethod
     def normalize_barangay(val, known_barangays=None):

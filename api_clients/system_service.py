@@ -187,6 +187,15 @@ def repair_payment_links(dry_run: bool = True):
     )
 
 
+def normalize_property_names(dry_run: bool = True):
+    """Preview or repair HTML entities in property owner/payor names."""
+    return api_request(
+        "POST",
+        f"/system/normalize-property-names?dry_run={'true' if dry_run else 'false'}",
+        timeout=180,
+    )
+
+
 def audit_td_numbers():
     """
     Scans all active properties and returns those whose TD number

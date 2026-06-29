@@ -2,26 +2,41 @@ import html
 import re
 from typing import Any, Optional
 
+
+def decode_html_entities(value: Any, max_passes: int = 5) -> Optional[str]:
+    """Decode single- or repeatedly-encoded HTML entities into plain text."""
+    if value is None:
+        return None
+
+    text = str(value)
+    for _ in range(max(1, int(max_passes))):
+        decoded = html.unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+    return text.replace("\xa0", " ")
+
 def sanitize_string(value: Any) -> Optional[str]:
     """
-    Surgically scrubs strings to prevent XSS and data corruption.
+    Canonicalizes stored strings without turning ordinary names into HTML.
     - Trims whitespace
-    - Escapes HTML tags
+    - Decodes repeated HTML entities such as ``&amp;amp;``
+    - Removes HTML tags (output layers still perform their own escaping)
     - Removes non-printable control characters
     """
     if value is None:
         return None
         
     # Ensure it's a string
-    text = str(value).strip()
+    text = (decode_html_entities(value) or "").strip()
     
     # 1. Remove non-printable control characters (except common ones like newline/tab)
     # This prevents UI layout breaks and invisible character injections
     text = "".join(char for char in text if char.isprintable() or char in "\n\r\t")
     
-    # 2. HTML Escaping (Neutralizes <script>, <img>, etc.)
-    # Converts < to &lt;, > to &gt;, etc.
-    text = html.escape(text)
+    # Stored values are plain text. Escaping belongs at the HTML output layer;
+    # storing escaped text is what produced literal &amp; and &#x27; owner names.
+    text = re.sub(r"<[^>]*>", "", text)
     
     return text
 
