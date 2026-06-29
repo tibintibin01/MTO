@@ -723,13 +723,19 @@ class SystemAdminPage:
                         f"Records: {records:,}\nChecksum: {short_checksum}\nPublished: {published_at}"
                     )
                 elif status == "saved_not_uploaded":
+                    missing = res.get("missing_configuration") or []
+                    missing_text = ", ".join(str(item) for item in missing) or "publish URL/token"
                     title = "Saved Locally Only"
                     accent = "#f59e0b"
                     status_text = f"Portal publish: saved locally only | {records:,} records | checksum {short_checksum}"
                     detail = (
                         "The snapshot was created, but it was not pushed to the web portal because "
-                        "publish URL/token is not configured on the server.\n\n"
-                        f"Saved file: {saved_path}\n\n{server_msg}"
+                        f"the API server is missing: {missing_text}.\n\n"
+                        f"Saved file: {saved_path}\n\n"
+                        "On the server, run:\n"
+                        "python scripts/configure_portal_publish.py\n\n"
+                        "Add the displayed secrets to the Vercel project, redeploy the portal, "
+                        f"and restart the API server.\n\n{server_msg}"
                     )
                 else:
                     title = "Portal Upload Failed"

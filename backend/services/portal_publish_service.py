@@ -307,10 +307,18 @@ def publish_portal_snapshot(db_session: Session, dry_run: bool = False) -> dict:
     publish_url = getattr(mto_config, "PORTAL_PUBLISH_URL", "") or ""
     publish_token = getattr(mto_config, "PORTAL_PUBLISH_TOKEN", "") or ""
     if not publish_url or not publish_token:
+        missing_configuration = []
+        if not publish_url:
+            missing_configuration.append("MTO_PORTAL_PUBLISH_URL")
+        if not publish_token:
+            missing_configuration.append("MTO_PORTAL_PUBLISH_TOKEN")
         result["status"] = "saved_not_uploaded"
+        result["missing_configuration"] = missing_configuration
         result["message"] = (
-            "Snapshot saved locally. Configure MTO_PORTAL_PUBLISH_URL and "
-            "MTO_PORTAL_PUBLISH_TOKEN to upload it to the web portal."
+            "Snapshot saved locally. Missing server configuration: "
+            + ", ".join(missing_configuration)
+            + ". Run python scripts/configure_portal_publish.py on the API server, "
+              "then restart the API."
         )
         return result
 
