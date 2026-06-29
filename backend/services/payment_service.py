@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import re
+from datetime import datetime, timedelta
 from decimal import Decimal
 from backend.database import SessionLocal
 from backend.models import ReceiptHistory
@@ -59,11 +60,14 @@ def find_duplicate_payment_entry(
     if not td_text or not or_text or not date_text or not normalized_years:
         return None
 
+    date_start = datetime.strptime(date_text, "%Y-%m-%d")
+    date_end = date_start + timedelta(days=1)
     row = db_session.query(Payment, Property).join(Property, Property.id == Payment.property_id).filter(
         Property.deleted_at == None,
         Property.td_number == td_text,
         Payment.or_number == or_text,
-        Payment.date_paid == date_text,
+        Payment.date_paid >= date_start,
+        Payment.date_paid < date_end,
         func.coalesce(Payment.tax_year, '') == normalized_years
     )
     if exclude_payment_id:

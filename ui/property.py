@@ -517,7 +517,10 @@ class PropertyEditModal(ctk.CTkToplevel):
                 self.vars[key].set("")
         self.save_btn.configure(text="SAVE PAYMENT")
         self._compute_lbl.configure(
-            text="Enter OR Number, OR Date, Tax Year, then use AUTO-COMPUTE.",
+            text=(
+                "Enter OR Number, OR Date, and Tax Year. For a partial payment, "
+                "Amount Paid is this installment only."
+            ),
             text_color="#64748b",
         )
         self.recompute()

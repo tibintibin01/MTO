@@ -425,9 +425,12 @@ def _sync_financial_records(prop_id, data, db_session: Session):
         paid = clean_currency(data.get("Amount Paid"))
         allocated = billing.allocate_payment_amount(billing_rows, paid)
         
-        # Upsert payment record using ORM
+        # Every legitimate installment is immutable and receives its own
+        # Payment row. Previously this code reused a row by property + OR +
+        # date, so posting another tax year with the same receipt/date replaced
+        # the old tax year and deleted its PaymentBilling allocation.
         from backend.models import Payment
-        or_no = data.get("OR Number")
+        or_no = str(data.get("OR Number") or "").strip()
         or_dt_raw = data.get("OR Date")
         
         # Parse or_date if it's a string
@@ -442,19 +445,29 @@ def _sync_financial_records(prop_id, data, db_session: Session):
             elif isinstance(or_dt_raw, datetime):
                 or_dt = or_dt_raw
 
-        pay_obj = db_session.query(Payment).filter(
-            Payment.property_id == prop_id,
-            Payment.or_number == or_no,
-            Payment.date_paid == or_dt
-        ).order_by(Payment.id.desc()).first()
-        
         payor_name = data.get("Payor") or data.get("Owner Name")
-        tax_year_str = data.get("Tax Year")
+        tax_year_str = billing.format_tax_years(data.get("Tax Year"))
         posted_by = data.get("Accountable Officer")
 
-        if not pay_obj:
-            pay_obj = Payment(property_id=prop_id)
-            db_session.add(pay_obj)
+        duplicate = payment.find_duplicate_payment_entry(
+            data.get("TD Number"),
+            or_no,
+            or_dt_raw,
+            tax_year_str,
+            db_session=db_session,
+        )
+        if duplicate:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Payment already exists for OR {or_no}, tax year {tax_year_str}, "
+                    f"and date {billing.normalize_date_input(or_dt_raw)} (payment ID {duplicate['payment_id']}). "
+                    "Use Edit Payment if the existing entry needs correction."
+                ),
+            )
+
+        pay_obj = Payment(property_id=prop_id)
+        db_session.add(pay_obj)
             
         pay_obj.amount = paid
         pay_obj.or_number = or_no

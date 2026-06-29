@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import pytest
 from datetime import datetime
+from fastapi import HTTPException
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
@@ -17,6 +18,8 @@ from backend.services.billing_service import (
     sync_existing_billing_assessed_value,
 )
 from backend.services.property_service import get_receivables_by_barangay
+from backend.services.property_service import _sync_financial_records
+from backend.services.payment_service import get_unified_payment_history
 
 
 @pytest.fixture()
@@ -371,6 +374,68 @@ def test_reconciliation_payment_sequence_respects_effectivity_year(db):
         row["td_number"] == "TD-NEW-IN-2025"
         for row in diagnostics["payment_sequence_gaps"]
     )
+
+
+def test_partial_installments_remain_separate_when_later_year_is_posted(db):
+    prop = Property(
+        td_number="06-0001-00001",
+        owner_name="Installment Owner",
+        barangay="NORTH POBLACION",
+        assessed_value=100_000.0,
+    )
+    db.add(prop)
+    db.commit()
+
+    def post(year, or_number, or_date, amount):
+        _sync_financial_records(prop.id, {
+            "TD Number": prop.td_number,
+            "Owner Name": prop.owner_name,
+            "Assessed Value": "100000",
+            "Tax Year": str(year),
+            "OR Number": or_number,
+            "OR Date": or_date,
+            "Penalty": "0",
+            "Discount": "0",
+            "Amount Paid": str(amount),
+        }, db)
+        db.commit()
+
+    post(2023, "OR-PARTIAL", "2023-01-10", 500.0)
+    post(2023, "OR-FINAL", "2023-02-10", 1_500.0)
+    # Reusing an OR/date for a different tax year must create another ledger
+    # entry, not mutate the existing 2023 installment.
+    post(2024, "OR-FINAL", "2023-02-10", 2_000.0)
+
+    payments = db.query(Payment).filter(Payment.property_id == prop.id).order_by(Payment.id).all()
+    assert [(row.tax_year, float(row.amount)) for row in payments] == [
+        ("2023", 500.0),
+        ("2023", 1_500.0),
+        ("2024", 2_000.0),
+    ]
+
+    billing_2023 = db.query(PropertyBilling).filter_by(property_id=prop.id, tax_year=2023).one()
+    billing_2024 = db.query(PropertyBilling).filter_by(property_id=prop.id, tax_year=2024).one()
+    assert float(billing_2023.amount_paid) == pytest.approx(2_000.0)
+    assert float(billing_2024.amount_paid) == pytest.approx(2_000.0)
+    assert db.query(PaymentBilling).filter_by(billing_id=billing_2023.id).count() == 2
+    assert db.query(PaymentBilling).filter_by(billing_id=billing_2024.id).count() == 1
+    assert len(get_unified_payment_history(prop.td_number, db_session=db)) == 3
+
+    with pytest.raises(HTTPException) as duplicate_error:
+        _sync_financial_records(prop.id, {
+            "TD Number": prop.td_number,
+            "Owner Name": prop.owner_name,
+            "Assessed Value": "100000",
+            "Tax Year": "2024",
+            "OR Number": "OR-FINAL",
+            "OR Date": "2023-02-10",
+            "Penalty": "0",
+            "Discount": "0",
+            "Amount Paid": "2000",
+        }, db)
+    db.rollback()
+    assert duplicate_error.value.status_code == 409
+    assert db.query(Payment).filter(Payment.property_id == prop.id).count() == 3
 
 
 def test_reconciliation_is_time_aware_for_prepayments_and_future_postings(db):
