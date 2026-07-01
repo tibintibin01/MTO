@@ -63,7 +63,7 @@ export default function PropertyDetail() {
   const load = async () => {
     setError("");
     try {
-      const r = await fetch(`/api/v1/public/property/${id}`, { cache: "no-store" });
+      const r = await fetch(`/api/public/property/${id}`, { cache: "no-store" });
       if (r.status === 404) { setError("Property not found. Check your TDN or PIN."); return; }
       if (r.status === 429) { setError("Too many requests. Please wait and try again."); return; }
       if (!r.ok)            { setError("Unable to load property data. Please try again."); return; }
@@ -76,7 +76,7 @@ export default function PropertyDetail() {
       setData(json);
 
       try {
-        const h = await fetch(`/api/v1/public/property/${id}/history`, { cache: "no-store" });
+        const h = await fetch(`/api/public/property/${id}/history`, { cache: "no-store" });
         if (h.ok) {
           const ht = await h.text();
           if (ht && ht.trim()) setHistory(JSON.parse(ht));
@@ -316,7 +316,7 @@ export default function PropertyDetail() {
               style={{background:"#f5c518", color:"#1a1a2e"}}>
               How to Pay <ChevronRight className="w-4 h-4" />
             </Link>
-            <a href={`/api/v1/public/property/${encodeURIComponent(id)}/soa`} target="_blank" rel="noopener noreferrer"
+            <a href={`/api/public/property/${encodeURIComponent(id)}/soa`} target="_blank" rel="noopener noreferrer"
               className="flex items-center justify-center gap-2 font-bold text-sm px-5 py-3 rounded-xl border transition-colors whitespace-nowrap"
               style={{background:"#ffffff", color:C.teal, borderColor:C.teal}}>
               <FileText className="w-4 h-4" /> Download SOA

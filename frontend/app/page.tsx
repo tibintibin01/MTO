@@ -34,7 +34,7 @@ export default function Home() {
     try {
       const params = new URLSearchParams({ name: findName.trim() });
       if (findBarangay.trim()) params.set("barangay", findBarangay.trim());
-      const res = await fetch(`/api/v1/public/find?${params}`, { cache: "no-store" });
+      const res = await fetch(`/api/public/find?${params}`, { cache: "no-store" });
       if (res.status === 400) {
         const j = await res.json();
         setFindError(j.detail || "Invalid search.");
@@ -75,7 +75,7 @@ export default function Home() {
     }
     setLoading(true);
     try {
-      const res = await fetch(`/api/v1/public/property/${encodeURIComponent(trimmed)}`, { cache: "no-store" });
+      const res = await fetch(`/api/public/property/${encodeURIComponent(trimmed)}`, { cache: "no-store" });
       if (res.status === 404) {
         setError("No property found for that TDN or PIN. Please check and try again.");
         return;
