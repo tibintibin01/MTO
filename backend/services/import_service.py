@@ -11,6 +11,10 @@ from backend.database import SessionLocal
 from utils.logger import mto_logger
 from utils.sanitizer import sanitize_string
 import backend.services.billing_service as billing
+from backend.services.assessment_value_service import (
+    upsert_history_version,
+    year_from_value as assessment_year,
+)
 
 
 class DataCleanser:
@@ -129,8 +133,8 @@ def validate_property_import(file_content, file_extension, db_session: Session =
                 try:
                     raw_val = row_data.get(av_col, 0)
                     val = float(raw_val) if not pd.isna(raw_val) else 0.0
-                    if val < 0:
-                        errors.append("Assessed Value cannot be negative")
+                    if val <= 0:
+                        errors.append("Assessed Value must be greater than zero")
                 except Exception as e:
                     mto_logger.warning(f"Error parsing assessed value: {e}")
                     errors.append("Invalid numeric format for Assessed Value")
@@ -209,6 +213,21 @@ def validate_assessment_import(file_content, file_extension, db_session: Session
             match = next((c for c in df.columns if c in aliases), None)
             found_cols[db_field] = match
 
+        missing_required = [
+            label
+            for field, label in (
+                ("td_number", "TD Number"),
+                ("owner_name", "Owner Name"),
+                ("assessed_value", "Assessed Value"),
+            )
+            if not found_cols.get(field)
+        ]
+        if missing_required:
+            return {
+                "success": False,
+                "error": f"Missing required column(s): {', '.join(missing_required)}",
+            }
+
         results = []
         rows_to_import = []
         seen_tds = set()
@@ -229,6 +248,8 @@ def validate_assessment_import(file_content, file_extension, db_session: Session
                 seen_tds.add(td)
             
             val = DataCleanser.to_float(row.get(found_cols.get("assessed_value")))
+            if val <= 0:
+                errors.append("Assessed Value must be greater than zero")
                 
             action = "UPDATE" if td in existing_tds else "INSERT"
             status = "❌ ERROR" if errors else "✅ VALID"
@@ -341,56 +362,73 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
     
     try:
         for i, row in enumerate(data_list):
+            savepoint = db_session.begin_nested()
+            row_action = None
             try:
                 td = row["td_number"]
                 if td in seen_tds:
-                    failed += 1
-                    failed_rows.append({
-                        "row": i + 2,
-                        "td_number": td,
-                        "reason": f"Duplicate TD Number in import file: {td}",
-                    })
-                    continue
+                    raise ValueError(f"Duplicate TD Number in import file: {td}")
                 seen_tds.add(td)
+
+                new_assessed_value = DataCleanser.to_float(row.get("assessed_value"))
+                if new_assessed_value <= 0:
+                    raise ValueError("Assessed Value must be greater than zero")
 
                 prop = db_session.query(Property).filter(Property.td_number == td).first()
                 
                 if prop:
-                    # 1. Capture current state for history before updating
-                    history = PropertyAssessmentHistory(
-                        property_id=prop.id,
-                        td_number=prop.td_number,
-                        assessed_value=prop.assessed_value,
-                        kind_of_property=prop.kind_of_property,
-                        tax_year=prop.effectivity_date or prop.tax_year,
-                        changed_by=user.get("username", "system")
-                    )
-                    db_session.add(history)
+                    old_assessed_value = float(prop.assessed_value or 0)
+                    value_changed = abs(old_assessed_value - new_assessed_value) > 0.009
 
-                    # 2. Perform the update
-                    prop.owner_name = row["owner_name"]
-                    prop.assessed_value = row["assessed_value"]
-                    prop.location = row["location"]
-                    prop.kind_of_property = row["kind_of_property"]
-                    prop.pin = row["pin"]
-                    prop.tax_year = row["tax_year"]
-                    prop.area = row["area"]
-                    prop.lot_number = row.get("lot_number")
-                    prop.block_number = row.get("block_number")
-                    billing.sync_existing_billing_assessed_value(
-                        prop.id,
-                        prop.assessed_value,
-                        effective_year=prop.effectivity_date or prop.tax_year or row.get("tax_year"),
-                        db_session=db_session,
-                    )
-                    updated += 1
+                    if value_changed and old_assessed_value > 0:
+                        old_effective_year = assessment_year(
+                            prop.effectivity_date or prop.tax_year
+                        )
+                        if old_effective_year:
+                            upsert_history_version(
+                                prop,
+                                old_effective_year,
+                                old_assessed_value,
+                                user.get("username", "system"),
+                                "Superseded by assessment import",
+                                db_session,
+                            )
+
+                    # Blank optional cells must not erase existing data.
+                    for attr, key in (
+                        ("owner_name", "owner_name"),
+                        ("location", "location"),
+                        ("kind_of_property", "kind_of_property"),
+                        ("pin", "pin"),
+                        ("tax_year", "tax_year"),
+                        ("area", "area"),
+                        ("lot_number", "lot_number"),
+                        ("block_number", "block_number"),
+                    ):
+                        incoming = row.get(key)
+                        if incoming not in (None, ""):
+                            setattr(prop, attr, incoming)
+
+                    if value_changed:
+                        prop.assessed_value = new_assessed_value
+                        billing.sync_existing_billing_assessed_value(
+                            prop.id,
+                            prop.assessed_value,
+                            effective_year=(
+                                prop.effectivity_date
+                                or prop.tax_year
+                                or row.get("tax_year")
+                            ),
+                            db_session=db_session,
+                        )
+                    row_action = "updated"
 
                 else:
                     # New TD number — insert as new property
                     new_prop = Property(
                         td_number=td,
                         owner_name=row["owner_name"],
-                        assessed_value=row["assessed_value"],
+                        assessed_value=new_assessed_value,
                         location=row["location"],
                         kind_of_property=row["kind_of_property"],
                         pin=row["pin"],
@@ -400,11 +438,16 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                         block_number=row.get("block_number")
                     )
                     db_session.add(new_prop)
+                    row_action = "inserted"
+
+                db_session.flush()
+                savepoint.commit()
+                if row_action == "updated":
+                    updated += 1
+                elif row_action == "inserted":
                     inserted += 1
 
-                # Flush every 10 rows to catch constraint errors early
                 if i % 10 == 0 or i == total - 1:
-                    db_session.flush()
                     percentage = int(((i + 1) / total) * 100)
                     try:
                         asyncio.run_coroutine_threadsafe(
@@ -415,8 +458,8 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                         mto_logger.warning(f"Failed to submit progress update: {prog_err}")
 
             except Exception as row_err:
-                # Roll back only the current flush group, not the whole batch
-                db_session.rollback()
+                if savepoint.is_active:
+                    savepoint.rollback()
                 failed += 1
                 failed_rows.append({
                     "row": i + 2,

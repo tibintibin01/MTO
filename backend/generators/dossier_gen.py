@@ -134,7 +134,17 @@ def generate_property_dossier(dossier_data, base_dir):
         c.drawString(margin_x + 5 * mm, current_y, "No previous assessment changes recorded.")
         c.setFillColor(colors.black)
     else:
+        seen_assessments = set()
         for item in history:
+            assessment_key = (
+                safe_text(item.get("td_number")).strip().upper(),
+                round(float(item.get("assessed_value") or 0), 2),
+                safe_text(item.get("tax_year")).strip(),
+                safe_text(item.get("kind")).strip().upper(),
+            )
+            if assessment_key in seen_assessments:
+                continue
+            seen_assessments.add(assessment_key)
             if current_y < 35 * mm:
                 c.showPage()
                 current_y = height - 30 * mm

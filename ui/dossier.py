@@ -183,8 +183,18 @@ class PropertyDossierModal(ctk.CTkToplevel):
                 }
             )
 
+        seen_assessments = set()
         for history in self.data.get("assessment_history", []):
             assessed_value = float(history.get("assessed_value") or 0)
+            assessment_key = (
+                str(history.get("td_number") or "").strip().upper(),
+                round(assessed_value, 2),
+                str(history.get("tax_year") or "").strip(),
+                str(history.get("kind") or "").strip().upper(),
+            )
+            if assessment_key in seen_assessments:
+                continue
+            seen_assessments.add(assessment_key)
             events.append(
                 {
                     "date": str(history.get("date", ""))[:10],
