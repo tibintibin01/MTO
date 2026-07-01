@@ -115,31 +115,51 @@ def generate_property_dossier(dossier_data, base_dir):
             c.drawString(margin_x + 2 * mm, current_y, safe_text(p[0]))
             c.drawString(margin_x + 35 * mm, current_y, safe_text(p[1]))
             c.drawString(margin_x + 75 * mm, current_y, safe_text(p[2]))
-            c.drawRightString(width - margin_x - 2 * mm, current_y, f"P {fmt_currency(p[6])}")
+            c.drawRightString(width - margin_x - 2 * mm, current_y, f"P {fmt_currency(p[7])}")
             current_y -= 7 * mm
 
     current_y -= 15 * mm
 
-    # Section 4: Administrative Audit
+    # Section 4: Assessment History
     c.setFont(BRANDING["fonts"]["header"], 12)
-    c.drawString(margin_x, current_y, "IV. ADMINISTRATIVE ACTIVITY TRACE")
+    c.drawString(margin_x, current_y, "IV. ASSESSMENT HISTORY")
     current_y -= 5 * mm
     c.line(margin_x, current_y, width - margin_x, current_y)
     current_y -= 10 * mm
 
-    logs = dossier_data.get("audit_summary", [])
-    for log in logs[:10]:
-        if current_y < 30 * mm:
-            c.showPage()
-            current_y = height - 30 * mm
-        c.setFont(BRANDING["fonts"]["header"], 8)
-        c.setFillColor(colors.HexColor("#455a64"))
-        c.drawString(margin_x, current_y, f"{log.get('timestamp')} - {log.get('username')}")
-        current_y -= 4 * mm
+    history = dossier_data.get("assessment_history", [])
+    if not history:
         c.setFont(BRANDING["fonts"]["body"], 9)
+        c.setFillColor(colors.HexColor("#90a4ae"))
+        c.drawString(margin_x + 5 * mm, current_y, "No previous assessment changes recorded.")
         c.setFillColor(colors.black)
-        c.drawString(margin_x, current_y, safe_text(log.get("action")))
-        current_y -= 8 * mm
+    else:
+        for item in history:
+            if current_y < 35 * mm:
+                c.showPage()
+                current_y = height - 30 * mm
+            c.setFont(BRANDING["fonts"]["header"], 9)
+            c.setFillColor(colors.HexColor("#455a64"))
+            c.drawString(
+                margin_x,
+                current_y,
+                f"{safe_text(item.get('date'))[:10]}  |  TD {safe_text(item.get('td_number'))}",
+            )
+            c.drawRightString(
+                width - margin_x,
+                current_y,
+                f"P {fmt_currency(item.get('assessed_value'))}",
+            )
+            current_y -= 5 * mm
+            c.setFont(BRANDING["fonts"]["body"], 8)
+            c.setFillColor(colors.black)
+            detail = (
+                f"{safe_text(item.get('kind') or 'Classification not recorded')} | "
+                f"Effective: {safe_text(item.get('tax_year') or 'Not recorded')} | "
+                f"{safe_text(item.get('change_reason') or 'Assessment update')}"
+            )
+            c.drawString(margin_x, current_y, detail[:115])
+            current_y -= 9 * mm
 
     c.setFont(BRANDING["fonts"]["body"], 7)
     c.setFillColor(colors.HexColor("#90a4ae"))
