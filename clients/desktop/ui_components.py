@@ -498,6 +498,11 @@ def attach_autocomplete(entry: ctk.CTkEntry, values: list, variable: tk.StringVa
         if not term:
             _close()
             return
+        # A complete valid value needs no suggestion popup. Keeping the
+        # duplicate dropdown open here covered the next field in edit forms.
+        if any(v.strip().upper() == term for v in values):
+            _close()
+            return
         prefix   = [v for v in values if v.upper().startswith(term)]
         contains = [v for v in values if not v.upper().startswith(term) and term in v.upper()]
         matches = prefix + contains
