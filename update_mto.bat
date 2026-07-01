@@ -10,13 +10,15 @@ echo.
 echo [1/5] Pulling latest code from GitHub...
 cd /d C:\MTO
 
-REM Client machines should not keep local dependency-lock changes. npm install
-REM can rewrite this file and block future pulls, so restore only this generated
-REM lockfile before updating. Do not touch office data or other source files.
-git diff --quiet -- frontend/package-lock.json
-if %errorlevel% neq 0 (
-    echo Local frontend package-lock drift detected. Restoring tracked lockfile...
-    git restore -- frontend/package-lock.json
+REM Frontend installs/builds can rewrite tracked generated artifacts and block
+REM the next pull. Restore only these known-safe files before updating. This
+REM never touches MariaDB, backups, .env, server_config.json, or office records.
+for %%F in (frontend/package-lock.json frontend/public/sw.js frontend/public/workbox-6747d6ad.js) do (
+    git diff --quiet -- "%%F"
+    if errorlevel 1 (
+        echo Local generated-file drift detected: %%F
+        git restore -- "%%F"
+    )
 )
 
 git pull --ff-only origin master
