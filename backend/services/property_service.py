@@ -166,11 +166,12 @@ def search_properties(
             )
             is_id_search = True
         elif "-" in clean_term:
+            normalized_term = clean_term.upper()
             # Structured TD number / PIN — exact match only
             query = query.filter(
-                (Property.td_number == clean_term) |
-                (Property.pin == clean_term) |
-                (Property.prev_td_number == clean_term)
+                (func.upper(func.trim(Property.td_number)) == normalized_term) |
+                (func.upper(func.trim(Property.pin)) == normalized_term) |
+                (func.upper(func.trim(Property.prev_td_number)) == normalized_term)
             )
             is_id_search = True
         else:

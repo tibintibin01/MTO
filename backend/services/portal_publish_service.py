@@ -140,7 +140,11 @@ def generate_portal_snapshot(db_session: Session) -> dict:
     billing_rows = (
         db_session.query(PropertyBilling)
         .join(Property, Property.id == PropertyBilling.property_id)
-        .filter(Property.deleted_at == None, PropertyBilling.tax_year >= DATA_START_YEAR)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year >= DATA_START_YEAR,
+            PropertyBilling.tax_year <= as_of_year,
+        )
         .order_by(PropertyBilling.tax_year.asc())
         .all()
     )

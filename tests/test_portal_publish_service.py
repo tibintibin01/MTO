@@ -109,6 +109,14 @@ def test_snapshot_uses_current_year_assessment_and_labels_future_revaluation(db,
         discount=0,
         amount_paid=0,
     ))
+    db.add(PropertyBilling(
+        property_id=prop.id,
+        tax_year=current_year + 1,
+        assessed_value=7_098_520,
+        penalty=0,
+        discount=0,
+        amount_paid=0,
+    ))
     db.commit()
 
     monkeypatch.setattr(
@@ -124,3 +132,4 @@ def test_snapshot_uses_current_year_assessment_and_labels_future_revaluation(db,
         "assessed_value": 7_098_520,
         "effective_year": current_year + 1,
     }
+    assert [row["tax_year"] for row in record["billing_breakdown"]] == [current_year]

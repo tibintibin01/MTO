@@ -160,14 +160,15 @@ class PropertyPage:
                 year_end_raw = self.year_end_ent.get().strip() if hasattr(self, "year_end_ent") else ""
                 year_start = int(year_start_raw) if year_start_raw.isdigit() else None
                 year_end = int(year_end_raw) if year_end_raw.isdigit() else None
+                exact_td_search = "-" in term
                 res = prop_svc.search_properties(
                     term,
                     limit=self.page_size,
                     cursor=self.next_cursor if not reset_page else None,
-                    barangay=brgy if brgy != "ALL" else None,
+                    barangay=None if exact_td_search else brgy if brgy != "ALL" else None,
                     kind=None,
-                    year_start=year_start,
-                    year_end=year_end,
+                    year_start=None if exact_td_search else year_start,
+                    year_end=None if exact_td_search else year_end,
                 )
                 items = res.get("items", [])
                 self.next_cursor = res.get("next_cursor")

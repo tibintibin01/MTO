@@ -142,3 +142,13 @@ def test_search_properties_finds_replacement_by_previous_td_number(db):
     rows = search_properties("06-0001-00001", barangay="BAYABAS", db_session=db)
 
     assert [row[1] for row in rows] == ["06-0001-00099", "06-0001-00001"]
+
+
+def test_exact_td_search_tolerates_stored_whitespace_and_case(db):
+    _property(db, "06-0012-02561 ", "2027", barangay="DINADIAWAN")
+    db.commit()
+
+    rows = search_properties("06-0012-02561", db_session=db)
+
+    assert len(rows) == 1
+    assert rows[0][1].strip() == "06-0012-02561"
