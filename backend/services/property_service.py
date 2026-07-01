@@ -8,6 +8,11 @@ from backend.models import Property, PropertyAssessmentHistory, PropertyBilling,
 from backend.services.auth_service import get_username, require_permission
 import backend.services.billing_service as billing
 import backend.services.payment_service as payment
+from backend.services.assessment_value_service import (
+    money as assessment_money,
+    upsert_history_version,
+    year_from_value as assessment_year,
+)
 from fastapi import HTTPException
 from utils.sanitizer import sanitize_string
 
@@ -376,6 +381,76 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
         billing_sync = {"updated": 0, "years": []}
         old_assessed = clean_currency(before_data.get("assessed_value")) if before_data else None
         new_assessed = clean_currency(prop.assessed_value)
+        username = get_username(user) if user else "unknown"
+        new_effective_year = assessment_year(prop.effectivity_date or prop.tax_year)
+
+        # Preserve the superseded assessment before applying a later valuation.
+        if before_data and old_assessed is not None and abs(old_assessed - new_assessed) > 0.009:
+            old_effective_year = assessment_year(
+                before_data.get("effectivity_date") or before_data.get("tax_year")
+            )
+            if old_effective_year and (
+                new_effective_year is None or old_effective_year < new_effective_year
+            ):
+                upsert_history_version(
+                    prop,
+                    old_effective_year,
+                    old_assessed,
+                    username,
+                    "Superseded by later assessment",
+                    db_session,
+                )
+
+        # Optional correction for records whose prior AV was never captured.
+        prior_value_raw = data.get("Prior Assessed Value")
+        prior_year_raw = data.get("Prior Effectivity Year")
+        has_prior_value = prior_value_raw not in (None, "")
+        has_prior_year = prior_year_raw not in (None, "")
+        prior_sync = {"updated": 0, "years": []}
+        if has_prior_value != has_prior_year:
+            raise HTTPException(
+                status_code=422,
+                detail="Prior Assessed Value and Prior Effectivity Year must be entered together.",
+            )
+        if has_prior_value:
+            prior_year = assessment_year(prior_year_raw)
+            prior_value = assessment_money(prior_value_raw)
+            if not prior_year or prior_value <= 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Prior assessment requires a valid positive value and a 4-digit year.",
+                )
+            if not new_effective_year or prior_year >= new_effective_year:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Prior assessment year must be earlier than the current Effectivity year.",
+                )
+
+            upsert_history_version(
+                prop,
+                prior_year,
+                prior_value,
+                username,
+                "Historical assessment correction",
+                db_session,
+            )
+            corrected_years = []
+            rows = db_session.query(PropertyBilling).filter(
+                PropertyBilling.property_id == prop.id,
+                PropertyBilling.is_archived == False,
+                PropertyBilling.tax_year >= prior_year,
+                PropertyBilling.tax_year < new_effective_year,
+            ).with_for_update().all()
+            for row in rows:
+                if assessment_money(row.assessed_value) != prior_value:
+                    row.assessed_value = prior_value
+                    row.updated_at = datetime.now(timezone.utc)
+                    corrected_years.append(int(row.tax_year))
+            prior_sync = {
+                "updated": len(corrected_years),
+                "years": sorted(corrected_years),
+            }
+
         if old_assessed is None or abs(old_assessed - new_assessed) > 0.009:
             billing_sync = billing.sync_existing_billing_assessed_value(
                 prop.id,
@@ -390,6 +465,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             "property_id": prop.id,
             "new_version": prop.version,
             "billing_sync": billing_sync,
+            "prior_assessment_sync": prior_sync,
         }
 
     except Exception as e:

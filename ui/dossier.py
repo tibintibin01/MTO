@@ -124,7 +124,11 @@ class PropertyDossierModal(ctk.CTkToplevel):
                 "type": "VALUATION",
                 "title": f"Previous Assessment: {h.get('td_number')}",
                 "subtitle": f"Historical Value: P {h.get('assessed_value', 0):,.2f}",
-                "detail": f"Classification: {h.get('kind')} | Year: {h.get('tax_year')}",
+                "detail": (
+                    f"Classification: {h.get('kind')} | Effective from: "
+                    f"{h.get('tax_year') or 'Not recorded'} | "
+                    f"{h.get('change_reason') or 'Assessment update'}"
+                ),
                 "color": "#e67e22" # Orange
             })
 

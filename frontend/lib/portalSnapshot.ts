@@ -5,7 +5,6 @@ import { createHmac } from "crypto";
 import { readFile } from "fs/promises";
 
 export const PORTAL_SNAPSHOT_BLOB_PATH = "portal/portal_snapshot_latest.json";
-const CACHE_TTL_MS = 30_000;
 
 type SnapshotRecord = Record<string, any>;
 type PortalSnapshot = {
@@ -16,8 +15,6 @@ type PortalSnapshot = {
   properties?: SnapshotRecord[];
   owner_lookup_index?: Record<string, number[]>;
 };
-
-let cachedSnapshot: { value: PortalSnapshot; expiresAt: number } | null = null;
 
 export class PortalSnapshotConfigError extends Error {
   constructor(message: string) {
@@ -63,11 +60,6 @@ function validateSnapshot(snapshot: PortalSnapshot): PortalSnapshot {
 }
 
 export async function loadPortalSnapshot(): Promise<PortalSnapshot | null> {
-  const now = Date.now();
-  if (cachedSnapshot && cachedSnapshot.expiresAt > now) {
-    return cachedSnapshot.value;
-  }
-
   const localPath = process.env.MTO_PORTAL_SNAPSHOT_PATH?.trim();
   let raw: string | null = null;
 
@@ -81,15 +73,12 @@ export async function loadPortalSnapshot(): Promise<PortalSnapshot | null> {
     raw = await streamToText(blob.stream);
   }
 
-  const snapshot = validateSnapshot(JSON.parse(raw));
-  cachedSnapshot = { value: snapshot, expiresAt: now + CACHE_TTL_MS };
-  return snapshot;
+  return validateSnapshot(JSON.parse(raw));
 }
 
 export async function storePortalSnapshot(snapshot: PortalSnapshot) {
   validateSnapshot(snapshot);
   const body = JSON.stringify(snapshot);
-  cachedSnapshot = { value: snapshot, expiresAt: Date.now() + CACHE_TTL_MS };
   return put(PORTAL_SNAPSHOT_BLOB_PATH, body, {
     access: "private",
     allowOverwrite: true,
@@ -114,6 +103,8 @@ export function publicProperty(record: SnapshotRecord, snapshot: PortalSnapshot)
     location: record.location || record.barangay || null,
     kind: record.kind || null,
     assessed_value: Number(record.assessed_value || 0),
+    assessment_as_of_year: Number(record.assessment_as_of_year || 0) || null,
+    future_assessment: record.future_assessment || null,
     status: record.status || "PENDING",
     balance: Number(record.balance || 0),
     total_due: Number(record.total_due || 0),

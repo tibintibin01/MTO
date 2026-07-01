@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
-from backend.models import Payment, Property, PropertyBilling
+from backend.models import Payment, Property, PropertyAssessmentHistory, PropertyBilling
 from backend.services.portal_publish_service import (
     _owner_lookup_hash,
     _snapshot_checksum,
@@ -81,3 +81,46 @@ def test_generate_portal_snapshot_is_sanitized_and_checksummed(db, monkeypatch):
     assert snapshot["owner_lookup_index"][_owner_lookup_hash("JUAN", "test-lookup-secret")] == [0]
     assert "JUAN DELA CRUZ" not in str(snapshot)
     assert "7812345" not in str(snapshot)
+
+
+def test_snapshot_uses_current_year_assessment_and_labels_future_revaluation(db, monkeypatch):
+    current_year = datetime.now(timezone.utc).year
+    prop = Property(
+        td_number="06-0012-02561",
+        owner_name="AGRI COMPONENT CORPORATION",
+        barangay="DINADIAWAN",
+        assessed_value=7_098_520,
+        effectivity_date=f"{current_year + 1}-01-01",
+    )
+    db.add(prop)
+    db.flush()
+    db.add(PropertyAssessmentHistory(
+        property_id=prop.id,
+        td_number=prop.td_number,
+        assessed_value=60_080,
+        tax_year=str(current_year - 3),
+        change_reason="Historical assessment correction",
+    ))
+    db.add(PropertyBilling(
+        property_id=prop.id,
+        tax_year=current_year,
+        assessed_value=60_080,
+        penalty=0,
+        discount=0,
+        amount_paid=0,
+    ))
+    db.commit()
+
+    monkeypatch.setattr(
+        "backend.services.portal_publish_service.mto_config.PORTAL_LOOKUP_SECRET",
+        "test-lookup-secret",
+    )
+
+    record = generate_portal_snapshot(db)["properties"][0]
+
+    assert record["assessed_value"] == 60_080
+    assert record["assessment_as_of_year"] == current_year
+    assert record["future_assessment"] == {
+        "assessed_value": 7_098_520,
+        "effective_year": current_year + 1,
+    }

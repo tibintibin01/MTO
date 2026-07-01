@@ -63,7 +63,7 @@ export default function PropertyDetail() {
   const load = async () => {
     setError("");
     try {
-      const r = await fetch(`/api/v1/public/property/${id}`);
+      const r = await fetch(`/api/v1/public/property/${id}`, { cache: "no-store" });
       if (r.status === 404) { setError("Property not found. Check your TDN or PIN."); return; }
       if (r.status === 429) { setError("Too many requests. Please wait and try again."); return; }
       if (!r.ok)            { setError("Unable to load property data. Please try again."); return; }
@@ -76,7 +76,7 @@ export default function PropertyDetail() {
       setData(json);
 
       try {
-        const h = await fetch(`/api/v1/public/property/${id}/history`);
+        const h = await fetch(`/api/v1/public/property/${id}/history`, { cache: "no-store" });
         if (h.ok) {
           const ht = await h.text();
           if (ht && ht.trim()) setHistory(JSON.parse(ht));
@@ -251,6 +251,20 @@ export default function PropertyDetail() {
                 <p className="text-3xl font-black leading-tight">
                   ₱{data.assessed_value.toLocaleString("en-PH",{minimumFractionDigits:2})}
                 </p>
+                {data.assessment_as_of_year && (
+                  <p className="text-white/55 text-[11px] mt-1">
+                    Effective assessment as of {data.assessment_as_of_year}
+                  </p>
+                )}
+                {data.future_assessment && (
+                  <div className="mt-3 rounded-lg border border-white/20 bg-white/10 px-3 py-2 text-xs">
+                    <p className="text-white/60 uppercase tracking-wider font-semibold">Future assessment</p>
+                    <p className="text-white font-bold mt-0.5">
+                      ₱{Number(data.future_assessment.assessed_value || 0).toLocaleString("en-PH", {minimumFractionDigits:2})}
+                      {" "}effective {data.future_assessment.effective_year}
+                    </p>
+                  </div>
+                )}
                 <span className="inline-flex items-center gap-1.5 bg-white/15 border border-white/20 px-2.5 py-1 rounded-full mt-3 text-xs font-bold text-white/80 uppercase">
                   <Home className="w-3 h-3" /> {data.kind}
                 </span>

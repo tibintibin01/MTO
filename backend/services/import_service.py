@@ -362,7 +362,7 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                         td_number=prop.td_number,
                         assessed_value=prop.assessed_value,
                         kind_of_property=prop.kind_of_property,
-                        tax_year=prop.tax_year,
+                        tax_year=prop.effectivity_date or prop.tax_year,
                         changed_by=user.get("username", "system")
                     )
                     db_session.add(history)

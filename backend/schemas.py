@@ -38,6 +38,8 @@ class PropertySaveSchema(BaseSanitizedModel):
     pin: Optional[str] = Field(None, alias="PIN")
     prev_td_number: Optional[str] = Field(None, alias="Previous TD Number")
     effectivity_date: Optional[str] = Field(None, alias="Effectivity Date")
+    prior_assessed_value: Optional[Decimal] = Field(None, alias="Prior Assessed Value")
+    prior_effectivity_year: Optional[str] = Field(None, alias="Prior Effectivity Year")
     version: Optional[int] = None
 
     @field_validator("td_number", "pin", "prev_td_number", mode="before")
@@ -47,20 +49,27 @@ class PropertySaveSchema(BaseSanitizedModel):
             return sanitize_numeric_string(v)
         return v
 
-    @field_validator("assessed_value", "penalty", "discount", "amount_paid", mode="before")
+    @field_validator(
+        "assessed_value", "penalty", "discount", "amount_paid",
+        "prior_assessed_value", mode="before",
+    )
     @classmethod
-    def coerce_to_decimal(cls, v: Any) -> Optional[Decimal]:
+    def coerce_to_decimal(cls, v: Any, info: ValidationInfo) -> Optional[Decimal]:
         """
         Coerce numeric inputs to Decimal to prevent float rounding errors.
         Accepts int, float, str, or Decimal. Returns None for None/empty.
         """
         if v is None:
+            if info.field_name == "prior_assessed_value":
+                return None
             return Decimal("0.00")
         if isinstance(v, Decimal):
             return v
         try:
             # Convert via str to avoid float precision loss (e.g. float 0.1 → "0.1")
             cleaned = str(v).replace(",", "").strip()
+            if not cleaned and info.field_name == "prior_assessed_value":
+                return None
             return Decimal(cleaned) if cleaned else Decimal("0.00")
         except Exception:
             return Decimal("0.00")

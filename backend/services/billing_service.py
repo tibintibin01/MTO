@@ -5,6 +5,10 @@ from sqlalchemy.orm import Session, aliased
 from backend.models import Property, PropertyBilling, PaymentBilling, Payment, TaxPolicy
 from decimal import Decimal, ROUND_HALF_UP
 from utils.db_compat import greatest, year_of, month_of
+from backend.services.assessment_value_service import (
+    assessed_value_for_year,
+    assessment_versions,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -251,21 +255,18 @@ def repair_billing_assessed_value_snapshots(
     rows_updated = 0
 
     for prop in props:
-        new_value = Decimal(str(prop.assessed_value or 0)).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
-        if new_value <= Decimal("0.00"):
-            continue
-
-        start_year = _year_from_value(prop.effectivity_date or prop.tax_year)
+        versions = assessment_versions(prop, db_session)
         query = db_session.query(PropertyBilling).filter(
             PropertyBilling.property_id == prop.id,
             PropertyBilling.is_archived == False,
         )
-        if start_year:
-            query = query.filter(PropertyBilling.tax_year >= start_year)
 
         for row in query.order_by(PropertyBilling.tax_year.asc()).all():
+            new_value = assessed_value_for_year(
+                prop, row.tax_year, db_session, versions=versions
+            )
+            if new_value is None or new_value <= Decimal("0.00"):
+                continue
             current = Decimal(str(row.assessed_value or 0)).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )
@@ -284,7 +285,7 @@ def repair_billing_assessed_value_snapshots(
                     "tax_year": int(row.tax_year or 0),
                     "old_assessed_value": float(current),
                     "new_assessed_value": float(new_value),
-                    "effectivity_year": start_year,
+                    "effectivity_year": _year_from_value(prop.effectivity_date or prop.tax_year),
                 })
 
             if not dry_run:

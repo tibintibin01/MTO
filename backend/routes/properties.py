@@ -68,6 +68,7 @@ async def get_property_history(property_id: int, current_user: dict = Depends(ge
             "kind": r.kind_of_property,
             "tax_year": r.tax_year,
             "changed_by": r.changed_by,
+            "change_reason": r.change_reason,
             "date": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if hasattr(r.created_at, "strftime") else str(r.created_at)
         }
         for r in rows
@@ -260,7 +261,7 @@ async def get_property_dossier(
         # Use ORM for history
         from backend.models import PropertyAssessmentHistory
         raw_history = db_session.query(PropertyAssessmentHistory).filter(PropertyAssessmentHistory.property_id == prop.get("id")).order_by(PropertyAssessmentHistory.created_at.desc()).all()
-        history = [{"id": r.id, "td_number": r.td_number, "assessed_value": float(r.assessed_value or 0), "kind": r.kind_of_property, "tax_year": r.tax_year, "changed_by": r.changed_by, "date": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else ""} for r in raw_history]
+        history = [{"id": r.id, "td_number": r.td_number, "assessed_value": float(r.assessed_value or 0), "kind": r.kind_of_property, "tax_year": r.tax_year, "changed_by": r.changed_by, "change_reason": r.change_reason, "date": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else ""} for r in raw_history]
 
         return {"master": prop, "payments": payments, "ancestry": ancestry, "audit_summary": logs, "assessment_history": history}
     except Exception as e:

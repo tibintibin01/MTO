@@ -21,7 +21,12 @@ import requests
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from backend.models import Payment, Property, PropertyBilling, TaxPolicy
+from backend.models import Payment, Property, PropertyAssessmentHistory, PropertyBilling, TaxPolicy
+from backend.services.assessment_value_service import (
+    assessed_value_for_year,
+    assessment_versions,
+    year_from_value as assessment_year,
+)
 from utils.config import config as mto_config
 from utils.logger import mto_logger
 
@@ -124,6 +129,7 @@ def _snapshot_checksum(snapshot_without_checksum: dict) -> str:
 def generate_portal_snapshot(db_session: Session) -> dict:
     """Builds a sanitized public portal snapshot from the office database."""
     published_at = datetime.now(timezone.utc).isoformat()
+    as_of_year = datetime.now(timezone.utc).year
     lookup_secret = getattr(mto_config, "PORTAL_LOOKUP_SECRET", "") or ""
 
     policies = {
@@ -152,6 +158,17 @@ def generate_portal_snapshot(db_session: Session) -> dict:
     )
     for payment in payment_rows:
         payments_by_property[int(payment.property_id)].append(payment)
+
+    histories_by_property: dict[int, list[PropertyAssessmentHistory]] = defaultdict(list)
+    history_rows = (
+        db_session.query(PropertyAssessmentHistory)
+        .join(Property, Property.id == PropertyAssessmentHistory.property_id)
+        .filter(Property.deleted_at == None)
+        .order_by(PropertyAssessmentHistory.property_id.asc(), PropertyAssessmentHistory.id.asc())
+        .all()
+    )
+    for history in history_rows:
+        histories_by_property[int(history.property_id)].append(history)
 
     properties = (
         db_session.query(Property)
@@ -197,6 +214,24 @@ def generate_portal_snapshot(db_session: Session) -> dict:
         total_paid = round(total_paid, 2)
         balance = round(max(0.0, total_due - total_paid), 2)
         payments = payments_by_property.get(int(prop.id), [])
+        versions = assessment_versions(
+            prop,
+            db_session,
+            history_rows=histories_by_property.get(int(prop.id), []),
+        )
+        effective_assessed = assessed_value_for_year(
+            prop, as_of_year, db_session, versions=versions
+        )
+        if effective_assessed is None:
+            # Legacy records without a dated assessment retain their master AV.
+            effective_assessed = prop.assessed_value
+        master_effective_year = assessment_year(prop.effectivity_date or prop.tax_year)
+        future_assessment = None
+        if master_effective_year and master_effective_year > as_of_year:
+            future_assessment = {
+                "assessed_value": _peso(prop.assessed_value),
+                "effective_year": master_effective_year,
+            }
         last_payment = None
         if payments:
             latest = payments[0]
@@ -217,7 +252,9 @@ def generate_portal_snapshot(db_session: Session) -> dict:
             "barangay": prop.barangay,
             "location": prop.location,
             "kind": prop.kind_of_property,
-            "assessed_value": _peso(prop.assessed_value),
+            "assessed_value": _peso(effective_assessed),
+            "assessment_as_of_year": as_of_year,
+            "future_assessment": future_assessment,
             "status": _status_from_balance(years, balance),
             "balance": balance,
             "total_due": total_due,

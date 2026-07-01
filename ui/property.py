@@ -386,6 +386,10 @@ class PropertyEditModal(ctk.CTkToplevel):
             ("Effectivity", "effectivity_date"),
             ("Assessed Value", "assessed_value"),
         ]
+        correction_fields = [
+            ("Prior AV (before effectivity)", "prior_assessed_value"),
+            ("Prior AV effective year", "prior_effectivity_year"),
+        ]
         payment_fields = [
             ("Tax Year", "tax_year"),
             ("OR Number", "or_number"),
@@ -395,10 +399,10 @@ class PropertyEditModal(ctk.CTkToplevel):
             ("Amount Paid", "amount_paid"),
         ]
 
-        for _, key in fields + payment_fields:
+        for _, key in fields + correction_fields + payment_fields:
             self.vars[key] = tk.StringVar()
 
-        visible_fields = fields + payment_fields if self.payment_mode else fields
+        visible_fields = fields + payment_fields if self.payment_mode else fields + correction_fields
 
         def _scroll_to_widget(widget):
             """
@@ -438,11 +442,19 @@ class PropertyEditModal(ctk.CTkToplevel):
                 if not self.payment_mode:
                     attach_autocomplete(entry, self.barangays, self.vars[key])
             else:
-                placeholder = "e.g. 2027" if key == "effectivity_date" else "e.g. 06-0012-01780" if key == "prev_td_number" else ""
+                placeholder = (
+                    "e.g. 2027"
+                    if key in ("effectivity_date", "prior_effectivity_year")
+                    else "e.g. 06-0012-01780"
+                    if key == "prev_td_number"
+                    else "Optional; corrects years before current effectivity"
+                    if key == "prior_assessed_value"
+                    else ""
+                )
                 entry = ctk.CTkEntry(self.scroll_form, height=40, textvariable=self.vars[key], placeholder_text=placeholder)
                 entry.pack(fill="x", padx=10, pady=(0, 5))
                 entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
-                if key in ["assessed_value", "penalty", "discount"]:
+                if key in ["assessed_value", "prior_assessed_value", "penalty", "discount"]:
                     self.vars[key].trace_add("write", lambda *a: self.recompute())
                 else:
                     self.vars[key].trace_add("write", lambda *a: self.validate())
@@ -656,6 +668,11 @@ class PropertyEditModal(ctk.CTkToplevel):
             "effectivity_date": "Effectivity Date",
             "assessed_value": "Assessed Value",
         }
+        if not self.payment_mode:
+            key_map.update({
+                "prior_assessed_value": "Prior Assessed Value",
+                "prior_effectivity_year": "Prior Effectivity Year",
+            })
         if self.payment_mode:
             key_map.update({
                 "tax_year": "Tax Year",
@@ -702,6 +719,31 @@ class PropertyEditModal(ctk.CTkToplevel):
         if self.property_id is not None and self._loaded_version is not None:
             data["version"] = self._loaded_version
 
+        if not self.payment_mode:
+            prior_value = data.get("Prior Assessed Value", "").strip()
+            prior_year = data.get("Prior Effectivity Year", "").strip()
+            if bool(prior_value) != bool(prior_year):
+                messagebox.showerror(
+                    "Incomplete Prior Assessment",
+                    "Enter both Prior AV and Prior AV effective year, or leave both blank.",
+                    parent=self,
+                )
+                return
+            if prior_value:
+                try:
+                    prior_amount = float(prior_value.replace(",", ""))
+                    prior_year_num = int(prior_year)
+                    current_year_num = int(data.get("Effectivity Date", "")[:4])
+                    if prior_amount <= 0 or prior_year_num >= current_year_num:
+                        raise ValueError
+                except (TypeError, ValueError):
+                    messagebox.showerror(
+                        "Invalid Prior Assessment",
+                        "Prior AV must be positive, and its year must be earlier than the current Effectivity year.",
+                        parent=self,
+                    )
+                    return
+
         if self.payment_mode:
             required_payment_fields = ("OR Number", "OR Date", "Tax Year", "Amount Paid")
             missing = [field for field in required_payment_fields if not data.get(field, "").strip()]
@@ -730,8 +772,16 @@ class PropertyEditModal(ctk.CTkToplevel):
             has_payment = bool(data.get("OR Number", "").strip())
             key = self._idempotency_key if has_payment else None
 
-            prop_svc.save_property(data, editing_id=self.property_id, user=self.user, idempotency_key=key)
+            result = prop_svc.save_property(data, editing_id=self.property_id, user=self.user, idempotency_key=key)
             success_msg = "Payment saved successfully." if self.payment_mode else "Property record saved successfully."
+            prior_sync = result.get("prior_assessment_sync", {}) if isinstance(result, dict) else {}
+            corrected_years = prior_sync.get("years", [])
+            if corrected_years:
+                success_msg += (
+                    "\n\nHistorical billing AV corrected for: "
+                    + ", ".join(str(year) for year in corrected_years)
+                    + ". Payment records were not changed."
+                )
             messagebox.showinfo("Success", success_msg, parent=self)
             if self.callback:
                 self.callback()

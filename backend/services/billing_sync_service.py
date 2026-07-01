@@ -33,6 +33,11 @@ from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy.orm import Session
 
 from backend.models import Property, PropertyBilling
+from backend.services.assessment_value_service import (
+    assessed_value_for_year,
+    assessment_versions,
+    earliest_assessment_year,
+)
 from utils.logger import mto_logger
 
 
@@ -131,7 +136,11 @@ def sync_billing_years(
 
     for idx, prop in enumerate(properties, 1):
         try:
-            start_year = _extract_start_year(prop)
+            versions = assessment_versions(prop, db_session)
+            start_year = (
+                earliest_assessment_year(prop, db_session, versions=versions)
+                or _extract_start_year(prop)
+            )
 
             # Safety: don't go further back than 2000 or further forward than now
             start_year = max(2000, min(start_year, current_year))
@@ -144,14 +153,21 @@ def sync_billing_years(
                 .all()
             )
 
-            assessed = Decimal(str(prop.assessed_value or 0))
-
             # Fetch tax policy rates per year — fall back to 1%+1% if not configured
             from backend.models import TaxPolicy
 
             for year in range(start_year, current_year + 1):
                 if year in existing_years:
                     skipped += 1
+                    continue
+
+                assessed = assessed_value_for_year(
+                    prop, year, db_session, versions=versions
+                )
+                if assessed is None:
+                    errors.append(
+                        f"Property {prop.td_number}: no assessment version is effective for {year}; skipped"
+                    )
                     continue
 
                 # Look up rate for this specific year
