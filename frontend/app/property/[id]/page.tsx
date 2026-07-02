@@ -130,6 +130,7 @@ export default function PropertyDetail() {
 
   // Phase 1: real computed figures from the backend (PropertyBilling-derived)
   const balance      = typeof data.balance === "number" ? data.balance : 0;
+  const totalCredit  = typeof data.total_credit === "number" ? data.total_credit : 0;
   const breakdown    = Array.isArray(data.billing_breakdown) ? data.billing_breakdown : [];
   const peso = (n: number) => "₱" + (n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2 });
 
@@ -306,6 +307,11 @@ export default function PropertyDetail() {
                   ? "No billing records for this property yet"
                   : "No outstanding balance — your account is updated"}
               </p>
+              {totalCredit > 0 && (
+                <p className="text-xs font-semibold mt-2" style={{color:"#a16207"}}>
+                  Unapplied credit: {peso(totalCredit)} · retained by tax year pending verification
+                </p>
+              )}
             </div>
           </div>
 
@@ -387,7 +393,7 @@ export default function PropertyDetail() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-100" style={{background:"#f8fafc"}}>
-                    {["Year","Assessed","Basic","SEF","Penalty","Discount","Due","Paid","Balance"].map((h,i) => (
+                    {["Year","Assessed","Basic","SEF","Penalty","Discount","Due","Paid","Credit","Balance"].map((h,i) => (
                       <th key={h} className={`px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider ${i===0?"text-left":"text-right"}`}>{h}</th>
                     ))}
                   </tr>
@@ -403,6 +409,9 @@ export default function PropertyDetail() {
                       <td className="px-4 py-3 text-right text-slate-500">{peso(y.discount)}</td>
                       <td className="px-4 py-3 text-right font-semibold text-slate-700">{peso(y.total_due)}</td>
                       <td className="px-4 py-3 text-right text-slate-500">{peso(y.amount_paid)}</td>
+                      <td className="px-4 py-3 text-right font-semibold" style={{color:y.credit > 0 ? "#a16207" : "#94a3b8"}}>
+                        {peso(y.credit)}
+                      </td>
                       <td className="px-4 py-3 text-right font-black"
                         style={{color: y.balance > 0 ? C.delinqText : C.paidGreen}}>
                         {peso(y.balance)}
@@ -430,6 +439,7 @@ export default function PropertyDetail() {
                     <span>Discount: {peso(y.discount)}</span>
                     <span className="text-slate-700 font-semibold">Due: {peso(y.total_due)}</span>
                     <span>Paid: {peso(y.amount_paid)}</span>
+                    <span style={{color:y.credit > 0 ? "#a16207" : undefined}}>Credit: {peso(y.credit)}</span>
                   </div>
                 </div>
               ))}

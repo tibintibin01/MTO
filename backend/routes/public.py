@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from backend.database import get_db
-from backend.models import Property, Payment, PropertyBilling, TaxPolicy
+from backend.models import Payment, PaymentBilling, Property, PropertyBilling, TaxPolicy
 from datetime import datetime, timezone
 from backend.deps import limiter
 import re
@@ -109,9 +109,42 @@ def _compute_billing_breakdown(property_id: int, db_session: Session):
         .all()
     )
 
+    receipt_values_by_year = {}
+    linked_rows = (
+        db_session.query(PaymentBilling, Payment, PropertyBilling.tax_year)
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .filter(
+            PropertyBilling.property_id == property_id,
+            PropertyBilling.tax_year >= DATA_START_YEAR,
+        )
+        .all()
+    )
+    payment_ids = list({int(payment.id) for _link, payment, _year in linked_rows})
+    link_counts = {}
+    if payment_ids:
+        link_counts = dict(
+            db_session.query(PaymentBilling.payment_id, func.count(PaymentBilling.id))
+            .filter(PaymentBilling.payment_id.in_(payment_ids))
+            .group_by(PaymentBilling.payment_id)
+            .all()
+        )
+    for link, payment, tax_year in linked_rows:
+        summary = receipt_values_by_year.setdefault(
+            int(tax_year), {"paid": 0.0, "penalty": 0.0, "discount": 0.0}
+        )
+        if int(link_counts.get(payment.id, 0) or 0) == 1:
+            summary["paid"] += float(payment.amount or 0)
+            summary["penalty"] += float(payment.penalty or 0)
+            summary["discount"] += float(payment.discount or 0)
+        else:
+            summary["paid"] += float(link.amount_paid or 0)
+
     years = []
     total_due = 0.0
     total_paid = 0.0
+    total_balance = 0.0
+    total_credit = 0.0
 
     for r in rows:
         assessed = float(r.assessed_value or 0)
@@ -120,11 +153,21 @@ def _compute_billing_breakdown(property_id: int, db_session: Session):
         penalty = float(r.penalty or 0)
         discount = float(r.discount or 0)
         paid = float(r.amount_paid or 0)
+        receipt_values = receipt_values_by_year.get(int(r.tax_year))
+        if receipt_values:
+            paid = round(receipt_values["paid"], 2)
+            if receipt_values["penalty"] > 0:
+                penalty = round(receipt_values["penalty"], 2)
+            if receipt_values["discount"] > 0:
+                discount = round(receipt_values["discount"], 2)
         due = round(basic + sef + penalty - discount, 2)
         balance = round(max(0.0, due - paid), 2)
+        credit = round(max(0.0, paid - due), 2)
 
         total_due += due
         total_paid += paid
+        total_balance += balance
+        total_credit += credit
 
         years.append({
             "tax_year": int(r.tax_year),
@@ -136,14 +179,18 @@ def _compute_billing_breakdown(property_id: int, db_session: Session):
             "total_due": due,
             "amount_paid": paid,
             "balance": balance,
+            "credit": credit,
             "status": "Paid" if paid >= due and due > 0 else "Partial" if paid > 0 else "Unpaid",
         })
 
-    balance = round(max(0.0, total_due - total_paid), 2)
+    # Keep excess payments as unapplied credits. They must not automatically
+    # reduce a different tax year's outstanding receivable.
+    balance = round(total_balance, 2)
     return {
         "years": years,
         "total_due": round(total_due, 2),
         "total_paid": round(total_paid, 2),
+        "total_credit": round(total_credit, 2),
         "balance": balance,
     }
 

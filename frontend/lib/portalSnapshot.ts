@@ -107,6 +107,7 @@ export function publicProperty(record: SnapshotRecord, snapshot: PortalSnapshot)
     future_assessment: record.future_assessment || null,
     status: record.status || "PENDING",
     balance: Number(record.balance || 0),
+    total_credit: Number(record.total_credit || 0),
     total_due: Number(record.total_due || 0),
     total_paid: Number(record.total_paid || 0),
     billing_breakdown: Array.isArray(record.billing_breakdown) ? record.billing_breakdown : [],

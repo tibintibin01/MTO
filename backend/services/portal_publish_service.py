@@ -21,7 +21,7 @@ import requests
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from backend.models import Payment, Property, PropertyAssessmentHistory, PropertyBilling, TaxPolicy
+from backend.models import Payment, PaymentBilling, Property, PropertyAssessmentHistory, PropertyBilling, TaxPolicy
 from backend.services.assessment_value_service import (
     assessed_value_for_year,
     assessment_versions,
@@ -152,6 +152,38 @@ def generate_portal_snapshot(db_session: Session) -> dict:
     for billing in billing_rows:
         billings_by_property[int(billing.property_id)].append(billing)
 
+    # For a payment linked to exactly one billing year, the receipt itself is
+    # the authoritative historical amount. Legacy imports may leave the link
+    # and billing summary stale after an assessment correction.
+    receipt_values_by_billing: dict[int, dict[str, float]] = defaultdict(
+        lambda: {"paid": 0.0, "penalty": 0.0, "discount": 0.0}
+    )
+    if billing_rows:
+        billing_ids = [int(row.id) for row in billing_rows]
+        linked_rows = (
+            db_session.query(PaymentBilling, Payment)
+            .join(Payment, Payment.id == PaymentBilling.payment_id)
+            .filter(PaymentBilling.billing_id.in_(billing_ids))
+            .all()
+        )
+        payment_ids = list({int(payment.id) for _link, payment in linked_rows})
+        link_counts = {}
+        if payment_ids:
+            link_counts = dict(
+                db_session.query(PaymentBilling.payment_id, func.count(PaymentBilling.id))
+                .filter(PaymentBilling.payment_id.in_(payment_ids))
+                .group_by(PaymentBilling.payment_id)
+                .all()
+            )
+        for link, payment in linked_rows:
+            summary = receipt_values_by_billing[int(link.billing_id)]
+            if int(link_counts.get(payment.id, 0) or 0) == 1:
+                summary["paid"] += _peso(payment.amount)
+                summary["penalty"] += _peso(payment.penalty)
+                summary["discount"] += _peso(payment.discount)
+            else:
+                summary["paid"] += _peso(link.amount_paid)
+
     payments_by_property: dict[int, list[Payment]] = defaultdict(list)
     payment_rows = (
         db_session.query(Payment)
@@ -187,6 +219,8 @@ def generate_portal_snapshot(db_session: Session) -> dict:
         years = []
         total_due = 0.0
         total_paid = 0.0
+        total_balance = 0.0
+        total_credit = 0.0
 
         for billing in billings_by_property.get(int(prop.id), []):
             tax_year = int(billing.tax_year)
@@ -197,10 +231,22 @@ def generate_portal_snapshot(db_session: Session) -> dict:
             penalty = _peso(billing.penalty)
             discount = _peso(billing.discount)
             paid = _peso(billing.amount_paid)
+            receipt_values = receipt_values_by_billing.get(int(billing.id))
+            if receipt_values:
+                paid = round(receipt_values["paid"], 2)
+                # Keep legacy billing values when old receipts did not retain
+                # penalty/discount components separately.
+                if receipt_values["penalty"] > 0:
+                    penalty = round(receipt_values["penalty"], 2)
+                if receipt_values["discount"] > 0:
+                    discount = round(receipt_values["discount"], 2)
             due = round(basic + sef + penalty - discount, 2)
             balance = round(max(0.0, due - paid), 2)
+            credit = round(max(0.0, paid - due), 2)
             total_due += due
             total_paid += paid
+            total_balance += balance
+            total_credit += credit
             years.append({
                 "tax_year": tax_year,
                 "assessed_value": assessed,
@@ -211,12 +257,16 @@ def generate_portal_snapshot(db_session: Session) -> dict:
                 "total_due": due,
                 "amount_paid": paid,
                 "balance": balance,
+                "credit": credit,
                 "status": "Paid" if paid >= due and due > 0 else "Partial" if paid > 0 else "Unpaid",
             })
 
         total_due = round(total_due, 2)
         total_paid = round(total_paid, 2)
-        balance = round(max(0.0, total_due - total_paid), 2)
+        # Credits remain attached to their billing year until formally applied.
+        # Never let an excess payment silently erase another year's receivable.
+        balance = round(total_balance, 2)
+        total_credit = round(total_credit, 2)
         payments = payments_by_property.get(int(prop.id), [])
         versions = assessment_versions(
             prop,
@@ -261,6 +311,7 @@ def generate_portal_snapshot(db_session: Session) -> dict:
             "future_assessment": future_assessment,
             "status": _status_from_balance(years, balance),
             "balance": balance,
+            "total_credit": total_credit,
             "total_due": total_due,
             "total_paid": total_paid,
             "billing_breakdown": years,

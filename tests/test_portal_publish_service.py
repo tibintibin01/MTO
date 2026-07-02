@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
-from backend.models import Payment, Property, PropertyAssessmentHistory, PropertyBilling
+from backend.models import Payment, PaymentBilling, Property, PropertyAssessmentHistory, PropertyBilling
 from backend.services.portal_publish_service import (
     _owner_lookup_hash,
     _snapshot_checksum,
@@ -133,3 +133,93 @@ def test_snapshot_uses_current_year_assessment_and_labels_future_revaluation(db,
         "effective_year": current_year + 1,
     }
     assert [row["tax_year"] for row in record["billing_breakdown"]] == [current_year]
+
+
+def test_snapshot_keeps_cross_year_credit_unapplied(db, monkeypatch):
+    prop = Property(
+        td_number="06-0010-00257",
+        owner_name="VERIFICATION ACCOUNT",
+        barangay="DIBUTUNAN",
+        assessed_value=36_900,
+    )
+    db.add(prop)
+    db.flush()
+    db.add_all([
+        PropertyBilling(
+            property_id=prop.id,
+            tax_year=2023,
+            assessed_value=36_900,
+            penalty=0,
+            discount=0,
+            amount_paid=0,
+        ),
+        PropertyBilling(
+            property_id=prop.id,
+            tax_year=2024,
+            assessed_value=36_900,
+            penalty=0,
+            discount=0,
+            amount_paid=792,
+        ),
+    ])
+    db.commit()
+    monkeypatch.setattr(
+        "backend.services.portal_publish_service.mto_config.PORTAL_LOOKUP_SECRET",
+        "test-lookup-secret",
+    )
+
+    record = generate_portal_snapshot(db)["properties"][0]
+
+    assert record["balance"] == 738.0
+    assert record["total_credit"] == 54.0
+    assert record["billing_breakdown"][1]["credit"] == 54.0
+
+
+def test_snapshot_uses_single_year_receipt_when_allocation_is_stale(db, monkeypatch):
+    prop = Property(
+        td_number="06-0010-00999",
+        owner_name="PAYMENT TEST",
+        barangay="DIBUTUNAN",
+        assessed_value=39_600,
+    )
+    db.add(prop)
+    db.flush()
+    billing = PropertyBilling(
+        property_id=prop.id,
+        tax_year=datetime.now(timezone.utc).year,
+        assessed_value=39_600,
+        penalty=0,
+        discount=0,
+        amount_paid=738,
+    )
+    db.add(billing)
+    db.flush()
+    payment = Payment(
+        property_id=prop.id,
+        amount=871,
+        penalty=79,
+        discount=0,
+        or_number="8330002",
+        tax_year=str(datetime.now(timezone.utc).year),
+    )
+    db.add(payment)
+    db.flush()
+    db.add(PaymentBilling(
+        payment_id=payment.id,
+        billing_id=billing.id,
+        tax_year=datetime.now(timezone.utc).year,
+        amount_paid=738,
+    ))
+    db.commit()
+    monkeypatch.setattr(
+        "backend.services.portal_publish_service.mto_config.PORTAL_LOOKUP_SECRET",
+        "test-lookup-secret",
+    )
+
+    record = generate_portal_snapshot(db)["properties"][0]
+    year = record["billing_breakdown"][0]
+
+    assert year["penalty"] == 79.0
+    assert year["total_due"] == 871.0
+    assert year["amount_paid"] == 871.0
+    assert year["balance"] == 0.0

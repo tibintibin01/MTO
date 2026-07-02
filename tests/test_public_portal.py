@@ -17,7 +17,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
-from backend.models import Property, Payment, PropertyBilling, TaxPolicy
+from backend.models import Payment, PaymentBilling, Property, PropertyBilling, TaxPolicy
 from backend.routes.public import (
     _compute_billing_breakdown,
     _derive_status,
@@ -178,4 +178,49 @@ class TestBillingBreakdown:
         _make_billing(db, prop.id, 2024, assessed=100_000.0, paid=5_000.0)  # overpaid
         bd = _compute_billing_breakdown(prop.id, db)
         assert bd["balance"] == 0.0
+        assert bd["total_credit"] == 3_000.0
+        assert bd["years"][0]["credit"] == 3_000.0
         assert _derive_status(bd) == "UPDATED"
+
+    def test_overpayment_does_not_erase_another_year_balance(self, db):
+        prop = _make_property(db, assessed=36_900.0)
+        _make_billing(db, prop.id, 2023, assessed=36_900.0, paid=0.0)
+        _make_billing(db, prop.id, 2024, assessed=36_900.0, paid=792.0)
+        bd = _compute_billing_breakdown(prop.id, db)
+
+        assert bd["years"][0]["balance"] == 738.0
+        assert bd["years"][1]["credit"] == 54.0
+        assert bd["total_credit"] == 54.0
+        assert bd["balance"] == 738.0
+        assert _derive_status(bd) == "DELINQUENT"
+
+    def test_single_year_receipt_repairs_stale_link_and_penalty_for_display(self, db):
+        prop = _make_property(db, assessed=39_600.0)
+        billing = _make_billing(
+            db, prop.id, 2023, assessed=39_600.0, penalty=0.0, paid=738.0
+        )
+        receipt = Payment(
+            property_id=prop.id,
+            amount=871.0,
+            penalty=79.0,
+            discount=0.0,
+            or_number="8330001",
+            tax_year="2023",
+        )
+        db.add(receipt)
+        db.flush()
+        db.add(PaymentBilling(
+            payment_id=receipt.id,
+            billing_id=billing.id,
+            tax_year=2023,
+            amount_paid=738.0,
+        ))
+        db.flush()
+
+        bd = _compute_billing_breakdown(prop.id, db)
+        year = bd["years"][0]
+
+        assert year["penalty"] == 79.0
+        assert year["total_due"] == 871.0
+        assert year["amount_paid"] == 871.0
+        assert year["balance"] == 0.0
