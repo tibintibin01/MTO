@@ -4,7 +4,7 @@ import traceback
 import os
 import threading
 import customtkinter as ctk
-from PIL import Image
+from PIL import Image, ImageDraw, ImageOps
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -30,6 +30,27 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 ASSETS_DIR = ROOT_DIR # In this repo, assets are currently in root
+
+
+def _load_circular_seal(size: int) -> Image.Image:
+    """Load the official seal unchanged and mask only its square corners."""
+    seal_path = ASSETS_DIR / "assets" / "official" / "treasurer_seal.png"
+    source = Image.open(seal_path).convert("RGBA")
+    # The supplied artwork has a narrow woven margin around the medallion.
+    # Crop to the gold outer rim before scaling it into the compact badge.
+    left = round(source.width * 0.036)
+    side = min(round(source.width * 0.928), round(source.height * 0.965))
+    source = source.crop((left, 0, left + side, side))
+    fitted = ImageOps.fit(
+        source,
+        (size, size),
+        method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.5),
+    )
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, size - 1, size - 1), fill=255)
+    fitted.putalpha(mask)
+    return fitted
 
 from dotenv import load_dotenv
 if env_path.exists():
@@ -180,19 +201,29 @@ class LoginApp(ctk.CTk):
         # MTO seal badge
         badge_fr = ctk.CTkFrame(
             self.content_frame,
-            width=56, height=56,
-            corner_radius=28,
-            fg_color="#1f4e78",
-            border_width=2,
-            border_color="#2c6ea1",
+            width=72, height=72,
+            corner_radius=36,
+            fg_color="transparent",
+            border_width=0,
         )
         badge_fr.pack(pady=(0, 14))
         badge_fr.pack_propagate(False)
-        ctk.CTkLabel(
-            badge_fr, text="🏛",
-            font=("Segoe UI Emoji", 24),
-            text_color="white",
-        ).place(relx=0.5, rely=0.5, anchor="center")
+        try:
+            seal = _load_circular_seal(96)
+            self.login_seal_img = ctk.CTkImage(
+                light_image=seal,
+                dark_image=seal,
+                size=(68, 68),
+            )
+            ctk.CTkLabel(badge_fr, image=self.login_seal_img, text="").place(
+                relx=0.5, rely=0.5, anchor="center"
+            )
+        except Exception:
+            ctk.CTkLabel(
+                badge_fr, text="🏛",
+                font=("Segoe UI Emoji", 24),
+                text_color="white",
+            ).place(relx=0.5, rely=0.5, anchor="center")
 
         # Title and subtitle
         ctk.CTkLabel(
@@ -366,25 +397,32 @@ class LoginApp(ctk.CTk):
 
         # Seal / icon circle
         icon_fr = ctk.CTkFrame(
-            inner, width=68, height=68, corner_radius=34,
-            fg_color="#1f4e78",
-            border_width=2,
-            border_color="#2c6ea1",
+            inner, width=76, height=76, corner_radius=38,
+            fg_color="transparent",
+            border_width=0,
         )
         icon_fr.pack(pady=(0, 18))
         icon_fr.pack_propagate(False)
 
-        # Use a fixed-width label with center justify to avoid emoji offset
-        icon_lbl = ctk.CTkLabel(
-            icon_fr,
-            text="🏛",
-            font=("Segoe UI Emoji", 28),
-            text_color="white",
-            width=68,
-            height=68,
-            justify="center",
-            anchor="center",
-        )
+        try:
+            seal = _load_circular_seal(112)
+            self.overlay_seal_img = ctk.CTkImage(
+                light_image=seal,
+                dark_image=seal,
+                size=(72, 72),
+            )
+            icon_lbl = ctk.CTkLabel(icon_fr, image=self.overlay_seal_img, text="")
+        except Exception:
+            icon_lbl = ctk.CTkLabel(
+                icon_fr,
+                text="🏛",
+                font=("Segoe UI Emoji", 28),
+                text_color="white",
+                width=68,
+                height=68,
+                justify="center",
+                anchor="center",
+            )
         icon_lbl.place(relx=0.5, rely=0.5, anchor="center")
 
         # System name
