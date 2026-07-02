@@ -260,6 +260,18 @@ class LedgerPage:
 
         def worker():
             try:
+                # Resolve an exact current TD through a fresh, non-cached
+                # request before using the broader property search. A former
+                # TD on a replacement record may equal another property's
+                # current TD, so the general result set can be ambiguous.
+                property_id = self._find_exact_current_property_id(term)
+                if property_id is not None:
+                    self.container.after(
+                        0,
+                        lambda pid=property_id: self._open_payment_modal(pid),
+                    )
+                    return
+
                 res = prop_svc.search_properties(term, limit=20)
                 items = res.get("items", []) if isinstance(res, dict) else []
                 match, message = self._resolve_property_match(term, items)
@@ -273,6 +285,12 @@ class LedgerPage:
                 self.container.after(0, lambda: overlay.hide())
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _find_exact_current_property_id(self, term):
+        exact_current = prop_svc.find_property_by_td_number(term)
+        if not isinstance(exact_current, dict):
+            return None
+        return exact_current.get("id")
 
     def _selected_property_id(self):
         sel = self.tree.selection()

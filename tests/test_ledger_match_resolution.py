@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "clients" / "desktop"))
 
+from ui import ledger as ledger_module
 from ui.ledger import LedgerPage
 
 
@@ -52,3 +53,22 @@ def test_duplicate_former_td_remains_ambiguous():
 
     assert match is None
     assert "Multiple properties share this former TD number" in message
+
+
+def test_fresh_exact_current_td_lookup_returns_property_id(monkeypatch):
+    calls = []
+
+    def fake_find(term):
+        calls.append(term)
+        return {"id": 77, "td_number": "06-0009-01059"}
+
+    monkeypatch.setattr(
+        ledger_module.prop_svc,
+        "find_property_by_td_number",
+        fake_find,
+    )
+
+    property_id = _page()._find_exact_current_property_id("06-0009-01059")
+
+    assert property_id == 77
+    assert calls == ["06-0009-01059"]
