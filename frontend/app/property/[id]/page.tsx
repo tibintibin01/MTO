@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import {
   ArrowLeft, FileText, CheckCircle2, AlertCircle,
   Building2, MapPin, RefreshCw, Phone, Clock,
-  Calendar, ChevronRight, Copy, Check, Home,
+  Calendar, ChevronDown, ChevronRight, Copy, Check, Home,
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
@@ -59,6 +59,7 @@ export default function PropertyDetail() {
   const [error,    setError]    = useState("");
   const [retrying, setRetrying] = useState(false);
   const [copied,   setCopied]   = useState(false);
+  const [billingOpen, setBillingOpen] = useState(false);
 
   const load = async () => {
     setError("");
@@ -382,12 +383,28 @@ export default function PropertyDetail() {
       {breakdown.length > 0 && (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 pb-2">
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-            <div className="px-6 py-4 flex items-center gap-2 border-b border-slate-100">
-              <FileText className="w-4 h-4" style={{color:C.teal}} />
-              <h2 className="font-bold text-slate-800">Billing Breakdown</h2>
-              <span className="ml-auto text-xs text-slate-400">Basic + SEF + Penalty − Discount</span>
-            </div>
+            <button
+              type="button"
+              onClick={() => setBillingOpen((open) => !open)}
+              aria-expanded={billingOpen}
+              className={`w-full px-6 py-4 flex items-center gap-3 text-left transition-colors hover:bg-slate-50 ${billingOpen ? "border-b border-slate-100" : ""}`}
+            >
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{background:"#e8f4f7"}}>
+                <FileText className="w-4 h-4" style={{color:C.teal}} />
+              </div>
+              <div>
+                <h2 className="font-bold text-slate-800">Billing Breakdown</h2>
+                <p className="text-xs text-slate-400">{breakdown.length} tax year(s) · Basic + SEF + Penalty − Discount</p>
+              </div>
+              <div className="ml-auto flex items-center gap-3">
+                <span className="text-sm font-black" style={{color:balance > 0 ? C.delinqText : C.paidGreen}}>
+                  {balance > 0 ? `${peso(balance)} due` : "Fully paid"}
+                </span>
+                <ChevronDown className={`w-5 h-5 text-slate-400 transition-transform ${billingOpen ? "rotate-180" : ""}`} />
+              </div>
+            </button>
 
+            {billingOpen && <>
             {/* Desktop table */}
             <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-sm">
@@ -444,6 +461,7 @@ export default function PropertyDetail() {
                 </div>
               ))}
             </div>
+            </>}
           </div>
         </div>
       )}
