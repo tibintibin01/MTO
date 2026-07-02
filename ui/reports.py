@@ -108,77 +108,139 @@ class ReportsPage:
             except Exception:
                 pass
 
+    @staticmethod
+    def _configure_report_tree_style(style_name):
+        """Apply the shared modern table appearance used by operational reports."""
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(
+            style_name,
+            rowheight=34,
+            font=("Inter", 11),
+            background="#0f172a",
+            fieldbackground="#0f172a",
+            foreground="#e2e8f0",
+            borderwidth=0,
+            bordercolor="#334155",
+            lightcolor="#334155",
+            darkcolor="#334155",
+            relief="flat",
+        )
+        style.configure(
+            f"{style_name}.Heading",
+            font=("Inter", 10, "bold"),
+            background="#334155",
+            foreground="#f8fafc",
+            borderwidth=0,
+            bordercolor="#475569",
+            lightcolor="#475569",
+            darkcolor="#475569",
+            relief="flat",
+            padding=(8, 8),
+        )
+        style.map(
+            style_name,
+            background=[("selected", "#0284c7")],
+            foreground=[("selected", "#ffffff")],
+        )
+        style.map(f"{style_name}.Heading", background=[("active", "#475569")])
+        for scrollbar_style in ("Report.Vertical.TScrollbar", "Report.Horizontal.TScrollbar"):
+            style.configure(
+                scrollbar_style,
+                gripcount=0,
+                background="#475569",
+                darkcolor="#475569",
+                lightcolor="#475569",
+                troughcolor="#0f172a",
+                bordercolor="#0f172a",
+                arrowcolor="#cbd5e1",
+                relief="flat",
+            )
+
     def setup_collection_tab(self):
-        filter_fr = ctk.CTkFrame(self.collection_tab, fg_color=ModernTheme.SECONDARY, corner_radius=8)
-        filter_fr.pack(fill="x", padx=10, pady=10)
+        collection_fr = ctk.CTkFrame(self.collection_tab, fg_color="transparent")
+        collection_fr.pack(fill="both", expand=True, padx=10, pady=10)
+
+        title_fr = ctk.CTkFrame(collection_fr, fg_color="transparent")
+        title_fr.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(
+            title_fr, text="OFFICIAL COLLECTION REGISTER",
+            font=ModernTheme.H3, text_color=ModernTheme.PRIMARY,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            title_fr,
+            text="Payment and receipt activity for the selected reporting period",
+            font=ModernTheme.BODY_SMALL, text_color=ModernTheme.TEXT_GRAY,
+        ).pack(anchor="w", pady=(2, 0))
+
+        filter_fr = ctk.CTkFrame(
+            collection_fr,
+            fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK),
+            corner_radius=8, border_width=1,
+            border_color=(ModernTheme.BORDER_LIGHT, ModernTheme.BORDER_DARK),
+        )
+        filter_fr.pack(fill="x", pady=(0, 10))
 
         ctk.CTkLabel(
-            filter_fr, text=tr("reports.collection.filter_label"), font=ModernTheme.BODY_BOLD, text_color="white"
-        ).pack(side="left", padx=10)
-
+            filter_fr, text="MONTH", font=ModernTheme.BUTTON_SMALL,
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(side="left", padx=(14, 6), pady=10)
         self.month_cb = ctk.CTkComboBox(
-            filter_fr, values=["All"] + [f"{m:02d}" for m in range(1, 13)]
+            filter_fr, values=["All"] + [f"{m:02d}" for m in range(1, 13)],
+            width=120, height=34, font=ModernTheme.BODY_SMALL,
         )
         self.month_cb.set(datetime.now().strftime("%m"))
-        self.month_cb.pack(side="left", padx=5)
+        self.month_cb.pack(side="left", padx=(0, 12), pady=10)
 
+        ctk.CTkLabel(
+            filter_fr, text="YEAR", font=ModernTheme.BUTTON_SMALL,
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(side="left", padx=(0, 6), pady=10)
         current_year = datetime.now().year
         self.year_cb = ctk.CTkComboBox(
             filter_fr,
-            values=["All"]
-            + [str(y) for y in range(current_year - 10, current_year + 3)],
+            values=["All"] + [str(y) for y in range(current_year - 10, current_year + 3)],
+            width=130, height=34, font=ModernTheme.BODY_SMALL,
         )
         self.year_cb.set(str(current_year))
-        self.year_cb.pack(side="left", padx=5)
+        self.year_cb.pack(side="left", padx=(0, 12), pady=10)
         self._bind_enter(self.month_cb, self.generate_collection_report)
         self._bind_enter(self.year_cb, self.generate_collection_report)
 
         ctk.CTkButton(
-            filter_fr, text=tr("reports.collection.btn_generate"), command=self.generate_collection_report,
-            font=ModernTheme.BUTTON, fg_color=ModernTheme.SUCCESS
-        ).pack(side="left", padx=10)
+            filter_fr, text=tr("reports.collection.btn_generate"),
+            command=self.generate_collection_report,
+            font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.PRIMARY,
+            hover_color=ModernTheme.PRIMARY_HOVER, height=34, width=110,
+        ).pack(side="left", padx=(0, 8), pady=10)
 
-        # 🏦 Manage Bank Deposits button
         self.manage_dep_btn = ctk.CTkButton(
-            filter_fr, text="🏦 Manage Deposits", command=self.open_manage_deposits,
-            font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY
+            filter_fr, text="MANAGE DEPOSITS", command=self.open_manage_deposits,
+            font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.SECONDARY,
+            hover_color=ModernTheme.SECONDARY_HOVER, height=34, width=150,
         )
-        self.manage_dep_btn.pack(side="left", padx=10)
+        self.manage_dep_btn.pack(side="left", padx=(0, 8), pady=10)
 
-        # 📊 Export COA RCD button
         self.export_rcd_btn = ctk.CTkButton(
-            filter_fr, text="📊 Export COA RCD (Excel)", command=self.open_export_signatories,
-            font=ModernTheme.BUTTON, fg_color=ModernTheme.WARNING
+            filter_fr, text="EXPORT COA RCD", command=self.open_export_signatories,
+            font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.WARNING,
+            height=34, width=150,
         )
         role = str(self.user.get("role", "")).strip().lower() if isinstance(self.user, dict) else ""
         if role == "admin":
-            self.export_rcd_btn.pack(side="left", padx=10)
+            self.export_rcd_btn.pack(side="left", padx=(0, 12), pady=10)
 
-        # ── Pagination state ──────────────────────────────────────────────────
         self._coll_page_size = 100
-        self._coll_cursors = [None]   # index 0 = first page cursor (None)
+        self._coll_cursors = [None]
         self._coll_page = 0
         self._coll_has_more = False
 
-        self.coll_table_fr = ctk.CTkFrame(self.collection_tab)
-        self.coll_table_fr.pack(fill="both", expand=True, padx=10, pady=(10, 0))
-
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure(
-            "Treeview",
-            rowheight=35,
-            font=ModernTheme.BODY,
-            background="#1e1e1e",
-            fieldbackground="#1e1e1e",
-            foreground="white",
+        self.coll_table_fr = ctk.CTkFrame(
+            collection_fr, fg_color="#0f172a", corner_radius=8,
+            border_width=1, border_color=ModernTheme.BORDER_DARK,
         )
-        style.configure(
-            "Treeview.Heading",
-            font=ModernTheme.BODY_BOLD,
-            background="#333333",
-            foreground="white",
-        )
+        self.coll_table_fr.pack(fill="both", expand=True)
+        self._configure_report_tree_style("Collection.Treeview")
 
         cols = (
             tr("reports.collection.table.date"),
@@ -188,65 +250,59 @@ class ReportsPage:
             tr("reports.collection.table.kind"),
             tr("reports.collection.table.year"),
             tr("reports.collection.table.amount"),
-            tr("reports.collection.table.posted")
+            tr("reports.collection.table.posted"),
         )
-
-        tree_container = tk.Frame(self.coll_table_fr, bg="#1e1e1e")
-        tree_container.pack(fill="both", expand=True)
-
-        scrolly = ttk.Scrollbar(tree_container, orient="vertical")
-        scrollx = ttk.Scrollbar(tree_container, orient="horizontal")
+        tree_container = tk.Frame(self.coll_table_fr, bg="#0f172a", bd=0, highlightthickness=0)
+        tree_container.pack(fill="both", expand=True, padx=1, pady=1)
+        scrolly = ttk.Scrollbar(
+            tree_container, orient="vertical", style="Report.Vertical.TScrollbar"
+        )
+        scrollx = ttk.Scrollbar(
+            tree_container, orient="horizontal", style="Report.Horizontal.TScrollbar"
+        )
         scrolly.pack(side="right", fill="y")
         scrollx.pack(side="bottom", fill="x")
-
         self.coll_tree = ttk.Treeview(
             tree_container, columns=cols, show="headings",
             yscrollcommand=scrolly.set, xscrollcommand=scrollx.set,
+            style="Collection.Treeview",
         )
         scrolly.configure(command=self.coll_tree.yview)
         scrollx.configure(command=self.coll_tree.xview)
-
         for col in cols:
             self.coll_tree.heading(col, text=col.upper())
             self.coll_tree.column(col, width=110, anchor="center")
         self.coll_tree.column(tr("reports.collection.table.owner"), width=180, anchor="w")
         self.coll_tree.pack(side="left", fill="both", expand=True)
+        self.coll_tree.tag_configure("oddrow", background="#162032", foreground="#e2e8f0")
+        self.coll_tree.tag_configure("evenrow", background="#1e293b", foreground="#f8fafc")
 
-        self.coll_tree.tag_configure("oddrow",  background="#2b2b2b", foreground="white")
-        self.coll_tree.tag_configure("evenrow", background="#333333", foreground="white")
-
-        # ── Pagination bar ────────────────────────────────────────────────────
-        pag_fr = ctk.CTkFrame(self.collection_tab, fg_color="transparent")
-        pag_fr.pack(fill="x", padx=10, pady=(4, 10))
-
+        pag_fr = ctk.CTkFrame(
+            collection_fr,
+            fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK),
+            corner_radius=8, border_width=1,
+            border_color=(ModernTheme.BORDER_LIGHT, ModernTheme.BORDER_DARK),
+        )
+        pag_fr.pack(fill="x", pady=(8, 0))
         self._coll_prev_btn = ctk.CTkButton(
-            pag_fr, text="◀  PREVIOUS",
-            command=self._coll_prev_page,
-            width=120, height=32,
-            font=ModernTheme.BUTTON_SMALL,
-            fg_color=ModernTheme.SECONDARY,
-            hover_color=ModernTheme.SECONDARY_HOVER,
+            pag_fr, text="PREVIOUS", command=self._coll_prev_page,
+            width=120, height=32, font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SECONDARY, hover_color=ModernTheme.SECONDARY_HOVER,
             state="disabled",
         )
-        self._coll_prev_btn.pack(side="left", padx=(0, 8))
-
+        self._coll_prev_btn.pack(side="left", padx=10, pady=8)
         self._coll_page_lbl = ctk.CTkLabel(
-            pag_fr, text="Page 1",
-            font=("Inter", 11, "bold"),
+            pag_fr, text="Page 1", font=("Inter", 11, "bold"),
             text_color=ModernTheme.TEXT_GRAY,
         )
         self._coll_page_lbl.pack(side="left", expand=True)
-
         self._coll_next_btn = ctk.CTkButton(
-            pag_fr, text="NEXT  ▶",
-            command=self._coll_next_page,
-            width=120, height=32,
-            font=ModernTheme.BUTTON_SMALL,
-            fg_color=ModernTheme.SECONDARY,
-            hover_color=ModernTheme.SECONDARY_HOVER,
+            pag_fr, text="NEXT", command=self._coll_next_page,
+            width=120, height=32, font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SECONDARY, hover_color=ModernTheme.SECONDARY_HOVER,
             state="disabled",
         )
-        self._coll_next_btn.pack(side="right")
+        self._coll_next_btn.pack(side="right", padx=10, pady=8)
 
     def setup_receivables_tab(self):
         receiv_fr = ctk.CTkFrame(self.receivables_tab, fg_color="transparent")
@@ -299,90 +355,98 @@ class ReportsPage:
 
     def setup_barangay_tab(self):
         brgy_fr = ctk.CTkFrame(self.barangay_tab, fg_color="transparent")
-        brgy_fr.pack(fill="both", expand=True, padx=20, pady=20)
+        brgy_fr.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # ── Header with year filter ──────────────────────────────────────────
         top_fr = ctk.CTkFrame(brgy_fr, fg_color="transparent")
-        top_fr.pack(fill="x", pady=(0, 8))
+        top_fr.pack(fill="x", pady=(0, 10))
 
         ctk.CTkLabel(
             top_fr,
             text=tr("reports.barangay.title"),
             font=ModernTheme.H3,
             text_color=ModernTheme.PRIMARY,
-        ).pack(side="left")
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            top_fr,
+            text="Jurisdiction-level assessment, collection, and outstanding balances",
+            font=ModernTheme.BODY_SMALL,
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(anchor="w", pady=(2, 0))
 
-        # Year filter + export buttons — right side
-        filter_fr = ctk.CTkFrame(top_fr, fg_color="transparent")
-        filter_fr.pack(side="right")
+        filter_fr = ctk.CTkFrame(
+            brgy_fr,
+            fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK),
+            corner_radius=8,
+            border_width=1,
+            border_color=(ModernTheme.BORDER_LIGHT, ModernTheme.BORDER_DARK),
+        )
+        filter_fr.pack(fill="x", pady=(0, 10))
 
         ctk.CTkLabel(
-            filter_fr, text="As of Year:", font=ModernTheme.BODY, text_color="gray"
-        ).pack(side="left", padx=(0, 8))
+            filter_fr, text="AS OF YEAR", font=ModernTheme.BUTTON_SMALL,
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(side="left", padx=(14, 8), pady=10)
 
         curr_y = datetime.now().year
         self.brgy_year_cb = ctk.CTkComboBox(
             filter_fr,
             values=["All Years"] + [str(y) for y in range(curr_y - 10, curr_y + 1)],
             width=130,
+            height=34,
+            font=ModernTheme.BODY_SMALL,
             command=lambda _: self.generate_barangay_receivables(),
         )
         self.brgy_year_cb.set(str(curr_y))
-        self.brgy_year_cb.pack(side="left", padx=(0, 8))
+        self.brgy_year_cb.pack(side="left", padx=(0, 10), pady=10)
         self._bind_enter(self.brgy_year_cb, self.generate_barangay_receivables)
 
-
-
         ctk.CTkButton(
             filter_fr,
-            text=f"🔄 {tr('reports.barangay.btn_refresh')}",
+            text=tr("reports.barangay.btn_refresh").upper(),
             command=self.generate_barangay_receivables,
-            width=160,
-            height=35,
-            font=ModernTheme.BUTTON,
-            fg_color=ModernTheme.SECONDARY,
-        ).pack(side="left", padx=(0, 6))
+            width=160, height=34, font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.PRIMARY,
+            hover_color=ModernTheme.PRIMARY_HOVER,
+        ).pack(side="left", padx=(0, 8), pady=10)
 
-        # ── Export buttons ───────────────────────────────────────────────────
         ctk.CTkButton(
             filter_fr,
-            text="📄 Export PDF",
+            text="EXPORT PDF",
             command=self._export_brgy_pdf,
-            width=130,
-            height=35,
-            font=ModernTheme.BUTTON,
-            fg_color="#c0392b",
-            hover_color="#962d22",
-        ).pack(side="left", padx=(0, 6))
+            width=125, height=34, font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.DANGER,
+        ).pack(side="left", padx=(0, 8), pady=10)
 
         ctk.CTkButton(
             filter_fr,
-            text="📊 Export Excel",
+            text="EXPORT EXCEL",
             command=self._export_brgy_excel,
-            width=140,
-            height=35,
-            font=ModernTheme.BUTTON,
-            fg_color="#1a7431",
-            hover_color="#145a27",
-        ).pack(side="left")
+            width=135, height=34, font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SUCCESS,
+        ).pack(side="left", padx=(0, 12), pady=10)
 
-        # Info banner explaining cumulative logic
-        info_fr = ctk.CTkFrame(brgy_fr, fg_color=("#1a2634", "#1a2634"), corner_radius=8)
+        info_fr = ctk.CTkFrame(
+            brgy_fr, fg_color=("#e0f2fe", "#132238"), corner_radius=8,
+            border_width=1, border_color=("#bae6fd", "#1e3a5f"),
+        )
         info_fr.pack(fill="x", pady=(0, 10))
         ctk.CTkLabel(
             info_fr,
             text=(
-                "ℹ️  Cumulative receivables: includes all unpaid balances from prior years "
+                "Cumulative receivables include unpaid balances from prior years "
                 "carried forward into the selected year."
             ),
-            font=("Segoe UI", 10),
-            text_color="#8b949e",
+            font=ModernTheme.BODY_SMALL,
+            text_color=("#0369a1", "#7dd3fc"),
             anchor="w",
-        ).pack(padx=14, pady=8, anchor="w")
+        ).pack(padx=14, pady=9, anchor="w")
 
-        # ── Table ────────────────────────────────────────────────────────────
-        t_container = ctk.CTkFrame(brgy_fr)
+        t_container = ctk.CTkFrame(
+            brgy_fr, fg_color="#0f172a", corner_radius=8,
+            border_width=1, border_color=ModernTheme.BORDER_DARK,
+        )
         t_container.pack(fill="both", expand=True)
+        self._configure_report_tree_style("BarangayReport.Treeview")
 
         cols = (
             tr("reports.barangay.table.barangay"),
@@ -393,41 +457,58 @@ class ReportsPage:
             tr("reports.barangay.table.collected"),
             tr("reports.barangay.table.receivable"),
         )
-        self.brgy_tree = ttk.Treeview(t_container, columns=cols, show="headings")
+        tree_host = tk.Frame(t_container, bg="#0f172a", bd=0, highlightthickness=0)
+        tree_host.pack(fill="both", expand=True, padx=1, pady=1)
+        self.brgy_tree = ttk.Treeview(
+            tree_host, columns=cols, show="headings",
+            style="BarangayReport.Treeview",
+        )
         for col in cols:
             self.brgy_tree.heading(col, text=col.upper())
             self.brgy_tree.column(col, width=120, anchor="center")
 
-        self.brgy_tree.column("Barangay", width=180, anchor="w")
-        self.brgy_tree.column("Total Receivable", width=150)
+        self.brgy_tree.column(cols[0], width=180, anchor="w")
+        self.brgy_tree.column(cols[-1], width=150)
 
-        scrolly = ttk.Scrollbar(t_container, orient="vertical", command=self.brgy_tree.yview)
-        self.brgy_tree.configure(yscrollcommand=scrolly.set)
+        scrolly = ttk.Scrollbar(
+            tree_host, orient="vertical", command=self.brgy_tree.yview,
+            style="Report.Vertical.TScrollbar",
+        )
+        scrollx = ttk.Scrollbar(
+            tree_host, orient="horizontal", command=self.brgy_tree.xview,
+            style="Report.Horizontal.TScrollbar",
+        )
+        self.brgy_tree.configure(yscrollcommand=scrolly.set, xscrollcommand=scrollx.set)
         self.brgy_tree.pack(side="left", fill="both", expand=True)
         scrolly.pack(side="right", fill="y")
+        scrollx.pack(side="bottom", fill="x")
 
-        self.brgy_tree.tag_configure("oddrow", background="#2b2b2b", foreground="white")
-        self.brgy_tree.tag_configure("evenrow", background="#333333", foreground="white")
+        self.brgy_tree.tag_configure("oddrow", background="#162032", foreground="#e2e8f0")
+        self.brgy_tree.tag_configure("evenrow", background="#1e293b", foreground="#f8fafc")
 
-        # ── Summary footer ───────────────────────────────────────────────────
-        self.brgy_summary = ctk.CTkFrame(brgy_fr, height=50, fg_color="#2c3e50", corner_radius=8)
-        self.brgy_summary.pack(fill="x", pady=(15, 0))
+        self.brgy_summary = ctk.CTkFrame(
+            brgy_fr, height=58,
+            fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK),
+            corner_radius=8, border_width=1,
+            border_color=(ModernTheme.BORDER_LIGHT, ModernTheme.BORDER_DARK),
+        )
+        self.brgy_summary.pack(fill="x", pady=(8, 0))
 
         self.brgy_year_lbl = ctk.CTkLabel(
             self.brgy_summary,
             text="",
-            font=("Segoe UI", 10),
-            text_color="#8b949e",
+            font=ModernTheme.BODY_SMALL,
+            text_color=ModernTheme.TEXT_GRAY,
         )
-        self.brgy_year_lbl.pack(side="left", padx=20, pady=10)
+        self.brgy_year_lbl.pack(side="left", padx=16, pady=12)
 
         self.brgy_total_lbl = ctk.CTkLabel(
             self.brgy_summary,
             text=tr("reports.barangay.total").replace("{value}", "P 0.00"),
-            font=ModernTheme.H3,
-            text_color="white",
+            font=("Inter", 16, "bold"),
+            text_color=ModernTheme.PRIMARY,
         )
-        self.brgy_total_lbl.pack(side="right", padx=30, pady=10)
+        self.brgy_total_lbl.pack(side="right", padx=18, pady=12)
 
     def setup_reconciliation_tab(self):
         rec_fr = ctk.CTkFrame(self.reconciliation_tab, fg_color="transparent")
