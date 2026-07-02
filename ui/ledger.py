@@ -285,17 +285,24 @@ class LedgerPage:
             return None, "No property matched your search."
 
         clean_term = self._normalize_identifier(term)
-        exact = []
-        for row in items:
-            td_number = row[1] if len(row) > 1 else ""
-            pin = row[18] if len(row) > 18 else ""
-            former_td = row[20] if len(row) > 20 else ""
-            candidates = [td_number, pin, former_td]
-            if any(self._normalize_identifier(value) == clean_term for value in candidates if value):
-                exact.append(row)
+        # A current TD is the strongest identifier. A transferred property's
+        # former TD may legitimately equal another record's current TD, so the
+        # two fields must never compete at the same priority.
+        for field_index, field_name in (
+            (1, "current TD number"),
+            (18, "PIN"),
+            (20, "former TD number"),
+        ):
+            matches = [
+                row for row in items
+                if len(row) > field_index
+                and self._normalize_identifier(row[field_index]) == clean_term
+            ]
+            if len(matches) == 1:
+                return matches[0], None
+            if len(matches) > 1:
+                return None, f"Multiple properties share this {field_name}. Please verify the property record first."
 
-        if len(exact) == 1:
-            return exact[0], None
         if len(items) == 1:
             return items[0], None
 
