@@ -29,118 +29,97 @@ class PropertyPage:
         self.fetch_barangays()
 
     def setup_ui(self):
-        header_fr = ctk.CTkFrame(self.container, fg_color="transparent")
-        header_fr.pack(fill="x", pady=(0, 20))
+        colors = {
+            "panel": "#111827", "panel_alt": "#0f172a", "border": "#334155",
+            "muted": "#94a3b8", "text": "#f8fafc", "blue": "#0284c7",
+            "blue_hover": "#0369a1", "green": "#059669", "green_hover": "#047857",
+            "amber": "#d97706", "amber_hover": "#b45309", "red": "#dc2626",
+        }
 
-        ctk.CTkLabel(header_fr, text=tr("dashboard.nav.property").upper(), font=ModernTheme.H1).pack(side="left")
+        header_fr = ctk.CTkFrame(self.container, fg_color="transparent")
+        header_fr.pack(fill="x", pady=(0, 14))
+        title_group = ctk.CTkFrame(header_fr, fg_color="transparent")
+        title_group.pack(side="left")
+        ctk.CTkLabel(title_group, text=tr("dashboard.nav.property").upper(), font=("Inter", 25, "bold"), text_color=colors["text"]).pack(anchor="w")
+        ctk.CTkLabel(title_group, text="Search, review, and maintain the municipal property registry", font=("Inter", 11), text_color=colors["muted"]).pack(anchor="w", pady=(2, 0))
 
         import api_clients.auth_service as auth
         if auth.has_permission(self.user, "property_edit"):
-            ctk.CTkButton(header_fr, text=f"🧹 {tr('property.btn_cleanup')}", command=self.open_bulk_update, font=ModernTheme.BUTTON, fg_color=ModernTheme.WARNING, width=150).pack(side="right", padx=10)
-            ctk.CTkButton(header_fr, text=f"+ {tr('property.btn_add')}", command=self.open_add_modal, font=ModernTheme.BUTTON, fg_color=ModernTheme.SUCCESS, width=150).pack(side="right", padx=(10, 0))
-            ctk.CTkButton(header_fr, text=f"🚀 {tr('property.btn_import')}", command=self.open_import_wizard, font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY, width=150).pack(side="right")
+            header_actions = ctk.CTkFrame(header_fr, fg_color="transparent")
+            header_actions.pack(side="right")
+            ctk.CTkButton(header_actions, text="BULK IMPORT", command=self.open_import_wizard, font=("Inter", 11, "bold"), fg_color=colors["blue"], hover_color=colors["blue_hover"], width=130, height=36, corner_radius=6).pack(side="left", padx=(0, 8))
+            ctk.CTkButton(header_actions, text="ADD PROPERTY", command=self.open_add_modal, font=("Inter", 11, "bold"), fg_color=colors["green"], hover_color=colors["green_hover"], width=135, height=36, corner_radius=6).pack(side="left", padx=(0, 8))
+            ctk.CTkButton(header_actions, text="DATA CLEANUP", command=self.open_bulk_update, font=("Inter", 11, "bold"), fg_color=colors["amber"], hover_color=colors["amber_hover"], width=135, height=36, corner_radius=6).pack(side="left")
 
-        filter_bar = ctk.CTkFrame(self.container, fg_color=ModernTheme.SECONDARY, corner_radius=8)
-        filter_bar.pack(fill="x", pady=(0, 15), padx=5)
-
-        # Keep the most-used action visible: search input and button stay together.
+        filter_bar = ctk.CTkFrame(self.container, fg_color=colors["panel"], corner_radius=8, border_width=1, border_color=colors["border"])
+        filter_bar.pack(fill="x", pady=(0, 12))
         search_group = ctk.CTkFrame(filter_bar, fg_color="transparent")
-        search_group.pack(side="left", padx=(12, 8), pady=8)
-        ctk.CTkLabel(search_group, text="FIND PROPERTY", font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 8))
-        self.search_ent = ctk.CTkEntry(
-            search_group,
-            placeholder_text="TD number, previous TD, or owner name...",
-            width=310,
-            height=32,
-            font=ModernTheme.BODY,
-        )
+        search_group.pack(side="left", padx=(14, 10), pady=12)
+        ctk.CTkLabel(search_group, text="FIND PROPERTY", font=("Inter", 10, "bold"), text_color=colors["muted"]).pack(side="left", padx=(0, 8))
+        self.search_ent = ctk.CTkEntry(search_group, placeholder_text="TD number, previous TD, or owner name...", width=330, height=34, font=("Inter", 11), fg_color=colors["panel_alt"], border_color=colors["border"])
         self.search_ent.pack(side="left")
         self.search_ent.bind("<Return>", lambda e: self.refresh_table())
         self.search_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
-        ctk.CTkButton(
-            search_group,
-            text="SEARCH",
-            command=self.refresh_table,
-            width=100,
-            height=32,
-            font=ModernTheme.BUTTON,
-            fg_color=ModernTheme.PRIMARY,
-        ).pack(side="left", padx=(6, 0))
+        ctk.CTkButton(search_group, text="SEARCH", command=self.refresh_table, width=92, height=34, font=("Inter", 10, "bold"), fg_color=colors["blue"], hover_color=colors["blue_hover"], corner_radius=6).pack(side="left", padx=(7, 0))
 
-        ctk.CTkFrame(filter_bar, width=1, height=28, fg_color="#94a3b8").pack(side="left", padx=(2, 8), pady=8)
-
-        # Secondary filters remain grouped together beside search.
-        left_group = ctk.CTkFrame(filter_bar, fg_color="transparent")
-        left_group.pack(side="left", padx=(0, 10), pady=8)
-
-        ctk.CTkLabel(left_group, text=tr("property.filters.barangay"), font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 4))
-        self.barangay_cmb = ctk.CTkComboBox(left_group, values=["ALL"], width=160, height=28, font=ModernTheme.BODY)
+        ctk.CTkFrame(filter_bar, width=1, height=32, fg_color=colors["border"]).pack(side="left", padx=(0, 10), pady=12)
+        filter_group = ctk.CTkFrame(filter_bar, fg_color="transparent")
+        filter_group.pack(side="left", pady=12)
+        ctk.CTkLabel(filter_group, text=tr("property.filters.barangay").upper(), font=("Inter", 9, "bold"), text_color=colors["muted"]).pack(side="left", padx=(0, 5))
+        self.barangay_cmb = ctk.CTkComboBox(filter_group, values=["ALL"], width=155, height=34, font=("Inter", 10), fg_color=colors["panel_alt"], border_color=colors["border"], button_color=colors["border"])
         self.barangay_cmb.pack(side="left", padx=(0, 12))
         self.barangay_cmb.bind("<Return>", lambda e: self.refresh_table())
         self.barangay_cmb.bind("<KP_Enter>", lambda e: self.refresh_table())
-
-        ctk.CTkLabel(left_group, text="YEAR FROM:", font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 4))
-        self.year_start_ent = ctk.CTkEntry(left_group, width=70, height=28, placeholder_text="e.g. 2020", font=ModernTheme.BODY)
-        self.year_start_ent.pack(side="left", padx=(0, 6))
+        ctk.CTkLabel(filter_group, text="YEAR", font=("Inter", 9, "bold"), text_color=colors["muted"]).pack(side="left", padx=(0, 5))
+        self.year_start_ent = ctk.CTkEntry(filter_group, width=76, height=34, placeholder_text="From", font=("Inter", 10), fg_color=colors["panel_alt"], border_color=colors["border"])
+        self.year_start_ent.pack(side="left")
         self.year_start_ent.bind("<Return>", lambda e: self.refresh_table())
         self.year_start_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
-
-        ctk.CTkLabel(left_group, text="TO:", font=ModernTheme.BODY_BOLD, text_color="white").pack(side="left", padx=(0, 4))
-        self.year_end_ent = ctk.CTkEntry(left_group, width=70, height=28, placeholder_text="e.g. 2024", font=ModernTheme.BODY)
-        self.year_end_ent.pack(side="left", padx=(0, 12))
+        ctk.CTkLabel(filter_group, text="TO", font=("Inter", 9, "bold"), text_color=colors["muted"]).pack(side="left", padx=6)
+        self.year_end_ent = ctk.CTkEntry(filter_group, width=76, height=34, placeholder_text="To", font=("Inter", 10), fg_color=colors["panel_alt"], border_color=colors["border"])
+        self.year_end_ent.pack(side="left", padx=(0, 8))
         self.year_end_ent.bind("<Return>", lambda e: self.refresh_table())
         self.year_end_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
+        ctk.CTkButton(filter_group, text="APPLY", command=self.refresh_table, width=80, height=34, font=("Inter", 10, "bold"), fg_color=colors["green"], hover_color=colors["green_hover"], corner_radius=6).pack(side="left")
 
-        ctk.CTkButton(left_group, text=f"🎯 {tr('property.filters.apply')}", command=self.refresh_table, width=130, height=28, font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.SUCCESS).pack(side="left", padx=(0, 5))
-
-        table_fr = ctk.CTkFrame(self.container, fg_color="transparent", corner_radius=12)
+        table_fr = ctk.CTkFrame(self.container, fg_color=colors["panel_alt"], corner_radius=8, border_width=1, border_color=colors["border"])
+        table_fr.pack(fill="both", expand=True)
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Prop.Treeview", 
-                        rowheight=35, 
-                        font=ModernTheme.BODY,
-                        background="#1e1e1e",
-                        fieldbackground="#1e1e1e",
-                        foreground="white")
-        style.configure("Prop.Treeview.Heading", 
-                        font=ModernTheme.BODY_BOLD,
-                        background="#333333",
-                        foreground="white")
-        style.map("Prop.Treeview", background=[("selected", ModernTheme.PRIMARY)])
-        
+        style.configure("Prop.Treeview", rowheight=34, font=("Inter", 11), background="#0f172a", fieldbackground="#0f172a", foreground="#e2e8f0", borderwidth=0)
+        style.configure("Prop.Treeview.Heading", font=("Inter", 10, "bold"), background="#334155", foreground="#f8fafc", borderwidth=0, relief="flat", padding=(8, 8))
+        style.map("Prop.Treeview", background=[("selected", colors["blue"])], foreground=[("selected", "#ffffff")])
+        style.configure("Prop.Vertical.TScrollbar", background="#475569", troughcolor="#0f172a", bordercolor="#0f172a", arrowcolor="#cbd5e1")
+
         self.cols = (tr("property.table.id"), tr("property.table.td"), tr("property.table.owner"), tr("property.table.location"), tr("property.table.value"), tr("property.table.penalty"), tr("property.table.discount"), tr("property.table.due"))
         self.tree = ttk.Treeview(table_fr, columns=self.cols, show="headings", style="Prop.Treeview")
         for col in self.cols:
             self.tree.heading(col, text=col.upper())
-            self.tree.column(col, anchor="center", width=100)
-        
+            self.tree.column(col, anchor="center", width=110)
         self.tree.column(tr("property.table.id"), width=0, stretch=tk.NO)
-        self.tree.column(tr("property.table.owner"), width=250, anchor="w")
-        
-        scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview)
+        self.tree.column(tr("property.table.td"), width=155)
+        self.tree.column(tr("property.table.owner"), width=300, anchor="w")
+        self.tree.column(tr("property.table.location"), width=160, anchor="w")
+        scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview, style="Prop.Vertical.TScrollbar")
         self.tree.configure(yscrollcommand=scrolly.set)
-        self.tree.pack(side="left", fill="both", expand=True, padx=5, pady=5)
-        scrolly.pack(side="right", fill="y")
+        scrolly.pack(side="right", fill="y", pady=1, padx=(0, 1))
+        self.tree.pack(side="left", fill="both", expand=True, padx=1, pady=1)
 
-        self.pag_fr = ctk.CTkFrame(self.container, fg_color="transparent")
-        self.pag_fr.pack(side="bottom", fill="x", pady=10)
-        self.prev_btn = ctk.CTkButton(self.pag_fr, text="◀ PREV", command=self.prev_page, width=100, fg_color=ModernTheme.SECONDARY)
-        self.prev_btn.pack(side="left", padx=10)
-        self.page_lbl = ctk.CTkLabel(self.pag_fr, text="PAGE 1", font=ModernTheme.BODY_BOLD)
+        footer = ctk.CTkFrame(self.container, fg_color=colors["panel"], corner_radius=8, border_width=1, border_color=colors["border"])
+        footer.pack(fill="x", pady=(12, 0))
+        self.prev_btn = ctk.CTkButton(footer, text="PREVIOUS", command=self.prev_page, width=105, height=34, fg_color="#334155", hover_color="#475569", font=("Inter", 10, "bold"), corner_radius=6)
+        self.prev_btn.pack(side="left", padx=12, pady=10)
+        self.page_lbl = ctk.CTkLabel(footer, text="PAGE 1", font=("Inter", 10, "bold"), text_color="#cbd5e1")
         self.page_lbl.pack(side="left", expand=True)
-        self.next_btn = ctk.CTkButton(self.pag_fr, text="NEXT ▶", command=self.next_page, width=100, fg_color=ModernTheme.SECONDARY)
-        self.next_btn.pack(side="right", padx=10)
-
-        actions = ctk.CTkFrame(self.container, fg_color="transparent")
-        actions.pack(side="bottom", fill="x", pady=(15, 0))
+        self.next_btn = ctk.CTkButton(footer, text="NEXT", command=self.next_page, width=105, height=34, fg_color="#334155", hover_color="#475569", font=("Inter", 10, "bold"), corner_radius=6)
+        self.next_btn.pack(side="right", padx=(8, 12), pady=10)
         if auth.has_permission(self.user, "property_edit"):
-            self.edit_btn = ctk.CTkButton(actions, text="✏️ EDIT", command=self.open_edit_modal, fg_color=ModernTheme.PRIMARY, state="disabled")
-            self.edit_btn.pack(side="right", padx=5)
+            self.edit_btn = ctk.CTkButton(footer, text="EDIT", command=self.open_edit_modal, width=100, height=34, fg_color=colors["blue"], hover_color=colors["blue_hover"], font=("Inter", 10, "bold"), corner_radius=6, state="disabled")
+            self.edit_btn.pack(side="right", pady=10)
         if auth.has_permission(self.user, "property_delete"):
-            self.del_btn = ctk.CTkButton(actions, text="🗑️ DELETE", command=self.confirm_delete, fg_color=ModernTheme.DANGER, state="disabled")
-            self.del_btn.pack(side="right", padx=5)
+            self.del_btn = ctk.CTkButton(footer, text="DELETE", command=self.confirm_delete, width=100, height=34, fg_color=colors["red"], hover_color="#b91c1c", font=("Inter", 10, "bold"), corner_radius=6, state="disabled")
+            self.del_btn.pack(side="right", padx=(8, 8), pady=10)
 
-        table_fr.pack(fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", self.on_selection_change)
         self.tree.bind("<Double-1>", lambda e: self.open_dossier())
 

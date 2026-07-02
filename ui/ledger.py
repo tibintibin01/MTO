@@ -23,82 +23,64 @@ class LedgerPage:
     def setup_ui(self):
         self.container = ctk.CTkFrame(self.parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
+        colors = {
+            "panel": "#111827", "panel_alt": "#0f172a", "border": "#334155",
+            "muted": "#94a3b8", "text": "#f8fafc", "blue": "#0284c7",
+            "blue_hover": "#0369a1", "green": "#059669", "green_hover": "#047857",
+            "amber": "#d97706", "amber_hover": "#b45309", "red": "#dc2626",
+        }
 
-        # Header
         header = ctk.CTkFrame(self.container, fg_color="transparent")
-        header.pack(fill="x", pady=(0, 20))
-        ctk.CTkLabel(header, text=tr("ledger.title"), font=ModernTheme.H2).pack(side="left")
-        ctk.CTkLabel(header, text=tr("ledger.subtitle"), font=ModernTheme.BODY, text_color=ModernTheme.TEXT_GRAY).pack(side="left", padx=20)
+        header.pack(fill="x", pady=(0, 14))
+        ctk.CTkLabel(header, text=tr("ledger.title"), font=("Inter", 25, "bold"), text_color=colors["text"]).pack(anchor="w")
+        ctk.CTkLabel(header, text=tr("ledger.subtitle"), font=("Inter", 11), text_color=colors["muted"]).pack(anchor="w", pady=(2, 0))
 
-        # Toolbar
-        toolbar = ctk.CTkFrame(self.container, fg_color="transparent")
-        toolbar.pack(fill="x", pady=(0, 15))
-
-        self.search_ent = ctk.CTkEntry(toolbar, placeholder_text=tr("ledger.search_placeholder"), width=450, height=35, font=ModernTheme.BODY)
+        toolbar = ctk.CTkFrame(self.container, fg_color=colors["panel"], corner_radius=8, border_width=1, border_color=colors["border"])
+        toolbar.pack(fill="x", pady=(0, 12))
+        lookup = ctk.CTkFrame(toolbar, fg_color="transparent")
+        lookup.pack(side="left", padx=12, pady=11)
+        ctk.CTkLabel(lookup, text="FIND LEDGER", font=("Inter", 10, "bold"), text_color=colors["muted"]).pack(side="left", padx=(0, 8))
+        self.search_ent = ctk.CTkEntry(lookup, placeholder_text=tr("ledger.search_placeholder"), width=400, height=36, font=("Inter", 11), fg_color=colors["panel_alt"], border_color=colors["border"])
         self.search_ent.pack(side="left")
         self.search_ent.bind("<Return>", lambda e: self.load_ledger())
         self.search_ent.bind("<KP_Enter>", lambda e: self.load_ledger())
-
-        self.search_btn = ctk.CTkButton(toolbar, text=f"🔍 {tr('ledger.btn_fetch')}", command=self.load_ledger, width=150, height=35, font=ModernTheme.BUTTON)
-        self.search_btn.pack(side="left", padx=10)
-
+        self.search_btn = ctk.CTkButton(lookup, text=tr("ledger.btn_fetch").upper(), command=self.load_ledger, width=125, height=36, font=("Inter", 10, "bold"), fg_color=colors["blue"], hover_color=colors["blue_hover"], corner_radius=6)
+        self.search_btn.pack(side="left", padx=(7, 0))
         if auth.has_permission(self.user, "payment_post"):
-            self.add_payment_btn = ctk.CTkButton(
-                toolbar,
-                text="+ ADD PAYMENT",
-                command=self.add_payment,
-                width=145,
-                height=35,
-                font=ModernTheme.BUTTON,
-                fg_color=ModernTheme.SUCCESS,
-            )
-            self.add_payment_btn.pack(side="left", padx=(0, 10))
+            self.add_payment_btn = ctk.CTkButton(lookup, text="ADD PAYMENT", command=self.add_payment, width=125, height=36, font=("Inter", 10, "bold"), fg_color=colors["green"], hover_color=colors["green_hover"], corner_radius=6)
+            self.add_payment_btn.pack(side="left", padx=(8, 0))
 
-        # Action Buttons
-        self.view_btn = ctk.CTkButton(toolbar, text=f"📄 {tr('ledger.btn_view')}", command=self.open_receipt, 
-                                     font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY, width=120, height=35, state="disabled")
-        self.view_btn.pack(side="right", padx=5)
-        
+        tools = ctk.CTkFrame(toolbar, fg_color="transparent")
+        tools.pack(side="right", padx=12, pady=11)
+        self.import_btn = ctk.CTkButton(tools, text=tr("property.btn_import").upper(), command=self.open_import_wizard, font=("Inter", 10, "bold"), fg_color="#334155", hover_color="#475569", width=112, height=36, corner_radius=6)
+        self.import_btn.pack(side="left", padx=(0, 7))
+        self.export_btn = ctk.CTkButton(tools, text=tr("ledger.btn_export").upper(), command=self.do_export, font=("Inter", 10, "bold"), fg_color=colors["amber"], hover_color=colors["amber_hover"], width=112, height=36, corner_radius=6)
+        self.export_btn.pack(side="left")
+
+        selected_bar = ctk.CTkFrame(self.container, fg_color="transparent")
+        selected_bar.pack(fill="x", pady=(0, 9))
+        ctk.CTkLabel(selected_bar, text="SELECTED PAYMENT", font=("Inter", 9, "bold"), text_color=colors["muted"]).pack(side="left", padx=(2, 10))
+        self.view_btn = ctk.CTkButton(selected_bar, text=tr("ledger.btn_view").upper(), command=self.open_receipt, font=("Inter", 10, "bold"), fg_color=colors["blue"], hover_color=colors["blue_hover"], width=118, height=32, corner_radius=6, state="disabled")
+        self.view_btn.pack(side="right")
         if auth.has_permission(self.user, "receipt_generate"):
-            self.regen_btn = ctk.CTkButton(
-                toolbar,
-                text=f"♻️ {tr('ledger.btn_regen')}",
-                command=self.regenerate_receipt,
-                font=ModernTheme.BUTTON,
-                fg_color=ModernTheme.SUCCESS,
-                width=120,
-                height=35,
-                state="disabled",
-            )
-            self.regen_btn.pack(side="right", padx=5)
-
-        self.export_btn = ctk.CTkButton(toolbar, text=f"📊 {tr('ledger.btn_export')}", command=self.do_export,
-                                        font=ModernTheme.BUTTON, fg_color=ModernTheme.WARNING, width=120, height=35)
-        self.export_btn.pack(side="right", padx=5)
-
-        self.import_btn = ctk.CTkButton(toolbar, text=f"🚀 {tr('property.btn_import')}", command=self.open_import_wizard,
-                                        font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY, width=120, height=35)
-        self.import_btn.pack(side="right", padx=5)
-
+            self.regen_btn = ctk.CTkButton(selected_bar, text=tr("ledger.btn_regen").upper(), command=self.regenerate_receipt, font=("Inter", 10, "bold"), fg_color=colors["green"], hover_color=colors["green_hover"], width=118, height=32, corner_radius=6, state="disabled")
+            self.regen_btn.pack(side="right", padx=(0, 7))
         if auth.has_permission(self.user, "payment_post"):
-            self.edit_btn = ctk.CTkButton(toolbar, text="EDIT", command=self.edit_payment,
-                                          font=ModernTheme.BUTTON, fg_color=ModernTheme.SECONDARY, width=110, height=35, state="disabled")
-            self.edit_btn.pack(side="right", padx=5)
+            self.edit_btn = ctk.CTkButton(selected_bar, text="EDIT", command=self.edit_payment, font=("Inter", 10, "bold"), fg_color="#475569", hover_color="#64748b", width=92, height=32, corner_radius=6, state="disabled")
+            self.edit_btn.pack(side="right", padx=(0, 7))
         if auth.has_permission(self.user, "payment_delete"):
-            self.del_btn = ctk.CTkButton(toolbar, text="🗑️ DELETE", command=self.delete_payment,
-                                         font=ModernTheme.BUTTON, fg_color=ModernTheme.DANGER, width=120, height=35, state="disabled")
-            self.del_btn.pack(side="right", padx=5)
+            self.del_btn = ctk.CTkButton(selected_bar, text="DELETE", command=self.delete_payment, font=("Inter", 10, "bold"), fg_color=colors["red"], hover_color="#b91c1c", width=92, height=32, corner_radius=6, state="disabled")
+            self.del_btn.pack(side="right", padx=(0, 7))
 
-
-        # --- THE LEDGER TABLE ---
-        t_frame = ctk.CTkFrame(self.container)
-        t_frame.pack(fill="both", expand=True, pady=(0, 20))
+        t_frame = ctk.CTkFrame(self.container, fg_color=colors["panel_alt"], corner_radius=8, border_width=1, border_color=colors["border"])
+        t_frame.pack(fill="both", expand=True)
 
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Treeview", rowheight=35, font=ModernTheme.BODY, background="#1e1e1e", fieldbackground="#1e1e1e", foreground="white")
-        style.configure("Treeview.Heading", font=ModernTheme.BODY_BOLD, background="#333333", foreground="white")
-        style.map("Treeview", background=[("selected", ModernTheme.PRIMARY)])
+        style.configure("Ledger.Treeview", rowheight=34, font=("Inter", 11), background="#0f172a", fieldbackground="#0f172a", foreground="#e2e8f0", borderwidth=0)
+        style.configure("Ledger.Treeview.Heading", font=("Inter", 10, "bold"), background="#334155", foreground="#f8fafc", borderwidth=0, relief="flat", padding=(8, 8))
+        style.map("Ledger.Treeview", background=[("selected", colors["blue"])], foreground=[("selected", "#ffffff")])
+        style.configure("Ledger.Vertical.TScrollbar", background="#475569", troughcolor="#0f172a", bordercolor="#0f172a", arrowcolor="#cbd5e1")
 
         # Internal ID, Date, OR, Year, Basic, SEF, Penalty, Discount, Total, PostedBy, FilePath
         self.cols = (
@@ -114,7 +96,7 @@ class LedgerPage:
             tr("ledger.table.posted"),
             tr("ledger.table.status")
         )
-        self.tree = ttk.Treeview(t_frame, columns=self.cols, show="headings")
+        self.tree = ttk.Treeview(t_frame, columns=self.cols, show="headings", style="Ledger.Treeview")
         
         for col in self.cols:
             self.tree.heading(col, text=col.upper())
@@ -126,26 +108,22 @@ class LedgerPage:
         self.tree.column("Posted By", width=150)
         self.tree.column("File Status", width=120)
 
-        scrolly = ttk.Scrollbar(t_frame, orient="vertical", command=self.tree.yview)
+        scrolly = ttk.Scrollbar(t_frame, orient="vertical", command=self.tree.yview, style="Ledger.Vertical.TScrollbar")
         self.tree.configure(yscrollcommand=scrolly.set)
-        
-        # Zebra Tags
-        self.tree.tag_configure('oddrow', background="#2b2b2b", foreground="white")
-        self.tree.tag_configure('evenrow', background="#333333", foreground="white")
-        
-        scrolly.pack(side="right", fill="y")
-        self.tree.pack(side="left", fill="both", expand=True)
+        self.tree.tag_configure('oddrow', background="#162032", foreground="#e2e8f0")
+        self.tree.tag_configure('evenrow', background="#1e293b", foreground="#e2e8f0")
+        scrolly.pack(side="right", fill="y", pady=1, padx=(0, 1))
+        self.tree.pack(side="left", fill="both", expand=True, padx=1, pady=1)
         
         self.tree.bind("<<TreeviewSelect>>", self.on_selection_change)
         self.tree.bind("<Double-1>", lambda e: self.open_receipt())
 
-        # --- FOOTER SUMMARY ---
-        self.footer = ctk.CTkFrame(self.container, height=60, fg_color=ModernTheme.SUCCESS, corner_radius=8)
-        self.footer.pack(fill="x", side="bottom")
-        
+        self.footer = ctk.CTkFrame(self.container, height=58, fg_color=colors["panel"], corner_radius=8, border_width=1, border_color=colors["border"])
+        self.footer.pack(fill="x", pady=(12, 0))
+        ctk.CTkLabel(self.footer, text="PAYMENT HISTORY TOTAL", font=("Inter", 9, "bold"), text_color=colors["muted"]).pack(side="left", padx=18, pady=14)
         self.total_lbl = ctk.CTkLabel(self.footer, text=tr("ledger.footer.total").replace("{value}", "₱ 0.00"), 
-                                      font=ModernTheme.H3, text_color="white")
-        self.total_lbl.pack(side="right", padx=30, pady=15)
+                                      font=("Inter", 17, "bold"), text_color="#34d399")
+        self.total_lbl.pack(side="right", padx=18, pady=14)
 
     def on_selection_change(self, event=None):
         sel = self.tree.selection()
