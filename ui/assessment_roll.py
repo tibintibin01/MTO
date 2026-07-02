@@ -58,112 +58,166 @@ class AssessmentRollPage:
         self.container = ctk.CTkFrame(self.parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
-        # --- HEADER ---
         header = ctk.CTkFrame(self.container, fg_color="transparent")
-        header.pack(fill="x", pady=(0, 20))
+        header.pack(fill="x", pady=(0, 12))
 
-        ctk.CTkLabel(header, text="ASSESSMENT ROLL", font=ModernTheme.H2).pack(
-            side="left"
+        title_fr = ctk.CTkFrame(header, fg_color="transparent")
+        title_fr.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(
+            title_fr, text="ASSESSMENT ROLL", font=ModernTheme.H2,
+            text_color=(ModernTheme.TEXT_MAIN_LIGHT, ModernTheme.TEXT_MAIN_DARK),
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            title_fr,
+            text="Active property assessments and valuation history",
+            font=ModernTheme.BODY_SMALL,
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(anchor="w", pady=(2, 0))
+
+        filters_fr = ctk.CTkFrame(
+            self.container,
+            fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK),
+            corner_radius=8,
+            border_width=1,
+            border_color=(ModernTheme.BORDER_LIGHT, ModernTheme.BORDER_DARK),
         )
+        filters_fr.pack(fill="x", pady=(0, 10))
 
-        # --- FILTERS ---
-        filters_fr = ctk.CTkFrame(self.container, fg_color="transparent")
-        filters_fr.pack(fill="x", pady=(0, 15))
-
-        # Search Box
+        ctk.CTkLabel(
+            filters_fr, text="FIND PROPERTY", font=ModernTheme.BUTTON_SMALL,
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(side="left", padx=(14, 7), pady=10)
         self.search_ent = ctk.CTkEntry(
-            filters_fr, placeholder_text="Search PIN, TD, Former TD, or Owner...", width=270
+            filters_fr,
+            placeholder_text="Search PIN, TD, Former TD, or Owner...",
+            width=330, height=34, font=ModernTheme.BODY_SMALL,
         )
-        self.search_ent.pack(side="left")
+        self.search_ent.pack(side="left", pady=10)
         self.search_ent.bind("<Return>", lambda e: self.refresh_table())
         self.search_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
 
-        # Barangay Filter
         ctk.CTkLabel(
-            filters_fr, text="BARANGAY:", font=("Segoe UI", 10, "bold"), text_color="gray"
-        ).pack(side="left", padx=(20, 5))
+            filters_fr, text="BARANGAY", font=ModernTheme.BUTTON_SMALL,
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(side="left", padx=(16, 7), pady=10)
         self.brgy_var = tk.StringVar(value="ALL")
         self.brgy_cb = ctk.CTkComboBox(
             filters_fr,
             values=["ALL"] + sorted(self.barangays),
             variable=self.brgy_var,
-            width=180,
+            width=190, height=34, font=ModernTheme.BODY_SMALL,
         )
-        self.brgy_cb.pack(side="left")
+        self.brgy_cb.pack(side="left", pady=10)
         self.brgy_cb.configure(command=lambda e: self.refresh_table())
         self.brgy_cb.bind("<Return>", lambda e: self.refresh_table())
         self.brgy_cb.bind("<KP_Enter>", lambda e: self.refresh_table())
 
-        # Active assessment roll year
         ctk.CTkLabel(
             filters_fr,
-            text="AS OF YEAR:",
-            font=("Segoe UI", 10, "bold"),
-            text_color="gray",
-        ).pack(side="left", padx=(20, 5))
+            text="AS OF YEAR",
+            font=ModernTheme.BUTTON_SMALL,
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(side="left", padx=(16, 7), pady=10)
         self.as_of_year_ent = ctk.CTkEntry(
-            filters_fr, width=80, placeholder_text="YYYY"
+            filters_fr, width=90, height=34, placeholder_text="YYYY",
+            font=ModernTheme.BODY_SMALL,
         )
-        self.as_of_year_ent.pack(side="left")
+        self.as_of_year_ent.pack(side="left", pady=10)
         self.as_of_year_ent.bind("<Return>", lambda e: self.refresh_table())
         self.as_of_year_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         ctk.CTkButton(
             filters_fr,
-            text="🔍 REFRESH",
+            text="REFRESH",
             command=self.refresh_table,
-            width=100,
-            fg_color="#34495e",
-        ).pack(side="left", padx=10)
+            width=105, height=34,
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.PRIMARY,
+            hover_color=ModernTheme.PRIMARY_HOVER,
+        ).pack(side="left", padx=(12, 8), pady=10)
 
         ctk.CTkButton(
             filters_fr,
-            text="🚀 BULK IMPORT",
+            text="BULK IMPORT",
             command=self.open_import_wizard,
-            fg_color="#3498db",
-            width=120,
-        ).pack(side="right", padx=5)
+            fg_color=ModernTheme.SECONDARY,
+            hover_color=ModernTheme.SECONDARY_HOVER,
+            width=125, height=34,
+            font=ModernTheme.BUTTON_SMALL,
+        ).pack(side="right", padx=12, pady=10)
 
         self._pdf_btn = ctk.CTkButton(
             header,
-            text="📄 Export PDF",
+            text="EXPORT PDF",
             command=self._export_roll_pdf,
-            fg_color="#c0392b",
-            hover_color="#962d22",
-            width=130,
+            fg_color=ModernTheme.DANGER,
+            width=125, height=34,
+            font=ModernTheme.BUTTON_SMALL,
         )
-        self._pdf_btn.pack(side="right", padx=(0, 6))
+        self._pdf_btn.pack(side="right", padx=(8, 0))
 
         self._excel_btn = ctk.CTkButton(
             header,
-            text="📊 Export Excel",
+            text="EXPORT EXCEL",
             command=self._export_roll_excel,
-            fg_color="#1a7431",
-            hover_color="#145a27",
-            width=140,
+            fg_color=ModernTheme.SUCCESS,
+            width=135, height=34,
+            font=ModernTheme.BUTTON_SMALL,
         )
-        self._excel_btn.pack(side="right", padx=(0, 6))
+        self._excel_btn.pack(side="right")
 
-        # --- TABLE ---
-        table_fr = ctk.CTkFrame(self.container, fg_color="transparent", corner_radius=12)
-
-
+        table_fr = ctk.CTkFrame(
+            self.container,
+            fg_color="#0f172a",
+            corner_radius=8,
+            border_width=1,
+            border_color=ModernTheme.BORDER_DARK,
+        )
         style = ttk.Style()
         style.theme_use("clam")
         style.configure(
             "Roll.Treeview",
-            rowheight=35,
-            font=("Segoe UI", 10),
-            background="#2b2b2b",
-            fieldbackground="#2b2b2b",
-            foreground="white",
+            rowheight=34,
+            font=("Inter", 11),
+            background="#0f172a",
+            fieldbackground="#0f172a",
+            foreground="#e2e8f0",
+            borderwidth=0,
+            bordercolor="#334155",
+            lightcolor="#334155",
+            darkcolor="#334155",
+            relief="flat",
         )
         style.configure(
             "Roll.Treeview.Heading",
-            font=("Segoe UI", 10, "bold"),
-            background="#333333",
-            foreground="white",
+            font=("Inter", 10, "bold"),
+            background="#334155",
+            foreground="#f8fafc",
+            borderwidth=0,
+            bordercolor="#475569",
+            lightcolor="#475569",
+            darkcolor="#475569",
+            relief="flat",
+            padding=(8, 8),
         )
+        style.map(
+            "Roll.Treeview",
+            background=[("selected", "#0284c7")],
+            foreground=[("selected", "#ffffff")],
+        )
+        style.map("Roll.Treeview.Heading", background=[("active", "#475569")])
+        for scrollbar_style in ("Roll.Vertical.TScrollbar", "Roll.Horizontal.TScrollbar"):
+            style.configure(
+                scrollbar_style,
+                gripcount=0,
+                background="#475569",
+                darkcolor="#475569",
+                lightcolor="#475569",
+                troughcolor="#0f172a",
+                bordercolor="#0f172a",
+                arrowcolor="#cbd5e1",
+                relief="flat",
+            )
 
         self.cols = (
             "ID",
@@ -177,8 +231,10 @@ class AssessmentRollPage:
             "PREVIOUS TD",
             "EFFECTIVITY",
         )
+        tree_host = tk.Frame(table_fr, bg="#0f172a", bd=0, highlightthickness=0)
+        tree_host.pack(fill="both", expand=True, padx=1, pady=1)
         self.tree = ttk.Treeview(
-            table_fr, columns=self.cols, show="headings", style="Roll.Treeview"
+            tree_host, columns=self.cols, show="headings", style="Roll.Treeview"
         )
 
         # Column Config
@@ -204,42 +260,61 @@ class AssessmentRollPage:
         self.tree.column("LOCATION", anchor="center")
 
 
-        scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrolly.set)
+        scrolly = ttk.Scrollbar(
+            tree_host, orient="vertical", command=self.tree.yview,
+            style="Roll.Vertical.TScrollbar",
+        )
+        scrollx = ttk.Scrollbar(
+            tree_host, orient="horizontal", command=self.tree.xview,
+            style="Roll.Horizontal.TScrollbar",
+        )
+        self.tree.configure(yscrollcommand=scrolly.set, xscrollcommand=scrollx.set)
 
         # Zebra Tags
-        self.tree.tag_configure("oddrow", background="#2b2b2b", foreground="white")
-        self.tree.tag_configure("evenrow", background="#333333", foreground="white")
+        self.tree.tag_configure("oddrow", background="#162032", foreground="#e2e8f0")
+        self.tree.tag_configure("evenrow", background="#1e293b", foreground="#f8fafc")
 
-        self.tree.pack(side="left", fill="both", expand=True, padx=5, pady=5)
         scrolly.pack(side="right", fill="y")
+        scrollx.pack(side="bottom", fill="x")
+        self.tree.pack(side="left", fill="both", expand=True)
 
         # --- PAGINATION BAR ---
-        self.pag_fr = ctk.CTkFrame(self.container, fg_color="transparent")
-        self.pag_fr.pack(side="bottom", fill="x", pady=10)
+        self.pag_fr = ctk.CTkFrame(
+            self.container,
+            fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK),
+            corner_radius=8,
+            border_width=1,
+            border_color=(ModernTheme.BORDER_LIGHT, ModernTheme.BORDER_DARK),
+        )
+        self.pag_fr.pack(side="bottom", fill="x", pady=(8, 0))
 
         self.prev_btn = ctk.CTkButton(
             self.pag_fr,
-            text="◀ PREVIOUS",
+            text="PREVIOUS",
             command=self.prev_page,
-            width=100,
-            fg_color="#34495e",
+            width=110, height=32,
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SECONDARY,
+            hover_color=ModernTheme.SECONDARY_HOVER,
         )
-        self.prev_btn.pack(side="left", padx=10)
+        self.prev_btn.pack(side="left", padx=10, pady=8)
 
         self.page_lbl = ctk.CTkLabel(
-            self.pag_fr, text="Page 1", font=("Segoe UI", 12, "bold")
+            self.pag_fr, text="Page 1", font=("Inter", 11, "bold"),
+            text_color=ModernTheme.TEXT_GRAY,
         )
         self.page_lbl.pack(side="left", expand=True)
 
         self.next_btn = ctk.CTkButton(
             self.pag_fr,
-            text="LOAD MORE ▶",
+            text="NEXT",
             command=self.next_page,
-            width=120,
-            fg_color="#34495e",
+            width=110, height=32,
+            font=ModernTheme.BUTTON_SMALL,
+            fg_color=ModernTheme.SECONDARY,
+            hover_color=ModernTheme.SECONDARY_HOVER,
         )
-        self.next_btn.pack(side="right", padx=10)
+        self.next_btn.pack(side="right", padx=10, pady=8)
         
         table_fr.pack(fill="both", expand=True) # Pack expanding table LAST
 
