@@ -189,7 +189,8 @@ class PropertyDossierModal(ctk.CTkToplevel):
             text="Latest property information",
             font=("Segoe UI", 10),
             text_color=MUTED,
-        ).pack(anchor="w", padx=70, pady=(0, 18))
+        ).pack(anchor="w", padx=70, pady=(0, 14))
+        self._summary_divider(parent)
 
         master = self.data["master"]
         specs = [
@@ -201,10 +202,6 @@ class PropertyDossierModal(ctk.CTkToplevel):
         ]
 
         for index, (symbol, label, value, color) in enumerate(specs):
-            if index:
-                ctk.CTkFrame(parent, fg_color="#e5ebf1", height=1).pack(
-                    fill="x", padx=22, pady=4
-                )
             row = ctk.CTkFrame(parent, fg_color="transparent", height=76)
             row.pack(fill="x", padx=20, pady=4)
             row.pack_propagate(False)
@@ -242,6 +239,16 @@ class PropertyDossierModal(ctk.CTkToplevel):
                 anchor="w",
                 wraplength=190,
             ).pack(fill="x", anchor="w", pady=(2, 0))
+            if index < len(specs) - 1:
+                self._summary_divider(parent)
+
+    def _summary_divider(self, parent):
+        ctk.CTkFrame(
+            parent,
+            fg_color="#c8d5e2",
+            height=2,
+            corner_radius=1,
+        ).pack(fill="x", padx=18, pady=3)
 
     def _setup_unified_timeline(self, parent):
         events = self._build_events()
