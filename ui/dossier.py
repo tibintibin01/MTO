@@ -1,8 +1,11 @@
+from pathlib import Path
+import sys
+
 import customtkinter as ctk
+from PIL import Image, ImageDraw, ImageOps
 
 
 NAVY = "#0b2a4a"
-NAVY_DEEP = "#071f38"
 INK = "#102a43"
 MUTED = "#6b7f95"
 SURFACE = "#ffffff"
@@ -14,7 +17,33 @@ BLUE = "#2785d8"
 PURPLE = "#7857d8"
 
 
+def _load_dossier_seal(size):
+    root_dir = (
+        Path(sys._MEIPASS).resolve()
+        if getattr(sys, "frozen", False)
+        else Path(__file__).resolve().parents[1]
+    )
+    source = Image.open(
+        root_dir / "assets" / "official" / "treasurer_seal.png"
+    ).convert("RGBA")
+    left = round(source.width * 0.036)
+    side = min(round(source.width * 0.928), round(source.height * 0.965))
+    source = source.crop((left, 0, left + side, side))
+    fitted = ImageOps.fit(
+        source,
+        (size, size),
+        method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.5),
+    )
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, size - 1, size - 1), fill=255)
+    fitted.putalpha(mask)
+    return fitted
+
+
 class PropertyDossierModal(ctk.CTkToplevel):
+    _header_seal_image = None
+
     def __init__(self, parent, data):
         super().__init__(parent)
         master = data["master"]
@@ -41,21 +70,34 @@ class PropertyDossierModal(ctk.CTkToplevel):
 
         identity = ctk.CTkFrame(
             header,
-            width=62,
-            height=62,
-            corner_radius=10,
-            fg_color=NAVY_DEEP,
-            border_width=1,
-            border_color=ORANGE,
+            width=68,
+            height=68,
+            corner_radius=34,
+            fg_color="transparent",
         )
-        identity.pack(side="left", padx=(30, 18), pady=28)
+        identity.pack(side="left", padx=(28, 18), pady=26)
         identity.pack_propagate(False)
-        ctk.CTkLabel(
-            identity,
-            text="RPT",
-            font=("Segoe UI", 16, "bold"),
-            text_color=ORANGE,
-        ).place(relx=0.5, rely=0.5, anchor="center")
+        try:
+            if PropertyDossierModal._header_seal_image is None:
+                seal = _load_dossier_seal(96)
+                PropertyDossierModal._header_seal_image = ctk.CTkImage(
+                    light_image=seal,
+                    dark_image=seal,
+                    size=(64, 64),
+                )
+            self.header_seal_image = PropertyDossierModal._header_seal_image
+            ctk.CTkLabel(
+                identity,
+                image=self.header_seal_image,
+                text="",
+            ).place(relx=0.5, rely=0.5, anchor="center")
+        except Exception:
+            ctk.CTkLabel(
+                identity,
+                text="RPT",
+                font=("Segoe UI", 16, "bold"),
+                text_color=ORANGE,
+            ).place(relx=0.5, rely=0.5, anchor="center")
 
         info = ctk.CTkFrame(header, fg_color="transparent")
         info.pack(side="left", fill="y", pady=24)
