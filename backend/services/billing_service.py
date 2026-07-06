@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import re
-from sqlalchemy import or_, and_, func, case
+from sqlalchemy import or_, and_, func, case, cast, Integer
 from sqlalchemy.orm import Session, aliased
 from backend.models import Property, PropertyBilling, PaymentBilling, Payment, TaxPolicy
 from decimal import Decimal, ROUND_HALF_UP
@@ -52,6 +52,36 @@ def _assigned_barangay_filters():
         Property.barangay != None,
         trimmed != "",
         func.upper(trimmed) != "UNSPECIFIED",
+    )
+
+
+def _property_effectivity_year_expr(model):
+    year_source = func.coalesce(
+        func.nullif(func.trim(model.effectivity_date), ""),
+        func.nullif(func.trim(model.tax_year), ""),
+    )
+    return cast(func.substr(year_source, 1, 4), Integer)
+
+
+def _compliance_property_scope(as_of_year: int, db_session: Session):
+    """Filters properties to those active for the selected compliance year."""
+    year = int(as_of_year)
+    effectivity_year = _property_effectivity_year_expr(Property)
+    replacement = aliased(Property)
+    replacement_effectivity_year = _property_effectivity_year_expr(replacement)
+    replaced_td_numbers = (
+        db_session.query(func.trim(replacement.prev_td_number))
+        .filter(
+            replacement.deleted_at == None,
+            replacement.prev_td_number != None,
+            func.trim(replacement.prev_td_number) != "",
+            replacement_effectivity_year <= year,
+        )
+        .scalar_subquery()
+    )
+    return (
+        or_(effectivity_year == None, effectivity_year <= year),
+        ~func.trim(Property.td_number).in_(replaced_td_numbers),
     )
 
 
@@ -1531,6 +1561,7 @@ def get_compliant_accounts(
     search: str = None,
     limit: int = 50,
     cursor: int = None,
+    as_of_year: int = None,
     db_session: Session = None,
 ):
     """
@@ -1550,6 +1581,7 @@ def get_compliant_accounts(
       - Cursor-based pagination (cursor = last seen Property.id)
     """
     safe_limit = min(max(1, int(limit)), 200)
+    selected_year = int(as_of_year or datetime.now(timezone.utc).year)
 
     # Use per-year rate from TaxPolicy via correlated subquery.
     # Falls back to 0.02 (1% basic + 1% SEF) if no policy row exists for that year.
@@ -1575,6 +1607,9 @@ def get_compliant_accounts(
             func.max(Payment.date_paid).label("last_paid"),
             func.max(Payment.or_number).label("last_or"),
         )
+        .join(PaymentBilling, PaymentBilling.payment_id == Payment.id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .filter(PropertyBilling.tax_year <= selected_year)
         .group_by(Payment.property_id)
         .subquery()
     )
@@ -1596,6 +1631,8 @@ def get_compliant_accounts(
         .join(PropertyBilling, PropertyBilling.property_id == Property.id)
         .outerjoin(last_payment_subq, last_payment_subq.c.property_id == Property.id)
         .filter(Property.deleted_at == None)
+        .filter(PropertyBilling.tax_year <= selected_year)
+        .filter(*_compliance_property_scope(selected_year, db_session))
         .group_by(
             Property.id,
             Property.td_number,
@@ -1665,10 +1702,14 @@ def get_compliant_accounts(
         "next_cursor": next_cursor,
         "has_more": has_more,
         "count": len(items),
+        "as_of_year": selected_year,
     }
 
 
-def get_compliant_summary_by_barangay(db_session: Session = None):
+def get_compliant_summary_by_barangay(
+    as_of_year: int = None,
+    db_session: Session = None,
+):
     """
     Returns a per-barangay summary of compliant vs total properties.
 
@@ -1681,6 +1722,8 @@ def get_compliant_summary_by_barangay(db_session: Session = None):
       - compliance rate (%)
       - total amount collected from compliant properties
     """
+    selected_year = int(as_of_year or datetime.now(timezone.utc).year)
+
     # Use per-year rate from TaxPolicy via correlated subquery.
     rate_expr = func.coalesce(
         db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
@@ -1708,6 +1751,8 @@ def get_compliant_summary_by_barangay(db_session: Session = None):
         )
         .join(PropertyBilling, PropertyBilling.property_id == Property.id)
         .filter(Property.deleted_at == None)
+        .filter(PropertyBilling.tax_year <= selected_year)
+        .filter(*_compliance_property_scope(selected_year, db_session))
         .filter(*_assigned_barangay_filters())
         .group_by(Property.id, Property.barangay)
         .subquery()

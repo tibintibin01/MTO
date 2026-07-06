@@ -6,6 +6,7 @@ import csv
 import os
 import threading
 import tkinter as tk
+from datetime import datetime
 from tkinter import ttk, messagebox, filedialog
 
 import customtkinter as ctk
@@ -39,6 +40,7 @@ class CompliantDashboardPage:
         self.user = user
         self._summary = []
         self._selected_barangay = "ALL"
+        self._selected_year = datetime.now().year
         self._rows: list = []
         self._page_size = 50
         self._page_index = 0
@@ -97,6 +99,27 @@ class CompliantDashboardPage:
             corner_radius=8,
         ).pack(side="right")
 
+        self._year_var = tk.StringVar(value=str(self._selected_year))
+        year_values = [str(year) for year in range(self._selected_year, 2022, -1)]
+        self._year_combo = ctk.CTkComboBox(
+            btn_fr,
+            variable=self._year_var,
+            values=year_values,
+            width=98,
+            height=40,
+            font=ModernTheme.BODY_BOLD,
+            command=lambda _value: self._on_year_change(),
+        )
+        self._year_combo.pack(side="right", padx=(8, 8))
+        self._year_combo.bind("<Return>", lambda _event: self._on_year_change())
+        self._year_combo.bind("<KP_Enter>", lambda _event: self._on_year_change())
+        ctk.CTkLabel(
+            btn_fr,
+            text="AS OF YEAR",
+            font=("Inter", 10, "bold"),
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(side="right", padx=(12, 0))
+
         # ── Info banner ───────────────────────────────────────────────────────
         info_fr = ctk.CTkFrame(
             self.container,
@@ -106,21 +129,22 @@ class CompliantDashboardPage:
             border_color=("#93c5fd", "#334155"),
         )
         info_fr.pack(fill="x", pady=(0, 12))
-        ctk.CTkLabel(
+        self._info_label = ctk.CTkLabel(
             info_fr,
             text=(
-                "Properties where total amount paid ≥ total amount due across "
-                "ALL billing years.  Click a barangay row to filter the list below."
+                f"Properties fully paid for every billed obligation through {self._selected_year}.  "
+                "Later billing years are excluded. Click a barangay row to filter the list."
             ),
             font=ModernTheme.BODY,
             text_color=ModernTheme.TEXT_GRAY,
-        ).pack(side="left", padx=16, pady=8)
+        )
+        self._info_label.pack(side="left", padx=16, pady=8)
 
         # ── KPI strip ─────────────────────────────────────────────────────────
         kpi_fr = ctk.CTkFrame(self.container, fg_color="transparent")
         kpi_fr.pack(fill="x", pady=(0, 12))
 
-        self._kpi_compliant = self._kpi_card(kpi_fr, "COMPLIANT",       "—")
+        self._kpi_compliant = self._kpi_card(kpi_fr, "COMPLIANT THROUGH YEAR", "—")
         self._kpi_rate      = self._kpi_card(kpi_fr, "COMPLIANCE RATE", "—")
         self._kpi_collected = self._kpi_card(kpi_fr, "TOTAL COLLECTED", "—")
         self._kpi_barangays = self._kpi_card(kpi_fr, "BARANGAYS",       "—")
@@ -373,26 +397,54 @@ class CompliantDashboardPage:
 
     # ── Data loading ──────────────────────────────────────────────────────────
 
+    def _on_year_change(self):
+        raw_year = self._year_var.get().strip()
+        try:
+            selected_year = int(raw_year)
+            current_year = datetime.now().year
+            if selected_year < 2023 or selected_year > current_year:
+                raise ValueError
+        except (TypeError, ValueError):
+            self._year_var.set(str(self._selected_year))
+            messagebox.showwarning(
+                "Invalid Year",
+                f"Enter a year from 2023 through {datetime.now().year}.",
+            )
+            return
+
+        if selected_year == self._selected_year:
+            return
+        self._selected_year = selected_year
+        self._load_all(reset_page=True)
+
     def _load_all(self, reset_page=False):
         if reset_page:
             self._page_index = 0
             self._page_cursors = [None]
             self._next_cursor = None
             self._has_more = False
-        overlay = LoadingOverlay(self.container, "LOADING COMPLIANCE DATA...")
+        selected_year = self._selected_year
+        overlay = LoadingOverlay(
+            self.container,
+            f"LOADING COMPLIANCE THROUGH {selected_year}...",
+        )
 
         def worker():
             try:
                 barangay = None if self._selected_barangay == "ALL" else self._selected_barangay
                 cursor = self._page_cursors[self._page_index] if self._page_index < len(self._page_cursors) else None
-                summary = billing.get_compliant_summary()
+                summary = billing.get_compliant_summary(as_of_year=selected_year)
                 page = billing.get_compliant_accounts_page(
                     barangay=barangay,
                     search=self._search_var.get().strip(),
                     limit=self._page_size,
                     cursor=cursor,
+                    as_of_year=selected_year,
                 )
-                self.container.after(0, lambda: self._render(summary, page))
+                self.container.after(
+                    0,
+                    lambda: self._render(summary, page, selected_year),
+                )
             except Exception as e:
                 self.container.after(
                     0, lambda err=e: messagebox.showerror("Load Error", str(err))
@@ -402,7 +454,15 @@ class CompliantDashboardPage:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _render(self, summary: list, page: dict):
+    def _render(self, summary: list, page: dict, selected_year: int):
+        if selected_year != self._selected_year:
+            return
+        self._info_label.configure(
+            text=(
+                f"Properties fully paid for every billed obligation through {selected_year}.  "
+                "Later billing years are excluded. Click a barangay row to filter the list."
+            )
+        )
         self._summary = summary
         self._rows = page.get("items", []) if isinstance(page, dict) else []
         self._next_cursor = page.get("next_cursor") if isinstance(page, dict) else None
@@ -464,9 +524,9 @@ class CompliantDashboardPage:
         self._fill_prop_tree_background(len(rows))
 
         brgy = (
-            "ALL COMPLIANT PROPERTIES"
+            f"ALL PROPERTIES COMPLIANT THROUGH {self._selected_year}"
             if self._selected_barangay == "ALL"
-            else f"COMPLIANT — {self._selected_barangay}"
+            else f"COMPLIANT THROUGH {self._selected_year} - {self._selected_barangay}"
         )
         search_note = " MATCHES" if self._search_var.get().strip() else ""
         self._list_label.configure(text=f"{brgy}{search_note}  ({len(rows)} on this page)")
@@ -557,7 +617,11 @@ class CompliantDashboardPage:
         barangay = None if self._selected_barangay == "ALL" else self._selected_barangay
         search = self._search_var.get().strip()
         try:
-            export_rows = billing.get_compliant_accounts(barangay=barangay, search=search)
+            export_rows = billing.get_compliant_accounts(
+                barangay=barangay,
+                search=search,
+                as_of_year=self._selected_year,
+            )
         except Exception as e:
             messagebox.showerror("Export Error", str(e))
             return
@@ -569,7 +633,10 @@ class CompliantDashboardPage:
         path = filedialog.asksaveasfilename(
             defaultextension=".csv",
             filetypes=[("CSV files", "*.csv")],
-            initialfile=f"compliant_{self._selected_barangay}.csv",
+            initialfile=(
+                f"compliant_through_{self._selected_year}_"
+                f"{self._selected_barangay}.csv"
+            ),
             title="Save Compliant Properties Report",
         )
         if not path:
@@ -578,6 +645,8 @@ class CompliantDashboardPage:
         try:
             with open(path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
+                writer.writerow(["Compliance Through Year", self._selected_year])
+                writer.writerow([])
                 writer.writerow([
                     "ID", "TD Number", "Owner Name", "Barangay", "Kind",
                     "Total Paid", "Years Covered", "Last OR", "Last Paid",

@@ -256,7 +256,7 @@ def export_report_excel(
     return save_stream_response_to_temp_file(resp, default_suffix=".xlsx")
 
 
-def _get_compliant_accounts_first_page(barangay=None, limit=100):
+def _get_compliant_accounts_first_page(barangay=None, limit=100, as_of_year=None):
     """
     Returns properties with zero outstanding balance across all billing years.
     Optionally filtered by barangay.
@@ -264,6 +264,8 @@ def _get_compliant_accounts_first_page(barangay=None, limit=100):
       (id, td_number, owner_name, barangay, kind, total_paid, years_covered, last_or, last_paid)
     """
     params = {"limit": limit}
+    if as_of_year:
+        params["as_of_year"] = as_of_year
     if barangay and barangay != "ALL":
         params["barangay"] = barangay
 
@@ -286,12 +288,16 @@ def _get_compliant_accounts_first_page(barangay=None, limit=100):
     return []
 
 
-def get_compliant_accounts_page(barangay=None, search=None, limit=50, cursor=None):
+def get_compliant_accounts_page(
+    barangay=None, search=None, limit=50, cursor=None, as_of_year=None
+):
     """
     Returns one cursor page of compliant properties.
     Response shape: {items: [tuple...], next_cursor, has_more, count}
     """
     params = {"limit": limit}
+    if as_of_year:
+        params["as_of_year"] = as_of_year
     if cursor:
         params["cursor"] = cursor
     if barangay and barangay != "ALL":
@@ -324,7 +330,9 @@ def get_compliant_accounts_page(barangay=None, search=None, limit=50, cursor=Non
     }
 
 
-def get_compliant_accounts(barangay=None, search=None, limit=200):
+def get_compliant_accounts(
+    barangay=None, search=None, limit=200, as_of_year=None
+):
     """
     Returns all compliant properties, following the backend cursor pages.
     The UI expects tuples:
@@ -335,6 +343,8 @@ def get_compliant_accounts(barangay=None, search=None, limit=200):
 
     while True:
         params = {"limit": limit}
+        if as_of_year:
+            params["as_of_year"] = as_of_year
         if cursor:
             params["cursor"] = cursor
         if barangay and barangay != "ALL":
@@ -368,12 +378,13 @@ def get_compliant_accounts(barangay=None, search=None, limit=200):
     return rows
 
 
-def get_compliant_summary():
+def get_compliant_summary(as_of_year=None):
     """
     Returns per-barangay compliance summary.
     Each item: {barangay, total_properties, compliant_count, delinquent_count,
                 compliance_rate, collected_from_compliant}
     """
-    result = api_request("GET", "/billing/compliant/summary")
+    params = {"as_of_year": as_of_year} if as_of_year else None
+    result = api_request("GET", "/billing/compliant/summary", params=params)
     return result if isinstance(result, list) else []
 

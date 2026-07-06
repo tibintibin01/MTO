@@ -149,6 +149,7 @@ async def get_compliant_list(
     search: Optional[str] = None,
     limit: int = 50,
     cursor: Optional[int] = None,
+    as_of_year: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
@@ -157,12 +158,18 @@ async def get_compliant_list(
     Optionally filtered by barangay. Cursor-paginated.
     """
     return bill_svc.get_compliant_accounts(
-        barangay=barangay, search=search, limit=limit, cursor=cursor, db_session=db_session
+        barangay=barangay,
+        search=search,
+        limit=limit,
+        cursor=cursor,
+        as_of_year=as_of_year,
+        db_session=db_session,
     )
 
 
 @router.get("/billing/compliant/summary")
 async def get_compliant_summary(
+    as_of_year: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
@@ -171,7 +178,10 @@ async def get_compliant_summary(
     total properties, compliant count, delinquent count, compliance rate %.
     Used for the summary cards at the top of the Compliant Properties dashboard.
     """
-    return bill_svc.get_compliant_summary_by_barangay(db_session=db_session)
+    return bill_svc.get_compliant_summary_by_barangay(
+        as_of_year=as_of_year,
+        db_session=db_session,
+    )
 
 @router.get("/reports/receivables-by-barangay")
 async def get_receivables_by_barangay(

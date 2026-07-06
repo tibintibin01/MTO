@@ -9,6 +9,7 @@ from backend.database import Base
 from backend.models import Payment, PaymentBilling, Property, PropertyBilling
 from backend.services.billing_service import (
     calculate_penalty,
+    get_compliant_accounts,
     get_compliant_summary_by_barangay,
     get_reconciliation_diagnostics,
     get_rpt_receivables_summary,
@@ -196,6 +197,103 @@ def test_compliant_summary_excludes_unassigned_barangay_rows(db):
     assert [row["barangay"] for row in summary] == ["NORTH POBLACION"]
     assert summary[0]["total_properties"] == 1
     assert summary[0]["compliant_count"] == 1
+
+
+def test_compliance_through_year_ignores_later_unpaid_billing(db):
+    prop = Property(
+        td_number="TD-AS-OF",
+        owner_name="Owner As Of",
+        barangay="BUENAVISTA",
+        assessed_value=100_000.0,
+        effectivity_date="2025-01-01",
+        penalty=0,
+        discount=0,
+    )
+    db.add(prop)
+    db.flush()
+    db.add_all([
+        PropertyBilling(
+            property_id=prop.id,
+            tax_year=2025,
+            assessed_value=100_000.0,
+            penalty=0,
+            discount=0,
+            amount_paid=2_000.0,
+        ),
+        PropertyBilling(
+            property_id=prop.id,
+            tax_year=2026,
+            assessed_value=100_000.0,
+            penalty=0,
+            discount=0,
+            amount_paid=0,
+        ),
+    ])
+    db.commit()
+
+    through_2025 = get_compliant_accounts(as_of_year=2025, db_session=db)
+    through_2026 = get_compliant_accounts(as_of_year=2026, db_session=db)
+    summary_2025 = get_compliant_summary_by_barangay(
+        as_of_year=2025, db_session=db
+    )
+    summary_2026 = get_compliant_summary_by_barangay(
+        as_of_year=2026, db_session=db
+    )
+
+    assert [row["td_number"] for row in through_2025["items"]] == ["TD-AS-OF"]
+    assert through_2025["items"][0]["years_covered"] == 1
+    assert through_2026["items"] == []
+    assert summary_2025[0]["compliant_count"] == 1
+    assert summary_2026[0]["compliant_count"] == 0
+
+
+def test_compliance_through_year_switches_to_effective_replacement(db):
+    old_prop = Property(
+        td_number="TD-OLD",
+        owner_name="Old Owner",
+        barangay="BUENAVISTA",
+        assessed_value=100_000.0,
+        effectivity_date="2023-01-01",
+        penalty=0,
+        discount=0,
+    )
+    replacement = Property(
+        td_number="TD-NEW",
+        prev_td_number="TD-OLD",
+        owner_name="New Owner",
+        barangay="BUENAVISTA",
+        assessed_value=100_000.0,
+        effectivity_date="2025-01-01",
+        penalty=0,
+        discount=0,
+    )
+    db.add_all([old_prop, replacement])
+    db.flush()
+    db.add_all([
+        PropertyBilling(
+            property_id=old_prop.id,
+            tax_year=2024,
+            assessed_value=100_000.0,
+            penalty=0,
+            discount=0,
+            amount_paid=2_000.0,
+        ),
+        PropertyBilling(
+            property_id=replacement.id,
+            tax_year=2025,
+            assessed_value=100_000.0,
+            penalty=0,
+            discount=0,
+            amount_paid=2_000.0,
+        ),
+    ])
+    db.commit()
+
+    rows_2024 = get_compliant_accounts(as_of_year=2024, db_session=db)["items"]
+    rows_2025 = get_compliant_accounts(as_of_year=2025, db_session=db)["items"]
+
+    assert [row["td_number"] for row in rows_2024] == ["TD-OLD"]
+    assert [row["td_number"] for row in rows_2025] == ["TD-NEW"]
 
 def test_sync_existing_billing_assessed_value_respects_effectivity_year(db):
     prop = Property(
