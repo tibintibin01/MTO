@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 from backend.database import SessionLocal
 
@@ -209,6 +209,22 @@ MIGRATIONS = [
     }
 
 ]
+
+
+def ensure_payment_remarks_column(db_session: Session) -> None:
+    """Repair deployments where the migration was recorded but the real column is missing."""
+    try:
+        inspector = inspect(db_session.connection())
+        column_names = {column["name"] for column in inspector.get_columns("payments")}
+        if "remarks" in column_names:
+            return
+
+        db_session.execute(text("ALTER TABLE payments ADD COLUMN remarks VARCHAR(500) NULL"))
+        db_session.commit()
+        print("Schema repair applied: payments.remarks column created.")
+    except Exception as e:
+        db_session.rollback()
+        print(f"WARNING: Could not ensure payments.remarks column: {e}")
 
 
 def run_migrations(db_session: Session = None):

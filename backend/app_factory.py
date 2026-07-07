@@ -50,8 +50,10 @@ async def lifespan(app: FastAPI):
     # Refresh dashboard stats so the first page load shows real numbers.
     try:
         from backend.database import SessionLocal
+        from backend.services.migration_service import ensure_payment_remarks_column
         from backend.services.stats_service import refresh_system_stats
         with SessionLocal() as db:
+            ensure_payment_remarks_column(db)
             refresh_system_stats(db_session=db)
         mto_logger.info("Dashboard stats refreshed successfully on startup.")
     except Exception as e:
