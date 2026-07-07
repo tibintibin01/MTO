@@ -35,6 +35,7 @@ class PropertySaveSchema(BaseSanitizedModel):
     or_date: Optional[str] = Field(None, alias="OR Date")
     tax_year: Optional[str] = Field(None, alias="Tax Year")
     amount_paid: Optional[Decimal] = Field(Decimal("0.00"), alias="Amount Paid")
+    remarks: Optional[str] = Field(None, alias="Remarks")
     pin: Optional[str] = Field(None, alias="PIN")
     prev_td_number: Optional[str] = Field(None, alias="Previous TD Number")
     effectivity_date: Optional[str] = Field(None, alias="Effectivity Date")

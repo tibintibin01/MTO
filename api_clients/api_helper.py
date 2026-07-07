@@ -271,7 +271,17 @@ def api_request(
             try:
                 error_data = e.response.json()
                 if "detail" in error_data:
-                    error_msg = f"Error: {error_data['detail']}"
+                    detail = error_data["detail"]
+                    if isinstance(detail, list):
+                        messages = []
+                        for item in detail[:5]:
+                            loc = item.get("loc", []) if isinstance(item, dict) else []
+                            field = " > ".join(str(part) for part in loc if part != "body")
+                            msg = item.get("msg", str(item)) if isinstance(item, dict) else str(item)
+                            messages.append(f"{field}: {msg}" if field else msg)
+                        error_msg = "Error: Request validation failed.\n" + "\n".join(messages)
+                    else:
+                        error_msg = f"Error: {detail}"
             except:
                 pass
         raise Exception(error_msg)
