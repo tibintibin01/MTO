@@ -12,6 +12,7 @@ from backend.services.billing_service import (
     get_compliant_accounts,
     get_compliant_summary_by_barangay,
     get_reconciliation_diagnostics,
+    get_reconciliation_metrics,
     get_rpt_receivables_summary,
     get_total_due,
     repair_billing_assessed_value_snapshots,
@@ -802,3 +803,11 @@ def test_reconciliation_overpaid_uses_linked_penalty(db):
         row["td_number"] == "06-0009-01219"
         for row in diagnostics["overpaid_or_credit_rows"]
     )
+
+    summary = get_rpt_receivables_summary(2024, db_session=db)
+    metrics = get_reconciliation_metrics(2024, db_session=db)
+    assert summary["current_year_penalty"] == pytest.approx(24.0)
+    assert summary["current_year_net_collectible"] == pytest.approx(624.0)
+    assert summary["equation_variance"] == pytest.approx(0.0)
+    assert metrics["assessor"]["current_year_penalty"] == pytest.approx(24.0)
+    assert metrics["assessor"]["current_year_net_collectible"] == pytest.approx(624.0)

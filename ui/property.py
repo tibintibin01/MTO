@@ -503,8 +503,10 @@ class PropertyEditModal(ctk.CTkToplevel):
 
     def _bind_enter_navigation(self):
         for entry in self._field_entries:
-            entry.bind("<Return>", lambda e, w=entry: self._focus_next_entry(w))
-            entry.bind("<KP_Enter>", lambda e, w=entry: self._focus_next_entry(w))
+            for widget in (entry, getattr(entry, "_entry", None)):
+                if widget:
+                    widget.bind("<Return>", lambda e, w=entry: self._focus_next_entry(w))
+                    widget.bind("<KP_Enter>", lambda e, w=entry: self._focus_next_entry(w))
 
     def _focus_next_entry(self, current):
         ordered = [w for w in self._field_entries if w and w.winfo_exists()]

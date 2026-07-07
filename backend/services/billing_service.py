@@ -957,6 +957,41 @@ def get_report_details(selected_month="All", selected_year="All", limit=200, cur
     }
 
 
+def _billing_effective_amount_exprs(db_session: Session):
+    """Use linked payments as the authoritative billing amounts when they exist."""
+    linked_paid_expr = db_session.query(
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
+    ).filter(
+        PaymentBilling.billing_id == PropertyBilling.id
+    ).correlate(PropertyBilling).scalar_subquery()
+    linked_penalty_expr = db_session.query(
+        func.coalesce(func.sum(Payment.penalty), 0)
+    ).join(
+        PaymentBilling, PaymentBilling.payment_id == Payment.id
+    ).filter(
+        PaymentBilling.billing_id == PropertyBilling.id
+    ).correlate(PropertyBilling).scalar_subquery()
+    linked_discount_expr = db_session.query(
+        func.coalesce(func.sum(Payment.discount), 0)
+    ).join(
+        PaymentBilling, PaymentBilling.payment_id == Payment.id
+    ).filter(
+        PaymentBilling.billing_id == PropertyBilling.id
+    ).correlate(PropertyBilling).scalar_subquery()
+    linked_count_expr = db_session.query(
+        func.count(PaymentBilling.id)
+    ).filter(
+        PaymentBilling.billing_id == PropertyBilling.id
+    ).correlate(PropertyBilling).scalar_subquery()
+
+    return {
+        "paid": case((linked_count_expr > 0, linked_paid_expr), else_=PropertyBilling.amount_paid),
+        "penalty": case((linked_count_expr > 0, linked_penalty_expr), else_=PropertyBilling.penalty),
+        "discount": case((linked_count_expr > 0, linked_discount_expr), else_=PropertyBilling.discount),
+        "linked_count": linked_count_expr,
+    }
+
+
 def get_rpt_receivables_summary(report_year, db_session: Session = None):
     try:
         ry = int(report_year)
@@ -966,7 +1001,10 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
     basic_rate_expr = func.coalesce(TaxPolicy.basic_rate, 0.0100)
     sef_rate_expr = func.coalesce(TaxPolicy.sef_rate, 0.0100)
     total_rate_expr = basic_rate_expr + sef_rate_expr
-    due_expr = (PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount
+    effective = _billing_effective_amount_exprs(db_session)
+    effective_penalty_expr = effective["penalty"]
+    effective_discount_expr = effective["discount"]
+    due_expr = (PropertyBilling.assessed_value * total_rate_expr) + effective_penalty_expr - effective_discount_expr
     paid_before_year = _paid_to_billing_expr(db_session, year_lt=ry)
     paid_through_year = _paid_to_billing_expr(db_session, year_lte=ry)
 
@@ -983,8 +1021,8 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
 
     curr_row = db_session.query(
         func.coalesce(func.sum(PropertyBilling.assessed_value * total_rate_expr), 0),
-        func.coalesce(func.sum(PropertyBilling.penalty), 0),
-        func.coalesce(func.sum(PropertyBilling.discount), 0),
+        func.coalesce(func.sum(effective_penalty_expr), 0),
+        func.coalesce(func.sum(effective_discount_expr), 0),
         func.coalesce(func.sum(due_expr), 0),
     ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
         TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
@@ -1076,7 +1114,10 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
     basic = basic_rate_expr()
     sef = sef_rate_expr()
     total = basic + sef
-    due_expr = (PropertyBilling.assessed_value * total) + PropertyBilling.penalty - PropertyBilling.discount
+    effective = _billing_effective_amount_exprs(db_session)
+    effective_penalty_expr = effective["penalty"]
+    effective_discount_expr = effective["discount"]
+    due_expr = (PropertyBilling.assessed_value * total) + effective_penalty_expr - effective_discount_expr
     paid_through_year = _paid_to_billing_expr(db_session, year_lte=ry)
     balance_as_of_expr = due_expr - paid_through_year
 
@@ -1084,8 +1125,8 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
         func.coalesce(func.sum(PropertyBilling.assessed_value), 0),
         func.count(func.distinct(PropertyBilling.property_id)),
         func.coalesce(func.sum(PropertyBilling.assessed_value * total), 0),
-        func.coalesce(func.sum(PropertyBilling.penalty), 0),
-        func.coalesce(func.sum(PropertyBilling.discount), 0),
+        func.coalesce(func.sum(effective_penalty_expr), 0),
+        func.coalesce(func.sum(effective_discount_expr), 0),
         func.coalesce(func.sum(due_expr), 0),
         func.coalesce(func.avg(basic), 0.0100),
         func.coalesce(func.avg(total), 0.0200),
@@ -1163,7 +1204,7 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
         func.coalesce(func.sum(case((and_(PropertyBilling.tax_year == ry, balance_as_of_expr > 0), balance_as_of_expr), else_=0)), 0),
         func.coalesce(func.sum(case((and_(PropertyBilling.tax_year < ry, balance_as_of_expr > 0), balance_as_of_expr), else_=0)), 0),
         func.count(func.distinct(case((balance_as_of_expr > 0, PropertyBilling.property_id), else_=None))),
-        func.coalesce(func.sum(case((balance_as_of_expr > 0, PropertyBilling.penalty), else_=0)), 0),
+        func.coalesce(func.sum(case((balance_as_of_expr > 0, effective_penalty_expr), else_=0)), 0),
         func.count(func.distinct(case((and_(paid_through_year > 0, balance_as_of_expr > 0), PropertyBilling.property_id), else_=None))),
     ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
         TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
