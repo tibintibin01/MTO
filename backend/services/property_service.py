@@ -286,6 +286,27 @@ def get_property_by_id(property_id, db_session: Session):
     return db_session.query(Property).filter(Property.id == property_id, Property.deleted_at == None).first()
 
 
+def _has_payment_payload(data):
+    return bool(str(data.get("OR Number") or "").strip() or str(data.get("Amount Paid") or "").strip())
+
+
+def _payment_only_payload(prop, data, user=None):
+    """Use the live property record for payment posting without rewriting it."""
+    payload = dict(data)
+    payload["TD Number"] = prop.td_number
+    payload["Owner Name"] = prop.owner_name
+    payload["Payor"] = payload.get("Payor") or prop.payor_name or prop.owner_name
+    payload["Assessed Value"] = prop.assessed_value
+    payload["Barangay"] = prop.barangay
+    payload["Location"] = prop.location
+    payload["Kind of Property"] = prop.kind_of_property
+    payload["PIN"] = prop.pin
+    payload["Previous TD Number"] = prop.prev_td_number
+    payload["Effectivity Date"] = prop.effectivity_date
+    payload["Accountable Officer"] = payload.get("Accountable Officer") or get_username(user)
+    return payload
+
+
 def save_property(data, editing_id=None, user=None, db_session: Session = None):
     """
     Main orchestrator for saving or updating a property using ORM.
@@ -302,6 +323,22 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             prop = db_session.query(Property).filter(Property.id == editing_id).first()
             if not prop:
                 raise HTTPException(status_code=404, detail="Property not found")
+
+            if _has_payment_payload(data):
+                _sync_financial_records(
+                    prop.id,
+                    _payment_only_payload(prop, data, user=user),
+                    db_session,
+                )
+                db_session.commit()
+                return {
+                    "ok": True,
+                    "property_id": prop.id,
+                    "new_version": prop.version,
+                    "payment_only": True,
+                    "billing_sync": {"updated": 0, "years": []},
+                    "prior_assessment_sync": {"updated": 0, "years": []},
+                }
             
             # Conflict Detection
             client_version = data.get("version", 0)
