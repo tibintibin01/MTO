@@ -28,22 +28,26 @@ def _clean_remarks(value):
     return text[:500] if text else None
 
 
+def has_payment_remarks_column(db_session: Session = None) -> bool:
+    try:
+        connection = db_session.connection() if db_session is not None else None
+        if connection is None:
+            return False
+        inspector = inspect(connection)
+        columns = {col["name"] for col in inspector.get_columns("payments")}
+        return "remarks" in columns
+    except Exception:
+        return False
+
+
 def _payment_remarks_expr(db_session: Session = None):
     """Return Payment.remarks only when the live DB has the column.
 
     This keeps ledger reads working during a rolling update where a desktop
     client or API process is newer than the database schema.
     """
-    try:
-        bind = db_session.get_bind() if db_session is not None else None
-        if bind is None:
-            return literal(None).label("remarks")
-        inspector = inspect(bind)
-        columns = {col["name"] for col in inspector.get_columns("payments")}
-        if "remarks" in columns:
-            return Payment.remarks
-    except Exception:
-        pass
+    if has_payment_remarks_column(db_session):
+        return Payment.remarks
     return literal(None).label("remarks")
 
 
@@ -54,7 +58,13 @@ def find_duplicate_payment(
     if not property_id or not or_number or not normalized_years:
         return None
 
-    query = db_session.query(Payment).filter(
+    query = db_session.query(
+        Payment.id.label("payment_id"),
+        Payment.or_number,
+        Payment.tax_year,
+        Payment.amount,
+        Payment.date_paid,
+    ).filter(
         Payment.property_id == property_id,
         Payment.or_number == or_number,
         func.coalesce(Payment.tax_year, '') == normalized_years
@@ -66,7 +76,7 @@ def find_duplicate_payment(
     if not row:
         return None
     return {
-        "payment_id": row.id,
+        "payment_id": row.payment_id,
         "or_number": row.or_number,
         "tax_year": row.tax_year,
         "amount": float(_d(row.amount)),
@@ -86,7 +96,16 @@ def find_duplicate_payment_entry(
 
     date_start = datetime.strptime(date_text, "%Y-%m-%d")
     date_end = date_start + timedelta(days=1)
-    row = db_session.query(Payment, Property).join(Property, Property.id == Payment.property_id).filter(
+    row = db_session.query(
+        Payment.id.label("payment_id"),
+        Payment.property_id,
+        Payment.or_number,
+        Payment.date_paid,
+        Payment.tax_year,
+        Payment.amount,
+        Property.td_number,
+        Property.owner_name,
+    ).join(Property, Property.id == Payment.property_id).filter(
         Property.deleted_at == None,
         Property.td_number == td_text,
         Payment.or_number == or_text,
@@ -100,16 +119,15 @@ def find_duplicate_payment_entry(
     result = row.order_by(Payment.id.desc()).first()
     if not result:
         return None
-    pay, prop = result
     return {
-        "payment_id": pay.id,
-        "property_id": prop.id,
-        "td_number": prop.td_number,
-        "owner_name": prop.owner_name,
-        "or_number": pay.or_number,
-        "date_paid": pay.date_paid,
-        "tax_year": pay.tax_year,
-        "amount": float(_d(pay.amount)),
+        "payment_id": result.payment_id,
+        "property_id": result.property_id,
+        "td_number": result.td_number,
+        "owner_name": result.owner_name,
+        "or_number": result.or_number,
+        "date_paid": result.date_paid,
+        "tax_year": result.tax_year,
+        "amount": float(_d(result.amount)),
     }
 
 
@@ -574,7 +592,8 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
         payment.penalty = penalty
         payment.discount = discount
         payment.posted_by = get_username(user_name)
-        payment.remarks = _clean_remarks(data.get("remarks"))
+        if has_payment_remarks_column(db_session):
+            payment.remarks = _clean_remarks(data.get("remarks"))
 
         db_session.flush()
         sync_payment_billings(

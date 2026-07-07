@@ -547,6 +547,7 @@ def _sync_financial_records(prop_id, data, db_session: Session):
                 ),
             )
 
+        can_store_remarks = payment.has_payment_remarks_column(db_session)
         pay_obj = Payment(property_id=prop_id)
         db_session.add(pay_obj)
             
@@ -555,7 +556,8 @@ def _sync_financial_records(prop_id, data, db_session: Session):
         pay_obj.date_paid = or_dt
         pay_obj.tax_year = tax_year_str
         pay_obj.posted_by = posted_by
-        pay_obj.remarks = remarks
+        if can_store_remarks:
+            pay_obj.remarks = remarks
         pay_obj.payor_name = payor_name
         pay_obj.penalty = pen    # store penalty on Payment record
         pay_obj.discount = disc  # store discount on Payment record
