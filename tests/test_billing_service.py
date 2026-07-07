@@ -736,7 +736,7 @@ def test_repair_payment_billing_allocations_fixes_stale_credit_amounts(db):
 
     diagnostics_before = get_reconciliation_diagnostics(2026, db_session=db)
     assert any(
-        row["td_number"] == "TD-STALE-CREDIT" and row["balance"] == pytest.approx(-2_000.0)
+        row["td_number"] == "TD-STALE-CREDIT" and row["balance"] == pytest.approx(-1_800.0)
         for row in diagnostics_before["overpaid_or_credit_rows"]
     )
 
@@ -757,3 +757,48 @@ def test_repair_payment_billing_allocations_fixes_stale_credit_amounts(db):
 
     diagnostics_after = get_reconciliation_diagnostics(2026, db_session=db)
     assert not any(row["td_number"] == "TD-STALE-CREDIT" for row in diagnostics_after["overpaid_or_credit_rows"])
+
+
+def test_reconciliation_overpaid_uses_linked_penalty(db):
+    prop = Property(
+        td_number="06-0009-01219",
+        owner_name="Penalty Owner",
+        barangay="DIARABASIN",
+        assessed_value=30_000.0,
+    )
+    db.add(prop)
+    db.flush()
+
+    billing = PropertyBilling(
+        property_id=prop.id,
+        tax_year=2024,
+        assessed_value=30_000.0,
+        penalty=0,
+        discount=0,
+        amount_paid=624.0,
+    )
+    db.add(billing)
+    payment = Payment(
+        property_id=prop.id,
+        amount=624.0,
+        penalty=24.0,
+        discount=0,
+        or_number="TEST-PEN-24",
+        date_paid=datetime(2024, 6, 1),
+        tax_year="2024",
+    )
+    db.add(payment)
+    db.flush()
+    db.add(PaymentBilling(
+        payment_id=payment.id,
+        billing_id=billing.id,
+        tax_year=2024,
+        amount_paid=624.0,
+    ))
+    db.commit()
+
+    diagnostics = get_reconciliation_diagnostics(2024, db_session=db)
+    assert not any(
+        row["td_number"] == "06-0009-01219"
+        for row in diagnostics["overpaid_or_credit_rows"]
+    )

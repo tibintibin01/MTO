@@ -307,6 +307,10 @@ class PropertyEditModal(ctk.CTkToplevel):
         self._original_prev_td = ""
         self._first_input = None
         self._last_input = None
+        self._field_entries = []
+        self._last_auto_amount_paid = ""
+        self._setting_auto_amount_paid = False
+        self._amount_paid_manually_changed = False
         self.barangays = ["NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN", "BUENAVISTA", "CALAOCAN", "DIAMANEN", "DIANED", "DIARABASIN", "DIBUTUNAN", "DIMABUNO", "DINADIAWAN", "DITALE", "GUPA", "IPIL", "LABOY", "LIPIT", "LOBBOT", "MALIGAYA", "MIJARES", "MUCDOL", "PUANGI", "SALAY", "SAPANGKAWAYAN", "TOYTOYAN"]
 
         # Generate a fresh idempotency key when the form opens — NOT on submit.
@@ -436,11 +440,14 @@ class PropertyEditModal(ctk.CTkToplevel):
                 entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
                 if key in ["assessed_value", "prior_assessed_value", "penalty", "discount"]:
                     self.vars[key].trace_add("write", lambda *a: self.recompute())
+                elif key == "amount_paid":
+                    self.vars[key].trace_add("write", lambda *a: self._on_amount_paid_changed())
                 else:
                     self.vars[key].trace_add("write", lambda *a: self.validate())
             if self._first_input is None:
                 self._first_input = entry
             self._last_input = entry
+            self._field_entries.append(entry)
 
         self.calc_box = ctk.CTkFrame(self.scroll_form, fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK), corner_radius=8)
         self.calc_box.pack(fill="x", padx=10, pady=15)
@@ -488,10 +495,31 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.save_btn.bind("<Shift-Tab>", lambda e: self._focus_widget(self.cancel_btn))
         self.save_btn.bind("<Return>", lambda e: self._submit_from_keyboard())
         self.save_btn.bind("<KP_Enter>", lambda e: self._submit_from_keyboard())
+        self._bind_enter_navigation()
 
     def _bind_keyboard_shortcuts(self):
         self.bind("<Return>", lambda e: self._submit_from_keyboard())
         self.bind("<KP_Enter>", lambda e: self._submit_from_keyboard())
+
+    def _bind_enter_navigation(self):
+        for entry in self._field_entries:
+            entry.bind("<Return>", lambda e, w=entry: self._focus_next_entry(w))
+            entry.bind("<KP_Enter>", lambda e, w=entry: self._focus_next_entry(w))
+
+    def _focus_next_entry(self, current):
+        ordered = [w for w in self._field_entries if w and w.winfo_exists()]
+        try:
+            index = ordered.index(current)
+        except ValueError:
+            return "break"
+
+        if index + 1 < len(ordered):
+            next_widget = ordered[index + 1]
+        else:
+            next_widget = self.save_btn
+
+        self.after_idle(lambda: self._focus_widget(next_widget))
+        return "break"
 
     def _submit_from_keyboard(self):
         try:
@@ -505,6 +533,9 @@ class PropertyEditModal(ctk.CTkToplevel):
     def _prepare_payment_entry(self):
         """Reuse the property editor as a clean payment-posting form."""
         self.title("Add Payment")
+        self._last_auto_amount_paid = ""
+        self._setting_auto_amount_paid = False
+        self._amount_paid_manually_changed = False
         for key in ("or_number", "or_date", "penalty", "discount", "amount_paid"):
             if key in self.vars:
                 self.vars[key].set("")
@@ -585,7 +616,7 @@ class PropertyEditModal(ctk.CTkToplevel):
 
         self.vars["discount"].set(f"{discount:.2f}")
         self.vars["penalty"].set(f"{penalty:.2f}")
-        self.vars["amount_paid"].set(f"{net_due:.2f}")
+        self._set_auto_amount_paid(net_due)
 
         breakdown = result.get("breakdown", "")
         self._compute_lbl.configure(
@@ -593,6 +624,28 @@ class PropertyEditModal(ctk.CTkToplevel):
             text_color="#10b981",
         )
         self.recompute()
+
+    def _on_amount_paid_changed(self):
+        if self._setting_auto_amount_paid:
+            self.validate()
+            return
+        current = self.vars["amount_paid"].get().strip()
+        if current and current != self._last_auto_amount_paid:
+            self._amount_paid_manually_changed = True
+        elif not current:
+            self._amount_paid_manually_changed = False
+        self.validate()
+
+    def _set_auto_amount_paid(self, amount):
+        text = f"{float(amount or 0):.2f}"
+        self._setting_auto_amount_paid = True
+        try:
+            self.vars["amount_paid"].set(text)
+            self._last_auto_amount_paid = text
+            self._amount_paid_manually_changed = False
+        finally:
+            self._setting_auto_amount_paid = False
+        self.validate()
 
     def recompute(self, *args):
         try:
@@ -604,8 +657,14 @@ class PropertyEditModal(ctk.CTkToplevel):
             # specific tax year — use that for accurate final amounts.
             total = (av * 0.02) + pe - ds
             self.total_lbl.configure(text=f"TOTAL TAX DUE: {total:,.2f}  (preview — use ⚡ AUTO-COMPUTE for exact amount)")
-            if self.payment_mode and not self.property_id:
-                self.vars["amount_paid"].set(f"{total:.2f}")
+            if self.payment_mode:
+                current_amount = self.vars["amount_paid"].get().strip()
+                if (
+                    not self._amount_paid_manually_changed
+                    or not current_amount
+                    or current_amount == self._last_auto_amount_paid
+                ):
+                    self._set_auto_amount_paid(total)
         except Exception:
             pass
         self.validate()

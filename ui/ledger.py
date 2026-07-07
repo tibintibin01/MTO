@@ -477,8 +477,6 @@ class PaymentEditModal(ctk.CTkToplevel):
             ctk.CTkLabel(content, text=label.upper(), font=("Segoe UI", 10, "bold"), text_color="#94a3b8").pack(anchor="w", fill="x")
             ent = ctk.CTkEntry(content, textvariable=self.vars[key], placeholder_text=placeholder, height=36, fg_color="#1f2937", border_color="#475569", text_color="white")
             ent.pack(fill="x", pady=(4, 12))
-            ent.bind("<Return>", lambda _e: self.save())
-            ent.bind("<KP_Enter>", lambda _e: self.save())
             self._field_entries.append(ent)
 
         hint = "Changing this record recalculates the linked billing balance. Regenerate the receipt after saving if the PDF should reflect the correction."
@@ -490,9 +488,30 @@ class PaymentEditModal(ctk.CTkToplevel):
         ctk.CTkButton(footer, text="CANCEL", command=self.destroy, fg_color="#64748b", width=120, height=36).grid(row=0, column=0, sticky="w")
         self.save_btn = ctk.CTkButton(footer, text="SAVE CHANGES", command=self.save, fg_color=ModernTheme.SUCCESS, width=160, height=36)
         self.save_btn.grid(row=0, column=2, sticky="e")
+        self.save_btn.bind("<Return>", lambda _e: self.save())
+        self.save_btn.bind("<KP_Enter>", lambda _e: self.save())
+        self._bind_enter_navigation()
 
         if self._field_entries:
             self._field_entries[0].focus_set()
+
+    def _bind_enter_navigation(self):
+        for entry in self._field_entries:
+            entry.bind("<Return>", lambda _e, w=entry: self._focus_next_entry(w))
+            entry.bind("<KP_Enter>", lambda _e, w=entry: self._focus_next_entry(w))
+
+    def _focus_next_entry(self, current):
+        try:
+            index = self._field_entries.index(current)
+        except ValueError:
+            return "break"
+
+        if index + 1 < len(self._field_entries):
+            next_widget = self._field_entries[index + 1]
+        else:
+            next_widget = self.save_btn
+        self.after_idle(next_widget.focus_set)
+        return "break"
 
     def _amount(self, key):
         text = self.vars[key].get().replace(",", "").strip()

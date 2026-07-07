@@ -512,11 +512,20 @@ def recalculate_billing_balances(billing_ids, db_session: Session = None):
             seen.append(billing_id)
 
     for billing_id in seen:
-        # Recalculate sum of payments for this billing
-        total_paid = db_session.query(func.sum(PaymentBilling.amount_paid)).filter(PaymentBilling.billing_id == billing_id).scalar() or 0
-        
+        total_paid, total_penalty, total_discount = db_session.query(
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
+            func.coalesce(func.sum(Payment.penalty), 0),
+            func.coalesce(func.sum(Payment.discount), 0),
+        ).outerjoin(
+            Payment, Payment.id == PaymentBilling.payment_id
+        ).filter(
+            PaymentBilling.billing_id == billing_id
+        ).one()
+
         db_session.query(PropertyBilling).filter(PropertyBilling.id == billing_id).update({
-            PropertyBilling.amount_paid: float(total_paid),
+            PropertyBilling.amount_paid: float(total_paid or 0),
+            PropertyBilling.penalty: float(total_penalty or 0),
+            PropertyBilling.discount: float(total_discount or 0),
             PropertyBilling.updated_at: datetime.now(timezone.utc)
         }, synchronize_session=False)
 
@@ -1206,15 +1215,46 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
 
     safe_limit = max(5, min(int(limit or 50), 200))
     total = total_rate_expr()
-    due_expr = (PropertyBilling.assessed_value * total) + PropertyBilling.penalty - PropertyBilling.discount
-    paid_through_year = _paid_to_billing_expr(db_session, year_lte=ry)
-    balance_expr = due_expr - paid_through_year
-    raw_cumulative_balance_expr = due_expr - PropertyBilling.amount_paid
     linked_paid_expr = db_session.query(
         func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
     ).filter(
         PaymentBilling.billing_id == PropertyBilling.id
     ).correlate(PropertyBilling).scalar_subquery()
+    linked_penalty_expr = db_session.query(
+        func.coalesce(func.sum(Payment.penalty), 0)
+    ).join(
+        PaymentBilling, PaymentBilling.payment_id == Payment.id
+    ).filter(
+        PaymentBilling.billing_id == PropertyBilling.id
+    ).correlate(PropertyBilling).scalar_subquery()
+    linked_discount_expr = db_session.query(
+        func.coalesce(func.sum(Payment.discount), 0)
+    ).join(
+        PaymentBilling, PaymentBilling.payment_id == Payment.id
+    ).filter(
+        PaymentBilling.billing_id == PropertyBilling.id
+    ).correlate(PropertyBilling).scalar_subquery()
+    linked_count_expr = db_session.query(
+        func.count(PaymentBilling.id)
+    ).filter(
+        PaymentBilling.billing_id == PropertyBilling.id
+    ).correlate(PropertyBilling).scalar_subquery()
+    effective_penalty_expr = case(
+        (linked_count_expr > 0, linked_penalty_expr),
+        else_=PropertyBilling.penalty,
+    )
+    effective_discount_expr = case(
+        (linked_count_expr > 0, linked_discount_expr),
+        else_=PropertyBilling.discount,
+    )
+    effective_paid_expr = case(
+        (linked_count_expr > 0, linked_paid_expr),
+        else_=PropertyBilling.amount_paid,
+    )
+    due_expr = (PropertyBilling.assessed_value * total) + effective_penalty_expr - effective_discount_expr
+    paid_through_year = _paid_to_billing_expr(db_session, year_lte=ry)
+    balance_expr = due_expr - paid_through_year
+    raw_cumulative_balance_expr = due_expr - effective_paid_expr
     payment_gap_expr = PropertyBilling.amount_paid - linked_paid_expr
 
     summary = get_rpt_receivables_summary(ry, db_session=db_session)
