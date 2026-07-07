@@ -94,6 +94,7 @@ class LedgerPage:
             tr("ledger.table.discount"),
             tr("ledger.table.total"),
             tr("ledger.table.posted"),
+            "Remarks",
             tr("ledger.table.status")
         )
         self.tree = ttk.Treeview(t_frame, columns=self.cols, show="headings", style="Ledger.Treeview")
@@ -106,6 +107,7 @@ class LedgerPage:
         self.tree.column("OR Number", width=120)
         self.tree.column("Total Paid", width=130)
         self.tree.column("Posted By", width=150)
+        self.tree.column("Remarks", width=220, anchor="w")
         self.tree.column("File Status", width=120)
 
         scrolly = ttk.Scrollbar(t_frame, orient="vertical", command=self.tree.yview, style="Ledger.Vertical.TScrollbar")
@@ -155,8 +157,10 @@ class LedgerPage:
 
         def worker():
             try:
-                # Unified query returns: payment_id(0), date_paid(1), or_number(2), tax_year(3), 
-                # basic(4), sef(5), penalty(6), amount(7), posted_by(8), file_path(9), receipt_id(10)
+                # Unified query returns:
+                # 0 payment_id, 1 date_paid, 2 OR, 3 tax_year, 4 basic, 5 SEF,
+                # 6 penalty, 7 discount, 8 amount, 9 posted_by, 10 remarks,
+                # 11 file_path, 12 receipt_id, 13 TD, 14 owner, 15 property_id.
                 rows = payment.get_unified_payment_history(term)
                 self.container.after(0, lambda: self._update_ui(rows, term))
             except Exception as e:
@@ -173,10 +177,11 @@ class LedgerPage:
         self._ledger_property_ids = {}
         if rows:
             for i, r in enumerate(rows):
-                # r: 0:pay_id, 1:date, 2:or, 3:year, 4:basic, 5:sef, 6:pen, 7:disc, 8:amt, 9:user, 10:path, 11:rid
-                f_r = list(r[:10]) # Get core 10 columns (ID to Posted By)
-                # Status based on file_path (which is index 10 in r)
-                status = tr("ledger.table.status_ready") if r[10] and os.path.exists(r[10]) else tr("ledger.table.status_missing")
+                # r: 0:pay_id, 1:date, 2:or, 3:year, 4:basic, 5:sef, 6:pen,
+                # 7:disc, 8:amt, 9:user, 10:remarks, 11:path, 12:rid
+                f_r = list(r[:11])
+                file_path = r[11] if len(r) > 11 else None
+                status = tr("ledger.table.status_ready") if file_path and os.path.exists(file_path) else tr("ledger.table.status_missing")
                 f_r.append(status)
                 
                 # Format Currencies
@@ -185,11 +190,12 @@ class LedgerPage:
                 f_r[6] = format_curr(f_r[6]) # Penalty
                 f_r[7] = format_curr(f_r[7]) # Discount
                 f_r[8] = format_curr(f_r[8]) # Total
+                f_r[10] = str(f_r[10] or "")
                 
                 tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-                item_id = self.tree.insert("", "end", values=f_r, tags=(r[10], tag)) # Store path and zebra tag
-                if len(r) > 14:
-                    self._ledger_property_ids[item_id] = r[14]
+                item_id = self.tree.insert("", "end", values=f_r, tags=(file_path or "", tag)) # Store path and zebra tag
+                if len(r) > 15:
+                    self._ledger_property_ids[item_id] = r[15]
                 try: grand_total += float(r[8])
                 except: pass
             self.total_lbl.configure(text=tr("ledger.footer.total").replace("{value}", f"₱ {grand_total:,.2f}"))
@@ -462,6 +468,7 @@ class PaymentEditModal(ctk.CTkToplevel):
             "penalty": tk.StringVar(value=self._money_text("penalty")),
             "discount": tk.StringVar(value=self._money_text("discount")),
             "amount": tk.StringVar(value=self._money_text("amount")),
+            "remarks": tk.StringVar(value=str(self.details.get("remarks") or "")),
         }
 
         fields = (
@@ -471,6 +478,7 @@ class PaymentEditModal(ctk.CTkToplevel):
             ("Penalty", "penalty", "0.00"),
             ("Discount", "discount", "0.00"),
             ("Total Paid", "amount", "0.00"),
+            ("Remarks", "remarks", "Optional note only"),
         )
         self._field_entries = []
         for label, key, placeholder in fields:
@@ -497,8 +505,10 @@ class PaymentEditModal(ctk.CTkToplevel):
 
     def _bind_enter_navigation(self):
         for entry in self._field_entries:
-            entry.bind("<Return>", lambda _e, w=entry: self._focus_next_entry(w))
-            entry.bind("<KP_Enter>", lambda _e, w=entry: self._focus_next_entry(w))
+            for widget in (entry, getattr(entry, "_entry", None)):
+                if widget:
+                    widget.bind("<Return>", lambda _e, w=entry: self._focus_next_entry(w))
+                    widget.bind("<KP_Enter>", lambda _e, w=entry: self._focus_next_entry(w))
 
     def _focus_next_entry(self, current):
         try:
@@ -526,6 +536,7 @@ class PaymentEditModal(ctk.CTkToplevel):
                 "penalty": self._amount("penalty"),
                 "discount": self._amount("discount"),
                 "amount": self._amount("amount"),
+                "remarks": self.vars["remarks"].get().strip(),
             }
         except ValueError:
             messagebox.showerror("Invalid Amount", "Penalty, discount, and total paid must be valid numbers.", parent=self)

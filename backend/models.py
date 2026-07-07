@@ -66,6 +66,7 @@ class Payment(Base):
     date_paid = Column(DateTime, nullable=True, index=True)
     tax_year = Column(String(20), nullable=True)
     posted_by = Column(String(255), nullable=True)
+    remarks = Column(String(500), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     property = relationship("Property", back_populates="payments")

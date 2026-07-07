@@ -528,6 +528,7 @@ def _sync_financial_records(prop_id, data, db_session: Session):
         payor_name = data.get("Payor") or data.get("Owner Name")
         tax_year_str = billing.format_tax_years(data.get("Tax Year"))
         posted_by = data.get("Accountable Officer")
+        remarks = str(data.get("Remarks") or "").strip()[:500] or None
 
         duplicate = payment.find_duplicate_payment_entry(
             data.get("TD Number"),
@@ -554,6 +555,7 @@ def _sync_financial_records(prop_id, data, db_session: Session):
         pay_obj.date_paid = or_dt
         pay_obj.tax_year = tax_year_str
         pay_obj.posted_by = posted_by
+        pay_obj.remarks = remarks
         pay_obj.payor_name = payor_name
         pay_obj.penalty = pen    # store penalty on Payment record
         pay_obj.discount = disc  # store discount on Payment record

@@ -382,6 +382,7 @@ class PropertyEditModal(ctk.CTkToplevel):
             ("Penalty", "penalty"),
             ("Discount", "discount"),
             ("Amount Paid", "amount_paid"),
+            ("Remarks", "remarks"),
         ]
 
         for _, key in fields + correction_fields + payment_fields:
@@ -564,7 +565,7 @@ class PropertyEditModal(ctk.CTkToplevel):
         self._last_auto_amount_paid = ""
         self._setting_auto_amount_paid = False
         self._amount_paid_manually_changed = False
-        for key in ("or_number", "or_date", "penalty", "discount", "amount_paid"):
+        for key in ("or_number", "or_date", "penalty", "discount", "amount_paid", "remarks"):
             if key in self.vars:
                 self.vars[key].set("")
         self.save_btn.configure(text="SAVE PAYMENT")
@@ -749,6 +750,7 @@ class PropertyEditModal(ctk.CTkToplevel):
                 "penalty": "Penalty",
                 "discount": "Discount",
                 "amount_paid": "Amount Paid",
+                "remarks": "Remarks",
             })
         
         data = {}

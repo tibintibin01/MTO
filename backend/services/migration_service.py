@@ -202,6 +202,10 @@ MIGRATIONS = [
             "CREATE INDEX IF NOT EXISTS ix_jobs_status_started "
             "ON jobs (status, started_at);"
         )
+    },
+    {
+        "id": "add_payment_remarks_column",
+        "sql": "ALTER TABLE payments ADD COLUMN IF NOT EXISTS remarks VARCHAR(500) NULL;"
     }
 
 ]

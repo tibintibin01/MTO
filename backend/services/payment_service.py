@@ -23,6 +23,11 @@ def _d(value) -> Decimal:
         return Decimal("0")
 
 
+def _clean_remarks(value):
+    text = str(value or "").strip()
+    return text[:500] if text else None
+
+
 def find_duplicate_payment(
     property_id, or_number, tax_year_text, exclude_payment_id=None, db_session: Session = None
 ):
@@ -262,6 +267,7 @@ def get_unified_payment_history(term, db_session: Session = None):
         Payment.discount,
         Payment.amount,
         Payment.posted_by,
+        Payment.remarks,
         ReceiptHistory.file_path,
         ReceiptHistory.id.label('receipt_id'),
         Property.td_number,
@@ -299,7 +305,8 @@ def get_payment_ledger(td_number, db_session: Session = None):
         (Property.assessed_value * sef_rate_expr()).label('sef'),
         Payment.penalty,
         Payment.discount,
-        Payment.amount
+        Payment.amount,
+        Payment.remarks
     ).join(Property, Property.id == Payment.property_id).outerjoin(
         TaxPolicy, TaxPolicy.tax_year == Property.tax_year
     ).filter(
@@ -373,6 +380,7 @@ def get_payment_receipt_details(payment_id, db_session: Session = None):
         Payment.or_number,
         Payment.date_paid,
         Payment.tax_year,
+        Payment.remarks,
         ReceiptHistory.file_path,
         ReceiptHistory.id.label('rh_id')
     ).join(Property, Property.id == Payment.property_id).outerjoin(
@@ -402,6 +410,7 @@ def get_payment_receipt_details(payment_id, db_session: Session = None):
         "or_number": row.or_number,
         "date_paid": row.date_paid,
         "tax_year": row.tax_year,
+        "remarks": row.remarks,
         "file_path": row.file_path,
         "receipt_history_id": row.rh_id,
     }
@@ -546,6 +555,7 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
         payment.penalty = penalty
         payment.discount = discount
         payment.posted_by = get_username(user_name)
+        payment.remarks = _clean_remarks(data.get("remarks"))
 
         db_session.flush()
         sync_payment_billings(

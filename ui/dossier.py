@@ -343,13 +343,17 @@ class PropertyDossierModal(ctk.CTkToplevel):
         events = []
 
         for payment in self.data.get("payments", []):
+            remarks = str(payment[8] or "").strip() if len(payment) > 8 else ""
+            detail = f"Tax year: {payment[2]}"
+            if remarks:
+                detail += f" | Note: {remarks}"
             events.append(
                 {
                     "date": str(payment[0])[:10],
                     "type": "PAYMENT",
                     "title": f"Official Receipt: {payment[1]}",
                     "subtitle": f"Amount paid: P {float(payment[7] or 0):,.2f}",
-                    "detail": f"Tax year: {payment[2]}",
+                    "detail": detail,
                     "color": "#16a085",
                 }
             )

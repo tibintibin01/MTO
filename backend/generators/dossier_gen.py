@@ -117,6 +117,13 @@ def generate_property_dossier(dossier_data, base_dir):
             c.drawString(margin_x + 75 * mm, current_y, safe_text(p[2]))
             c.drawRightString(width - margin_x - 2 * mm, current_y, f"P {fmt_currency(p[7])}")
             current_y -= 7 * mm
+            note = safe_text(p[8]) if len(p) > 8 else ""
+            if note:
+                c.setFont(BRANDING["fonts"]["body"], 8)
+                c.setFillColor(colors.HexColor("#546e7a"))
+                c.drawString(margin_x + 35 * mm, current_y, f"Note: {note[:120]}")
+                c.setFillColor(colors.black)
+                current_y -= 6 * mm
 
     current_y -= 15 * mm
 

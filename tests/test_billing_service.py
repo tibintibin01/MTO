@@ -485,7 +485,7 @@ def test_partial_installments_remain_separate_when_later_year_is_posted(db):
     db.add(prop)
     db.commit()
 
-    def post(year, or_number, or_date, amount):
+    def post(year, or_number, or_date, amount, remarks=""):
         _sync_financial_records(prop.id, {
             "TD Number": prop.td_number,
             "Owner Name": prop.owner_name,
@@ -496,10 +496,11 @@ def test_partial_installments_remain_separate_when_later_year_is_posted(db):
             "Penalty": "0",
             "Discount": "0",
             "Amount Paid": str(amount),
+            "Remarks": remarks,
         }, db)
         db.commit()
 
-    post(2023, "OR-PARTIAL", "2023-01-10", 500.0)
+    post(2023, "OR-PARTIAL", "2023-01-10", 500.0, "1st quarter only")
     post(2023, "OR-FINAL", "2023-02-10", 1_500.0)
     # Reusing an OR/date for a different tax year must create another ledger
     # entry, not mutate the existing 2023 installment.
@@ -511,6 +512,7 @@ def test_partial_installments_remain_separate_when_later_year_is_posted(db):
         ("2023", 1_500.0),
         ("2024", 2_000.0),
     ]
+    assert payments[0].remarks == "1st quarter only"
 
     billing_2023 = db.query(PropertyBilling).filter_by(property_id=prop.id, tax_year=2023).one()
     billing_2024 = db.query(PropertyBilling).filter_by(property_id=prop.id, tax_year=2024).one()
@@ -518,7 +520,9 @@ def test_partial_installments_remain_separate_when_later_year_is_posted(db):
     assert float(billing_2024.amount_paid) == pytest.approx(2_000.0)
     assert db.query(PaymentBilling).filter_by(billing_id=billing_2023.id).count() == 2
     assert db.query(PaymentBilling).filter_by(billing_id=billing_2024.id).count() == 1
-    assert len(get_unified_payment_history(prop.td_number, db_session=db)) == 3
+    ledger_rows = get_unified_payment_history(prop.td_number, db_session=db)
+    assert len(ledger_rows) == 3
+    assert any(row[10] == "1st quarter only" for row in ledger_rows)
 
     with pytest.raises(HTTPException) as duplicate_error:
         _sync_financial_records(prop.id, {

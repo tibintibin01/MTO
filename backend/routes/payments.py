@@ -21,6 +21,7 @@ class PaymentUpdateRequest(BaseModel):
     amount: float
     penalty: float = 0.0
     discount: float = 0.0
+    remarks: Optional[str] = None
 @router.get("/recent")
 async def get_recent_payments(
     limit: int = 8, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
