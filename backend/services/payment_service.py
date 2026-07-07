@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from backend.database import SessionLocal
 from backend.models import ReceiptHistory
-from sqlalchemy import or_, func, cast
+from sqlalchemy import or_, func, cast, literal, inspect
 from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
 from backend.models import Payment, Property, PropertyBilling, PaymentBilling, TaxPolicy
@@ -26,6 +26,25 @@ def _d(value) -> Decimal:
 def _clean_remarks(value):
     text = str(value or "").strip()
     return text[:500] if text else None
+
+
+def _payment_remarks_expr(db_session: Session = None):
+    """Return Payment.remarks only when the live DB has the column.
+
+    This keeps ledger reads working during a rolling update where a desktop
+    client or API process is newer than the database schema.
+    """
+    try:
+        bind = db_session.get_bind() if db_session is not None else None
+        if bind is None:
+            return literal(None).label("remarks")
+        inspector = inspect(bind)
+        columns = {col["name"] for col in inspector.get_columns("payments")}
+        if "remarks" in columns:
+            return Payment.remarks
+    except Exception:
+        pass
+    return literal(None).label("remarks")
 
 
 def find_duplicate_payment(
@@ -267,7 +286,7 @@ def get_unified_payment_history(term, db_session: Session = None):
         Payment.discount,
         Payment.amount,
         Payment.posted_by,
-        Payment.remarks,
+        _payment_remarks_expr(db_session),
         ReceiptHistory.file_path,
         ReceiptHistory.id.label('receipt_id'),
         Property.td_number,
@@ -306,7 +325,7 @@ def get_payment_ledger(td_number, db_session: Session = None):
         Payment.penalty,
         Payment.discount,
         Payment.amount,
-        Payment.remarks
+        _payment_remarks_expr(db_session)
     ).join(Property, Property.id == Payment.property_id).outerjoin(
         TaxPolicy, TaxPolicy.tax_year == Property.tax_year
     ).filter(
@@ -380,7 +399,7 @@ def get_payment_receipt_details(payment_id, db_session: Session = None):
         Payment.or_number,
         Payment.date_paid,
         Payment.tax_year,
-        Payment.remarks,
+        _payment_remarks_expr(db_session),
         ReceiptHistory.file_path,
         ReceiptHistory.id.label('rh_id')
     ).join(Property, Property.id == Payment.property_id).outerjoin(
