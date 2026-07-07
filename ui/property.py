@@ -308,6 +308,7 @@ class PropertyEditModal(ctk.CTkToplevel):
         self._first_input = None
         self._last_input = None
         self._field_entries = []
+        self._field_entries_by_key = {}
         self._last_auto_amount_paid = ""
         self._setting_auto_amount_paid = False
         self._amount_paid_manually_changed = False
@@ -448,6 +449,7 @@ class PropertyEditModal(ctk.CTkToplevel):
                 self._first_input = entry
             self._last_input = entry
             self._field_entries.append(entry)
+            self._field_entries_by_key[key] = entry
 
         self.calc_box = ctk.CTkFrame(self.scroll_form, fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK), corner_radius=8)
         self.calc_box.pack(fill="x", padx=10, pady=15)
@@ -523,6 +525,30 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.after_idle(lambda: self._focus_widget(next_widget))
         return "break"
 
+    def _focus_and_select_field(self, key):
+        entry = self._field_entries_by_key.get(key)
+        if not entry:
+            return
+
+        def apply_focus():
+            if not self.winfo_exists() or not entry.winfo_exists():
+                return
+            self._focus_widget(entry)
+            for widget in (entry, getattr(entry, "_entry", None)):
+                if not widget:
+                    continue
+                try:
+                    widget.select_range(0, "end")
+                    widget.icursor("end")
+                except Exception:
+                    try:
+                        widget.selection_range(0, "end")
+                        widget.icursor("end")
+                    except Exception:
+                        pass
+
+        self.after(150, apply_focus)
+
     def _submit_from_keyboard(self):
         try:
             if self.save_btn.cget("state") == "disabled":
@@ -550,6 +576,7 @@ class PropertyEditModal(ctk.CTkToplevel):
             text_color="#64748b",
         )
         self.recompute()
+        self._focus_and_select_field("tax_year")
 
     def _auto_compute(self):
         """
