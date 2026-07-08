@@ -222,7 +222,8 @@ def fix_td_numbers(dry_run: bool = True):
     )
 
 def compute_payment(assessed_value: float, tax_year: int, date_paid: str,
-                    payment_type: str = "annual", quarter: int = 0):
+                    payment_type: str = "annual", quarter: int = 0,
+                    property_id=None):
     """
     Smart payment computation.
     Returns discount and penalty amounts based on date_paid vs tax_year deadline.
@@ -247,13 +248,16 @@ def compute_payment(assessed_value: float, tax_year: int, date_paid: str,
         discount_amount, discount_label, penalty_months, penalty_amount,
         penalty_label, net_amount_due, breakdown
     """
-    return api_request("POST", "/system/compute-payment", data={
+    payload = {
         "assessed_value": assessed_value,
         "tax_year":       tax_year,
         "date_paid":      date_paid,
         "payment_type":   payment_type,
         "quarter":        quarter,
-    })
+    }
+    if property_id:
+        payload["property_id"] = property_id
+    return api_request("POST", "/system/compute-payment", data=payload)
 
 
 def shadow_duplicate_cleanup(bad_ids: list):

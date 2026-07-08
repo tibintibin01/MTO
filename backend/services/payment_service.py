@@ -499,7 +499,11 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
     """Update a single payment row and keep PropertyBilling totals in sync."""
     from datetime import datetime
     from backend.services.system_service import log_action
-    from backend.services.billing_service import recalculate_billing_balances, sync_payment_billings
+    from backend.services.billing_service import (
+        recalculate_billing_balances,
+        resolve_assessed_value_for_billing_year,
+        sync_payment_billings,
+    )
 
     payment = db_session.query(Payment).filter(Payment.id == payment_id).with_for_update().first()
     if not payment:
@@ -574,7 +578,12 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
             billing = PropertyBilling(
                 property_id=payment.property_id,
                 tax_year=tax_year,
-                assessed_value=_d(prop.assessed_value),
+                assessed_value=resolve_assessed_value_for_billing_year(
+                    payment.property_id,
+                    tax_year,
+                    prop.assessed_value,
+                    db_session=db_session,
+                ),
                 penalty=0,
                 discount=0,
                 amount_paid=0,

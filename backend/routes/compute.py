@@ -32,6 +32,7 @@ class ComputePaymentRequest(BaseModel):
     date_paid: str           # YYYY-MM-DD
     payment_type: str = "annual"
     quarter: int = 0
+    property_id: Optional[int] = None
 
 
 def _count_annual_penalty_months(tax_year: int, paid_date) -> int:
@@ -62,7 +63,8 @@ async def compute_payment(
     """
     from decimal import Decimal, ROUND_HALF_UP
     from datetime import date
-    from backend.models import TaxPolicy
+    from backend.models import Property, TaxPolicy
+    from backend.services.assessment_value_service import assessed_value_for_year
 
     try:
         paid_date = datetime.strptime(data.date_paid, "%Y-%m-%d").date()
@@ -71,6 +73,18 @@ async def compute_payment(
 
     tax_year = data.tax_year
     av = Decimal(str(data.assessed_value))
+    av_source = "input"
+
+    if data.property_id:
+        prop = db_session.query(Property).filter(
+            Property.id == data.property_id,
+            Property.deleted_at == None,
+        ).first()
+        if prop:
+            resolved_av = assessed_value_for_year(prop, tax_year, db_session)
+            if resolved_av is not None and resolved_av > Decimal("0.00"):
+                av = resolved_av
+                av_source = "effective_year"
 
     policy = db_session.query(TaxPolicy).filter(TaxPolicy.tax_year == tax_year).first()
     basic_rate   = Decimal(str(policy.basic_rate))   if policy else Decimal("0.01")
@@ -112,6 +126,7 @@ async def compute_payment(
 
     return {
         "assessed_value": float(av), "basic_rate": float(basic_rate),
+        "assessed_value_source": av_source,
         "sef_rate": float(sef_rate), "penalty_rate": float(penalty_rate),
         "basic_tax": float(basic_tax), "sef_tax": float(sef_tax), "total_tax": float(total_tax),
         "discount_rate": float(discount_rate), "discount_amount": float(discount_amount),

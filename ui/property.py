@@ -624,7 +624,12 @@ class PropertyEditModal(ctk.CTkToplevel):
 
         def worker():
             try:
-                result = system_svc.compute_payment(av, yr, clean_date)
+                result = system_svc.compute_payment(
+                    av,
+                    yr,
+                    clean_date,
+                    property_id=self.property_id if self.payment_mode else None,
+                )
                 self.after(0, lambda r=result: self._apply_compute(r))
             except Exception as e:
                 self.after(0, lambda err=e: self._compute_lbl.configure(
@@ -643,12 +648,24 @@ class PropertyEditModal(ctk.CTkToplevel):
         discount = result.get("discount_amount", 0.0)
         penalty  = result.get("penalty_amount",  0.0)
         net_due  = result.get("net_amount_due",  0.0)
+        resolved_av = result.get("assessed_value")
+
+        if self.payment_mode and resolved_av is not None:
+            self.vars["assessed_value"].set(f"{float(resolved_av):.2f}")
 
         self.vars["discount"].set(f"{discount:.2f}")
         self.vars["penalty"].set(f"{penalty:.2f}")
         self._set_auto_amount_paid(net_due)
 
         breakdown = result.get("breakdown", "")
+        source = result.get("assessed_value_source")
+        prefix = ""
+        if self.payment_mode and source == "effective_year":
+            prefix = (
+                f"AV used for {self.vars['tax_year'].get().strip()}: "
+                f"{float(resolved_av or 0):,.2f}. "
+            )
+        breakdown = f"{prefix}{breakdown}"
         self._compute_lbl.configure(
             text=f"✅  {breakdown}",
             text_color="#10b981",

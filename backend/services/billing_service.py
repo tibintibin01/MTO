@@ -181,6 +181,41 @@ def sync_property_billing(
     }
 
 
+def resolve_assessed_value_for_billing_year(
+    property_id,
+    tax_year,
+    fallback_assessed_value=None,
+    db_session: Session = None,
+):
+    """
+    Resolve the assessed value that should be used for a specific billing year.
+
+    Property.assessed_value is the current master value. Payment/billing rows are
+    historical snapshots, so older tax years must use the assessment value that
+    was effective for that year when prior assessment history exists.
+    """
+    fallback = Decimal(str(fallback_assessed_value or 0)).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    if not db_session or not property_id:
+        return fallback
+
+    normalized_tax_year = (
+        int(tax_year) if tax_year and str(tax_year).strip().isdigit() else None
+    )
+    if not normalized_tax_year:
+        return fallback
+
+    prop = db_session.query(Property).filter(Property.id == property_id).first()
+    if not prop:
+        return fallback
+
+    resolved = assessed_value_for_year(prop, normalized_tax_year, db_session)
+    if resolved is None or resolved <= Decimal("0.00"):
+        return fallback
+    return resolved
+
+
 def _year_from_value(value):
     if value is None:
         return None
@@ -686,7 +721,12 @@ def repair_payment_billing_allocations(
             billing = PropertyBilling(
                 property_id=prop.id,
                 tax_year=tax_year,
-                assessed_value=Decimal(str(prop.assessed_value or 0)),
+                assessed_value=resolve_assessed_value_for_billing_year(
+                    prop.id,
+                    tax_year,
+                    prop.assessed_value,
+                    db_session=db_session,
+                ),
                 penalty=Decimal("0.00"),
                 discount=Decimal("0.00"),
                 amount_paid=Decimal("0.00"),

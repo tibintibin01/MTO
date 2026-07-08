@@ -525,15 +525,22 @@ def _sync_financial_records(prop_id, data, db_session: Session):
     pen = clean_currency(data.get("Penalty"))
     disc = clean_currency(data.get("Discount"))
     
-    # Split amounts across multiple years if applicable
-    av_shares = billing.split_amount_across_years(av, len(tax_years))
+    # Penalty/discount entered for a multi-year receipt are split across years
+    # for backward compatibility. Assessed value is not split: each tax year
+    # gets the historical value effective for that year.
     pen_shares = billing.split_amount_across_years(pen, len(tax_years))
     disc_shares = billing.split_amount_across_years(disc, len(tax_years))
     
     should_pay = bool(data.get("OR Number"))
     billing_rows = []
     
-    for year, a_s, p_s, d_s in zip(tax_years, av_shares, pen_shares, disc_shares):
+    for year, p_s, d_s in zip(tax_years, pen_shares, disc_shares):
+        a_s = billing.resolve_assessed_value_for_billing_year(
+            prop_id,
+            year,
+            av,
+            db_session=db_session,
+        )
         billing_rows.append(
             billing.sync_property_billing(prop_id, year, a_s, p_s, d_s, has_payment=should_pay, db_session=db_session)
         )

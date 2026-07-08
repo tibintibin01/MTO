@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
-from backend.models import Payment, PaymentBilling, Property, PropertyBilling
+from backend.models import Payment, PaymentBilling, Property, PropertyAssessmentHistory, PropertyBilling
 from backend.services.billing_service import (
     calculate_penalty,
     get_compliant_accounts,
@@ -136,6 +136,53 @@ def test_receivables_by_barangay_collections_use_billing_year_allocations(db):
     assert row[2] == pytest.approx(2_000.0)
     assert row[5] == pytest.approx(500.0)
     assert row[6] == pytest.approx(1_500.0)
+
+
+def test_payment_posting_uses_effective_year_assessed_value(db):
+    prop = Property(
+        td_number="06-0009-01236",
+        owner_name="Year Effective AV",
+        barangay="DIARABASIN",
+        assessed_value=181_820.0,
+        effectivity_date="2025-01-01",
+        penalty=0,
+        discount=0,
+    )
+    db.add(prop)
+    db.flush()
+    db.add(
+        PropertyAssessmentHistory(
+            property_id=prop.id,
+            td_number=prop.td_number,
+            kind_of_property="RESIDENTIAL LOT",
+            assessed_value=179_270.0,
+            tax_year="2023",
+        )
+    )
+    db.commit()
+
+    _sync_financial_records(
+        prop.id,
+        {
+            "TD Number": prop.td_number,
+            "Owner Name": prop.owner_name,
+            "Assessed Value": "181820",
+            "Tax Year": "2023",
+            "OR Number": "8139132",
+            "OR Date": "2026-07-08",
+            "Amount Paid": "3585.40",
+            "Penalty": "0",
+            "Discount": "0",
+        },
+        db,
+    )
+    db.commit()
+
+    row = db.query(PropertyBilling).filter(
+        PropertyBilling.property_id == prop.id,
+        PropertyBilling.tax_year == 2023,
+    ).one()
+    assert float(row.assessed_value) == pytest.approx(179_270.0)
 
 def test_get_total_due_logic(mock_db_session):
     """Test the orchestration of total due calculation including basic, SEF, and penalties."""
