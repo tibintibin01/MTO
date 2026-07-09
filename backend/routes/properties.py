@@ -88,7 +88,13 @@ async def resolve_payment_target(
 ):
     result = prop_svc.resolve_payment_target(td_number, tax_year, db_session=db_session)
     if not result:
-        raise HTTPException(status_code=404, detail="No property chain matched this TD number.")
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"No active TD in this chain is effective for tax year {tax_year}. "
+                "Use the TD record active for that year, or add the missing Previous TD first."
+            ),
+        )
     return result
 
 @router.get("/delinquent")

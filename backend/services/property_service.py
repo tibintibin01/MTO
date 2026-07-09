@@ -375,7 +375,7 @@ def resolve_property_for_tax_year(td_number, tax_year, db_session: Session):
         if _property_effectivity_year(prop) is None
         or _property_effectivity_year(prop) <= year
     ]
-    return eligible[-1] if eligible else chain[0]
+    return eligible[-1] if eligible else None
 
 
 def resolve_payment_target(td_number, tax_year, db_session: Session):
@@ -446,9 +446,23 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                 target_prop = prop
                 if tax_years:
                     target_props = [
-                        resolve_property_for_tax_year(prop.td_number, year, db_session) or prop
+                        resolve_property_for_tax_year(prop.td_number, year, db_session)
                         for year in tax_years
                     ]
+                    missing_years = [
+                        year for year, target in zip(tax_years, target_props)
+                        if target is None
+                    ]
+                    if missing_years:
+                        first_year = missing_years[0]
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                f"TD {prop.td_number} is not effective for tax year {first_year}. "
+                                "Post the payment to the TD record that was active for that year, "
+                                "or add the missing Previous TD record first."
+                            ),
+                        )
                     target_ids = {item.id for item in target_props if item}
                     if len(target_ids) > 1:
                         summary = ", ".join(

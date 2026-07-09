@@ -223,3 +223,34 @@ def test_payment_spanning_td_effectivity_change_requires_split_posting():
     assert "spans TD changes" in exc.value.detail
     assert old.td_number in exc.value.detail
     assert replacement_2026.td_number in exc.value.detail
+
+
+def test_payment_before_earliest_effectivity_is_rejected():
+    db = _session()
+    prop = Property(
+        td_number="06-0009-09999",
+        owner_name="Future Effective Owner",
+        barangay="DIARABASIN",
+        location="DIARABASIN",
+        kind_of_property="RESIDENTIAL LOT",
+        assessed_value=150_000,
+        effectivity_date="2025-01-01",
+        version=1,
+    )
+    db.add(prop)
+    db.commit()
+
+    assert resolve_property_for_tax_year(prop.td_number, 2023, db) is None
+
+    with pytest.raises(HTTPException) as exc:
+        save_property(
+            _payment_payload(prop, tax_year="2023"),
+            editing_id=prop.id,
+            user={"id": 1, "username": "tester"},
+            db_session=db,
+        )
+
+    assert exc.value.status_code == 422
+    assert "not effective for tax year 2023" in exc.value.detail
+    assert db.query(Payment).count() == 0
+    assert db.query(PropertyBilling).count() == 0
