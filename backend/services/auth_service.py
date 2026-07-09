@@ -402,6 +402,8 @@ def reset_user_password(user_id, new_password, admin_user, db_session: Session):
         return False
 
     user.password = hash_password(new_password)
+    user.failed_attempts = 0
+    user.lockout_until = None
     # Use naive UTC to match the token issued-at comparison in get_current_user.
     # datetime.now() would give local time (UTC+8 in Philippines), causing the
     # iat comparison to incorrectly reject fresh tokens after a password reset.
