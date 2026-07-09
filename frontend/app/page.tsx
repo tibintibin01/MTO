@@ -96,30 +96,58 @@ export default function Home() {
     <div className="flex flex-col">
 
       {/* ── Hero section ── */}
-      <section className="bg-gradient-to-br from-[#1a3a6b] via-[#1f4e78] to-[#0f2a5e] text-white py-16 px-4">
-        <div className="max-w-3xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 bg-yellow-400 text-[#0f2a5e] text-xs font-bold px-4 py-1.5 rounded-full mb-6 tracking-widest uppercase">
+      <section className="relative isolate overflow-hidden bg-[#09213f] px-4 py-16 text-white sm:py-20">
+        <div
+          className="absolute inset-0 bg-cover bg-center opacity-30"
+          style={{ backgroundImage: "url('/municipal-hall.png')" }}
+          aria-hidden="true"
+        />
+        <div className="absolute inset-0 bg-[#09213f]/82" aria-hidden="true" />
+        <div
+          className="absolute inset-x-0 bottom-0 h-24 bg-slate-50"
+          style={{ clipPath: "polygon(0 68%, 100% 38%, 100% 100%, 0 100%)" }}
+          aria-hidden="true"
+        />
+        <div className="relative z-10 max-w-4xl mx-auto text-center">
+          <div className="inline-flex items-center gap-2 rounded-full border border-yellow-300/40 bg-yellow-300 px-4 py-1.5 text-xs font-black uppercase text-[#09213f] shadow-lg shadow-yellow-950/20 mb-6">
             Official Government Portal
           </div>
-          <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-4 leading-tight">
+          <h2 className="text-4xl sm:text-5xl lg:text-6xl font-black mb-5 leading-[1.02]">
             Real Property Tax<br />
             <span className="text-yellow-300">Inquiry Portal</span>
           </h2>
-          <p className="text-blue-200 text-base sm:text-lg max-w-xl mx-auto mb-10">
+          <p className="text-blue-100 text-base sm:text-lg max-w-2xl mx-auto mb-6 leading-8">
             Enter your Tax Declaration Number (TDN) or PIN to view your property&apos;s
             assessment, payment history, and outstanding balance.
           </p>
 
+          <div className="mb-8 grid gap-3 text-left sm:grid-cols-3">
+            {[
+              ["Read-only", "Public inquiry access"],
+              ["From 2023", "Payment history"],
+              ["Official", "Municipal snapshot"],
+            ].map(([label, detail]) => (
+              <div
+                key={label}
+                className="rounded-2xl border border-white/12 bg-white/10 px-4 py-3 shadow-lg shadow-slate-950/20 backdrop-blur"
+              >
+                <p className="text-sm font-black text-white">{label}</p>
+                <p className="mt-1 text-xs text-blue-200">{detail}</p>
+              </div>
+            ))}
+          </div>
+
           {/* Search box */}
           <form onSubmit={handleSearch} className="max-w-2xl mx-auto">
-            <div className="flex flex-col sm:flex-row gap-3 bg-white rounded-2xl p-2 shadow-2xl">
+            <div className="rounded-[1.75rem] border border-white/20 bg-white/15 p-3 shadow-2xl shadow-slate-950/40 backdrop-blur-xl">
+            <div className="flex flex-col sm:flex-row gap-3 bg-white rounded-[1.25rem] p-2 shadow-xl">
               <div className="relative flex-1">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                   <Search className="h-5 w-5 text-slate-400" />
                 </div>
                 <input
                   type="text"
-                  className="block w-full pl-11 pr-4 py-3.5 border-none bg-transparent focus:ring-0 text-slate-800 text-base placeholder-slate-400 outline-none"
+                  className="block w-full pl-11 pr-4 py-4 border-none bg-transparent focus:ring-0 text-slate-800 text-base placeholder-slate-400 outline-none"
                   placeholder="e.g. 06-0012-01379"
                   value={query}
                   onChange={(e) => { setQuery(e.target.value); setError(""); }}
@@ -131,7 +159,7 @@ export default function Home() {
               <button
                 type="submit"
                 disabled={loading}
-                className="bg-[#1a3a6b] text-white px-8 py-3.5 rounded-xl font-bold text-sm tracking-wide hover:bg-[#0f2a5e] transition-all flex items-center justify-center gap-2 disabled:opacity-50 whitespace-nowrap"
+                className="bg-[#1a3a6b] text-white px-8 py-4 rounded-2xl font-black text-sm hover:bg-[#0f2a5e] transition-all flex items-center justify-center gap-2 disabled:opacity-50 whitespace-nowrap uppercase"
               >
                 {loading ? (
                   <span className="flex items-center gap-2">
@@ -139,7 +167,7 @@ export default function Home() {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
                     </svg>
-                    SEARCHING...
+                    SEARCHING
                   </span>
                 ) : (
                   <>
@@ -149,8 +177,9 @@ export default function Home() {
                 )}
               </button>
             </div>
+            </div>
             {error && (
-              <div className="flex items-center gap-2 mt-3 bg-red-500/20 border border-red-400/40 rounded-xl px-4 py-2.5">
+              <div className="flex items-center gap-2 mt-3 bg-red-500/20 border border-red-400/40 rounded-xl px-4 py-2.5 backdrop-blur">
                 <AlertCircle className="w-4 h-4 text-red-300 flex-shrink-0" />
                 <p className="text-sm text-red-200 font-medium">{error}</p>
               </div>
