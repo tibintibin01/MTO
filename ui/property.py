@@ -312,6 +312,9 @@ class PropertyEditModal(ctk.CTkToplevel):
         self._last_auto_amount_paid = ""
         self._setting_auto_amount_paid = False
         self._amount_paid_manually_changed = False
+        self._payment_target_timer = None
+        self._resolving_payment_target = False
+        self._last_resolved_target_key = None
         self.barangays = ["NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN", "BUENAVISTA", "CALAOCAN", "DIAMANEN", "DIANED", "DIARABASIN", "DIBUTUNAN", "DIMABUNO", "DINADIAWAN", "DITALE", "GUPA", "IPIL", "LABOY", "LIPIT", "LOBBOT", "MALIGAYA", "MIJARES", "MUCDOL", "PUANGI", "SALAY", "SAPANGKAWAYAN", "TOYTOYAN"]
 
         # Generate a fresh idempotency key when the form opens — NOT on submit.
@@ -444,6 +447,8 @@ class PropertyEditModal(ctk.CTkToplevel):
                     self.vars[key].trace_add("write", lambda *a: self.recompute())
                 elif key == "amount_paid":
                     self.vars[key].trace_add("write", lambda *a: self._on_amount_paid_changed())
+                elif key == "tax_year" and self.payment_mode:
+                    self.vars[key].trace_add("write", lambda *a: self._on_payment_tax_year_changed())
                 else:
                     self.vars[key].trace_add("write", lambda *a: self.validate())
             if self._first_input is None:
@@ -578,6 +583,78 @@ class PropertyEditModal(ctk.CTkToplevel):
         )
         self.recompute()
         self._focus_and_select_field("tax_year")
+
+    def _on_payment_tax_year_changed(self):
+        self.validate()
+        if not self.payment_mode or self._resolving_payment_target:
+            return
+        year_text = self.vars["tax_year"].get().strip()
+        if not (year_text.isdigit() and len(year_text) == 4):
+            return
+        if self._payment_target_timer:
+            try:
+                self.after_cancel(self._payment_target_timer)
+            except Exception:
+                pass
+        self._payment_target_timer = self.after(450, self._resolve_payment_target_for_tax_year)
+
+    def _resolve_payment_target_for_tax_year(self):
+        if not self.payment_mode or self._resolving_payment_target:
+            return
+        td_number = self.vars["td_number"].get().strip()
+        year_text = self.vars["tax_year"].get().strip()
+        if not td_number or not (year_text.isdigit() and len(year_text) == 4):
+            return
+        resolve_key = (td_number.upper(), year_text, self.property_id)
+        if resolve_key == self._last_resolved_target_key:
+            return
+        self._last_resolved_target_key = resolve_key
+
+        def worker():
+            try:
+                result = prop_svc.resolve_payment_target(td_number, int(year_text))
+                self.after(0, lambda r=result, old_td=td_number, year=year_text: self._apply_payment_target_resolution(r, old_td, year))
+            except Exception:
+                # Do not interrupt typing. Save still has server-side validation.
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_payment_target_resolution(self, result, old_td, year_text):
+        if not self.winfo_exists() or not isinstance(result, dict):
+            return
+        target_id = result.get("id")
+        target_td = result.get("td_number")
+        if not target_id or int(target_id) == int(self.property_id or 0):
+            return
+
+        payment_values = {
+            key: self.vars[key].get()
+            for key in ("tax_year", "or_number", "or_date", "penalty", "discount", "amount_paid", "remarks")
+            if key in self.vars
+        }
+        manual_amount = self._amount_paid_manually_changed
+        last_auto = self._last_auto_amount_paid
+
+        self._resolving_payment_target = True
+        try:
+            self.property_id = int(target_id)
+            self.load_data()
+            for key, value in payment_values.items():
+                if key in self.vars:
+                    self.vars[key].set(value)
+            self._amount_paid_manually_changed = manual_amount
+            self._last_auto_amount_paid = last_auto
+            self._compute_lbl.configure(
+                text=(
+                    f"Tax year {year_text} belongs to TD {target_td}. "
+                    f"The payment target was switched from {old_td}."
+                ),
+                text_color="#f59e0b",
+            )
+            self.recompute()
+        finally:
+            self._resolving_payment_target = False
 
     def _auto_compute(self):
         """
@@ -861,6 +938,11 @@ class PropertyEditModal(ctk.CTkToplevel):
 
             result = prop_svc.save_property(data, editing_id=self.property_id, user=self.user, idempotency_key=key)
             success_msg = "Payment saved successfully." if self.payment_mode else "Property record saved successfully."
+            if self.payment_mode and isinstance(result, dict) and result.get("target_changed"):
+                success_msg += (
+                    f"\n\nApplied to TD {result.get('td_number')} because that TD is effective "
+                    f"for tax year {data.get('Tax Year')}."
+                )
             prior_sync = result.get("prior_assessment_sync", {}) if isinstance(result, dict) else {}
             corrected_years = prior_sync.get("years", [])
             if corrected_years:

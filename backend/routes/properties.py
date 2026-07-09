@@ -78,6 +78,19 @@ async def get_property_history(property_id: int, current_user: dict = Depends(ge
 async def list_barangays(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     return prop_svc.get_barangays(db_session=db_session)
 
+
+@router.get("/payment-target")
+async def resolve_payment_target(
+    td_number: str,
+    tax_year: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    result = prop_svc.resolve_payment_target(td_number, tax_year, db_session=db_session)
+    if not result:
+        raise HTTPException(status_code=404, detail="No property chain matched this TD number.")
+    return result
+
 @router.get("/delinquent")
 async def get_delinquent_accounts(
     limit: int = 50,

@@ -48,6 +48,14 @@ def find_property_by_td_number(td_number, exclude_id=None):
     return None
 
 
+def resolve_payment_target(td_number, tax_year):
+    return api_request(
+        "GET",
+        "/properties/payment-target",
+        params={"td_number": td_number, "tax_year": tax_year},
+    )
+
+
 def acquire_property_lock(property_id, user_name, stale_minutes=30):
     # For now, return success to keep UI working until we implement locks in API
     return {"ok": True, "locked_by": user_name}

@@ -286,6 +286,123 @@ def get_property_by_id(property_id, db_session: Session):
     return db_session.query(Property).filter(Property.id == property_id, Property.deleted_at == None).first()
 
 
+def _property_effectivity_year(prop):
+    return assessment_year(
+        getattr(prop, "effectivity_date", None) or getattr(prop, "tax_year", None)
+    )
+
+
+def _td_text(value):
+    return str(value or "").strip().upper()
+
+
+def _td_chain_for_property(seed_prop, db_session: Session):
+    """Return all active TD records connected by Previous TD, oldest to newest."""
+    if not seed_prop:
+        return []
+
+    by_id = {seed_prop.id: seed_prop}
+    current = seed_prop
+    visited = {seed_prop.id}
+
+    # Walk backwards through Previous TD links.
+    while current and _td_text(current.prev_td_number):
+        parent = db_session.query(Property).filter(
+            Property.deleted_at == None,
+            func.upper(func.trim(Property.td_number)) == _td_text(current.prev_td_number),
+        ).first()
+        if not parent or parent.id in visited:
+            break
+        by_id[parent.id] = parent
+        visited.add(parent.id)
+        current = parent
+
+    # Walk forwards through replacement links. If a data error creates more
+    # than one replacement, pick the earliest effective replacement first so
+    # the chain remains deterministic.
+    queue = list(by_id.values())
+    scanned = set()
+    while queue:
+        current = queue.pop(0)
+        if current.id in scanned:
+            continue
+        scanned.add(current.id)
+        children = db_session.query(Property).filter(
+            Property.deleted_at == None,
+            func.upper(func.trim(Property.prev_td_number)) == _td_text(current.td_number),
+        ).all()
+        children.sort(key=lambda p: (_property_effectivity_year(p) or 9999, p.id or 0))
+        for child in children:
+            if child.id not in by_id:
+                by_id[child.id] = child
+                queue.append(child)
+
+    chain = list(by_id.values())
+    chain.sort(key=lambda p: (_property_effectivity_year(p) or 0, p.id or 0))
+    return chain
+
+
+def resolve_property_for_tax_year(td_number, tax_year, db_session: Session):
+    """Resolve the TD record that should receive a payment for a tax year.
+
+    A searched TD can be an old TD, current TD, or a Previous TD value on a
+    newer record. The selected payment target must be the chain member whose
+    effectivity covers the tax year being paid.
+    """
+    td = _td_text(td_number)
+    if not td or not tax_year:
+        return None
+    try:
+        year = int(str(tax_year).strip()[:4])
+    except (TypeError, ValueError):
+        return None
+
+    seed = db_session.query(Property).filter(
+        Property.deleted_at == None,
+        func.upper(func.trim(Property.td_number)) == td,
+    ).first()
+    if not seed:
+        seed = db_session.query(Property).filter(
+            Property.deleted_at == None,
+            func.upper(func.trim(Property.prev_td_number)) == td,
+        ).order_by(Property.id.asc()).first()
+    if not seed:
+        return None
+
+    chain = _td_chain_for_property(seed, db_session)
+    eligible = [
+        prop for prop in chain
+        if _property_effectivity_year(prop) is None
+        or _property_effectivity_year(prop) <= year
+    ]
+    return eligible[-1] if eligible else chain[0]
+
+
+def resolve_payment_target(td_number, tax_year, db_session: Session):
+    target = resolve_property_for_tax_year(td_number, tax_year, db_session)
+    if not target:
+        return None
+    chain = _td_chain_for_property(target, db_session)
+    return {
+        "id": target.id,
+        "td_number": target.td_number,
+        "owner_name": target.owner_name,
+        "effectivity_date": target.effectivity_date,
+        "effectivity_year": _property_effectivity_year(target),
+        "chain": [
+            {
+                "id": prop.id,
+                "td_number": prop.td_number,
+                "owner_name": prop.owner_name,
+                "prev_td_number": prop.prev_td_number,
+                "effectivity_date": prop.effectivity_date,
+                "effectivity_year": _property_effectivity_year(prop),
+            }
+            for prop in chain
+        ],
+    }
+
+
 def _has_payment_payload(data):
     return bool(str(data.get("OR Number") or "").strip() or str(data.get("Amount Paid") or "").strip())
 
@@ -325,16 +442,44 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                 raise HTTPException(status_code=404, detail="Property not found")
 
             if _has_payment_payload(data):
+                tax_years = billing.normalize_tax_years(data.get("Tax Year"))
+                target_prop = prop
+                if tax_years:
+                    target_props = [
+                        resolve_property_for_tax_year(prop.td_number, year, db_session) or prop
+                        for year in tax_years
+                    ]
+                    target_ids = {item.id for item in target_props if item}
+                    if len(target_ids) > 1:
+                        summary = ", ".join(
+                            f"{year}: {target.td_number}"
+                            for year, target in zip(tax_years, target_props)
+                            if target
+                        )
+                        raise HTTPException(
+                            status_code=422,
+                            detail=(
+                                "This payment spans TD changes. Post the payment by TD/effectivity group instead: "
+                                f"{summary}."
+                            ),
+                        )
+                    if target_props and target_props[0]:
+                        target_prop = target_props[0]
+
                 _sync_financial_records(
-                    prop.id,
-                    _payment_only_payload(prop, data, user=user),
+                    target_prop.id,
+                    _payment_only_payload(target_prop, data, user=user),
                     db_session,
                 )
                 db_session.commit()
                 return {
                     "ok": True,
-                    "property_id": prop.id,
-                    "new_version": prop.version,
+                    "property_id": target_prop.id,
+                    "td_number": target_prop.td_number,
+                    "target_changed": target_prop.id != prop.id,
+                    "requested_property_id": prop.id,
+                    "requested_td_number": prop.td_number,
+                    "new_version": target_prop.version,
                     "payment_only": True,
                     "billing_sync": {"updated": 0, "years": []},
                     "prior_assessment_sync": {"updated": 0, "years": []},
