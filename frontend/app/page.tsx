@@ -10,9 +10,9 @@ import {
   CalendarDays,
   Clock,
   FileText,
+  Eye,
   Landmark,
   MapPin,
-  Phone,
   Search,
   Shield,
 } from "lucide-react";
@@ -431,66 +431,69 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ── Notice banner ── */}
-      <section className="max-w-5xl mx-auto px-4 pb-6 w-full">
-        <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-          <div className="w-10 h-10 bg-yellow-400 rounded-xl flex items-center justify-center flex-shrink-0">
-            <Clock className="w-5 h-5 text-yellow-900" />
+      {/* ── Official payment advisory ── */}
+      <section className="mx-auto w-full max-w-5xl px-4 pb-7">
+        <motion.div
+          className="relative overflow-hidden rounded-2xl border border-amber-300/80 bg-gradient-to-r from-amber-50 via-yellow-50 to-white px-5 py-5 shadow-[0_14px_34px_rgba(146,64,14,0.09)] sm:px-6"
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, amount: 0.4 }}
+        >
+          <div className="absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b from-amber-400 to-yellow-500" />
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl border border-amber-200 bg-gradient-to-br from-yellow-300 to-amber-500 text-amber-950 shadow-[0_8px_18px_rgba(245,158,11,0.28)]">
+              <Clock className="h-6 w-6" />
+            </div>
+            <div className="flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-black text-amber-950">Payment Deadline Reminder</p>
+                <span className="rounded-full border border-amber-200 bg-white/80 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-amber-700">Official advisory</span>
+              </div>
+              <p className="mt-1.5 text-sm leading-6 text-amber-900/85">
+                Annual RPT payments are due on <strong>January 31</strong>. Payments made by <strong>March 31</strong> qualify for a <strong>10% prompt payment discount</strong>; advance payments qualify for <strong>20%</strong>. Late payments are subject to a <strong>2% monthly penalty</strong>.
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="font-bold text-yellow-900 text-sm">Payment Deadline Reminder</p>
-            <p className="text-yellow-800 text-sm mt-0.5">
-              Annual RPT payments are due on <strong>January 31</strong> of each year.
-              Payments made by <strong>March 31</strong> qualify for a <strong>10% prompt payment discount</strong>.
-              Advance payments (prior year) qualify for a <strong>20% discount</strong>.
-              Late payments are subject to a <strong>2% monthly penalty</strong>.
-            </p>
-          </div>
-        </div>
+        </motion.div>
       </section>
 
       {/* ── How to use ── */}
-      <section className="max-w-5xl mx-auto px-4 pb-12 w-full">
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8">
-          <h3 className="font-extrabold text-slate-800 text-lg mb-6">How to Use This Portal</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            {[
-              { step: "1", title: "Enter Your TDN", desc: "Type your Tax Declaration Number (e.g. 06-0012-01379) in the search box above. You can find this on your tax receipt or assessment notice." },
-              { step: "2", title: "View Your Record", desc: "See your property details, assessed value, payment history, and current balance — all in one place." },
-              { step: "3", title: "Visit the Office", desc: "To make payments or correct records, visit the Municipal Treasury Office. Bring your TDN and a valid ID." },
-            ].map(({ step, title, desc }) => (
-              <div key={step} className="flex gap-4">
-                <div className="w-9 h-9 rounded-full bg-[#1a3a6b] text-white font-bold text-sm flex items-center justify-center flex-shrink-0">
-                  {step}
-                </div>
-                <div>
-                  <p className="font-bold text-slate-800 text-sm mb-1">{title}</p>
-                  <p className="text-sm text-slate-500 leading-relaxed">{desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── Contact ── */}
-      <section className="bg-[#1a3a6b] text-white py-10 px-4">
-        <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
-          <div>
-            <p className="font-bold text-lg">Need Help?</p>
-            <p className="text-blue-200 text-sm mt-1">
-              Visit the Municipal Treasury Office of Dipaculao, Aurora during office hours.
-            </p>
-            <p className="text-blue-300 text-xs mt-1">
-              Monday – Friday &nbsp;|&nbsp; 8:00 AM – 5:00 PM &nbsp;|&nbsp; Excluding Holidays
-            </p>
-          </div>
-          <div className="flex items-center gap-3 bg-white/10 border border-white/20 rounded-xl px-5 py-3">
-            <Phone className="w-5 h-5 text-yellow-300" />
+      <section className="mx-auto w-full max-w-5xl px-4 pb-14">
+        <div className="relative overflow-hidden rounded-3xl border border-white bg-white/90 p-6 shadow-[0_22px_55px_rgba(15,23,42,0.10)] backdrop-blur sm:p-8">
+          <div className="absolute inset-x-12 top-0 h-px bg-gradient-to-r from-transparent via-blue-400/70 to-transparent" />
+          <div className="mb-7 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="text-xs text-blue-300">Municipal Treasury Office</p>
-              <p className="font-bold text-sm">Dipaculao, Aurora</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600">Three simple steps</p>
+              <h3 className="mt-1 text-xl font-black text-slate-900">How to Use This Portal</h3>
             </div>
+            <p className="text-xs text-slate-400">Secure, read-only property inquiry</p>
+          </div>
+          <div className="relative grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="absolute left-[16%] right-[16%] top-7 hidden h-px bg-gradient-to-r from-blue-200 via-amber-200 to-emerald-200 sm:block" />
+            {[
+              { step: "01", title: "Enter Your TDN", desc: "Enter the Tax Declaration Number shown on your tax receipt or assessment notice.", icon: Search, tone: "text-blue-700", surface: "from-blue-50 to-white", ring: "border-blue-200" },
+              { step: "02", title: "View Your Record", desc: "Review the assessment, official payment history, and current outstanding balance.", icon: Eye, tone: "text-amber-700", surface: "from-amber-50 to-white", ring: "border-amber-200" },
+              { step: "03", title: "Visit the Office", desc: "For payments or corrections, bring your TDN and a valid ID to the Treasury Office.", icon: Landmark, tone: "text-emerald-700", surface: "from-emerald-50 to-white", ring: "border-emerald-200" },
+            ].map(({ step, title, desc, icon: Icon, tone, surface, ring }, index) => (
+              <motion.div
+                key={step}
+                className={`group relative rounded-2xl border ${ring} bg-gradient-to-br ${surface} p-5 shadow-[0_10px_24px_rgba(15,23,42,0.06)]`}
+                initial={{ opacity: 0, y: 14 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, amount: 0.4 }}
+                transition={{ delay: index * 0.08 }}
+                whileHover={{ y: -4 }}
+              >
+                <div className="mb-5 flex items-center justify-between">
+                  <div className={`relative z-10 flex h-14 w-14 items-center justify-center rounded-2xl border ${ring} bg-white ${tone} shadow-[0_8px_18px_rgba(15,23,42,0.10)]`}>
+                    <Icon className="h-6 w-6" />
+                  </div>
+                  <span className="text-xs font-black tracking-widest text-slate-300">{step}</span>
+                </div>
+                <p className="text-sm font-black text-slate-900">{title}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">{desc}</p>
+              </motion.div>
+            ))}
           </div>
         </div>
       </section>
