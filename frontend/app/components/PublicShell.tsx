@@ -72,16 +72,6 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
                 </svg>
                 Help &amp; Support
               </a>
-              <div className="w-px h-4 bg-white/20 mx-1" />
-              <a
-                href="/admin/login"
-                className="flex items-center gap-2 font-bold px-4 py-2 rounded-xl transition-colors text-sm"
-                style={{background:"#f5c518", color:"#1a1a2e"}}>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                </svg>
-                Staff Login
-              </a>
             </div>
           </nav>
         </div>
@@ -120,7 +110,6 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
             <ul className="space-y-2 text-sm text-blue-100">
               <li><a href="/" className="hover:text-yellow-300 transition-colors">Property Search</a></li>
               <li><a href="/help" className="hover:text-yellow-300 transition-colors">Help &amp; Support</a></li>
-              <li><a href="/admin/login" className="hover:text-yellow-300 transition-colors">Staff Portal</a></li>
             </ul>
           </div>
 
