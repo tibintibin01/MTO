@@ -9,13 +9,21 @@ import { PublicShell } from "./components/PublicShell";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Dipaculao Treasury Portal | Bayan ng Dipaculao, Aurora",
+  title: "Public Treasury Web Portal | Bayan ng Dipaculao, Aurora",
+  applicationName: "Public Treasury Web Portal",
   description: "Official property tax portal of the Municipal Treasury Office of Dipaculao, Aurora.",
   manifest: "/manifest.json",
+  icons: {
+    icon: [
+      { url: "/icons/logo.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon.png", sizes: "1024x1024", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-icon.png", sizes: "1254x1254", type: "image/png" }],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Dipaculao Treasury",
+    title: "Public Treasury Web Portal",
   },
 };
 

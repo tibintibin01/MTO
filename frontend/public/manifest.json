@@ -1,6 +1,6 @@
 {
-  "name": "MTO Public Treasury Portal",
-  "short_name": "MTO Portal",
+  "name": "Public Treasury Web Portal",
+  "short_name": "Treasury Portal",
   "description": "Check your property tax status and payment history with the Municipal Treasury Office.",
   "start_url": "/",
   "scope": "/",
@@ -18,8 +18,8 @@
       "purpose": "any maskable"
     },
     {
-      "src": "/icons/seal.png",
-      "sizes": "512x512",
+      "src": "/icon.png",
+      "sizes": "1024x1024",
       "type": "image/png",
       "purpose": "any maskable"
     }
