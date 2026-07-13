@@ -182,26 +182,36 @@ export default function Home() {
           aria-hidden="true"
         />
         <motion.div
-          className="absolute left-[11%] top-[24%] hidden h-20 w-20 items-center justify-center rounded-3xl border border-white/20 bg-white/12 shadow-2xl shadow-blue-950/40 backdrop-blur-xl lg:flex"
-          animate={{ y: [0, -12, 0], rotate: [-5, 4, -5] }}
-          transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
+          className="absolute left-[10%] top-[24%] hidden h-24 w-24 lg:block"
+          style={{ transformStyle: "preserve-3d", perspective: 700 }}
+          animate={{ y: [0, -13, 0], rotateX: [4, -5, 4], rotateY: [-10, 8, -10] }}
+          transition={{ duration: 6.5, repeat: Infinity, ease: "easeInOut" }}
           aria-hidden="true"
         >
-          <MapPin className="h-9 w-9 text-cyan-200" />
+          <div className="absolute inset-2 translate-x-2 translate-y-3 rounded-[1.7rem] bg-cyan-950/70 blur-md" />
+          <div className="absolute inset-0 rounded-[1.75rem] border border-cyan-100/35 bg-gradient-to-br from-white/25 via-cyan-300/10 to-blue-950/50 shadow-[inset_0_1px_1px_rgba(255,255,255,0.55),inset_0_-14px_28px_rgba(2,12,32,0.35),0_24px_50px_rgba(1,8,24,0.48),0_0_28px_rgba(103,232,249,0.18)] backdrop-blur-xl" />
+          <div className="absolute inset-[11px] flex items-center justify-center rounded-[1.3rem] border border-cyan-100/25 bg-gradient-to-br from-cyan-200/20 via-blue-500/10 to-blue-950/45 shadow-[inset_0_2px_8px_rgba(255,255,255,0.22),0_9px_18px_rgba(1,8,24,0.35)]">
+            <MapPin className="absolute h-10 w-10 translate-x-1 translate-y-1 text-blue-950/65" strokeWidth={2.4} />
+            <MapPin className="relative h-10 w-10 text-cyan-100 drop-shadow-[0_0_12px_rgba(165,243,252,0.75)]" strokeWidth={2.4} />
+            <span className="absolute left-3 top-2 h-1.5 w-8 rounded-full bg-white/45 blur-[1px]" />
+          </div>
         </motion.div>
         <motion.div
-          className="absolute right-[11%] top-[28%] hidden h-20 w-20 items-center justify-center rounded-3xl border border-white/20 bg-white/12 shadow-2xl shadow-blue-950/40 backdrop-blur-xl lg:flex"
-          animate={{ y: [0, 12, 0], rotate: [5, -3, 5] }}
+          className="absolute right-[10%] top-[28%] hidden h-24 w-24 lg:block"
+          style={{ transformStyle: "preserve-3d", perspective: 700 }}
+          animate={{ y: [0, 13, 0], rotateX: [-4, 5, -4], rotateY: [10, -8, 10] }}
           transition={{ duration: 7.5, repeat: Infinity, ease: "easeInOut" }}
           aria-hidden="true"
         >
-          <Landmark className="h-9 w-9 text-amber-200" />
+          <div className="absolute inset-2 translate-x-2 translate-y-3 rounded-[1.7rem] bg-amber-950/60 blur-md" />
+          <div className="absolute inset-0 rounded-[1.75rem] border border-amber-100/40 bg-gradient-to-br from-white/25 via-amber-300/10 to-blue-950/55 shadow-[inset_0_1px_1px_rgba(255,255,255,0.55),inset_0_-14px_28px_rgba(2,12,32,0.35),0_24px_50px_rgba(1,8,24,0.48),0_0_28px_rgba(253,224,71,0.18)] backdrop-blur-xl" />
+          <div className="absolute inset-[11px] flex items-center justify-center rounded-[1.3rem] border border-amber-100/30 bg-gradient-to-br from-amber-100/25 via-yellow-400/10 to-blue-950/45 shadow-[inset_0_2px_8px_rgba(255,255,255,0.22),0_9px_18px_rgba(1,8,24,0.35)]">
+            <Landmark className="absolute h-10 w-10 translate-x-1 translate-y-1 text-blue-950/65" strokeWidth={2.3} />
+            <Landmark className="relative h-10 w-10 text-amber-100 drop-shadow-[0_0_12px_rgba(253,230,138,0.75)]" strokeWidth={2.3} />
+            <span className="absolute left-3 top-2 h-1.5 w-8 rounded-full bg-white/45 blur-[1px]" />
+          </div>
         </motion.div>
-        <div
-          className="absolute inset-x-0 bottom-0 h-28 bg-slate-50"
-          style={{ clipPath: "polygon(0 78%, 100% 46%, 100% 100%, 0 100%)" }}
-          aria-hidden="true"
-        />
+        <div className="absolute inset-x-0 bottom-0 h-px bg-white/25" aria-hidden="true" />
         <div className="relative z-10 mx-auto max-w-6xl text-center">
           <motion.div
             className="mb-6 inline-flex items-center gap-2 rounded-full border border-yellow-300/70 bg-yellow-300 px-5 py-2 text-xs font-black uppercase tracking-[0.16em] text-[#09213f] shadow-[0_0_32px_rgba(250,204,21,0.32)]"
