@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
+import { motion } from "framer-motion";
 import { useToast } from "../../components/ToastProvider";
 
 /* ─── Design tokens (matched from reference screenshot) ─────────────────── */
@@ -29,6 +30,12 @@ const C = {
   paidBorder:  "#bbf7d0",
   totalPaidTxt:"#1a3a6b",          // navy for total paid value
   lastPayTxt:  "#1a3a6b",          // navy for last payment value
+};
+
+const rise = {
+  initial: { opacity: 0, y: 18 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.45, ease: "easeOut" as const },
 };
 
 function Skeleton() {
@@ -161,14 +168,15 @@ export default function PropertyDetail() {
           </Link>
 
           {/* ── BIG GLASS PANEL ── */}
-          <div className="rounded-3xl p-6"
+          <motion.div {...rise} className="rounded-3xl p-6 relative overflow-hidden"
             style={{
-              background:"rgba(255,255,255,0.08)",
+              background:"linear-gradient(145deg,rgba(255,255,255,0.13),rgba(255,255,255,0.055))",
               backdropFilter:"blur(20px)",
               WebkitBackdropFilter:"blur(20px)",
-              border:"1px solid rgba(255,255,255,0.15)",
-              boxShadow:"0 8px 32px rgba(0,0,0,0.3)",
+              border:"1px solid rgba(255,255,255,0.22)",
+              boxShadow:"0 24px 70px rgba(0,8,28,0.42), inset 0 1px 0 rgba(255,255,255,0.18)",
             }}>
+            <div className="absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-amber-300/70 to-transparent" />
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
 
             {/* TD + status */}
@@ -207,10 +215,11 @@ export default function PropertyDetail() {
             </div>
 
             {/* Property Details card — inside glass panel, semi-transparent */}
-            <div className="lg:col-span-4 rounded-2xl p-5 h-full"
+            <motion.div whileHover={{ y: -3 }} transition={{ duration: 0.2 }} className="lg:col-span-4 rounded-2xl p-5 h-full"
               style={{
-                background:"rgba(255,255,255,0.12)",
-                border:"1px solid rgba(255,255,255,0.18)",
+                background:"linear-gradient(145deg,rgba(255,255,255,0.18),rgba(255,255,255,0.08))",
+                border:"1px solid rgba(255,255,255,0.24)",
+                boxShadow:"0 14px 30px rgba(0,8,28,0.22), inset 0 1px 0 rgba(255,255,255,0.18)",
               }}>
               <div className="flex items-center gap-2 mb-4">
                 <FileText className="w-4 h-4 text-white/70" />
@@ -238,11 +247,20 @@ export default function PropertyDetail() {
                   </div>
                 </div>
               </div>
-            </div>
+            </motion.div>
 
             {/* Assessed Value card — teal gradient with faint house icon */}
-            <div className="lg:col-span-3 rounded-2xl p-5 text-white shadow-xl relative overflow-hidden h-full"
-              style={{background:"linear-gradient(135deg,#1a7a8a 0%,#0d5f6e 100%)"}}>
+            <motion.div
+              whileHover={{ y: -4, rotateX: 1.5, rotateY: -1.5 }}
+              transition={{ duration: 0.2 }}
+              className="lg:col-span-3 rounded-2xl p-5 text-white relative overflow-hidden h-full"
+              style={{
+                background:"linear-gradient(145deg,#238d9b 0%,#116b79 52%,#084955 100%)",
+                boxShadow:"0 18px 38px rgba(0,25,38,0.38), inset 0 1px 0 rgba(255,255,255,0.24)",
+                border:"1px solid rgba(147,235,240,0.24)",
+                transformPerspective:900,
+              }}>
+              <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/60 to-transparent" />
               {/* Faint house watermark */}
               <div className="absolute bottom-2 right-3 opacity-10 text-8xl select-none pointer-events-none">🏠</div>
               <div className="relative">
@@ -271,20 +289,25 @@ export default function PropertyDetail() {
                   <Home className="w-3 h-3" /> {data.kind}
                 </span>
               </div>
-            </div>
+            </motion.div>
 
           </div>
-          </div>{/* end glass panel */}
+          </motion.div>{/* end glass panel */}
         </div>
       </div>
 
       {/* ── AMOUNT DUE — the answer to "how much do I owe?" ──────────────── */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 -mt-3 relative z-20">
-        <div className="rounded-2xl shadow-lg p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5"
+        <motion.div
+          {...rise}
+          transition={{ duration: 0.45, delay: 0.08, ease: "easeOut" }}
+          className="rounded-2xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5 relative overflow-hidden"
           style={{
             background: isDelinquent ? "linear-gradient(135deg,#fff5f2 0%,#ffffff 60%)" : "linear-gradient(135deg,#f0fdf4 0%,#ffffff 60%)",
             border: `2px solid ${isDelinquent ? C.delinqBorder : C.paidBorder}`,
+            boxShadow:"0 18px 44px rgba(15,31,60,0.16), inset 0 1px 0 rgba(255,255,255,0.9)",
           }}>
+          <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white to-transparent" />
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
               style={{background: isDelinquent ? "#ffe4dc" : C.paidBg}}>
@@ -329,7 +352,7 @@ export default function PropertyDetail() {
               <FileText className="w-4 h-4" /> Download SOA
             </a>
           </div>
-        </div>
+        </motion.div>
       </div>
 
       {/* ── SECONDARY STATS ──────────────────────────────────────────────── */}
@@ -337,7 +360,8 @@ export default function PropertyDetail() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
 
           {/* Total Paid */}
-          <div className="rounded-2xl shadow-sm border border-slate-100 p-5 flex items-center gap-4" style={{background:C.statBg}}>
+          <motion.div whileHover={{ y: -4 }} transition={{ duration: 0.2 }} className="rounded-2xl border border-slate-200/80 p-5 flex items-center gap-4 relative overflow-hidden" style={{background:C.statBg,boxShadow:"0 10px 24px rgba(15,31,60,0.08), inset 0 1px 0 #fff"}}>
+            <div className="absolute inset-x-0 top-0 h-1 bg-emerald-500" />
             <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{background:C.paidBg}}>
               <CheckCircle2 className="w-6 h-6" style={{color:C.paidGreen}} />
             </div>
@@ -348,10 +372,11 @@ export default function PropertyDetail() {
               </p>
               <p className="text-xs text-slate-400">{history.length} payment(s) on record</p>
             </div>
-          </div>
+          </motion.div>
 
           {/* Total Billed */}
-          <div className="rounded-2xl shadow-sm border border-slate-100 p-5 flex items-center gap-4" style={{background:C.statBg}}>
+          <motion.div whileHover={{ y: -4 }} transition={{ duration: 0.2 }} className="rounded-2xl border border-slate-200/80 p-5 flex items-center gap-4 relative overflow-hidden" style={{background:C.statBg,boxShadow:"0 10px 24px rgba(15,31,60,0.08), inset 0 1px 0 #fff"}}>
+            <div className="absolute inset-x-0 top-0 h-1 bg-blue-500" />
             <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{background:"#eff6ff"}}>
               <FileText className="w-6 h-6" style={{color:"#2563eb"}} />
             </div>
@@ -362,10 +387,11 @@ export default function PropertyDetail() {
               </p>
               <p className="text-xs text-slate-400">{breakdown.length} tax year(s)</p>
             </div>
-          </div>
+          </motion.div>
 
           {/* Last Payment */}
-          <div className="rounded-2xl shadow-sm border border-slate-100 p-5 flex items-center gap-4" style={{background:C.statBg}}>
+          <motion.div whileHover={{ y: -4 }} transition={{ duration: 0.2 }} className="rounded-2xl border border-slate-200/80 p-5 flex items-center gap-4 relative overflow-hidden" style={{background:C.statBg,boxShadow:"0 10px 24px rgba(15,31,60,0.08), inset 0 1px 0 #fff"}}>
+            <div className="absolute inset-x-0 top-0 h-1 bg-cyan-600" />
             <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{background:"#e8f4f7"}}>
               <Calendar className="w-6 h-6" style={{color:C.teal}} />
             </div>
@@ -374,7 +400,7 @@ export default function PropertyDetail() {
               <p className="text-xl font-black" style={{color:C.lastPayTxt}}>{data.last_payment?.period ?? sorted[0]?.period ?? "—"}</p>
               <p className="text-xs text-slate-400">{data.last_payment?.date_paid ?? sorted[0]?.date_paid ?? "No payments recorded"}</p>
             </div>
-          </div>
+          </motion.div>
 
         </div>
       </div>
@@ -382,7 +408,7 @@ export default function PropertyDetail() {
       {/* ── BILLING BREAKDOWN (per-year) ─────────────────────────────────── */}
       {breakdown.length > 0 && (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 pb-2">
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="bg-white rounded-2xl border border-slate-200/80 overflow-hidden" style={{boxShadow:"0 10px 28px rgba(15,31,60,0.07)"}}>
             <button
               type="button"
               onClick={() => setBillingOpen((open) => !open)}
@@ -471,7 +497,7 @@ export default function PropertyDetail() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
           {/* Payment History */}
-          <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 overflow-hidden" style={{boxShadow:"0 12px 30px rgba(15,31,60,0.08)"}}>
             <div className="px-6 py-4 flex items-center justify-between border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <FileText className="w-4 h-4" style={{color:C.teal}} />
@@ -545,7 +571,8 @@ export default function PropertyDetail() {
 
           {/* Sidebar */}
           <div className="space-y-4">
-            <div className="rounded-2xl p-6 text-white" style={{background:"#1a3a8f"}}>
+            <motion.div whileHover={{ y: -3 }} transition={{ duration: 0.2 }} className="rounded-2xl p-6 text-white relative overflow-hidden" style={{background:"linear-gradient(145deg,#214aa9,#17377f 55%,#10285f)",boxShadow:"0 18px 38px rgba(16,40,95,0.26), inset 0 1px 0 rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.12)"}}>
+              <div className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/60 to-transparent" />
               {/* Header with headset icon */}
               <div className="flex items-start gap-4 mb-5">
                 <div className="w-14 h-14 rounded-full flex items-center justify-center flex-shrink-0 mt-1"
@@ -591,7 +618,7 @@ export default function PropertyDetail() {
                 </div>
                 <ChevronRight className="w-5 h-5" />
               </Link>
-            </div>
+            </motion.div>
 
             <div className="rounded-2xl p-5" style={{background:"#fffbeb",border:"1px solid #fde68a"}}>
               <p className="font-bold text-sm mb-2 flex items-center gap-2" style={{color:"#92400e"}}>
