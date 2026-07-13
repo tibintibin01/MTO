@@ -498,17 +498,17 @@ export default function PropertyDetail() {
 
           {/* Payment History */}
           <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 overflow-hidden" style={{boxShadow:"0 12px 30px rgba(15,31,60,0.08)"}}>
-            <div className="px-6 py-4 flex items-center justify-between border-b border-slate-100">
+            <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 min-[440px]:flex-row min-[440px]:items-center min-[440px]:justify-between sm:px-6">
               <div className="flex items-center gap-2">
                 <FileText className="w-4 h-4" style={{color:C.teal}} />
                 <h2 className="font-bold text-slate-800">Payment History</h2>
               </div>
-              <span className="flex items-center gap-1.5 text-xs text-slate-400 bg-slate-50 border border-slate-100 px-3 py-1 rounded-full">
+              <span className="flex w-fit items-center gap-1.5 rounded-full border border-slate-100 bg-slate-50 px-3 py-1 text-xs text-slate-400">
                 <Calendar className="w-3 h-3" /> From 2023 onwards
               </span>
             </div>
 
-            <div className="px-6 py-2.5 border-b flex items-start gap-2" style={{background:"#eff6ff",borderColor:"#dbeafe"}}>
+            <div className="flex items-start gap-2 border-b px-4 py-3 sm:px-6" style={{background:"#eff6ff",borderColor:"#dbeafe"}}>
               <span className="text-blue-400 text-sm flex-shrink-0 mt-0.5">ℹ</span>
               <p className="text-xs text-blue-700 leading-relaxed">
                 Records shown are from <strong>January 2023</strong> onwards. For earlier transactions, visit the Municipal Treasury Office with your TDN and a valid ID.
@@ -516,7 +516,8 @@ export default function PropertyDetail() {
             </div>
 
             {sorted.length > 0 ? (
-              <table className="w-full text-sm">
+              <>
+              <table className="hidden w-full text-sm sm:table">
                 <thead>
                   <tr className="border-b border-slate-100" style={{background:"#f8fafc"}}>
                     {["Period","OR Number","Date Paid","Amount","Status"].map(h => (
@@ -560,6 +561,44 @@ export default function PropertyDetail() {
                   </tr>
                 </tfoot>
               </table>
+
+              <div className="divide-y divide-slate-100 sm:hidden">
+                {sorted.map((p, i) => (
+                  <article key={i} className="px-4 py-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <div className="h-8 w-0.5 flex-shrink-0 rounded-full" style={{background:C.teal}} />
+                        <Calendar className="h-4 w-4 flex-shrink-0 text-slate-300" />
+                        <span className="truncate font-bold text-slate-800">{p.period}</span>
+                      </div>
+                      <span className="inline-flex flex-shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold"
+                        style={{background:C.paidBg, color:C.paidGreen, border:`1px solid ${C.paidBorder}`}}>
+                        <CheckCircle2 className="h-3 w-3" /> Paid
+                      </span>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-slate-100 pt-3">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">OR Number</p>
+                        <p className="mt-1 truncate font-mono text-xs text-slate-600">{p.or_number}</p>
+                      </div>
+                      <div className="min-w-0 text-right">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Date Paid</p>
+                        <p className="mt-1 truncate text-xs text-slate-600">{p.date_paid}</p>
+                      </div>
+                      <div className="col-span-2 flex items-end justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Amount Paid</p>
+                        <p className="text-base font-black text-slate-900">{peso(p.amount)}</p>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+                <div className="flex items-center justify-between gap-4 bg-slate-50 px-4 py-4">
+                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Recorded</span>
+                  <span className="text-base font-black" style={{color:C.paidGreen}}>{peso(totalPaid)}</span>
+                </div>
+              </div>
+              </>
             ) : (
               <div className="py-14 text-center">
                 <FileText className="w-10 h-10 text-slate-200 mx-auto mb-3" />
