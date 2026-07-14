@@ -497,6 +497,43 @@ async def generate_notice_pdf(
         raise HTTPException(status_code=500, detail=f"PDF Generation Failed: {str(e)}")
 
 
+@router.get("/properties/{property_id}/notice-preview", tags=["Financial"])
+async def generate_notice_preview(
+    property_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    try:
+        details = bill_svc.get_property_statement_data(property_id, db_session=db_session)
+        if not details:
+            raise HTTPException(status_code=404, detail="Property billing data not found")
+
+        details["prepared_by"] = (
+            current_user.get("full_name")
+            or current_user.get("name")
+            or current_user.get("username")
+            or ""
+        )
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        html_path = await asyncio.to_thread(
+            notice_gen.generate_delinquency_notice_preview, details, base_dir
+        )
+        return FileResponse(
+            html_path,
+            media_type="text/html",
+            filename=os.path.basename(html_path),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        mto_logger.error(
+            f"Failed to generate notice preview for property {property_id} | "
+            f"Error: {str(e)}\n{traceback.format_exc()}"
+        )
+        raise HTTPException(status_code=500, detail=f"Notice Preview Failed: {str(e)}")
+
+
 @router.get("/analytics")
 async def serve_analytics_dashboard():
     """

@@ -25,6 +25,7 @@ class DelinquencyDashboardPage:
         self.next_offset = None
         self.current_items = {}
         self.summary_cards = {}
+        self.print_buttons = {}
 
         self.container = ctk.CTkFrame(parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
@@ -163,6 +164,7 @@ class DelinquencyDashboardPage:
     def _build_table(self):
         table_fr = ctk.CTkFrame(self.container, fg_color="transparent", corner_radius=8)
         table_fr.pack(fill="both", expand=True)
+        self.table_fr = table_fr
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -185,7 +187,7 @@ class DelinquencyDashboardPage:
 
         self.cols = (
             "ID", "TD NUMBER", "OWNER NAME", "BARANGAY", "BALANCE",
-            "TOTAL PAID", "TOTAL DUE", "YEARS", "EARLIEST", "AGING", "PRIORITY",
+            "TOTAL PAID", "TOTAL DUE", "YEARS", "EARLIEST", "AGING", "PRINT",
         )
         self.tree = ttk.Treeview(table_fr, columns=self.cols, show="headings", style="Delinq.Treeview")
         for col in self.cols:
@@ -196,10 +198,19 @@ class DelinquencyDashboardPage:
         self.tree.column("OWNER NAME", width=310, anchor="w")
         self.tree.column("BARANGAY", width=170, anchor="w")
         self.tree.column("BALANCE", width=140)
-        self.tree.column("PRIORITY", width=130)
+        self.tree.column("PRINT", width=110, stretch=tk.NO)
 
-        scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrolly.set)
+        def scroll_tree(*args):
+            self.tree.yview(*args)
+            self.tree.after_idle(self._sync_print_buttons)
+
+        scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=scroll_tree)
+
+        def update_scrollbar(first, last):
+            scrolly.set(first, last)
+            self.tree.after_idle(self._sync_print_buttons)
+
+        self.tree.configure(yscrollcommand=update_scrollbar)
         self.tree.pack(side="left", fill="both", expand=True, padx=(0, 4))
         scrolly.pack(side="right", fill="y")
 
@@ -210,6 +221,10 @@ class DelinquencyDashboardPage:
 
         self.tree.bind("<<TreeviewSelect>>", self.on_selection_change)
         self.tree.bind("<Double-1>", lambda _e: self.open_dossier())
+        self.tree.bind("<Configure>", lambda _e: self.tree.after_idle(self._sync_print_buttons))
+        self.tree.bind("<MouseWheel>", lambda _e: self.tree.after_idle(self._sync_print_buttons), add="+")
+        self.tree.bind("<Button-4>", lambda _e: self.tree.after_idle(self._sync_print_buttons), add="+")
+        self.tree.bind("<Button-5>", lambda _e: self.tree.after_idle(self._sync_print_buttons), add="+")
 
     def _build_footer(self):
         footer = ctk.CTkFrame(self.container, fg_color="transparent")
@@ -251,12 +266,6 @@ class DelinquencyDashboardPage:
             width=135, height=40, fg_color=ModernTheme.SUCCESS, font=ModernTheme.BUTTON, state="disabled",
         )
         self.compute_btn.pack(side="left", padx=5)
-
-        self.notice_btn = ctk.CTkButton(
-            actions, text="NOTICE", command=self.generate_notice,
-            width=105, height=40, fg_color=ModernTheme.DANGER, font=ModernTheme.BUTTON, state="disabled",
-        )
-        self.notice_btn.pack(side="left", padx=5)
 
     def fetch_barangays(self):
         def worker():
@@ -300,6 +309,7 @@ class DelinquencyDashboardPage:
         threading.Thread(target=worker, daemon=True).start()
 
     def _update_table(self, result):
+        self._clear_print_buttons()
         for item in self.tree.get_children():
             self.tree.delete(item)
         self.current_items = {}
@@ -322,13 +332,68 @@ class DelinquencyDashboardPage:
                 item.get("years_billed", 0),
                 item.get("earliest_year") or "-",
                 item.get("aging_bucket") or "-",
-                priority,
+                "",
             )
             item_id = self.tree.insert("", "end", values=values, tags=(tag,))
             self.current_items[item_id] = item
+            self._create_print_button(item_id)
 
         self._update_summary(result, items)
         self.on_selection_change()
+        self.tree.after_idle(self._sync_print_buttons)
+
+    def _create_print_button(self, item_id):
+        button = ctk.CTkButton(
+            self.table_fr,
+            text="PRINT",
+            command=lambda iid=item_id: self.print_notice_for(iid),
+            width=86,
+            height=26,
+            corner_radius=5,
+            fg_color="transparent",
+            hover_color="#3a2029",
+            border_width=1,
+            border_color=ModernTheme.DANGER,
+            text_color="#ff5364",
+            font=ModernTheme.BUTTON_SMALL,
+        )
+        self.print_buttons[item_id] = button
+
+    def _clear_print_buttons(self):
+        for button in self.print_buttons.values():
+            try:
+                button.destroy()
+            except tk.TclError:
+                pass
+        self.print_buttons = {}
+
+    def _sync_print_buttons(self):
+        if not hasattr(self, "tree") or not self.tree.winfo_exists():
+            return
+        tree_x = self.tree.winfo_x()
+        tree_y = self.tree.winfo_y()
+        for item_id, button in self.print_buttons.items():
+            bbox = self.tree.bbox(item_id, "PRINT")
+            if not bbox:
+                button.place_forget()
+                continue
+            x, y, width, height = bbox
+            button_width = min(88, max(64, width - 12))
+            button.place(
+                x=tree_x + x + (width - button_width) // 2,
+                y=tree_y + y + max(3, (height - 26) // 2),
+                width=button_width,
+                height=26,
+            )
+            button.lift()
+
+    def print_notice_for(self, item_id):
+        if item_id not in self.current_items:
+            return
+        self.tree.selection_set(item_id)
+        self.tree.focus(item_id)
+        self.on_selection_change()
+        self.generate_notice()
 
     def _update_summary(self, result, items):
         summary = result.get("summary", {}) if isinstance(result, dict) else {}
@@ -350,7 +415,6 @@ class DelinquencyDashboardPage:
         state = "normal" if selected else "disabled"
         self.dossier_btn.configure(state=state)
         self.compute_btn.configure(state=state)
-        self.notice_btn.configure(state=state)
         if hasattr(self, "add_payment_btn"):
             self.add_payment_btn.configure(state=state)
         self.summary_cards["selected"].configure(
@@ -461,7 +525,7 @@ class DelinquencyDashboardPage:
         self._download_pdf("computation", billing.download_computation_pdf)
 
     def generate_notice(self):
-        self._download_pdf("notice", billing.download_notice_pdf)
+        self._download_pdf("official notice preview", billing.download_notice_preview)
 
     def _download_pdf(self, label, downloader):
         item = self._selected_item()
@@ -485,8 +549,13 @@ class DelinquencyDashboardPage:
         threading.Thread(target=worker, daemon=True).start()
 
     def export_page(self):
-        rows = [self.tree.item(child)["values"] for child in self.tree.get_children()]
+        export_columns = [col for col in self.cols if col not in ("ID", "PRINT")]
+        export_indexes = [self.cols.index(col) for col in export_columns]
+        rows = [
+            [self.tree.item(child)["values"][idx] for idx in export_indexes]
+            for child in self.tree.get_children()
+        ]
         if not rows:
             messagebox.showwarning("Export", "No rows to export.")
             return
-        export_data_to_excel(rows, self.cols, filename_prefix="CollectionWorkbench")
+        export_data_to_excel(rows, export_columns, filename_prefix="CollectionWorkbench")

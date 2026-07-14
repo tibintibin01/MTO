@@ -182,6 +182,11 @@ def download_notice_pdf(property_id):
     return api_download_file("GET", f"/properties/{property_id}/notice-pdf")
 
 
+def download_notice_preview(property_id):
+    """Downloads the official print-ready delinquency notice preview."""
+    return api_download_file("GET", f"/properties/{property_id}/notice-preview")
+
+
 def download_receivables_by_barangay_pdf(year=None, barangay=None):
     """Downloads the Receivables-by-Barangay PDF report and returns the local file path."""
     params = {}

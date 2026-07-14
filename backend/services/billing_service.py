@@ -940,6 +940,13 @@ def get_property_statement_data(property_id, db_session: Session = None):
         total_paid += item["amount_paid"]
         grand_total += item["total_amount"]
 
+    last_payment = (
+        db_session.query(Payment)
+        .filter(Payment.property_id == property_id)
+        .order_by(Payment.date_paid.desc(), Payment.id.desc())
+        .first()
+    )
+
     return {
         "id": prop.id,
         "td_number": prop.td_number,
@@ -952,6 +959,9 @@ def get_property_statement_data(property_id, db_session: Session = None):
         "block_number": prop.block_number,
         "area": prop.area,
         "pin": prop.pin,
+        "accountable_officer": prop.accountable_officer,
+        "last_payment_date": last_payment.date_paid if last_payment else None,
+        "last_or_number": last_payment.or_number if last_payment else None,
         "total_balance": total_balance,
         "total_paid": total_paid,
         "grand_total": grand_total,
