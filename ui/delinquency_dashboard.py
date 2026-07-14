@@ -220,7 +220,8 @@ class DelinquencyDashboardPage:
         self.tree.tag_configure("urgent", background="#43292a", foreground="white")
 
         self.tree.bind("<<TreeviewSelect>>", self.on_selection_change)
-        self.tree.bind("<Double-1>", lambda _e: self.open_dossier())
+        self.tree.bind("<ButtonRelease-1>", self._on_tree_click, add="+")
+        self.tree.bind("<Double-1>", self._on_tree_double_click)
         self.tree.bind("<Configure>", lambda _e: self.tree.after_idle(self._sync_print_buttons))
         self.tree.bind("<MouseWheel>", lambda _e: self.tree.after_idle(self._sync_print_buttons), add="+")
         self.tree.bind("<Button-4>", lambda _e: self.tree.after_idle(self._sync_print_buttons), add="+")
@@ -332,7 +333,7 @@ class DelinquencyDashboardPage:
                 item.get("years_billed", 0),
                 item.get("earliest_year") or "-",
                 item.get("aging_bucket") or "-",
-                "",
+                "PRINT",
             )
             item_id = self.tree.insert("", "end", values=values, tags=(tag,))
             self.current_items[item_id] = item
@@ -343,21 +344,47 @@ class DelinquencyDashboardPage:
         self.tree.after_idle(self._sync_print_buttons)
 
     def _create_print_button(self, item_id):
-        button = ctk.CTkButton(
+        # This control overlays a native ttk.Treeview cell, so it must also use
+        # native Tk coordinates. A CTkButton applies display scaling a second
+        # time on Windows and can be placed beyond the visible PRINT column.
+        button = tk.Button(
             self.table_fr,
             text="PRINT",
             command=lambda iid=item_id: self.print_notice_for(iid),
-            width=86,
-            height=26,
-            corner_radius=5,
-            fg_color="transparent",
-            hover_color="#3a2029",
-            border_width=1,
-            border_color=ModernTheme.DANGER,
-            text_color="#ff5364",
+            bg="#321b24",
+            activebackground="#4a2330",
+            fg="#ff6675",
+            activeforeground="#ffffff",
+            highlightbackground=ModernTheme.DANGER,
+            highlightcolor=ModernTheme.DANGER,
+            highlightthickness=1,
+            relief="flat",
+            bd=0,
+            cursor="hand2",
             font=ModernTheme.BUTTON_SMALL,
+            takefocus=False,
         )
         self.print_buttons[item_id] = button
+
+    def _on_tree_click(self, event):
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return None
+        if self.tree.identify_column(event.x) != f"#{self.cols.index('PRINT') + 1}":
+            return None
+        item_id = self.tree.identify_row(event.y)
+        if item_id:
+            self.print_notice_for(item_id)
+            return "break"
+        return None
+
+    def _on_tree_double_click(self, event):
+        if (
+            self.tree.identify_region(event.x, event.y) == "cell"
+            and self.tree.identify_column(event.x) == f"#{self.cols.index('PRINT') + 1}"
+        ):
+            return "break"
+        self.open_dossier()
+        return None
 
     def _clear_print_buttons(self):
         for button in self.print_buttons.values():
