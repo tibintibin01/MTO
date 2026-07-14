@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import re
 from sqlalchemy import or_, and_, func, case, cast, Integer
 from sqlalchemy.orm import Session, aliased
@@ -9,6 +9,70 @@ from backend.services.assessment_value_service import (
     assessed_value_for_year,
     assessment_versions,
 )
+
+
+ANNUAL_PENALTY_START_MONTH = 7
+MAX_PENALTY_MONTHS = 36
+MONEY = Decimal("0.01")
+
+
+def annual_penalty_months(tax_year: int, as_of_date=None) -> int:
+    """Return office-standard annual penalty months, capped at 36 months."""
+    as_of = as_of_date or date.today()
+    start = date(int(tax_year), ANNUAL_PENALTY_START_MONTH, 1)
+    if as_of <= start:
+        return 0
+    months = (as_of.year - start.year) * 12 + (as_of.month - start.month)
+    return min(MAX_PENALTY_MONTHS, max(0, months))
+
+
+def calculate_current_billing_amounts(
+    *,
+    assessed_value,
+    tax_year,
+    paid=0,
+    recorded_penalty=0,
+    discount=0,
+    basic_rate=0.01,
+    sef_rate=0.01,
+    penalty_rate=0.02,
+    as_of_date=None,
+):
+    """Calculate current receivable without double-charging paid penalties."""
+    assessed = Decimal(str(assessed_value or 0))
+    paid_amount = Decimal(str(paid or 0))
+    historical_penalty = Decimal(str(recorded_penalty or 0))
+    discount_amount = Decimal(str(discount or 0))
+    tax_principal = (
+        assessed * (Decimal(str(basic_rate or 0.01)) + Decimal(str(sef_rate or 0.01)))
+    ).quantize(MONEY, rounding=ROUND_HALF_UP)
+    principal_credit = max(
+        Decimal("0.00"), paid_amount + discount_amount - historical_penalty
+    )
+    remaining_principal = max(Decimal("0.00"), tax_principal - principal_credit)
+    months = annual_penalty_months(int(tax_year), as_of_date)
+    accrued_penalty = (
+        remaining_principal * Decimal(str(penalty_rate or 0.02)) * Decimal(months)
+    ).quantize(MONEY, rounding=ROUND_HALF_UP)
+    total_penalty = historical_penalty + accrued_penalty
+    total_due = (tax_principal + total_penalty - discount_amount).quantize(
+        MONEY, rounding=ROUND_HALF_UP
+    )
+    balance = max(Decimal("0.00"), total_due - paid_amount).quantize(
+        MONEY, rounding=ROUND_HALF_UP
+    )
+    return {
+        "tax_principal": tax_principal,
+        "recorded_penalty": historical_penalty,
+        "accrued_penalty": accrued_penalty,
+        "penalty": total_penalty,
+        "discount": discount_amount,
+        "paid": paid_amount,
+        "remaining_principal": remaining_principal,
+        "total_due": total_due,
+        "balance": balance,
+        "penalty_months": months,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -865,28 +929,31 @@ def repair_payment_billing_allocations(
     }
 
 
-def get_property_billing_history(property_id=None, term=None, limit=50, db_session: Session = None):
+def get_property_billing_history(
+    property_id=None,
+    term=None,
+    limit=50,
+    as_of_date=None,
+    db_session: Session = None,
+):
     safe_limit = max(1, int(limit))
-    
+
     basic_rate_expr = func.coalesce(TaxPolicy.basic_rate, 0.0100)
     sef_rate_expr = func.coalesce(TaxPolicy.sef_rate, 0.0100)
-    total_rate_expr = basic_rate_expr + sef_rate_expr
+    current = _billing_current_amount_exprs(db_session, as_of_date)
     
     query = db_session.query(
         PropertyBilling.tax_year,
         PropertyBilling.assessed_value,
         (PropertyBilling.assessed_value * basic_rate_expr).label('basic_amount'),
         (PropertyBilling.assessed_value * sef_rate_expr).label('sef_amount'),
-        PropertyBilling.penalty,
-        ((PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount).label('total_amount'),
-        PropertyBilling.amount_paid,
-        greatest(
-            ((PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount) - PropertyBilling.amount_paid,
-            0
-        ).label('balance_amount'),
+        current["total_penalty"].label('penalty'),
+        current["total_due"].label('total_amount'),
+        current["paid"].label('amount_paid'),
+        current["balance"].label('balance_amount'),
         case(
-            (PropertyBilling.amount_paid <= 0, 'Pending'),
-            (PropertyBilling.amount_paid >= ((PropertyBilling.assessed_value * total_rate_expr) + PropertyBilling.penalty - PropertyBilling.discount), 'Paid'),
+            (current["paid"] <= 0, 'Pending'),
+            (current["balance"] <= 0, 'Paid'),
             else_='Partial'
         ).label('billing_status'),
 
@@ -911,12 +978,17 @@ def get_property_billing_history(property_id=None, term=None, limit=50, db_sessi
     return [list(r) for r in results]
 
 
-def get_property_statement_data(property_id, db_session: Session = None):
+def get_property_statement_data(property_id, as_of_date=None, db_session: Session = None):
     prop = db_session.query(Property).filter(Property.id == property_id, Property.deleted_at == None).first()
     if not prop:
         return None
         
-    billing_rows_raw = get_property_billing_history(property_id=property_id, limit=500, db_session=db_session)
+    billing_rows_raw = get_property_billing_history(
+        property_id=property_id,
+        limit=500,
+        as_of_date=as_of_date,
+        db_session=db_session,
+    )
     billing_rows = []
     total_balance = 0.0
     total_paid = 0.0
@@ -1039,6 +1111,49 @@ def _billing_effective_amount_exprs(db_session: Session):
         "penalty": case((linked_count_expr > 0, linked_penalty_expr), else_=PropertyBilling.penalty),
         "discount": case((linked_count_expr > 0, linked_discount_expr), else_=PropertyBilling.discount),
         "linked_count": linked_count_expr,
+    }
+
+
+def _billing_current_amount_exprs(db_session: Session, as_of_date=None):
+    """SQL expressions for the live, as-of-date balance of each billing row."""
+    as_of = as_of_date or date.today()
+    effective = _billing_effective_amount_exprs(db_session)
+    total_rate = tax_rate_subquery(db_session, PropertyBilling.tax_year)
+    penalty_rate = func.coalesce(
+        db_session.query(TaxPolicy.penalty_rate)
+        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .correlate(PropertyBilling)
+        .scalar_subquery(),
+        0.02,
+    )
+    raw_months = (
+        (int(as_of.year) - PropertyBilling.tax_year) * 12
+        + (int(as_of.month) - ANNUAL_PENALTY_START_MONTH)
+    )
+    months = case(
+        (raw_months < 0, 0),
+        (raw_months > MAX_PENALTY_MONTHS, MAX_PENALTY_MONTHS),
+        else_=raw_months,
+    )
+    tax_principal = PropertyBilling.assessed_value * total_rate
+    principal_credit = greatest(
+        effective["paid"] + effective["discount"] - effective["penalty"],
+        0,
+    )
+    remaining_principal = greatest(tax_principal - principal_credit, 0)
+    accrued_penalty = func.round(remaining_principal * penalty_rate * months, 2)
+    total_penalty = effective["penalty"] + accrued_penalty
+    total_due = tax_principal + total_penalty - effective["discount"]
+    balance = greatest(total_due - effective["paid"], 0)
+    return {
+        **effective,
+        "tax_principal": tax_principal,
+        "remaining_principal": remaining_principal,
+        "accrued_penalty": accrued_penalty,
+        "total_penalty": total_penalty,
+        "total_due": total_due,
+        "balance": balance,
+        "penalty_months": months,
     }
 
 
@@ -1956,7 +2071,12 @@ def get_compliant_summary_by_barangay(
     return result
 
 
-def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
+def get_delinquent_accounts(
+    limit=50,
+    cursor=None,
+    as_of_date=None,
+    db_session: Session = None,
+):
     """
     Fetches properties with outstanding balances using cursor-based pagination.
 
@@ -1972,34 +2092,16 @@ def get_delinquent_accounts(limit=50, cursor=None, db_session: Session = None):
     """
     safe_limit = min(max(1, int(limit)), 200)  # hard cap at 200
 
-    # Use per-year rate from TaxPolicy via correlated subquery.
-    # Falls back to 0.02 if no policy row exists for that year.
-    rate_expr = func.coalesce(
-        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
-        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
-        .correlate(PropertyBilling)
-        .scalar_subquery(),
-        0.02
-    )
-
-    balance_expr = func.sum(
-        (PropertyBilling.assessed_value * rate_expr)
-        + PropertyBilling.penalty
-        - PropertyBilling.discount
-        - PropertyBilling.amount_paid
-    )
+    current = _billing_current_amount_exprs(db_session, as_of_date)
+    balance_expr = func.sum(current["balance"])
 
     query = db_session.query(
         Property.id,
         Property.td_number,
         Property.owner_name,
         Property.location,
-        func.sum(
-            (PropertyBilling.assessed_value * rate_expr)
-            + PropertyBilling.penalty
-            - PropertyBilling.discount
-        ).label("total_due"),
-        func.sum(PropertyBilling.amount_paid).label("total_paid"),
+        func.sum(current["total_due"]).label("total_due"),
+        func.sum(current["paid"]).label("total_paid"),
         balance_expr.label("balance"),
     ).join(
         PropertyBilling, PropertyBilling.property_id == Property.id
@@ -2044,6 +2146,7 @@ def get_collections_worklist(
     min_age_days: int = 0,
     limit: int = 50,
     offset: int = 0,
+    as_of_date=None,
     db_session: Session = None,
 ):
     """
@@ -2052,8 +2155,9 @@ def get_collections_worklist(
     arrears first.
 
     Aging is derived from the EARLIEST billed tax year that still contributes to
-    the outstanding balance. Penalties accrue from Feb 1 of the tax year
-    (RA 7160), so age_days = today − Feb 1 of the earliest delinquent year.
+    the outstanding balance. February 1 is used only as the worklist's
+    operational age reference; monetary penalties come from the shared office
+    penalty calculator.
 
     Params:
       barangay     — optional filter
@@ -2064,25 +2168,10 @@ def get_collections_worklist(
     Returns aging buckets per row:
       CURRENT (<30d), 30, 60, 90, 120+  with a label and the computed age_days.
     """
-    from datetime import date
-
     safe_limit = min(max(1, int(limit)), 200)
     safe_offset = max(0, int(offset))
-
-    rate_expr = func.coalesce(
-        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
-        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
-        .correlate(PropertyBilling)
-        .scalar_subquery(),
-        0.02
-    )
-
-    balance_expr = func.sum(
-        (PropertyBilling.assessed_value * rate_expr)
-        + PropertyBilling.penalty
-        - PropertyBilling.discount
-        - PropertyBilling.amount_paid
-    )
+    current = _billing_current_amount_exprs(db_session, as_of_date)
+    balance_expr = func.sum(current["balance"])
 
     query = db_session.query(
         Property.id,
@@ -2090,12 +2179,8 @@ def get_collections_worklist(
         Property.owner_name,
         Property.location,
         func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
-        func.sum(
-            (PropertyBilling.assessed_value * rate_expr)
-            + PropertyBilling.penalty
-            - PropertyBilling.discount
-        ).label("total_due"),
-        func.sum(PropertyBilling.amount_paid).label("total_paid"),
+        func.sum(current["total_due"]).label("total_due"),
+        func.sum(current["paid"]).label("total_paid"),
         balance_expr.label("balance"),
         func.min(PropertyBilling.tax_year).label("earliest_year"),
         func.count(PropertyBilling.id).label("years_billed"),
@@ -2127,7 +2212,7 @@ def get_collections_worklist(
         query = query.having(balance_expr >= float(min_balance))
 
     status = str(payment_status or "").strip().upper()
-    total_paid_expr = func.sum(PropertyBilling.amount_paid)
+    total_paid_expr = func.sum(current["paid"])
     if status == "NO_PAYMENT":
         query = query.having(total_paid_expr <= 0)
     elif status == "PARTIAL":
@@ -2136,14 +2221,14 @@ def get_collections_worklist(
     # Order by balance DESC — collections priority is biggest arrears first
     rows = query.order_by(balance_expr.desc(), Property.id.asc()).all()
 
-    today = date.today()
+    today = as_of_date or date.today()
 
     def _age_days(earliest_year) -> int:
         try:
             yr = int(earliest_year)
         except (ValueError, TypeError):
             return 0
-        # Penalty accrual begins Feb 1 of the tax year
+        # Aging is an operational age indicator, independent of penalty months.
         start = date(yr, 2, 1)
         return max(0, (today - start).days)
 
@@ -2223,7 +2308,12 @@ def calculate_penalty(principal, months_late, tax_year=None, db_session=None):
         except Exception:
             pass  # Fall back to default on any DB error
 
-    return float(Decimal(str(principal)) * rate * int(months_late))
+    capped_months = min(MAX_PENALTY_MONTHS, max(0, int(months_late or 0)))
+    return float(
+        (Decimal(str(principal or 0)) * rate * capped_months).quantize(
+            MONEY, rounding=ROUND_HALF_UP
+        )
+    )
 
 
 def get_total_due(property_id, db_session: Session = None):

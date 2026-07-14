@@ -18,7 +18,13 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
 from backend.models import Property, PropertyBilling
-from backend.services.billing_service import get_collections_worklist
+from backend.services.billing_service import (
+    get_collections_worklist,
+    get_property_statement_data,
+)
+
+
+TEST_AS_OF = date(2023, 7, 1)
 
 
 @pytest.fixture()
@@ -62,7 +68,7 @@ def test_only_delinquent_appear(db):
     _billing(db, owed.id, 2024, paid=0.0)        # unpaid → included
     db.commit()
 
-    result = get_collections_worklist(db_session=db)
+    result = get_collections_worklist(as_of_date=TEST_AS_OF, db_session=db)
     tds = [i["td_number"] for i in result["items"]]
     assert "TD-OWED" in tds
     assert "TD-PAID" not in tds
@@ -76,7 +82,7 @@ def test_ordered_by_balance_desc(db):
     _billing(db, big.id, 2024, assessed=500_000.0, paid=0.0)    # due 10,000
     db.commit()
 
-    result = get_collections_worklist(db_session=db)
+    result = get_collections_worklist(as_of_date=TEST_AS_OF, db_session=db)
     assert result["items"][0]["td_number"] == "TD-BIG"
     assert result["items"][1]["td_number"] == "TD-SMALL"
 
@@ -87,12 +93,12 @@ def test_aging_bucket_from_earliest_year(db):
     _billing(db, p.id, 2023, paid=0.0)
     db.commit()
 
-    result = get_collections_worklist(db_session=db)
+    result = get_collections_worklist(as_of_date=TEST_AS_OF, db_session=db)
     row = result["items"][0]
     assert row["earliest_year"] == 2023
     assert row["aging_bucket"] == "120+"
     # Age is measured from Feb 1, 2023
-    expected = (date.today() - date(2023, 2, 1)).days
+    expected = (TEST_AS_OF - date(2023, 2, 1)).days
     assert row["age_days"] == expected
 
 
@@ -107,7 +113,11 @@ def test_min_age_filter_excludes_recent(db):
     age = max(0, (date.today() - date(current_year, 2, 1)).days)
 
     # Requiring 120+ days should drop it if today is < ~Jun 1
-    result = get_collections_worklist(min_age_days=age + 1, db_session=db)
+    result = get_collections_worklist(
+        min_age_days=age + 1,
+        as_of_date=TEST_AS_OF,
+        db_session=db,
+    )
     assert all(i["td_number"] != "TD-RECENT" for i in result["items"])
 
 
@@ -118,7 +128,7 @@ def test_summary_aging_totals_sum_to_balance(db):
     _billing(db, b.id, 2023, assessed=200_000.0, paid=0.0)   # due 4,000
     db.commit()
 
-    result = get_collections_worklist(db_session=db)
+    result = get_collections_worklist(as_of_date=TEST_AS_OF, db_session=db)
     summary = result["summary"]
     assert summary["total_balance"] == 6_000.0
     assert round(sum(summary["aging_totals"].values()), 2) == 6_000.0
@@ -131,6 +141,62 @@ def test_barangay_filter(db):
     _billing(db, b.id, 2024, paid=0.0)
     db.commit()
 
-    result = get_collections_worklist(barangay="SAN JOSE", db_session=db)
+    result = get_collections_worklist(
+        barangay="SAN JOSE",
+        as_of_date=TEST_AS_OF,
+        db_session=db,
+    )
     tds = [i["td_number"] for i in result["items"]]
     assert tds == ["TD-SJ"]
+
+
+def test_worklist_adds_live_penalty_to_unpaid_balance(db):
+    prop = _prop(db, "TD-LIVE-PENALTY")
+    _billing(db, prop.id, 2024, assessed=100_000.0, paid=0.0)
+    db.commit()
+
+    result = get_collections_worklist(
+        as_of_date=date(2025, 8, 1),
+        db_session=db,
+    )
+    row = next(item for item in result["items"] if item["td_number"] == prop.td_number)
+
+    # P2,000 tax principal + 13 months × 2% = P2,520.
+    assert row["total_due"] == pytest.approx(2_520.0)
+    assert row["balance"] == pytest.approx(2_520.0)
+
+
+def test_worklist_excludes_fully_paid_year_with_recorded_penalty(db):
+    prop = _prop(db, "TD-PAID-LATE")
+    _billing(
+        db,
+        prop.id,
+        2024,
+        assessed=30_000.0,
+        paid=624.0,
+        penalty=24.0,
+    )
+    db.commit()
+
+    result = get_collections_worklist(
+        as_of_date=date(2026, 7, 1),
+        db_session=db,
+    )
+    assert prop.td_number not in [item["td_number"] for item in result["items"]]
+
+
+def test_statement_rows_include_live_penalty_for_notice_generation(db):
+    prop = _prop(db, "TD-NOTICE-PENALTY")
+    _billing(db, prop.id, 2024, assessed=100_000.0, paid=0.0)
+    db.commit()
+
+    statement = get_property_statement_data(
+        prop.id,
+        as_of_date=date(2025, 8, 1),
+        db_session=db,
+    )
+    row = statement["billing_rows"][0]
+
+    assert row["penalty"] == pytest.approx(520.0)
+    assert row["total_amount"] == pytest.approx(2_520.0)
+    assert row["balance_amount"] == pytest.approx(2_520.0)

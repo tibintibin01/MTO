@@ -343,36 +343,26 @@ def _handle_retention_run(job: Job, payload: dict):
 
 def _handle_accrue_penalties(job: Job, payload: dict):
     """
-    Monthly penalty accrual for all delinquent PropertyBilling records.
+    Verify live penalty coverage without mutating billing history.
 
-    For each active property billing row where:
-      - tax_year < current year (prior year, not yet settled)
-      - amount_paid < (assessed_value * total_rate)  (still has a balance)
-
-    Adds 2% of the outstanding balance to the penalty column.
-    This ensures the delinquency dashboard always shows current penalty
-    amounts without requiring a manual computation trigger.
-
-    dry_run=True → computes totals but writes nothing to the DB.
+    Current penalty is derived as of the report date from unpaid tax principal.
+    Stored penalty remains the historical amount recorded on actual payments.
     """
-    from decimal import Decimal, ROUND_HALF_UP
+    from decimal import Decimal
     from backend.models import PropertyBilling, TaxPolicy
+    from backend.services.billing_service import calculate_current_billing_amounts
 
     dry_run = payload.get("dry_run", False)
-    _update_job(job.id, progress=5, progress_message="Starting penalty accrual...")
+    _update_job(job.id, progress=5, progress_message="Checking live penalty coverage...")
 
-    updated = 0
+    evaluated = 0
     skipped = 0
-    total_penalty_added = Decimal("0.00")
+    total_live_penalty = Decimal("0.00")
 
     with SessionLocal() as db:
-        current_year = datetime.now(timezone.utc).year
-
-        # Fetch all prior-year billing rows that still have a balance
         rows = (
             db.query(PropertyBilling)
             .filter(
-                PropertyBilling.tax_year < current_year,
                 PropertyBilling.is_archived == False,
             )
             .all()
@@ -393,37 +383,27 @@ def _handle_accrue_penalties(job: Job, payload: dict):
             sef_rate     = Decimal(str(policy.sef_rate))     if policy else Decimal("0.01")
             penalty_rate = Decimal(str(policy.penalty_rate)) if policy else Decimal("0.02")
 
-            av = Decimal(str(billing.assessed_value or 0))
-            total_tax = (av * (basic_rate + sef_rate)).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
+            amounts = calculate_current_billing_amounts(
+                assessed_value=billing.assessed_value,
+                tax_year=billing.tax_year,
+                paid=billing.amount_paid,
+                recorded_penalty=billing.penalty,
+                discount=billing.discount,
+                basic_rate=basic_rate,
+                sef_rate=sef_rate,
+                penalty_rate=penalty_rate,
             )
-            amount_paid = Decimal(str(billing.amount_paid or 0))
-            current_penalty = Decimal(str(billing.penalty or 0))
-
-            # Outstanding balance before this accrual
-            balance = total_tax - amount_paid
-            if balance <= 0:
+            if amounts["balance"] <= 0:
                 skipped += 1
                 continue
-
-            # Accrue one month's penalty on the outstanding balance
-            new_penalty_increment = (balance * penalty_rate).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            )
-
-            if not dry_run:
-                billing.penalty = current_penalty + new_penalty_increment
-
-            total_penalty_added += new_penalty_increment
-            updated += 1
-
-        if not dry_run and updated > 0:
-            db.commit()
+            total_live_penalty += amounts["accrued_penalty"]
+            evaluated += 1
 
     summary = (
         f"{'DRY RUN — ' if dry_run else ''}"
-        f"Penalty accrual: {updated} rows updated, {skipped} skipped (no balance). "
-        f"Total penalty added: ₱{total_penalty_added:,.2f}"
+        f"Live penalty verification: {evaluated} delinquent rows evaluated, "
+        f"{skipped} settled rows skipped. Current accrued penalty: "
+        f"₱{total_live_penalty:,.2f}; no billing history was modified."
     )
     mto_logger.info(summary, job_id=job.id[:8])
     _update_job(
@@ -431,9 +411,11 @@ def _handle_accrue_penalties(job: Job, payload: dict):
         status="COMPLETED",
         result=json.dumps({
             "dry_run": dry_run,
-            "rows_updated": updated,
+            "rows_updated": 0,
+            "rows_evaluated": evaluated,
             "rows_skipped": skipped,
-            "total_penalty_added": float(total_penalty_added),
+            "total_penalty_added": 0.0,
+            "current_accrued_penalty": float(total_live_penalty),
         }),
         completed_at=datetime.now(timezone.utc),
         progress=100,

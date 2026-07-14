@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import pytest
-from datetime import datetime
+from datetime import date, datetime
 from fastapi import HTTPException
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -8,6 +8,8 @@ from sqlalchemy.orm import sessionmaker
 from backend.database import Base
 from backend.models import Payment, PaymentBilling, Property, PropertyAssessmentHistory, PropertyBilling
 from backend.services.billing_service import (
+    annual_penalty_months,
+    calculate_current_billing_amounts,
     calculate_penalty,
     get_compliant_accounts,
     get_compliant_summary_by_barangay,
@@ -53,13 +55,42 @@ def test_calculate_penalty_basic():
     assert penalty == 1000.0
 
 def test_calculate_penalty_cap():
-    """Test the maximum penalty cap (usually 72% in many PH local tax codes, but let's check system logic)."""
-    # If the system implements a cap, we test it here. 
-    # For now, let's assume it scales.
+    """Penalty is capped at 36 months (72% at the default monthly rate)."""
     principal = 1000.0
-    months_late = 40 # 80% penalty
+    months_late = 40
     penalty = calculate_penalty(principal, months_late)
-    assert penalty == 800.0
+    assert penalty == 720.0
+
+
+def test_annual_penalty_months_uses_office_start_and_legal_cap():
+    assert annual_penalty_months(2024, date(2026, 6, 20)) == 23
+    assert annual_penalty_months(2023, date(2030, 1, 1)) == 36
+
+
+def test_current_penalty_uses_only_remaining_tax_principal():
+    amounts = calculate_current_billing_amounts(
+        assessed_value=30_000,
+        tax_year=2024,
+        paid=300,
+        as_of_date=date(2024, 8, 1),
+    )
+    assert float(amounts["tax_principal"]) == 600.0
+    assert float(amounts["remaining_principal"]) == 300.0
+    assert float(amounts["accrued_penalty"]) == 6.0
+    assert float(amounts["balance"]) == 306.0
+
+
+def test_current_penalty_does_not_double_charge_a_paid_late_year():
+    amounts = calculate_current_billing_amounts(
+        assessed_value=30_000,
+        tax_year=2024,
+        paid=624,
+        recorded_penalty=24,
+        as_of_date=date(2026, 7, 1),
+    )
+    assert float(amounts["remaining_principal"]) == 0.0
+    assert float(amounts["accrued_penalty"]) == 0.0
+    assert float(amounts["balance"]) == 0.0
 
 
 def test_receivables_by_barangay_collections_use_billing_year_allocations(db):

@@ -170,8 +170,9 @@ def test_snapshot_keeps_cross_year_credit_unapplied(db, monkeypatch):
 
     record = generate_portal_snapshot(db)["properties"][0]
 
-    assert record["balance"] == 738.0
+    assert record["balance"] == 1269.36
     assert record["total_credit"] == 54.0
+    assert record["billing_breakdown"][0]["penalty"] == 531.36
     assert record["billing_breakdown"][1]["credit"] == 54.0
 
 

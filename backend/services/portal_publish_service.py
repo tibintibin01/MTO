@@ -27,6 +27,7 @@ from backend.services.assessment_value_service import (
     assessment_versions,
     year_from_value as assessment_year,
 )
+from backend.services.billing_service import calculate_current_billing_amounts
 from utils.config import config as mto_config
 from utils.logger import mto_logger
 
@@ -133,7 +134,11 @@ def generate_portal_snapshot(db_session: Session) -> dict:
     lookup_secret = getattr(mto_config, "PORTAL_LOOKUP_SECRET", "") or ""
 
     policies = {
-        int(p.tax_year): (float(p.basic_rate or 0.01), float(p.sef_rate or 0.01))
+        int(p.tax_year): (
+            float(p.basic_rate or 0.01),
+            float(p.sef_rate or 0.01),
+            float(p.penalty_rate or 0.02),
+        )
         for p in db_session.query(TaxPolicy).all()
     }
 
@@ -224,7 +229,9 @@ def generate_portal_snapshot(db_session: Session) -> dict:
 
         for billing in billings_by_property.get(int(prop.id), []):
             tax_year = int(billing.tax_year)
-            basic_rate, sef_rate = policies.get(tax_year, (0.01, 0.01))
+            basic_rate, sef_rate, penalty_rate = policies.get(
+                tax_year, (0.01, 0.01, 0.02)
+            )
             assessed = _peso(billing.assessed_value)
             basic = round(assessed * basic_rate, 2)
             sef = round(assessed * sef_rate, 2)
@@ -240,8 +247,19 @@ def generate_portal_snapshot(db_session: Session) -> dict:
                     penalty = round(receipt_values["penalty"], 2)
                 if receipt_values["discount"] > 0:
                     discount = round(receipt_values["discount"], 2)
-            due = round(basic + sef + penalty - discount, 2)
-            balance = round(max(0.0, due - paid), 2)
+            current = calculate_current_billing_amounts(
+                assessed_value=assessed,
+                tax_year=tax_year,
+                paid=paid,
+                recorded_penalty=penalty,
+                discount=discount,
+                basic_rate=basic_rate,
+                sef_rate=sef_rate,
+                penalty_rate=penalty_rate,
+            )
+            penalty = float(current["penalty"])
+            due = float(current["total_due"])
+            balance = float(current["balance"])
             credit = round(max(0.0, paid - due), 2)
             total_due += due
             total_paid += paid

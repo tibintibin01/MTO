@@ -19,7 +19,7 @@ Covers:
 
 import pytest
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -464,7 +464,11 @@ class TestDelinquencyDetermination:
         )
         db.commit()
 
-        result = get_delinquent_accounts(limit=50, db_session=db)
+        result = get_delinquent_accounts(
+            limit=50,
+            as_of_date=date(2024, 7, 1),
+            db_session=db,
+        )
         ids = [item["id"] for item in result["items"]]
         assert prop.id in ids
 
@@ -504,7 +508,11 @@ class TestDelinquencyDetermination:
         )
         db.commit()
 
-        result = get_delinquent_accounts(limit=50, db_session=db)
+        result = get_delinquent_accounts(
+            limit=50,
+            as_of_date=date(2024, 7, 1),
+            db_session=db,
+        )
         item = next(i for i in result["items"] if i["id"] == prop.id)
         # total_due = basic(1000) + sef(1000) = 2000, nothing paid
         assert item["balance"] == pytest.approx(2_000.0)
@@ -733,7 +741,11 @@ class TestFullPaymentLifecycle:
 
         # Step 4: Verify property statement totals
         db.commit()
-        statement = get_property_statement_data(prop.id, db_session=db)
+        statement = get_property_statement_data(
+            prop.id,
+            as_of_date=date(2022, 7, 1),
+            db_session=db,
+        )
         assert statement["total_paid"] == pytest.approx(4_000.0)
         assert statement["total_balance"] == pytest.approx(0.0)
         assert statement["grand_total"] == pytest.approx(4_000.0)
@@ -751,7 +763,11 @@ class TestFullPaymentLifecycle:
         db.commit()
 
         # Total due = 3 years × 2000 = 6000
-        statement = get_property_statement_data(prop.id, db_session=db)
+        statement = get_property_statement_data(
+            prop.id,
+            as_of_date=date(2022, 7, 1),
+            db_session=db,
+        )
         assert statement["grand_total"] == pytest.approx(6_000.0)
         assert statement["total_balance"] == pytest.approx(6_000.0)
 
@@ -764,6 +780,10 @@ class TestFullPaymentLifecycle:
             billing.amount_paid = Decimal("2000.00")
         db.commit()
 
-        statement2 = get_property_statement_data(prop.id, db_session=db)
+        statement2 = get_property_statement_data(
+            prop.id,
+            as_of_date=date(2022, 7, 1),
+            db_session=db,
+        )
         assert statement2["total_paid"] == pytest.approx(4_000.0)
         assert statement2["total_balance"] == pytest.approx(2_000.0)  # 2024 still unpaid

@@ -43,12 +43,9 @@ def _count_annual_penalty_months(tax_year: int, paid_date) -> int:
     period, not immediately after January. A payment for 2024 made on
     2026-06-20 is therefore 23 months late (46% at 2% per month).
     """
-    from datetime import date
+    from backend.services.billing_service import annual_penalty_months
 
-    penalty_start = date(tax_year, 7, 1)
-    if paid_date <= penalty_start:
-        return 0
-    return max(0, (paid_date.year - penalty_start.year) * 12 + (paid_date.month - penalty_start.month))
+    return annual_penalty_months(tax_year, paid_date)
 
 
 @router.post("/system/compute-payment")
