@@ -161,9 +161,9 @@ def test_worklist_adds_live_penalty_to_unpaid_balance(db):
     )
     row = next(item for item in result["items"] if item["td_number"] == prop.td_number)
 
-    # P2,000 tax principal + 13 months × 2% = P2,520.
-    assert row["total_due"] == pytest.approx(2_520.0)
-    assert row["balance"] == pytest.approx(2_520.0)
+    # P2,000 tax principal + 20 months x 2% = P2,800.
+    assert row["total_due"] == pytest.approx(2_800.0)
+    assert row["balance"] == pytest.approx(2_800.0)
 
 
 def test_worklist_excludes_fully_paid_year_with_recorded_penalty(db):
@@ -197,6 +197,6 @@ def test_statement_rows_include_live_penalty_for_notice_generation(db):
     )
     row = statement["billing_rows"][0]
 
-    assert row["penalty"] == pytest.approx(520.0)
-    assert row["total_amount"] == pytest.approx(2_520.0)
-    assert row["balance_amount"] == pytest.approx(2_520.0)
+    assert row["penalty"] == pytest.approx(800.0)
+    assert row["total_amount"] == pytest.approx(2_800.0)
+    assert row["balance_amount"] == pytest.approx(2_800.0)

@@ -514,8 +514,8 @@ class TestDelinquencyDetermination:
             db_session=db,
         )
         item = next(i for i in result["items"] if i["id"] == prop.id)
-        # total_due = basic(1000) + sef(1000) = 2000, nothing paid
-        assert item["balance"] == pytest.approx(2_000.0)
+        # P2,000 principal + 7 calendar months x 2% = P2,280.
+        assert item["balance"] == pytest.approx(2_280.0)
 
     def test_soft_deleted_property_excluded_from_delinquents(self, db):
         prop = make_property(db, td="TD-SOFTDEL-001", assessed_value=100_000.0)
@@ -762,14 +762,14 @@ class TestFullPaymentLifecycle:
             )
         db.commit()
 
-        # Total due = 3 years × 2000 = 6000
+        # Current 2022 levy includes 7 penalty months; future years do not.
         statement = get_property_statement_data(
             prop.id,
             as_of_date=date(2022, 7, 1),
             db_session=db,
         )
-        assert statement["grand_total"] == pytest.approx(6_000.0)
-        assert statement["total_balance"] == pytest.approx(6_000.0)
+        assert statement["grand_total"] == pytest.approx(6_280.0)
+        assert statement["total_balance"] == pytest.approx(6_280.0)
 
         # Pay 2022 and 2023 only
         for year in ["2022", "2023"]:

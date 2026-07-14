@@ -17,7 +17,7 @@ class _NoPolicySession:
 
 
 @pytest.mark.asyncio
-async def test_compute_payment_uses_office_penalty_month_count():
+async def test_compute_payment_uses_calendar_inclusive_penalty_month_count():
     result = await compute_payment(
         ComputePaymentRequest(
             assessed_value=480_210.0,
@@ -31,6 +31,6 @@ async def test_compute_payment_uses_office_penalty_month_count():
     assert result["basic_tax"] == pytest.approx(4802.10)
     assert result["sef_tax"] == pytest.approx(4802.10)
     assert result["total_tax"] == pytest.approx(9604.20)
-    assert result["penalty_months"] == 23
-    assert result["penalty_amount"] == pytest.approx(4417.93)
-    assert result["net_amount_due"] == pytest.approx(14022.13)
+    assert result["penalty_months"] == 30
+    assert result["penalty_amount"] == pytest.approx(5762.52)
+    assert result["net_amount_due"] == pytest.approx(15366.72)

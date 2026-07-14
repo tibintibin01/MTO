@@ -62,8 +62,12 @@ def test_calculate_penalty_cap():
     assert penalty == 720.0
 
 
-def test_annual_penalty_months_uses_office_start_and_legal_cap():
-    assert annual_penalty_months(2024, date(2026, 6, 20)) == 23
+def test_annual_penalty_months_uses_calendar_months_and_legal_cap():
+    assert annual_penalty_months(2026, date(2026, 7, 14)) == 7
+    assert annual_penalty_months(2025, date(2026, 7, 14)) == 19
+    assert annual_penalty_months(2024, date(2026, 7, 14)) == 31
+    assert annual_penalty_months(2023, date(2026, 7, 14)) == 36
+    assert annual_penalty_months(2024, date(2026, 6, 20)) == 30
     assert annual_penalty_months(2023, date(2030, 1, 1)) == 36
 
 
@@ -76,8 +80,8 @@ def test_current_penalty_uses_only_remaining_tax_principal():
     )
     assert float(amounts["tax_principal"]) == 600.0
     assert float(amounts["remaining_principal"]) == 300.0
-    assert float(amounts["accrued_penalty"]) == 6.0
-    assert float(amounts["balance"]) == 306.0
+    assert float(amounts["accrued_penalty"]) == 48.0
+    assert float(amounts["balance"]) == 348.0
 
 
 def test_current_penalty_does_not_double_charge_a_paid_late_year():

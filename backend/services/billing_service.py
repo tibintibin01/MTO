@@ -11,18 +11,14 @@ from backend.services.assessment_value_service import (
 )
 
 
-ANNUAL_PENALTY_START_MONTH = 7
 MAX_PENALTY_MONTHS = 36
 MONEY = Decimal("0.01")
 
 
 def annual_penalty_months(tax_year: int, as_of_date=None) -> int:
-    """Return office-standard annual penalty months, capped at 36 months."""
+    """Return calendar-inclusive annual penalty months, capped at 36 months."""
     as_of = as_of_date or date.today()
-    start = date(int(tax_year), ANNUAL_PENALTY_START_MONTH, 1)
-    if as_of <= start:
-        return 0
-    months = (as_of.year - start.year) * 12 + (as_of.month - start.month)
+    months = (as_of.year - int(tax_year)) * 12 + as_of.month
     return min(MAX_PENALTY_MONTHS, max(0, months))
 
 
@@ -1128,7 +1124,7 @@ def _billing_current_amount_exprs(db_session: Session, as_of_date=None):
     )
     raw_months = (
         (int(as_of.year) - PropertyBilling.tax_year) * 12
-        + (int(as_of.month) - ANNUAL_PENALTY_START_MONTH)
+        + int(as_of.month)
     )
     months = case(
         (raw_months < 0, 0),

@@ -39,9 +39,9 @@ def _count_annual_penalty_months(tax_year: int, paid_date) -> int:
     """
     Count penalty months for annual RPT payments.
 
-    Dipaculao MTO's calculator starts delinquency after the regular payment
-    period, not immediately after January. A payment for 2024 made on
-    2026-06-20 is therefore 23 months late (46% at 2% per month).
+    The office calculation counts January through the payment month,
+    inclusive, at 2% per month and caps the charge at 36 months. A payment
+    for 2024 made in June 2026 is therefore 30 months late (60%).
     """
     from backend.services.billing_service import annual_penalty_months
 
