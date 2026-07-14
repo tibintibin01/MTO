@@ -71,7 +71,8 @@ def test_notice_preview_is_self_contained_folio_document(tmp_path):
     assert "Save PDF" in document
     assert "Print Document" in document
     assert "data:image/png;base64," in document
-    assert "MTO TEST USER" in document
+    assert "MTO TEST USER" not in document
+    assert '<div class="signature-name"></div>' in document
 
 
 def test_notice_preview_escapes_taxpayer_text(tmp_path):

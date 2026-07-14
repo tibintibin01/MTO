@@ -386,10 +386,7 @@ def generate_delinquency_notice_preview(statement_data, base_dir):
     if not table_rows:
         table_rows.append('<tr><td colspan="7" class="empty">No outstanding billing rows found.</td></tr>')
 
-    prepared_by = _html_text(
-        statement_data.get("prepared_by") or BRANDING.get("notice_prepared_by"),
-        "AUTHORIZED MTO PERSONNEL",
-    ).upper()
+    prepared_by = ""
     owner_name = _html_text(statement_data.get("owner_name"))
     barangay = _html_text(statement_data.get("barangay") or statement_data.get("location"))
     location = _html_text(statement_data.get("location") or statement_data.get("barangay"))
@@ -421,28 +418,28 @@ def generate_delinquency_notice_preview(statement_data, base_dir):
   .save {{ background:#e8eef6; color:#18324d; }}
   .print {{ background:#2563eb; color:white; }}
   .preview {{ padding:8px 24px 32px; overflow:auto; }}
-  .sheet {{ width:8.5in; min-height:13in; margin:0 auto; background:#fff; padding:.30in .38in .25in; box-shadow:0 10px 28px rgba(15,23,42,.18); font-size:9px; line-height:1.28; }}
-  .letterhead {{ display:grid; grid-template-columns:1.05in 1fr 1.05in; align-items:center; min-height:.83in; }}
-  .letterhead img {{ width:.72in; height:.72in; object-fit:contain; justify-self:center; }}
-  .gov {{ text-align:center; font-weight:700; font-size:8px; line-height:1.15; text-transform:uppercase; }}
-  .office-script {{ display:block; margin-top:5px; color:#164d8c; font-family:Georgia, 'Times New Roman', serif; font-style:italic; font-size:15px; text-transform:none; }}
-  .double-rule {{ border-top:3px double #222; margin:3px 0 8px; }}
-  h1 {{ margin:0 0 10px; text-align:center; font-size:13px; letter-spacing:.1px; }}
-  .date-row {{ display:flex; justify-content:flex-end; align-items:flex-end; gap:9px; margin-bottom:7px; }}
-  .date-line {{ width:1.38in; border-bottom:1px solid #111; padding:0 4px 2px; text-align:center; }}
-  .identity {{ display:grid; grid-template-columns:.70in 1fr; gap:5px 8px; margin-bottom:8px; }}
-  .fill-line {{ border-bottom:1px solid #111; min-height:16px; padding:0 4px 2px; font-weight:700; }}
+  .sheet {{ width:8.5in; min-height:13in; margin:0 auto; background:#fff; padding:.38in .46in .34in; box-shadow:0 10px 28px rgba(15,23,42,.18); font-size:10.5px; line-height:1.38; display:flex; flex-direction:column; }}
+  .letterhead {{ display:grid; grid-template-columns:1.12in 1fr 1.12in; align-items:center; min-height:1in; }}
+  .letterhead img {{ width:.86in; height:.86in; object-fit:contain; justify-self:center; }}
+  .gov {{ text-align:center; font-weight:700; font-size:9.3px; line-height:1.2; text-transform:uppercase; }}
+  .office-script {{ display:block; margin-top:7px; color:#164d8c; font-family:Georgia, 'Times New Roman', serif; font-style:italic; font-size:18px; text-transform:none; }}
+  .double-rule {{ border-top:3px double #222; margin:6px 0 11px; }}
+  h1 {{ margin:0 0 13px; text-align:center; font-size:15px; letter-spacing:.1px; }}
+  .date-row {{ display:flex; justify-content:flex-end; align-items:flex-end; gap:10px; margin-bottom:10px; }}
+  .date-line {{ width:1.55in; border-bottom:1px solid #111; padding:0 5px 3px; text-align:center; }}
+  .identity {{ display:grid; grid-template-columns:.76in 1fr; gap:7px 10px; margin-bottom:11px; }}
+  .fill-line {{ border-bottom:1px solid #111; min-height:19px; padding:0 5px 3px; font-weight:700; }}
   .fill-line.address {{ font-weight:400; }}
-  .salutation {{ font-weight:700; margin:8px 0 5px; }}
-  .legal {{ margin:0 0 8px; text-align:justify; }}
-  .property-grid {{ display:grid; grid-template-columns:1fr 1fr; column-gap:26px; margin:5px 0 8px; }}
-  .detail {{ display:grid; grid-template-columns:.82in 1fr; align-items:end; min-height:21px; }}
-  .detail strong {{ font-size:8px; }}
-  .detail span {{ border-bottom:1px solid #111; padding:0 4px 2px; min-height:15px; }}
-  .summary-sentence {{ margin:8px 0 6px; }}
+  .salutation {{ font-weight:700; margin:11px 0 7px; }}
+  .legal {{ margin:0 0 11px; text-align:justify; }}
+  .property-grid {{ display:grid; grid-template-columns:1fr 1fr; column-gap:30px; margin:7px 0 11px; }}
+  .detail {{ display:grid; grid-template-columns:.96in 1fr; align-items:end; min-height:25px; }}
+  .detail strong {{ font-size:9px; }}
+  .detail span {{ border-bottom:1px solid #111; padding:0 5px 3px; min-height:18px; }}
+  .summary-sentence {{ margin:11px 0 8px; }}
   .summary-sentence b {{ color:var(--red); }}
-  table {{ width:100%; border-collapse:collapse; table-layout:fixed; font-size:7.6px; }}
-  th, td {{ border:1px solid #111; padding:4px 3px; text-align:right; vertical-align:middle; }}
+  table {{ width:100%; border-collapse:collapse; table-layout:fixed; font-size:8.8px; }}
+  th, td {{ border:1px solid #111; padding:6px 4px; text-align:right; vertical-align:middle; }}
   th {{ text-align:center; font-weight:700; background:#f8fafc; }}
   th:nth-child(1), td:nth-child(1) {{ width:18%; }}
   th:nth-child(2), td:nth-child(2) {{ width:10%; text-align:center; }}
@@ -452,23 +449,23 @@ def generate_delinquency_notice_preview(statement_data, base_dir):
   .empty {{ text-align:center; padding:12px; color:#64748b; }}
   .total-row td {{ font-weight:700; background:#f3f4f6; }}
   .total-row td:first-child {{ text-align:center; }}
-  .total-row .amount {{ color:var(--red); font-size:9px; }}
-  .body-note {{ margin:8px 0 0; text-align:justify; font-size:8px; }}
-  .amount-words {{ text-align:center; font-weight:700; font-style:italic; text-decoration:underline; margin:5px 0; }}
-  .warning {{ text-align:center; font-size:8px; margin-top:5px; }}
-  .signature-space {{ height:1.85in; display:flex; align-items:flex-end; }}
-  .signatures {{ width:100%; display:grid; grid-template-columns:1fr 1fr; gap:.65in; text-align:center; }}
-  .signature-label {{ text-align:left; margin-bottom:18px; }}
-  .signature-name {{ border-bottom:1px solid #111; font-weight:700; min-height:16px; }}
-  .signature-title {{ font-size:7px; margin-top:2px; text-transform:uppercase; }}
-  .service-rule {{ border-top:1px solid #9ca3af; margin-top:5px; }}
-  .service {{ display:grid; grid-template-columns:1.35fr .9fr; gap:10px; padding-top:5px; }}
-  .ack-title, .service-title {{ font-weight:700; font-size:7px; margin-bottom:4px; }}
-  .ack-line {{ display:grid; grid-template-columns:.95in 1fr; margin:2px 0; }}
-  .ack-line span:last-child {{ border-bottom:1px solid #111; min-height:12px; }}
-  .service-box {{ border:1px solid #111; padding:6px; min-height:.65in; }}
-  .check {{ display:inline-block; width:10px; height:10px; border:1px solid #111; vertical-align:-1px; margin:0 3px 0 7px; }}
-  .reason {{ margin-top:9px; border-bottom:1px solid #111; min-height:13px; }}
+  .total-row .amount {{ color:var(--red); font-size:10.5px; }}
+  .body-note {{ margin:10px 0 0; text-align:justify; font-size:9px; }}
+  .amount-words {{ text-align:center; font-weight:700; font-style:italic; text-decoration:underline; margin:8px 0; font-size:9.5px; }}
+  .warning {{ text-align:center; font-size:9px; margin-top:8px; }}
+  .signature-space {{ flex:1 1 auto; min-height:1.7in; max-height:2.25in; display:flex; align-items:flex-end; }}
+  .signatures {{ width:100%; display:grid; grid-template-columns:1fr 1fr; gap:.72in; text-align:center; }}
+  .signature-label {{ text-align:left; margin-bottom:22px; }}
+  .signature-name {{ border-bottom:1px solid #111; font-weight:700; min-height:18px; }}
+  .signature-title {{ font-size:7.8px; margin-top:3px; text-transform:uppercase; }}
+  .service-rule {{ border-top:1px solid #9ca3af; margin-top:8px; }}
+  .service {{ display:grid; grid-template-columns:1.35fr .9fr; gap:14px; padding-top:8px; }}
+  .ack-title, .service-title {{ font-weight:700; font-size:8px; margin-bottom:6px; }}
+  .ack-line {{ display:grid; grid-template-columns:1.02in 1fr; margin:4px 0; }}
+  .ack-line span:last-child {{ border-bottom:1px solid #111; min-height:14px; }}
+  .service-box {{ border:1px solid #111; padding:8px; min-height:.82in; }}
+  .check {{ display:inline-block; width:11px; height:11px; border:1px solid #111; vertical-align:-1px; margin:0 4px 0 8px; }}
+  .reason {{ margin-top:12px; border-bottom:1px solid #111; min-height:15px; }}
   @page {{ size:8.5in 13in; margin:0; }}
   @media print {{
     html, body {{ background:white; }}
