@@ -1,5 +1,5 @@
 import customtkinter as ctk
-from api_clients.api_helper import CONNECTION_STATUS
+import api_clients.api_helper as api
 from api_clients.offline_manager import manager
 
 class ConnectivityStatusBar(ctk.CTkFrame):
@@ -14,12 +14,13 @@ class ConnectivityStatusBar(ctk.CTkFrame):
         
         self.queue_lbl = ctk.CTkLabel(self, text="", font=("Segoe UI", 10), text_color="#bdc3c7")
         self.queue_lbl.pack(side="right", padx=15)
+        self._ws_connected = False
         
         self.update_status()
 
     def update_status(self):
         """Periodically updates the UI based on global connection state."""
-        from api_clients.api_helper import CONNECTION_STATUS as status
+        status = api.get_connection_status()
         count = manager.get_queue_count()
         
         if status == "ONLINE":
@@ -37,14 +38,10 @@ class ConnectivityStatusBar(ctk.CTkFrame):
         else:
             self.queue_lbl.configure(text="")
             
-        # Check every 2 seconds
-        self.after(2000, self.update_status)
+        # Keep this callback lightweight; queue count is an in-memory value.
+        if self.winfo_exists():
+            self.after(2000, self.update_status)
         
     def set_ws_status(self, connected: bool):
-        """Updates the status specifically for WebSocket events."""
-        if connected:
-            self.status_dot.configure(text_color="#2ecc71")
-            self.status_lbl.configure(text="SYSTEM ONLINE • LIVE")
-        else:
-            self.status_dot.configure(text_color="#e67e22")
-            self.status_lbl.configure(text="SYSTEM ONLINE • DISCONNECTED")
+        """Records optional WebSocket state without replacing API health."""
+        self._ws_connected = connected

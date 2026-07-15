@@ -11,7 +11,10 @@ from utils.logger import mto_logger
 class OfflineManager:
     def __init__(self, db_path="mto_local.db"):
         self.db_path = db_path
+        self._queue_count_lock = threading.Lock()
+        self._queue_count = 0
         self._init_db()
+        self._refresh_queue_count()
         self._sync_thread = None
         self._stop_event = threading.Event()
         self._on_queue_change = None
@@ -82,6 +85,7 @@ class OfflineManager:
                     (method, endpoint, json.dumps(payload), datetime.now())
                 )
                 conn.commit()
+            self._refresh_queue_count()
             self._notify_change()
             return True
         except: return False
@@ -107,6 +111,7 @@ class OfflineManager:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute("DELETE FROM sync_queue WHERE id = ?", (action_id,))
                 conn.commit()
+            self._refresh_queue_count()
             self._notify_change()
         except: pass
 
@@ -130,15 +135,26 @@ class OfflineManager:
                     (action_id,)
                 )
                 conn.commit()
+            self._refresh_queue_count()
             self._notify_change()
         except: pass
 
     def get_queue_count(self):
-        """Returns the number of items waiting to be synced."""
+        """Returns the cached pending count without blocking the UI thread."""
+        with self._queue_count_lock:
+            return self._queue_count
+
+    def _refresh_queue_count(self):
+        """Refreshes the cached pending count after a queue mutation."""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                return conn.execute("SELECT COUNT(*) FROM sync_queue WHERE status = 'PENDING'").fetchone()[0]
-        except: return 0
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM sync_queue WHERE status = 'PENDING'"
+                ).fetchone()[0]
+        except Exception:
+            return
+        with self._queue_count_lock:
+            self._queue_count = count
 
     def start_sync_worker(self, api_request_fn):
         """Starts the background sync thread."""
@@ -201,9 +217,6 @@ class OfflineManager:
 
             # Wait before next check
             self._stop_event.wait(30) # Check every 30 seconds
-
-# Global instance
-manager = OfflineManager()
 
 # Global instance
 manager = OfflineManager()

@@ -5,6 +5,30 @@ import threading
 from utils.logger import mto_logger
 
 CONNECTION_STATUS = "ONLINE" # ONLINE, OFFLINE, SYNCING
+_CONNECTION_STATUS_LOCK = threading.Lock()
+DEFAULT_CONNECT_TIMEOUT = 4
+
+
+def set_connection_status(status):
+    """Updates the process-wide API connectivity state safely."""
+    global CONNECTION_STATUS
+    if status not in {"ONLINE", "OFFLINE", "SYNCING"}:
+        raise ValueError(f"Unsupported connection status: {status}")
+    with _CONNECTION_STATUS_LOCK:
+        CONNECTION_STATUS = status
+
+
+def get_connection_status():
+    """Returns the latest API connectivity state."""
+    with _CONNECTION_STATUS_LOCK:
+        return CONNECTION_STATUS
+
+
+def _requests_timeout(timeout):
+    """Keep connection failures short while preserving long response timeouts."""
+    if isinstance(timeout, tuple):
+        return timeout
+    return (DEFAULT_CONNECT_TIMEOUT, timeout)
 
 import os
 import json
@@ -205,9 +229,13 @@ def api_request(
             params=params,
             headers=headers,
             files=files,
-            timeout=timeout,
+            timeout=_requests_timeout(timeout),
             verify=verify_param,
         )
+
+        # Reaching the API is enough to recover the connectivity indicator,
+        # even when the endpoint subsequently returns a validation error.
+        set_connection_status("ONLINE")
 
 
         mto_logger.info(f"API Response: {response.status_code}", status=response.status_code)
@@ -233,8 +261,7 @@ def api_request(
             return response.json()
         return True
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-        global CONNECTION_STATUS
-        CONNECTION_STATUS = "OFFLINE"
+        set_connection_status("OFFLINE")
         
         if not queue_offline:
             raise Exception(
@@ -265,7 +292,7 @@ def api_request(
         
         # If it's a 503 or 504, we might treat it as offline too
         if status_code in [502, 503, 504]:
-            CONNECTION_STATUS = "OFFLINE"
+            set_connection_status("OFFLINE")
 
         if e.response is not None and e.response.text:
             try:
@@ -315,15 +342,23 @@ def api_download_file(method, endpoint, params=None, timeout=120):
             url,
             params=params,
             headers=headers,
-            timeout=timeout,
+            timeout=_requests_timeout(timeout),
             verify=verify_param,
             stream=True
         )
+
+        set_connection_status("ONLINE")
         
         response.raise_for_status()
         
         return save_stream_response_to_temp_file(response, default_suffix=".pdf")
         
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+        set_connection_status("OFFLINE")
+        raise Exception(
+            f"Cannot reach API server at {BASE_URL}. "
+            "Start the API server and verify server_config.json."
+        ) from e
     except Exception as e:
         status_code = getattr(getattr(e, "response", None), "status_code", "N/A")
         raise Exception(f"File Download Error (Status {status_code}): {str(e)}")

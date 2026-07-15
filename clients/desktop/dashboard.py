@@ -21,7 +21,6 @@ from theme_manager import setup_theme, ModernTheme
 from ui_components import ModernChartWidget, show_toast, ErrorDialog
 from utils import tr
 from api_clients.sync_monitor import sync_monitor
-import api_clients.api_helper as api
 from api_clients.offline_manager import manager
 
 
@@ -32,7 +31,6 @@ from ui.help_page import SystemHelpPage
 from ui.watchdog import SessionWatchdog, show_session_expired_dialog
 from ui.notifications import NotificationListener
 from ui.conflict_resolver import ConflictArbitrationModal
-from api_clients.sync_monitor import sync_monitor
 
 # Ensure theme is loaded
 setup_theme()
@@ -77,28 +75,6 @@ class DashboardApp(ctk.CTk):
         # Responsive Layout
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
-
-        # --- CONNECTIVITY STATUS BAR (FOOTER) ---
-        self.footer = ctk.CTkFrame(self, height=25, fg_color="#2c3e50")
-        self.footer.grid(row=1, column=0, columnspan=2, sticky="ew")
-        
-        self.status_dot = ctk.CTkLabel(self.footer, text="●", font=("Segoe UI", 14), text_color="#2ecc71")
-        self.status_dot.pack(side="left", padx=(15, 5))
-        
-        self.status_lbl = ctk.CTkLabel(self.footer, text="SYSTEM ONLINE", font=("Segoe UI", 10, "bold"), text_color="white")
-        self.status_lbl.pack(side="left")
-        
-        self.queue_lbl = ctk.CTkLabel(self.footer, text="", font=("Segoe UI", 10), text_color="#bdc3c7")
-        self.queue_lbl.pack(side="right", padx=15)
-        
-        # 1. Initialize Sync Badge and Worker
-        from ui_components import SyncBadge
-        self.sync_badge = SyncBadge(self.footer, command=self.open_sync_manager)
-        self.sync_badge.pack(side="right", padx=10)
-        
-        manager.set_on_queue_change(self.sync_badge.update_status)
-        # We start the worker loop using the global api_request function
-        self.after(2000, lambda: manager.start_sync_worker(api.api_request))
 
         self.progress_overlays = {}
 

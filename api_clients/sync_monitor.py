@@ -4,7 +4,6 @@ import requests
 import api_clients.api_helper as api
 from api_clients.offline_manager import manager
 from utils.logger import mto_logger
-from utils.resilience import CircuitBreaker
 
 class SyncMonitor:
     def __init__(self, interval=30, on_conflict=None):
@@ -12,9 +11,6 @@ class SyncMonitor:
         self.on_conflict = on_conflict # Callback: func(action_id, local_payload, server_snapshot)
         self.running = False
         self._thread = None
-        
-        # Initialize Circuit Breaker for Local Backend connectivity
-        self.circuit = CircuitBreaker(name="LocalBackend", failure_threshold=3, recovery_timeout=60)
 
     def start(self):
         if not self.running:
@@ -29,34 +25,36 @@ class SyncMonitor:
                 is_online = self._check_connection()
                 
                 if is_online:
-                    if api.CONNECTION_STATUS == "OFFLINE":
-                        api.CONNECTION_STATUS = "ONLINE"
+                    api.set_connection_status("ONLINE")
                     
                     # Flush queue if online
                     pending = manager.get_pending_actions()
                     if pending:
-                        api.CONNECTION_STATUS = "SYNCING"
+                        api.set_connection_status("SYNCING")
                         self._flush_queue(pending)
-                        api.CONNECTION_STATUS = "ONLINE"
+                        if api.get_connection_status() != "OFFLINE":
+                            api.set_connection_status("ONLINE")
                 else:
-                    api.CONNECTION_STATUS = "OFFLINE"
+                    api.set_connection_status("OFFLINE")
             except Exception as e:
                 # Network or unexpected error — mark offline but never swallow
                 # KeyboardInterrupt or SystemExit which would mask a shutdown.
                 mto_logger.warning("SyncMonitor loop error: %s", e)
-                api.CONNECTION_STATUS = "OFFLINE"
+                api.set_connection_status("OFFLINE")
                 
             time.sleep(self.interval)
 
     def _check_connection(self):
-        """Pings the local API server with circuit breaker protection."""
-        def ping():
-            response = requests.get(f"{api.BASE_URL}/", timeout=5, verify=api.CERT_PATH)
-            return response.status_code == 200
-            
+        """Pings the local API server without delaying future recovery probes."""
+        verify_param = str(api.CERT_PATH) if api.CERT_PATH.exists() else False
         try:
-            return self.circuit.call(ping)
-        except Exception:
+            response = requests.get(
+                f"{api.BASE_URL}/",
+                timeout=(3, 5),
+                verify=verify_param,
+            )
+            return response.status_code < 500
+        except requests.exceptions.RequestException:
             return False
 
     def _flush_queue(self, pending):
@@ -90,8 +88,11 @@ class SyncMonitor:
                     continue
 
                 mto_logger.error(f"SYNC FAILED for {action['id']}", error=str(e), action_id=action["id"])
-                if "Connection lost" in str(e) or "Status N/A" in str(e):
+                # A connection failure already updates the shared status in
+                # api_request. Stop immediately instead of timing out once for
+                # every queued action while the server is unavailable.
+                if api.get_connection_status() == "OFFLINE":
                     break
 
 # Global monitor
-sync_monitor = SyncMonitor(interval=20)
+sync_monitor = SyncMonitor(interval=10)
