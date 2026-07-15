@@ -13,7 +13,7 @@ from utils.logger import mto_logger
 router = APIRouter(prefix="/properties", tags=["Properties"])
 
 @router.get("")
-async def list_properties(
+def list_properties(
     search: str = "",
     limit: int = 50,
     cursor: Optional[int] = None,
@@ -49,11 +49,11 @@ async def list_properties(
     }
 
 @router.get("/unspecified")
-async def get_unspecified_properties(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_unspecified_properties(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     return prop_svc.get_unspecified_properties(db_session=db_session)
 
 @router.get("/{property_id}/history")
-async def get_property_history(property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_property_history(property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     from backend.models import PropertyAssessmentHistory
     
     rows = db_session.query(PropertyAssessmentHistory).filter(
@@ -75,12 +75,12 @@ async def get_property_history(property_id: int, current_user: dict = Depends(ge
     ]
 
 @router.get("/barangays")
-async def list_barangays(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def list_barangays(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     return prop_svc.get_barangays(db_session=db_session)
 
 
 @router.get("/payment-target")
-async def resolve_payment_target(
+def resolve_payment_target(
     td_number: str,
     tax_year: int,
     current_user: dict = Depends(get_current_user),
@@ -98,7 +98,7 @@ async def resolve_payment_target(
     return result
 
 @router.get("/delinquent")
-async def get_delinquent_accounts(
+def get_delinquent_accounts(
     limit: int = 50,
     cursor: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
@@ -107,7 +107,7 @@ async def get_delinquent_accounts(
     return bill_svc.get_delinquent_accounts(limit=limit, cursor=cursor, db_session=db_session)
 
 @router.get("/deleted", dependencies=[Depends(admin_only)])
-async def list_deleted_properties(
+def list_deleted_properties(
     limit: int = 50,
     cursor: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
@@ -116,21 +116,21 @@ async def list_deleted_properties(
     return prop_svc.get_deleted_properties(limit=limit, cursor=cursor, db_session=db_session)
 
 @router.post("/{property_id}/restore", dependencies=[Depends(admin_only)])
-async def restore_property(
+def restore_property(
     property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
 ):
     prop_svc.restore_property(property_id, current_user, db_session=db_session)
     return {"status": "restored"}
 
 @router.delete("/{property_id}/purge", dependencies=[Depends(admin_only)])
-async def purge_property(
+def purge_property(
     property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
 ):
     prop_svc.purge_property(property_id, current_user, db_session=db_session)
     return {"status": "purged"}
 
 @router.get("/{property_id}")
-async def get_property(
+def get_property(
     property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
 ):
     prop = prop_svc.get_property_by_id(property_id, db_session=db_session)
@@ -141,7 +141,7 @@ async def get_property(
 @router.post("")
 @limiter.limit("15/minute")
 @user_limiter.limit("15/minute")
-async def create_property(
+def create_property(
     request: Request,
     data: PropertySaveSchema, 
     current_user: dict = Depends(write_access),
@@ -165,7 +165,7 @@ async def create_property(
 @router.put("/{property_id}")
 @limiter.limit("20/minute")
 @user_limiter.limit("20/minute")
-async def update_property(
+def update_property(
     request: Request,
     property_id: int,
     data: PropertySaveSchema,
@@ -200,7 +200,7 @@ async def update_property(
         raise HTTPException(status_code=500, detail=f"Internal Server Error [{error_type}]: {str(e)}")
 
 @router.delete("/{property_id}")
-async def delete_property(
+def delete_property(
     property_id: int, request: Request, current_user: dict = Depends(write_access), db_session: Session = Depends(get_db)
 ):
     ip = request.client.host
@@ -210,14 +210,14 @@ async def delete_property(
     return {"status": "deleted", **res}
 
 @router.post("/bulk-update-barangay")
-async def bulk_update_barangay(data: BulkUpdateBarangaySchema, current_user: dict = Depends(write_access), db_session: Session = Depends(get_db)):
+def bulk_update_barangay(data: BulkUpdateBarangaySchema, current_user: dict = Depends(write_access), db_session: Session = Depends(get_db)):
     ids = data.ids
     new_brgy = data.barangay
     count = prop_svc.bulk_update_barangay(ids, new_brgy, user=current_user, db_session=db_session)
     return {"updated": count}
 
 @router.get("/dossier/{td_number}")
-async def get_property_dossier(
+def get_property_dossier(
     td_number: str, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
 ):
     try:

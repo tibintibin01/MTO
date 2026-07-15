@@ -28,7 +28,7 @@ async def readyz():
 @router.get("/healthz")
 @router.get("/health")
 @router.get("/ready")
-async def health_check(db_session: Session = Depends(get_db)):
+def health_check(db_session: Session = Depends(get_db)):
     """Deep readiness probe: checks DB, cache, storage, vault, and job workers."""
     import shutil
     from utils.cache_manager import cache
@@ -104,7 +104,7 @@ async def health_check(db_session: Session = Depends(get_db)):
 
 
 @router.get("/api/v1/metrics")
-async def get_metrics(current_user: dict = Depends(admin_only)):
+def get_metrics(current_user: dict = Depends(admin_only)):
     """Prometheus metrics endpoint. Admin only."""
     from utils.metrics import MetricsManager
     content, content_type = MetricsManager.get_latest_metrics()
@@ -112,7 +112,7 @@ async def get_metrics(current_user: dict = Depends(admin_only)):
 
 
 @router.get("/system/stats")
-async def get_system_stats(
+def get_system_stats(
     current_user: dict = Depends(admin_only),
     db_session: Session = Depends(get_db),
 ):
@@ -121,7 +121,7 @@ async def get_system_stats(
 
 
 @router.get("/system/workers")
-async def get_worker_health(current_user: dict = Depends(admin_only)):
+def get_worker_health(current_user: dict = Depends(admin_only)):
     """Returns live health status of all background job worker threads."""
     from backend.services.job_service import get_worker_health as _get_health
     return _get_health()

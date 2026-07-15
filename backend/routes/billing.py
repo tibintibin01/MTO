@@ -52,17 +52,17 @@ def _fetch_all_assessment_roll_items(
 
 
 @router.get("/billing/summary")
-async def get_billing_summary(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_billing_summary(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     return sys_svc.get_dashboard_summary(db_session=db_session)
 
 @router.get("/properties/{property_id}/statement")
-async def get_property_statement(
+def get_property_statement(
     property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
 ):
     return bill_svc.get_property_statement_data(property_id, db_session=db_session)
 
 @router.get("/billing/assessment-roll")
-async def get_assessment_roll(
+def get_assessment_roll(
     limit: int = 100,
     cursor: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
@@ -71,7 +71,7 @@ async def get_assessment_roll(
     return prop_svc.get_assessment_roll(limit=limit, cursor=cursor, db_session=db_session)
 
 @router.get("/billing/report-details")
-async def get_report_details(
+def get_report_details(
     month: str = "All",
     year: str = "All",
     limit: int = 200,
@@ -82,21 +82,21 @@ async def get_report_details(
     return bill_svc.get_report_details(month, year, limit=limit, cursor=cursor, db_session=db_session)
 
 @router.get("/billing/receivables-summary")
-async def get_receivables_summary(
+def get_receivables_summary(
     year: str, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
 ):
     return bill_svc.get_rpt_receivables_summary(year, db_session=db_session)
 
 
 @router.get("/billing/reconciliation-metrics")
-async def get_reconciliation_metrics(
+def get_reconciliation_metrics(
     year: str, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
 ):
     return bill_svc.get_reconciliation_metrics(year, db_session=db_session)
 
 
 @router.get("/billing/reconciliation-diagnostics")
-async def get_reconciliation_diagnostics(
+def get_reconciliation_diagnostics(
     year: str,
     limit: int = 50,
     current_user: dict = Depends(get_current_user),
@@ -105,7 +105,7 @@ async def get_reconciliation_diagnostics(
     return bill_svc.get_reconciliation_diagnostics(year, limit=limit, db_session=db_session)
 
 @router.get("/billing/delinquents")
-async def get_delinquent_list(
+def get_delinquent_list(
     limit: int = 50,
     cursor: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
@@ -115,7 +115,7 @@ async def get_delinquent_list(
 
 
 @router.get("/billing/collections", dependencies=[Depends(read_only)])
-async def get_collections_worklist(
+def get_collections_worklist(
     barangay: Optional[str] = None,
     search: Optional[str] = None,
     payment_status: Optional[str] = None,
@@ -144,7 +144,7 @@ async def get_collections_worklist(
 
 
 @router.get("/billing/compliant")
-async def get_compliant_list(
+def get_compliant_list(
     barangay: Optional[str] = None,
     search: Optional[str] = None,
     limit: int = 50,
@@ -168,7 +168,7 @@ async def get_compliant_list(
 
 
 @router.get("/billing/compliant/summary")
-async def get_compliant_summary(
+def get_compliant_summary(
     as_of_year: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
@@ -184,7 +184,7 @@ async def get_compliant_summary(
     )
 
 @router.get("/reports/receivables-by-barangay")
-async def get_receivables_by_barangay(
+def get_receivables_by_barangay(
     year: Optional[int] = None,
     data_start_year: int = 2023,
     current_user: dict = Depends(get_current_user),
@@ -291,19 +291,19 @@ async def export_assessment_roll_pdf(
 
 
 @router.get("/analytics/trends", tags=["Analytics"], dependencies=[Depends(read_only)])
-async def get_analytics_trends(months: int = 12, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_analytics_trends(months: int = 12, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     return pay_svc.get_monthly_collection_trend(months, db_session=db_session)
 
 @router.get("/analytics/barangay-breakdown", tags=["Analytics"], dependencies=[Depends(read_only)])
-async def get_barangay_breakdown(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_barangay_breakdown(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     return pay_svc.get_revenue_by_barangay(db_session=db_session)
 
 @router.get("/analytics/kpis", tags=["Analytics"], dependencies=[Depends(read_only)])
-async def get_analytics_kpis(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_analytics_kpis(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     return pay_svc.get_collection_kpis(db_session=db_session)
 
 @router.get("/api/analytics/dashboard")
-async def get_analytics_dashboard(user: str = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_analytics_dashboard(user: str = Depends(get_current_user), db_session: Session = Depends(get_db)):
     """Returns a comprehensive set of treasury analytics data including year-over-year comparison."""
     return {
         "summary":   analytics.get_collection_summary(db_session=db_session),

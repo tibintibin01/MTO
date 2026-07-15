@@ -159,6 +159,7 @@ def create_app() -> FastAPI:
     app.middleware("http")(idempotency_middleware)
     app.middleware("http")(request_body_size_middleware)
     app.middleware("http")(security_headers_middleware)
+    app.middleware("http")(request_timeout_middleware)
 
     # Import and Include Routers
     from backend.routes import auth, users, properties, payments, billing, system, public, jobs, reports

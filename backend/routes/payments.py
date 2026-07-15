@@ -23,13 +23,13 @@ class PaymentUpdateRequest(BaseModel):
     discount: float = 0.0
     remarks: Optional[str] = None
 @router.get("/recent")
-async def get_recent_payments(
+def get_recent_payments(
     limit: int = 8, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
 ):
     return pay_svc.get_recent_payments(limit, db_session=db_session)
 
 @router.get("/records")
-async def get_payment_records(
+def get_payment_records(
     term: str,
     limit: int = 50,
     cursor: Optional[int] = None,
@@ -39,7 +39,7 @@ async def get_payment_records(
     return pay_svc.get_payment_receipt_records(term, limit=limit, cursor=cursor, db_session=db_session)
 
 @router.get("/{payment_id}/details")
-async def get_payment_details(
+def get_payment_details(
     payment_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
 ):
     res = pay_svc.get_payment_receipt_details(payment_id, db_session=db_session)
@@ -48,7 +48,7 @@ async def get_payment_details(
     return res
 
 @router.post("/receipt-record")
-async def save_receipt_record(
+def save_receipt_record(
     data: ReceiptRecordSchema, current_user: dict = Depends(write_access), db_session: Session = Depends(get_db)
 ):
     return pay_svc.save_receipt_record(
@@ -62,15 +62,15 @@ async def save_receipt_record(
     )
 
 @router.get("/ledger")
-async def get_payment_ledger(term: str, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_payment_ledger(term: str, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     return pay_svc.get_unified_payment_history(term, db_session=db_session)
 
 @router.get("/next-or")
-async def get_next_or_number(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_next_or_number(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     return {"next_or": pay_svc.get_next_or_number(db_session=db_session)}
 
 @router.get("/trend")
-async def get_collection_trend(
+def get_collection_trend(
     months: int = 6, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
 ):
     return pay_svc.get_monthly_collection_trend(months, db_session=db_session)
@@ -129,7 +129,7 @@ async def generate_receipt_pdf(
 
 
 @router.put("/{payment_id}")
-async def update_payment(
+def update_payment(
     payment_id: int,
     data: PaymentUpdateRequest,
     current_user: dict = Depends(write_access),
@@ -142,7 +142,7 @@ async def update_payment(
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.delete("/{payment_id}")
-async def delete_payment(
+def delete_payment(
     payment_id: int, current_user: dict = Depends(write_access), db_session: Session = Depends(get_db)
 ):
     try:
@@ -164,7 +164,7 @@ class BatchDeleteCommitRequest(BaseModel):
 
 
 @router.get("/cleanup-candidates")
-async def payment_cleanup_candidates(
+def payment_cleanup_candidates(
     year: int = 2026,
     limit: int = 500,
     current_user: dict = Depends(write_access),
@@ -178,7 +178,7 @@ async def payment_cleanup_candidates(
 
 
 @router.post("/batch-delete/preview")
-async def batch_delete_preview(
+def batch_delete_preview(
     data: BatchDeletePreviewRequest,
     current_user: dict = Depends(write_access),
     db_session: Session = Depends(get_db),
@@ -236,7 +236,7 @@ async def batch_delete_preview(
 
 
 @router.post("/batch-delete/preview-by-ids")
-async def batch_delete_preview_by_ids(
+def batch_delete_preview_by_ids(
     data: BatchDeleteCommitRequest,
     current_user: dict = Depends(write_access),
     db_session: Session = Depends(get_db),
@@ -293,7 +293,7 @@ async def batch_delete_preview_by_ids(
 
 
 @router.post("/batch-delete/commit")
-async def batch_delete_commit(
+def batch_delete_commit(
     data: BatchDeleteCommitRequest,
     current_user: dict = Depends(write_access),
     db_session: Session = Depends(get_db),
