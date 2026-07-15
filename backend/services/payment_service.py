@@ -309,7 +309,9 @@ def get_unified_payment_history(term, db_session: Session = None):
         ReceiptHistory.id.label('receipt_id'),
         Property.td_number,
         Property.owner_name,
-        Property.id.label('property_id')
+        Property.id.label('property_id'),
+        Property.barangay,
+        Property.kind_of_property,
     ).join(Property, Property.id == Payment.property_id).outerjoin(
         ReceiptHistory, ReceiptHistory.payment_id == Payment.id
     ).outerjoin(

@@ -18,6 +18,8 @@ class LedgerPage:
         self.is_loading = False
         self.search_timer = None
         self._ledger_property_ids = {}
+        self._ledger_property_contexts = {}
+        self._active_property_context = None
         self.setup_ui()
 
     def setup_ui(self):
@@ -57,11 +59,34 @@ class LedgerPage:
         self.export_btn = ctk.CTkButton(tools, text=tr("ledger.btn_export").upper(), command=self.do_export, font=("Inter", 10, "bold"), fg_color=colors["amber"], hover_color=colors["amber_hover"], width=112, height=36, corner_radius=6)
         self.export_btn.pack(side="left")
 
-        selected_bar = ctk.CTkFrame(self.container, fg_color="transparent")
+        selected_bar = ctk.CTkFrame(
+            self.container,
+            fg_color=colors["panel"],
+            corner_radius=8,
+            border_width=1,
+            border_color=colors["border"],
+        )
         selected_bar.pack(fill="x", pady=(0, 9))
-        ctk.CTkLabel(selected_bar, text="SELECTED PAYMENT", font=("Inter", 9, "bold"), text_color=colors["muted"]).pack(side="left", padx=(2, 10))
+        context = ctk.CTkFrame(selected_bar, fg_color="transparent")
+        context.pack(side="left", fill="x", expand=True, padx=(14, 10), pady=8)
+        self.property_owner_lbl = ctk.CTkLabel(
+            context,
+            text="PROPERTY ACCOUNT  |  No property loaded",
+            font=("Inter", 12, "bold"),
+            text_color=colors["text"],
+            anchor="w",
+        )
+        self.property_owner_lbl.pack(fill="x", anchor="w")
+        self.property_context_lbl = ctk.CTkLabel(
+            context,
+            text="Search a TD number, owner, or OR number to view its payment history.",
+            font=("Inter", 9),
+            text_color=colors["muted"],
+            anchor="w",
+        )
+        self.property_context_lbl.pack(fill="x", anchor="w", pady=(2, 0))
         self.view_btn = ctk.CTkButton(selected_bar, text=tr("ledger.btn_view").upper(), command=self.open_receipt, font=("Inter", 10, "bold"), fg_color=colors["blue"], hover_color=colors["blue_hover"], width=118, height=32, corner_radius=6, state="disabled")
-        self.view_btn.pack(side="right")
+        self.view_btn.pack(side="right", padx=(0, 12), pady=10)
         if auth.has_permission(self.user, "receipt_generate"):
             self.regen_btn = ctk.CTkButton(selected_bar, text=tr("ledger.btn_regen").upper(), command=self.regenerate_receipt, font=("Inter", 10, "bold"), fg_color=colors["green"], hover_color=colors["green_hover"], width=118, height=32, corner_radius=6, state="disabled")
             self.regen_btn.pack(side="right", padx=(0, 7))
@@ -140,6 +165,43 @@ class LedgerPage:
             self.edit_btn.configure(state=state)
         if hasattr(self, "del_btn"):
             self.del_btn.configure(state=state)
+        if sel:
+            self._show_property_context(
+                self._ledger_property_contexts.get(sel[0]),
+                self.tree.item(sel[0]).get("values", []),
+            )
+        elif self._active_property_context:
+            self._show_property_context(self._active_property_context)
+
+    def _show_property_context(self, context, payment_values=None):
+        if not context:
+            self.property_owner_lbl.configure(text="PROPERTY ACCOUNT  |  No property loaded")
+            self.property_context_lbl.configure(
+                text="Search a TD number, owner, or OR number to view its payment history."
+            )
+            return
+
+        if context.get("multiple"):
+            count = context.get("count", 0)
+            self.property_owner_lbl.configure(text="PROPERTY ACCOUNT  |  Multiple properties found")
+            self.property_context_lbl.configure(
+                text=f"{count} property accounts match this search. Select a payment row to confirm its owner."
+            )
+            return
+
+        owner = str(context.get("owner_name") or "UNKNOWN OWNER").strip()
+        td_number = str(context.get("td_number") or "No TD").strip()
+        barangay = str(context.get("barangay") or "Unspecified barangay").strip()
+        classification = str(
+            context.get("kind_of_property") or "Unspecified classification"
+        ).strip()
+        details = f"TD {td_number}  |  {barangay}  |  {classification}"
+        if payment_values and len(payment_values) > 3:
+            or_number = str(payment_values[2] or "No OR")
+            tax_year = str(payment_values[3] or "No tax year")
+            details += f"  |  Selected: OR {or_number} - Tax Year {tax_year}"
+        self.property_owner_lbl.configure(text=f"PROPERTY OWNER  |  {owner}")
+        self.property_context_lbl.configure(text=details)
 
     def load_ledger(self):
         term = self.search_ent.get().strip()
@@ -160,7 +222,8 @@ class LedgerPage:
                 # Unified query returns:
                 # 0 payment_id, 1 date_paid, 2 OR, 3 tax_year, 4 basic, 5 SEF,
                 # 6 penalty, 7 discount, 8 amount, 9 posted_by, 10 remarks,
-                # 11 file_path, 12 receipt_id, 13 TD, 14 owner, 15 property_id.
+                # 11 file_path, 12 receipt_id, 13 TD, 14 owner, 15 property_id,
+                # 16 barangay, 17 classification.
                 rows = payment.get_unified_payment_history(term)
                 self.container.after(0, lambda: self._update_ui(rows, term))
             except Exception as e:
@@ -175,6 +238,8 @@ class LedgerPage:
     def _update_ui(self, rows, term):
         grand_total = 0.0
         self._ledger_property_ids = {}
+        self._ledger_property_contexts = {}
+        self._active_property_context = None
         if rows:
             for i, r in enumerate(rows):
                 # r: 0:pay_id, 1:date, 2:or, 3:year, 4:basic, 5:sef, 6:pen,
@@ -196,12 +261,31 @@ class LedgerPage:
                 item_id = self.tree.insert("", "end", values=f_r, tags=(file_path or "", tag)) # Store path and zebra tag
                 if len(r) > 15:
                     self._ledger_property_ids[item_id] = r[15]
+                    self._ledger_property_contexts[item_id] = {
+                        "property_id": r[15],
+                        "td_number": r[13] if len(r) > 13 else "",
+                        "owner_name": r[14] if len(r) > 14 else "",
+                        "barangay": r[16] if len(r) > 16 else "",
+                        "kind_of_property": r[17] if len(r) > 17 else "",
+                    }
                 try: grand_total += float(r[8])
                 except: pass
             self.total_lbl.configure(text=tr("ledger.footer.total").replace("{value}", f"₱ {grand_total:,.2f}"))
+            contexts_by_property = {
+                context["property_id"]: context
+                for context in self._ledger_property_contexts.values()
+            }
+            if len(contexts_by_property) == 1:
+                self._active_property_context = next(iter(contexts_by_property.values()))
+            elif contexts_by_property:
+                self._active_property_context = {
+                    "multiple": True,
+                    "count": len(contexts_by_property),
+                }
         else:
             # Silently update without annoying pop-ups
             self.total_lbl.configure(text=tr("ledger.footer.total").replace("{value}", "₱ 0.00"))
+        self._show_property_context(self._active_property_context)
         self.on_selection_change()
 
     def open_receipt(self):

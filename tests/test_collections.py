@@ -19,6 +19,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.database import Base
 from backend.models import Property, PropertyBilling
 from backend.services.billing_service import (
+    get_delinquent_accounts,
     get_collections_worklist,
     get_property_statement_data,
 )
@@ -130,8 +131,9 @@ def test_summary_aging_totals_sum_to_balance(db):
 
     result = get_collections_worklist(as_of_date=TEST_AS_OF, db_session=db)
     summary = result["summary"]
-    assert summary["total_balance"] == 6_000.0
-    assert round(sum(summary["aging_totals"].values()), 2) == 6_000.0
+    # P6,000 principal + seven calendar months at 2% = P6,840.
+    assert summary["total_balance"] == 6_840.0
+    assert round(sum(summary["aging_totals"].values()), 2) == 6_840.0
 
 
 def test_barangay_filter(db):
@@ -183,6 +185,102 @@ def test_worklist_excludes_fully_paid_year_with_recorded_penalty(db):
         db_session=db,
     )
     assert prop.td_number not in [item["td_number"] for item in result["items"]]
+
+
+def test_replaced_td_keeps_only_pre_replacement_delinquency(db):
+    old = Property(
+        td_number="06-0004-00414",
+        owner_name="OLD OWNER",
+        barangay="BORLONGAN",
+        assessed_value=100_000.0,
+        effectivity_date="2023-01-01",
+        penalty=0,
+        discount=0,
+    )
+    replacement = Property(
+        td_number="06-0004-01265",
+        prev_td_number="06-0004-00414",
+        owner_name="NEW OWNER",
+        barangay="BORLONGAN",
+        assessed_value=150_000.0,
+        effectivity_date="2025-01-01",
+        penalty=0,
+        discount=0,
+    )
+    db.add_all([old, replacement])
+    db.flush()
+    _billing(db, old.id, 2023, paid=2_000.0)
+    _billing(db, old.id, 2024, paid=0.0)
+    _billing(db, old.id, 2025, paid=0.0)  # Invalid stale row after replacement.
+    _billing(db, replacement.id, 2025, assessed=150_000.0, paid=3_000.0)
+    db.commit()
+
+    result = get_collections_worklist(
+        as_of_date=date(2026, 7, 1),
+        db_session=db,
+    )
+    old_row = next(item for item in result["items"] if item["td_number"] == old.td_number)
+
+    assert old_row["earliest_year"] == 2023
+    assert old_row["years_billed"] == 2  # 2023 and 2024 only; stale 2025 is excluded.
+    assert replacement.td_number not in [item["td_number"] for item in result["items"]]
+
+    delinquent = get_delinquent_accounts(
+        as_of_date=date(2026, 7, 1),
+        db_session=db,
+    )
+    old_delinquent = next(
+        item for item in delinquent["items"] if item["td_number"] == old.td_number
+    )
+    # Only the unpaid 2024 row remains: P2,000 + 31 months x 2% = P3,240.
+    assert old_delinquent["balance"] == pytest.approx(3_240.0)
+
+    statement = get_property_statement_data(
+        old.id,
+        as_of_date=date(2026, 7, 1),
+        db_session=db,
+    )
+    assert [row["tax_year"] for row in statement["billing_rows"]] == [2024, 2023]
+
+
+def test_replaced_td_with_paid_history_ignores_stale_later_billing(db):
+    old = Property(
+        td_number="TD-PAID-OLD",
+        owner_name="OLD OWNER",
+        barangay="BORLONGAN",
+        assessed_value=100_000.0,
+        effectivity_date="2023-01-01",
+        penalty=0,
+        discount=0,
+    )
+    replacement = Property(
+        td_number="TD-PAID-NEW",
+        prev_td_number="TD-PAID-OLD",
+        owner_name="NEW OWNER",
+        barangay="BORLONGAN",
+        assessed_value=100_000.0,
+        effectivity_date="2025-01-01",
+        penalty=0,
+        discount=0,
+    )
+    db.add_all([old, replacement])
+    db.flush()
+    _billing(db, old.id, 2023, paid=2_000.0)
+    _billing(db, old.id, 2024, paid=2_000.0)
+    _billing(db, old.id, 2025, paid=0.0)  # Must not revive the cancelled TD.
+    db.commit()
+
+    result = get_collections_worklist(
+        as_of_date=date(2026, 7, 1),
+        db_session=db,
+    )
+    assert old.td_number not in [item["td_number"] for item in result["items"]]
+
+    delinquent = get_delinquent_accounts(
+        as_of_date=date(2026, 7, 1),
+        db_session=db,
+    )
+    assert old.td_number not in [item["td_number"] for item in delinquent["items"]]
 
 
 def test_statement_rows_include_live_penalty_for_notice_generation(db):

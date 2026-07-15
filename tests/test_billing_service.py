@@ -605,6 +605,11 @@ def test_partial_installments_remain_separate_when_later_year_is_posted(db):
     ledger_rows = get_unified_payment_history(prop.td_number, db_session=db)
     assert len(ledger_rows) == 3
     assert any(row[10] == "1st quarter only" for row in ledger_rows)
+    assert all(row[13] == prop.td_number for row in ledger_rows)
+    assert all(row[14] == prop.owner_name for row in ledger_rows)
+    assert all(row[15] == prop.id for row in ledger_rows)
+    assert all(row[16] == prop.barangay for row in ledger_rows)
+    assert all(row[17] == prop.kind_of_property for row in ledger_rows)
 
     with pytest.raises(HTTPException) as duplicate_error:
         _sync_financial_records(prop.id, {

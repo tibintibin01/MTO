@@ -145,6 +145,35 @@ def _compliance_property_scope(as_of_year: int, db_session: Session):
     )
 
 
+def _valid_property_billing_scope(db_session: Session):
+    """Limit billing rows to the years in which their TD was effective.
+
+    A superseded TD keeps its historical obligations, but it must not accrue
+    receivables for the successor TD's effective year or any later year.
+    """
+    property_effectivity_year = _property_effectivity_year_expr(Property)
+    replacement = aliased(Property)
+    replacement_effectivity_year = _property_effectivity_year_expr(replacement)
+    effective_replacement_exists = db_session.query(replacement.id).filter(
+        replacement.deleted_at == None,
+        replacement.prev_td_number != None,
+        func.trim(replacement.prev_td_number) != "",
+        func.upper(func.trim(replacement.prev_td_number))
+        == func.upper(func.trim(Property.td_number)),
+        replacement_effectivity_year != None,
+        replacement_effectivity_year <= PropertyBilling.tax_year,
+    ).exists()
+
+    return (
+        PropertyBilling.is_archived == False,
+        or_(
+            property_effectivity_year == None,
+            property_effectivity_year <= PropertyBilling.tax_year,
+        ),
+        ~effective_replacement_exists,
+    )
+
+
 def tax_rate_subquery(db_session: Session, billing_tax_year_col):
     """
     Correlated scalar subquery that resolves the total rate for a billing row.
@@ -956,7 +985,10 @@ def get_property_billing_history(
         PropertyBilling.updated_at
     ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
         TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(Property.deleted_at == None)
+    ).filter(
+        Property.deleted_at == None,
+        *_valid_property_billing_scope(db_session),
+    )
     
     if property_id:
         query = query.filter(PropertyBilling.property_id == property_id)
@@ -2102,7 +2134,8 @@ def get_delinquent_accounts(
     ).join(
         PropertyBilling, PropertyBilling.property_id == Property.id
     ).filter(
-        Property.deleted_at == None
+        Property.deleted_at == None,
+        *_valid_property_billing_scope(db_session),
     ).group_by(Property.id).having(balance_expr > 0)
 
     if cursor:
@@ -2183,7 +2216,8 @@ def get_collections_worklist(
     ).join(
         PropertyBilling, PropertyBilling.property_id == Property.id
     ).filter(
-        Property.deleted_at == None
+        Property.deleted_at == None,
+        *_valid_property_billing_scope(db_session),
     )
 
     if barangay and barangay.strip() and barangay.upper() != "ALL":
