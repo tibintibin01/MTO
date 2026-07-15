@@ -225,7 +225,13 @@ class LedgerPage:
                 # 11 file_path, 12 receipt_id, 13 TD, 14 owner, 15 property_id,
                 # 16 barangay, 17 classification.
                 rows = payment.get_unified_payment_history(term)
-                self.container.after(0, lambda: self._update_ui(rows, term))
+                fallback_context = None
+                if not rows:
+                    fallback_context = self._resolve_property_context(term)
+                self.container.after(
+                    0,
+                    lambda: self._update_ui(rows, term, fallback_context),
+                )
             except Exception as e:
                 self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
             finally:
@@ -235,7 +241,7 @@ class LedgerPage:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _update_ui(self, rows, term):
+    def _update_ui(self, rows, term, fallback_context=None):
         grand_total = 0.0
         self._ledger_property_ids = {}
         self._ledger_property_contexts = {}
@@ -283,7 +289,9 @@ class LedgerPage:
                     "count": len(contexts_by_property),
                 }
         else:
-            # Silently update without annoying pop-ups
+            # A valid property can have no payment history yet. Preserve its
+            # identity so the ledger and Add Payment modal stay connected.
+            self._active_property_context = fallback_context
             self.total_lbl.configure(text=tr("ledger.footer.total").replace("{value}", "₱ 0.00"))
         self._show_property_context(self._active_property_context)
         self.on_selection_change()
@@ -356,9 +364,12 @@ class LedgerPage:
                 # current TD, so the general result set can be ambiguous.
                 property_id = self._find_exact_current_property_id(term)
                 if property_id is not None:
+                    context = self._property_context_for_id(property_id)
                     self.container.after(
                         0,
-                        lambda pid=property_id: self._open_payment_modal(pid),
+                        lambda pid=property_id, ctx=context: self._open_payment_modal(
+                            pid, ctx
+                        ),
                     )
                     return
 
@@ -366,7 +377,13 @@ class LedgerPage:
                 items = res.get("items", []) if isinstance(res, dict) else []
                 match, message = self._resolve_property_match(term, items)
                 if match:
-                    self.container.after(0, lambda pid=match[0]: self._open_payment_modal(pid))
+                    context = self._property_context_from_search_row(match)
+                    self.container.after(
+                        0,
+                        lambda pid=match[0], ctx=context: self._open_payment_modal(
+                            pid, ctx
+                        ),
+                    )
                 else:
                     self.container.after(0, lambda msg=message: messagebox.showwarning("Add Payment", msg))
             except Exception as e:
@@ -381,6 +398,53 @@ class LedgerPage:
         if not isinstance(exact_current, dict):
             return None
         return exact_current.get("id")
+
+    def _resolve_property_context(self, term):
+        exact_current = prop_svc.find_property_by_td_number(term)
+        if isinstance(exact_current, dict) and exact_current.get("id") is not None:
+            return self._property_context_for_id(
+                exact_current["id"], fallback=exact_current
+            )
+
+        response = prop_svc.search_properties(term, limit=20)
+        items = response.get("items", []) if isinstance(response, dict) else []
+        match, _message = self._resolve_property_match(term, items)
+        if match:
+            return self._property_context_from_search_row(match)
+        if len(items) > 1:
+            return {"multiple": True, "count": len(items)}
+        return None
+
+    def _property_context_for_id(self, property_id, fallback=None):
+        try:
+            detail = prop_svc.get_property_by_id(property_id)
+        except Exception:
+            detail = fallback
+        return self._property_context_from_detail(detail)
+
+    def _property_context_from_detail(self, detail):
+        if not isinstance(detail, dict):
+            return None
+        return {
+            "property_id": detail.get("id"),
+            "td_number": detail.get("td_number"),
+            "owner_name": detail.get("owner_name"),
+            "barangay": detail.get("barangay") or detail.get("location"),
+            "kind_of_property": detail.get("kind_of_property"),
+        }
+
+    def _property_context_from_search_row(self, row):
+        if not row:
+            return None
+        return {
+            "property_id": row[0] if len(row) > 0 else None,
+            "td_number": row[1] if len(row) > 1 else None,
+            "owner_name": row[2] if len(row) > 2 else None,
+            "kind_of_property": row[7] if len(row) > 7 else None,
+            "barangay": row[22] if len(row) > 22 else (
+                row[6] if len(row) > 6 else None
+            ),
+        }
 
     def _selected_property_id(self):
         sel = self.tree.selection()
@@ -419,7 +483,10 @@ class LedgerPage:
     def _normalize_identifier(self, value):
         return str(value or "").strip().replace(" ", "-").upper()
 
-    def _open_payment_modal(self, property_id):
+    def _open_payment_modal(self, property_id, context=None):
+        if context:
+            self._active_property_context = context
+            self._show_property_context(context)
         from ui.property import PropertyEditModal
         PropertyEditModal(
             self.container.winfo_toplevel(),
