@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOG_PATH = PROJECT_ROOT / "logs" / "api_supervisor.log"
+LOCK_PATH = PROJECT_ROOT / "logs" / "api_supervisor.lock"
 MIN_STABLE_RUNTIME_SECONDS = 30
 INITIAL_RESTART_DELAY_SECONDS = 2
 MAX_RESTART_DELAY_SECONDS = 30
@@ -34,6 +35,30 @@ def _log(message: str) -> None:
         handle.write(line + "\n")
 
 
+def _acquire_single_instance_lock():
+    """Keep manual launchers and the Windows startup task from duplicating."""
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    handle = LOCK_PATH.open("a+b")
+    if LOCK_PATH.stat().st_size == 0:
+        handle.write(b"0")
+        handle.flush()
+    handle.seek(0)
+
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
 def _child_environment() -> dict[str, str]:
     env = os.environ.copy()
     existing_path = env.get("PYTHONPATH", "")
@@ -44,6 +69,102 @@ def _child_environment() -> dict[str, str]:
     )
     env["MTO_API_SUPERVISED"] = "1"
     return env
+
+
+def _attach_child_lifetime(child: subprocess.Popen):
+    """On Windows, terminate the API child if the supervisor is terminated."""
+    if os.name != "nt":
+        return None
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        ]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        job_handle = kernel32.CreateJobObjectW(None, None)
+        if not job_handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+
+        limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        limits.BasicLimitInformation.LimitFlags = 0x00002000  # KILL_ON_JOB_CLOSE
+        configured = kernel32.SetInformationJobObject(
+            job_handle,
+            9,  # JobObjectExtendedLimitInformation
+            ctypes.byref(limits),
+            ctypes.sizeof(limits),
+        )
+        assigned = configured and kernel32.AssignProcessToJobObject(
+            job_handle,
+            wintypes.HANDLE(child._handle),
+        )
+        if not assigned:
+            error = ctypes.get_last_error()
+            kernel32.CloseHandle(job_handle)
+            raise ctypes.WinError(error)
+        return job_handle
+    except Exception as exc:
+        _log(f"Could not attach API child lifetime protection: {exc!r}")
+        return None
+
+
+def _close_child_lifetime(handle) -> None:
+    if handle is None or os.name != "nt":
+        return
+    import ctypes
+
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.CloseHandle(handle)
 
 
 def _stop_child(child: subprocess.Popen) -> None:
@@ -98,12 +219,18 @@ def _wait_for_child(child: subprocess.Popen) -> tuple[int, bool]:
 
 
 def run() -> int:
+    instance_lock = _acquire_single_instance_lock()
+    if instance_lock is None:
+        _log("Another API supervisor is already running; duplicate launch ignored")
+        return 0
+
     restart_delay = INITIAL_RESTART_DELAY_SECONDS
     child: subprocess.Popen | None = None
 
     _log(f"API supervisor started with Python {sys.executable}")
     while True:
         started_at = time.monotonic()
+        child_job_handle = None
         try:
             _log("Starting API child process")
             child = subprocess.Popen(
@@ -111,6 +238,7 @@ def run() -> int:
                 cwd=PROJECT_ROOT,
                 env=_child_environment(),
             )
+            child_job_handle = _attach_child_lifetime(child)
             exit_code, replaced_unhealthy = _wait_for_child(child)
         except KeyboardInterrupt:
             _log("Supervisor stop requested")
@@ -121,6 +249,12 @@ def run() -> int:
             exit_code = -1
             replaced_unhealthy = False
             _log(f"Could not launch API child: {exc!r}")
+        finally:
+            if child_job_handle is not None:
+                _close_child_lifetime(child_job_handle)
+            elif child is not None and child.poll() is None:
+                _stop_child(child)
+            child = None
 
         runtime = time.monotonic() - started_at
         exit_reason = "was replaced after a health-check failure" if replaced_unhealthy else "exited"
