@@ -23,8 +23,30 @@ if (-not (Test-Path -LiteralPath $EnvFile)) {
 }
 
 $envLines = Get-Content -LiteralPath $EnvFile
-if (-not ($envLines -match '^MTO_BACKUP_DIR=.+')) {
-    throw "MTO_BACKUP_DIR must be configured in .env before using the SYSTEM startup task."
+$backupSetting = $envLines | Where-Object {
+    $_ -match '^\s*MTO_BACKUP_DIR\s*=\s*.+$'
+} | Select-Object -First 1
+
+if (-not $backupSetting) {
+    $backupDirectory = Join-Path $env:USERPROFILE "mto_backups"
+    New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
+
+    $envContent = [IO.File]::ReadAllText($EnvFile)
+    $settingLine = "MTO_BACKUP_DIR=$backupDirectory"
+    if ($envContent -match '(?m)^\s*MTO_BACKUP_DIR\s*=.*$') {
+        $backupSettingPattern = New-Object regex '(?m)^\s*MTO_BACKUP_DIR\s*=.*$'
+        $envContent = $backupSettingPattern.Replace($envContent, $settingLine, 1)
+    }
+    else {
+        if ($envContent.Length -gt 0 -and -not $envContent.EndsWith("`n")) {
+            $envContent += [Environment]::NewLine
+        }
+        $envContent += $settingLine + [Environment]::NewLine
+    }
+
+    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($EnvFile, $envContent, $utf8WithoutBom)
+    Write-Host "Configured a stable server backup directory: $backupDirectory"
 }
 
 $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
