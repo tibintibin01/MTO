@@ -174,6 +174,33 @@ def _valid_property_billing_scope(db_session: Session):
     )
 
 
+def _replacement_cutoffs_subquery(db_session: Session):
+    """Return the first effective successor year for each previous TD.
+
+    Collection reports process every billing row in the jurisdiction. Using a
+    correlated successor lookup there makes MariaDB rescan ``properties`` for
+    every billing row. Materializing this small mapping once preserves the
+    replacement rule without the nested scan.
+    """
+    replacement = aliased(Property)
+    previous_td_key = func.upper(func.trim(replacement.prev_td_number))
+    replacement_year = _property_effectivity_year_expr(replacement)
+    return (
+        db_session.query(
+            previous_td_key.label("previous_td_key"),
+            func.min(replacement_year).label("replacement_year"),
+        )
+        .filter(
+            replacement.deleted_at == None,
+            replacement.prev_td_number != None,
+            func.trim(replacement.prev_td_number) != "",
+            replacement_year != None,
+        )
+        .group_by(previous_td_key)
+        .subquery()
+    )
+
+
 def tax_rate_subquery(db_session: Session, billing_tax_year_col):
     """
     Correlated scalar subquery that resolves the total rate for a billing row.
@@ -2197,6 +2224,8 @@ def get_collections_worklist(
         PaymentBilling.billing_id
     ).subquery()
 
+    replacement_cutoffs = _replacement_cutoffs_subquery(db_session)
+
     linked_count = func.coalesce(allocation_totals.c.linked_count, 0)
     effective_paid = case(
         (linked_count > 0, func.coalesce(allocation_totals.c.linked_paid, 0)),
@@ -2265,9 +2294,21 @@ def get_collections_worklist(
     ).outerjoin(
         TaxPolicy,
         TaxPolicy.tax_year == PropertyBilling.tax_year,
+    ).outerjoin(
+        replacement_cutoffs,
+        replacement_cutoffs.c.previous_td_key
+        == func.upper(func.trim(Property.td_number)),
     ).filter(
         Property.deleted_at == None,
-        *_valid_property_billing_scope(db_session),
+        PropertyBilling.is_archived == False,
+        or_(
+            _property_effectivity_year_expr(Property) == None,
+            _property_effectivity_year_expr(Property) <= PropertyBilling.tax_year,
+        ),
+        or_(
+            replacement_cutoffs.c.replacement_year == None,
+            PropertyBilling.tax_year < replacement_cutoffs.c.replacement_year,
+        ),
     )
 
     if barangay and barangay.strip() and barangay.upper() != "ALL":
@@ -2314,14 +2355,13 @@ def get_collections_worklist(
             earliest_year_expr <= latest_eligible_year
         )
 
-    accounts = account_query.subquery()
-
-    # Materialize only the requested page. Summary rows remain compact: one
-    # result per earliest billing year instead of one result per property.
-    rows = db_session.query(*accounts.c).order_by(
-        accounts.c.balance.desc(),
-        accounts.c.id.asc(),
-    ).offset(safe_offset).limit(safe_limit).all()
+    # Execute the jurisdiction aggregate once. The previous implementation
+    # wrapped this query twice (page + summary), forcing MariaDB to repeat the
+    # full billing/payment calculation. About 16k compact account rows are
+    # inexpensive to sort and summarize in Python and avoid a second DB pass.
+    account_rows = account_query.all()
+    account_rows.sort(key=lambda row: (-float(row.balance or 0), int(row.id)))
+    rows = account_rows[safe_offset:safe_offset + safe_limit]
 
     def _age_days(earliest_year) -> int:
         try:
@@ -2359,19 +2399,11 @@ def get_collections_worklist(
             "aging_bucket": _bucket(age),
         })
 
-    summary_rows = db_session.query(
-        accounts.c.earliest_year,
-        func.count(accounts.c.id).label("account_count"),
-        func.coalesce(func.sum(accounts.c.balance), 0).label("total_balance"),
-    ).group_by(accounts.c.earliest_year).all()
-
-    total_matching = sum(int(row.account_count or 0) for row in summary_rows)
-    total_balance = sum(float(row.total_balance or 0) for row in summary_rows)
+    total_matching = len(account_rows)
+    total_balance = sum(float(row.balance or 0) for row in account_rows)
     bucket_totals = {"CURRENT": 0.0, "30": 0.0, "60": 0.0, "90": 0.0, "120+": 0.0}
-    for row in summary_rows:
-        bucket_totals[_bucket(_age_days(row.earliest_year))] += float(
-            row.total_balance or 0
-        )
+    for row in account_rows:
+        bucket_totals[_bucket(_age_days(row.earliest_year))] += float(row.balance or 0)
 
     has_more = (safe_offset + safe_limit) < total_matching
     return {

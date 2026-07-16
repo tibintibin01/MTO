@@ -136,6 +136,33 @@ def test_summary_aging_totals_sum_to_balance(db):
     assert round(sum(summary["aging_totals"].values()), 2) == 6_840.0
 
 
+def test_worklist_materializes_account_aggregates_once(db):
+    first = _prop(db, "TD-ONE-PASS-A")
+    _billing(db, first.id, 2023, assessed=100_000.0)
+    second = _prop(db, "TD-ONE-PASS-B")
+    _billing(db, second.id, 2024, assessed=200_000.0)
+    db.commit()
+
+    select_count = 0
+
+    def count_selects(_conn, _cursor, statement, _parameters, _context, _many):
+        nonlocal select_count
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_count += 1
+
+    event.listen(db.get_bind(), "before_cursor_execute", count_selects)
+    try:
+        result = get_collections_worklist(
+            as_of_date=TEST_AS_OF,
+            db_session=db,
+        )
+    finally:
+        event.remove(db.get_bind(), "before_cursor_execute", count_selects)
+
+    assert result["summary"]["delinquent_count"] == 2
+    assert select_count == 1
+
+
 def test_barangay_filter(db):
     a = _prop(db, "TD-POB", barangay="POBLACION")
     _billing(db, a.id, 2024, paid=0.0)
