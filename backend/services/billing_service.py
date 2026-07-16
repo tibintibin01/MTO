@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import re
 from sqlalchemy import or_, and_, func, case, cast, Integer
 from sqlalchemy.orm import Session, aliased
@@ -2178,55 +2178,105 @@ def get_collections_worklist(
     as_of_date=None,
     db_session: Session = None,
 ):
-    """
-    Collections worklist: delinquent properties prioritised by balance (largest
-    first) with aging metadata so staff can chase the highest-value, oldest
-    arrears first.
-
-    Aging is derived from the EARLIEST billed tax year that still contributes to
-    the outstanding balance. February 1 is used only as the worklist's
-    operational age reference; monetary penalties come from the shared office
-    penalty calculator.
-
-    Params:
-      barangay     — optional filter
-      min_age_days — only include accounts at least this old (0/30/60/90/120)
-      limit/offset — pagination (offset is acceptable here: the delinquent set
-                     is bounded and this is an admin worklist, not a public feed)
-
-    Returns aging buckets per row:
-      CURRENT (<30d), 30, 60, 90, 120+  with a label and the computed age_days.
-    """
+    """Return a paginated collections worklist with full-set aging totals."""
     safe_limit = min(max(1, int(limit)), 200)
     safe_offset = max(0, int(offset))
-    current = _billing_current_amount_exprs(db_session, as_of_date)
-    balance_expr = func.sum(current["balance"])
+    today = as_of_date or date.today()
 
-    query = db_session.query(
-        Property.id,
-        Property.td_number,
-        Property.owner_name,
-        Property.location,
-        func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
-        func.sum(current["total_due"]).label("total_due"),
-        func.sum(current["paid"]).label("total_paid"),
+    # Aggregate payment links once. Four correlated subqueries per billing row
+    # made this endpoint progressively slower as the ledger grew.
+    allocation_totals = db_session.query(
+        PaymentBilling.billing_id.label("billing_id"),
+        func.count(PaymentBilling.id).label("linked_count"),
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("linked_paid"),
+        func.coalesce(func.sum(Payment.penalty), 0).label("linked_penalty"),
+        func.coalesce(func.sum(Payment.discount), 0).label("linked_discount"),
+    ).join(
+        Payment, Payment.id == PaymentBilling.payment_id
+    ).group_by(
+        PaymentBilling.billing_id
+    ).subquery()
+
+    linked_count = func.coalesce(allocation_totals.c.linked_count, 0)
+    effective_paid = case(
+        (linked_count > 0, func.coalesce(allocation_totals.c.linked_paid, 0)),
+        else_=func.coalesce(PropertyBilling.amount_paid, 0),
+    )
+    effective_penalty = case(
+        (linked_count > 0, func.coalesce(allocation_totals.c.linked_penalty, 0)),
+        else_=func.coalesce(PropertyBilling.penalty, 0),
+    )
+    effective_discount = case(
+        (linked_count > 0, func.coalesce(allocation_totals.c.linked_discount, 0)),
+        else_=func.coalesce(PropertyBilling.discount, 0),
+    )
+
+    total_rate = func.coalesce(TaxPolicy.basic_rate, 0.01) + func.coalesce(
+        TaxPolicy.sef_rate, 0.01
+    )
+    penalty_rate = func.coalesce(TaxPolicy.penalty_rate, 0.02)
+    raw_months = (
+        (int(today.year) - PropertyBilling.tax_year) * 12
+        + int(today.month)
+    )
+    penalty_months = case(
+        (raw_months < 0, 0),
+        (raw_months > MAX_PENALTY_MONTHS, MAX_PENALTY_MONTHS),
+        else_=raw_months,
+    )
+    tax_principal = PropertyBilling.assessed_value * total_rate
+    principal_credit = greatest(
+        effective_paid + effective_discount - effective_penalty,
+        0,
+    )
+    remaining_principal = greatest(tax_principal - principal_credit, 0)
+    accrued_penalty = func.round(
+        remaining_principal * penalty_rate * penalty_months,
+        2,
+    )
+    total_due = (
+        tax_principal
+        + effective_penalty
+        + accrued_penalty
+        - effective_discount
+    )
+    billing_balance = greatest(total_due - effective_paid, 0)
+    balance_expr = func.sum(billing_balance)
+    total_paid_expr = func.sum(effective_paid)
+    earliest_year_expr = func.min(PropertyBilling.tax_year)
+    barangay_expr = func.coalesce(Property.barangay, "UNSPECIFIED")
+
+    account_query = db_session.query(
+        Property.id.label("id"),
+        Property.td_number.label("td_number"),
+        Property.owner_name.label("owner_name"),
+        Property.location.label("location"),
+        barangay_expr.label("barangay"),
+        func.sum(total_due).label("total_due"),
+        total_paid_expr.label("total_paid"),
         balance_expr.label("balance"),
-        func.min(PropertyBilling.tax_year).label("earliest_year"),
+        earliest_year_expr.label("earliest_year"),
         func.count(PropertyBilling.id).label("years_billed"),
     ).join(
         PropertyBilling, PropertyBilling.property_id == Property.id
+    ).outerjoin(
+        allocation_totals,
+        allocation_totals.c.billing_id == PropertyBilling.id,
+    ).outerjoin(
+        TaxPolicy,
+        TaxPolicy.tax_year == PropertyBilling.tax_year,
     ).filter(
         Property.deleted_at == None,
         *_valid_property_billing_scope(db_session),
     )
 
     if barangay and barangay.strip() and barangay.upper() != "ALL":
-        query = query.filter(Property.barangay == barangay.strip())
+        account_query = account_query.filter(Property.barangay == barangay.strip())
 
     if search and str(search).strip():
         term = str(search).strip()
         like_term = f"%{term}%"
-        query = query.filter(or_(
+        account_query = account_query.filter(or_(
             Property.td_number.like(like_term),
             Property.prev_td_number.like(like_term),
             Property.pin.like(like_term),
@@ -2236,31 +2286,49 @@ def get_collections_worklist(
             Property.barangay.like(like_term),
         ))
 
-    query = query.group_by(Property.id).having(balance_expr > 0)
+    account_query = account_query.group_by(
+        Property.id,
+        Property.td_number,
+        Property.owner_name,
+        Property.location,
+        Property.barangay,
+    ).having(balance_expr > 0)
 
     if min_balance is not None:
-        query = query.having(balance_expr >= float(min_balance))
+        account_query = account_query.having(balance_expr >= float(min_balance))
 
     status = str(payment_status or "").strip().upper()
-    total_paid_expr = func.sum(current["paid"])
     if status == "NO_PAYMENT":
-        query = query.having(total_paid_expr <= 0)
+        account_query = account_query.having(total_paid_expr <= 0)
     elif status == "PARTIAL":
-        query = query.having(total_paid_expr > 0)
+        account_query = account_query.having(total_paid_expr > 0)
 
-    # Order by balance DESC — collections priority is biggest arrears first
-    rows = query.order_by(balance_expr.desc(), Property.id.asc()).all()
+    if min_age_days:
+        cutoff = today - timedelta(days=max(0, int(min_age_days)))
+        latest_eligible_year = (
+            cutoff.year
+            if cutoff >= date(cutoff.year, 2, 1)
+            else cutoff.year - 1
+        )
+        account_query = account_query.having(
+            earliest_year_expr <= latest_eligible_year
+        )
 
-    today = as_of_date or date.today()
+    accounts = account_query.subquery()
+
+    # Materialize only the requested page. Summary rows remain compact: one
+    # result per earliest billing year instead of one result per property.
+    rows = db_session.query(*accounts.c).order_by(
+        accounts.c.balance.desc(),
+        accounts.c.id.asc(),
+    ).offset(safe_offset).limit(safe_limit).all()
 
     def _age_days(earliest_year) -> int:
         try:
-            yr = int(earliest_year)
+            year = int(earliest_year)
         except (ValueError, TypeError):
             return 0
-        # Aging is an operational age indicator, independent of penalty months.
-        start = date(yr, 2, 1)
-        return max(0, (today - start).days)
+        return max(0, (today - date(year, 2, 1)).days)
 
     def _bucket(days: int) -> str:
         if days >= 120:
@@ -2273,41 +2341,45 @@ def get_collections_worklist(
             return "30"
         return "CURRENT"
 
-    enriched = []
-    for r in rows:
-        age = _age_days(r.earliest_year)
-        if age < min_age_days:
-            continue
-        enriched.append({
-            "id": r.id,
-            "td_number": r.td_number,
-            "owner_name": r.owner_name,
-            "location": r.location,
-            "barangay": r.barangay,
-            "total_due": float(r.total_due or 0),
-            "total_paid": float(r.total_paid or 0),
-            "balance": float(r.balance or 0),
-            "earliest_year": int(r.earliest_year) if r.earliest_year else None,
-            "years_billed": int(r.years_billed or 0),
+    page = []
+    for row in rows:
+        age = _age_days(row.earliest_year)
+        page.append({
+            "id": row.id,
+            "td_number": row.td_number,
+            "owner_name": row.owner_name,
+            "location": row.location,
+            "barangay": row.barangay,
+            "total_due": float(row.total_due or 0),
+            "total_paid": float(row.total_paid or 0),
+            "balance": float(row.balance or 0),
+            "earliest_year": int(row.earliest_year) if row.earliest_year else None,
+            "years_billed": int(row.years_billed or 0),
             "age_days": age,
             "aging_bucket": _bucket(age),
         })
 
-    total_matching = len(enriched)
-    page = enriched[safe_offset:safe_offset + safe_limit]
+    summary_rows = db_session.query(
+        accounts.c.earliest_year,
+        func.count(accounts.c.id).label("account_count"),
+        func.coalesce(func.sum(accounts.c.balance), 0).label("total_balance"),
+    ).group_by(accounts.c.earliest_year).all()
 
-    # Summary totals across the full matching set (not just the page)
-    total_balance = sum(e["balance"] for e in enriched)
+    total_matching = sum(int(row.account_count or 0) for row in summary_rows)
+    total_balance = sum(float(row.total_balance or 0) for row in summary_rows)
     bucket_totals = {"CURRENT": 0.0, "30": 0.0, "60": 0.0, "90": 0.0, "120+": 0.0}
-    for e in enriched:
-        bucket_totals[e["aging_bucket"]] += e["balance"]
+    for row in summary_rows:
+        bucket_totals[_bucket(_age_days(row.earliest_year))] += float(
+            row.total_balance or 0
+        )
 
+    has_more = (safe_offset + safe_limit) < total_matching
     return {
         "items": page,
         "count": len(page),
         "total_matching": total_matching,
-        "has_more": (safe_offset + safe_limit) < total_matching,
-        "next_offset": safe_offset + safe_limit if (safe_offset + safe_limit) < total_matching else None,
+        "has_more": has_more,
+        "next_offset": safe_offset + safe_limit if has_more else None,
         "summary": {
             "delinquent_count": total_matching,
             "total_balance": round(total_balance, 2),

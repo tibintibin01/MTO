@@ -67,6 +67,8 @@ _PATH_TIMEOUTS = {
     "/system/import/commit":  300,
     "/system/import/validate":300,
     "/billing/bulk-soa-pdf":  120,
+    # Cold-cache jurisdiction-wide aggregation may need more than the default.
+    "/billing/collections":   90,
 }
 
 async def request_timeout_middleware(request: Request, call_next):
