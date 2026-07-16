@@ -330,6 +330,62 @@ def test_compliance_through_year_ignores_later_unpaid_billing(db):
     assert summary_2026[0]["compliant_count"] == 0
 
 
+def test_compliance_uses_linked_payment_allocation_when_cached_paid_is_stale(db):
+    prop = Property(
+        td_number="TD-LINKED-COMPLIANT",
+        owner_name="Owner With Linked Payment",
+        barangay="DIAMANEN",
+        assessed_value=100_000.0,
+        effectivity_date="2024-01-01",
+        penalty=0,
+        discount=0,
+    )
+    db.add(prop)
+    db.flush()
+    billing = PropertyBilling(
+        property_id=prop.id,
+        tax_year=2024,
+        assessed_value=100_000.0,
+        penalty=0,
+        discount=0,
+        amount_paid=0,
+    )
+    payment = Payment(
+        property_id=prop.id,
+        amount=2_000.0,
+        penalty=0,
+        discount=0,
+        or_number="OR-LINKED",
+        date_paid=datetime(2024, 1, 15),
+        tax_year="2024",
+    )
+    db.add_all([billing, payment])
+    db.flush()
+    db.add(
+        PaymentBilling(
+            payment_id=payment.id,
+            billing_id=billing.id,
+            tax_year=2024,
+            amount_paid=2_000.0,
+        )
+    )
+    db.commit()
+
+    accounts = get_compliant_accounts(
+        barangay="DIAMANEN", as_of_year=2024, db_session=db
+    )
+    summary = get_compliant_summary_by_barangay(
+        as_of_year=2024, db_session=db
+    )
+
+    assert [row["td_number"] for row in accounts["items"]] == [
+        "TD-LINKED-COMPLIANT"
+    ]
+    assert accounts["items"][0]["total_paid"] == 2_000.0
+    assert summary[0]["compliant_count"] == 1
+    assert summary[0]["collected_from_compliant"] == 2_000.0
+
+
 def test_compliance_through_year_switches_to_effective_replacement(db):
     old_prop = Property(
         td_number="TD-OLD",

@@ -1894,12 +1894,13 @@ def get_compliant_accounts(
         0.02
     )
 
+    effective = _billing_effective_amount_exprs(db_session)
     total_due_expr = func.sum(
         (PropertyBilling.assessed_value * rate_expr)
-        + PropertyBilling.penalty
-        - PropertyBilling.discount
+        + effective["penalty"]
+        - effective["discount"]
     )
-    total_paid_expr = func.sum(PropertyBilling.amount_paid)
+    total_paid_expr = func.sum(effective["paid"])
 
     # Last payment date for this property — used for "last paid" display column
     last_payment_subq = (
@@ -2034,12 +2035,13 @@ def get_compliant_summary_by_barangay(
         0.02
     )
 
+    effective = _billing_effective_amount_exprs(db_session)
     total_due_expr = func.sum(
         (PropertyBilling.assessed_value * rate_expr)
-        + PropertyBilling.penalty
-        - PropertyBilling.discount
+        + effective["penalty"]
+        - effective["discount"]
     )
-    total_paid_expr = func.sum(PropertyBilling.amount_paid)
+    total_paid_expr = func.sum(effective["paid"])
 
     # All properties with billing records, grouped by property + barangay
     # to determine per-property compliance status
