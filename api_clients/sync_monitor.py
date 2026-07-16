@@ -25,22 +25,21 @@ class SyncMonitor:
                 is_online = self._check_connection()
                 
                 if is_online:
-                    api.set_connection_status("ONLINE")
+                    api.record_connection_success()
                     
                     # Flush queue if online
                     pending = manager.get_pending_actions()
                     if pending:
                         api.set_connection_status("SYNCING")
                         self._flush_queue(pending)
-                        if api.get_connection_status() != "OFFLINE":
-                            api.set_connection_status("ONLINE")
+                        if api.get_connection_status() == "SYNCING":
+                            api.record_connection_success()
                 else:
-                    api.set_connection_status("OFFLINE")
+                    api.record_connection_failure()
             except Exception as e:
-                # Network or unexpected error — mark offline but never swallow
-                # KeyboardInterrupt or SystemExit which would mask a shutdown.
+                # A monitor implementation error is not proof of an API outage.
+                # Log it and let the next health probe determine connectivity.
                 mto_logger.warning("SyncMonitor loop error: %s", e)
-                api.set_connection_status("OFFLINE")
                 
             time.sleep(self.interval)
 
@@ -49,8 +48,8 @@ class SyncMonitor:
         verify_param = str(api.CERT_PATH) if api.CERT_PATH.exists() else False
         try:
             response = requests.get(
-                f"{api.BASE_URL}/",
-                timeout=(3, 5),
+                f"{api.BASE_URL}/readyz",
+                timeout=(2, 3),
                 verify=verify_param,
             )
             return response.status_code < 500
@@ -91,7 +90,7 @@ class SyncMonitor:
                 # A connection failure already updates the shared status in
                 # api_request. Stop immediately instead of timing out once for
                 # every queued action while the server is unavailable.
-                if api.get_connection_status() == "OFFLINE":
+                if api.get_connection_status() in {"DEGRADED", "OFFLINE"}:
                     break
 
 # Global monitor

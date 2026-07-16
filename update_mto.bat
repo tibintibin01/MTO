@@ -60,7 +60,7 @@ echo.
 echo [5/5] Starting updated services...
 cd C:\MTO
 call venv\Scripts\activate
-start "MTO Backend" cmd /k "python -m uvicorn backend.main:app --host 0.0.0.0 --port 8001"
+start "MTO Backend" cmd /k "python scripts\run_api_supervisor.py"
 timeout /t 5 >nul
 cd C:\MTO\frontend
 start "MTO Frontend" cmd /k "npm start"

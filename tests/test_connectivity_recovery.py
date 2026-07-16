@@ -43,28 +43,54 @@ def test_successful_request_recovers_online_state_and_uses_short_connect_timeout
     assert captured["timeout"] == (api.DEFAULT_CONNECT_TIMEOUT, 19)
 
 
-def test_connection_failure_marks_client_offline(monkeypatch):
+def test_repeated_connection_failures_transition_through_degraded(monkeypatch):
     def fail_request(*args, **kwargs):
         raise requests.exceptions.ConnectionError("server unavailable")
 
     monkeypatch.setattr(api.requests, "request", fail_request)
     api.set_connection_status("ONLINE")
 
-    try:
-        api.api_request("GET", "/", queue_offline=False)
-    except Exception as exc:
-        assert "Cannot reach API server" in str(exc)
-    else:
-        raise AssertionError("Expected an API connection failure")
+    for attempt in range(1, api.CONNECTION_FAILURE_THRESHOLD + 1):
+        try:
+            api.api_request("GET", "/", queue_offline=False)
+        except Exception as exc:
+            assert "Cannot reach API server" in str(exc)
+        else:
+            raise AssertionError("Expected an API connection failure")
 
+        expected = (
+            "OFFLINE"
+            if attempt == api.CONNECTION_FAILURE_THRESHOLD
+            else "DEGRADED"
+        )
+        assert api.get_connection_status() == expected
+
+    assert api.get_connection_failure_count() == api.CONNECTION_FAILURE_THRESHOLD
     assert api.get_connection_status() == "OFFLINE"
+
+
+def test_success_resets_transient_connection_failures(monkeypatch):
+    monkeypatch.setattr(
+        api.requests,
+        "request",
+        lambda *args, **kwargs: _Response(),
+    )
+    api.set_connection_status("ONLINE")
+    api.record_connection_failure()
+    api.record_connection_failure()
+
+    assert api.get_connection_status() == "DEGRADED"
+    api.api_request("GET", "/readyz", queue_offline=False)
+
+    assert api.get_connection_status() == "ONLINE"
+    assert api.get_connection_failure_count() == 0
 
 
 def test_health_probe_can_retry_immediately(monkeypatch):
     calls = []
 
-    def fake_get(*args, **kwargs):
-        calls.append(kwargs)
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
         return _Response(status_code=200)
 
     monkeypatch.setattr("api_clients.sync_monitor.requests.get", fake_get)
@@ -73,7 +99,9 @@ def test_health_probe_can_retry_immediately(monkeypatch):
     assert monitor._check_connection() is True
     assert monitor._check_connection() is True
     assert len(calls) == 2
-    assert calls[0]["timeout"] == (3, 5)
+    assert calls[0][0].endswith("/readyz")
+    assert calls[0][1]["timeout"] == (2, 3)
+    assert calls[0][1]["verify"] is not None
 
 
 def test_queue_flush_stops_after_first_connection_failure(monkeypatch):
@@ -81,7 +109,7 @@ def test_queue_flush_stops_after_first_connection_failure(monkeypatch):
 
     def fail_request(*args, **kwargs):
         calls.append((args, kwargs))
-        api.set_connection_status("OFFLINE")
+        api.record_connection_failure()
         raise Exception("Cannot reach API server")
 
     monkeypatch.setattr(api, "api_request", fail_request)
@@ -91,6 +119,7 @@ def test_queue_flush_stops_after_first_connection_failure(monkeypatch):
         {"id": 2, "method": "POST", "endpoint": "/payments", "payload": {}},
     ]
 
+    api.set_connection_status("ONLINE")
     monitor._flush_queue(pending)
 
     assert len(calls) == 1

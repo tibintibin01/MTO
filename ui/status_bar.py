@@ -26,8 +26,11 @@ class ConnectivityStatusBar(ctk.CTkFrame):
         if status == "ONLINE":
             self.status_dot.configure(text_color="#2ecc71")
             self.status_lbl.configure(text="SYSTEM ONLINE & SECURED")
+        elif status == "DEGRADED":
+            self.status_dot.configure(text_color="#f39c12")
+            self.status_lbl.configure(text="SERVER SLOW - RETRYING...")
         elif status == "OFFLINE":
-            self.status_dot.configure(text_color="#f1c40f")
+            self.status_dot.configure(text_color="#e74c3c")
             self.status_lbl.configure(text="OFFLINE MODE (LOCAL SAVE ACTIVE)")
         elif status == "SYNCING":
             self.status_dot.configure(text_color="#3498db")

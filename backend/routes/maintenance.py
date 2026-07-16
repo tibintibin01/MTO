@@ -371,6 +371,16 @@ async def restart_server(
     The response is sent first, then the process exits after a 2-second delay.
     The OS / startup script is responsible for restarting the process.
     """
+    if os.getenv("MTO_API_SUPERVISED") != "1":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Automatic restart is unavailable because the API was not "
+                "started by the MTO supervisor. Run start_server.bat on the "
+                "server PC instead of terminating this process."
+            ),
+        )
+
     mto_logger.info("Server restart requested", user=current_user.get("username"))
 
     async def _do_restart():

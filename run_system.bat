@@ -56,7 +56,7 @@ if %ERRORLEVEL% EQU 0 (
     docker compose up -d
 ) else (
     echo [LOCAL FALLBACK] Docker not running. Starting local native API...
-    start "MTO FastAPI Backend Server" cmd /k "title MTO Backend (Port 8001) && VENV\Scripts\python.exe -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8001"
+    start "MTO FastAPI Backend Server" cmd /k "title MTO Backend (Port 8001) && VENV\Scripts\python.exe scripts\run_api_supervisor.py"
 )
 
 echo [2/3] Starting Next.js Frontend Portal...

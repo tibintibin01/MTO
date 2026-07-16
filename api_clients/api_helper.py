@@ -4,24 +4,51 @@ from api_clients.offline_manager import manager
 import threading
 from utils.logger import mto_logger
 
-CONNECTION_STATUS = "ONLINE" # ONLINE, OFFLINE, SYNCING
+CONNECTION_STATUS = "ONLINE" # ONLINE, DEGRADED, OFFLINE, SYNCING
 _CONNECTION_STATUS_LOCK = threading.Lock()
 DEFAULT_CONNECT_TIMEOUT = 4
+CONNECTION_FAILURE_THRESHOLD = 3
+_CONSECUTIVE_CONNECTION_FAILURES = 0
 
 
 def set_connection_status(status):
     """Updates the process-wide API connectivity state safely."""
-    global CONNECTION_STATUS
-    if status not in {"ONLINE", "OFFLINE", "SYNCING"}:
+    global CONNECTION_STATUS, _CONSECUTIVE_CONNECTION_FAILURES
+    if status not in {"ONLINE", "DEGRADED", "OFFLINE", "SYNCING"}:
         raise ValueError(f"Unsupported connection status: {status}")
     with _CONNECTION_STATUS_LOCK:
         CONNECTION_STATUS = status
+        if status == "ONLINE":
+            _CONSECUTIVE_CONNECTION_FAILURES = 0
 
 
 def get_connection_status():
     """Returns the latest API connectivity state."""
     with _CONNECTION_STATUS_LOCK:
         return CONNECTION_STATUS
+
+
+def record_connection_success():
+    """Records a successful API response and clears transient failures."""
+    set_connection_status("ONLINE")
+
+
+def record_connection_failure():
+    """Records one failed connection without declaring an outage too early."""
+    global CONNECTION_STATUS, _CONSECUTIVE_CONNECTION_FAILURES
+    with _CONNECTION_STATUS_LOCK:
+        _CONSECUTIVE_CONNECTION_FAILURES += 1
+        if _CONSECUTIVE_CONNECTION_FAILURES >= CONNECTION_FAILURE_THRESHOLD:
+            CONNECTION_STATUS = "OFFLINE"
+        else:
+            CONNECTION_STATUS = "DEGRADED"
+        return CONNECTION_STATUS
+
+
+def get_connection_failure_count():
+    """Returns the current number of consecutive connectivity failures."""
+    with _CONNECTION_STATUS_LOCK:
+        return _CONSECUTIVE_CONNECTION_FAILURES
 
 
 def _requests_timeout(timeout):
@@ -235,7 +262,7 @@ def api_request(
 
         # Reaching the API is enough to recover the connectivity indicator,
         # even when the endpoint subsequently returns a validation error.
-        set_connection_status("ONLINE")
+        record_connection_success()
 
 
         mto_logger.info(f"API Response: {response.status_code}", status=response.status_code)
@@ -261,7 +288,7 @@ def api_request(
             return response.json()
         return True
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-        set_connection_status("OFFLINE")
+        record_connection_failure()
         
         if not queue_offline:
             raise Exception(
@@ -292,7 +319,7 @@ def api_request(
         
         # If it's a 503 or 504, we might treat it as offline too
         if status_code in [502, 503, 504]:
-            set_connection_status("OFFLINE")
+            record_connection_failure()
 
         if e.response is not None and e.response.text:
             try:
@@ -347,14 +374,14 @@ def api_download_file(method, endpoint, params=None, timeout=120):
             stream=True
         )
 
-        set_connection_status("ONLINE")
+        record_connection_success()
         
         response.raise_for_status()
         
         return save_stream_response_to_temp_file(response, default_suffix=".pdf")
         
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-        set_connection_status("OFFLINE")
+        record_connection_failure()
         raise Exception(
             f"Cannot reach API server at {BASE_URL}. "
             "Start the API server and verify server_config.json."
