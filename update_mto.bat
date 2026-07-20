@@ -60,16 +60,10 @@ echo Done.
 echo.
 
 echo [4/5] Rebuilding frontend...
-cd C:\MTO\frontend
-call npm ci --silent
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\update_frontend.ps1" -ProjectRoot "C:\MTO"
 if %errorlevel% neq 0 (
-    echo ERROR: Frontend dependency update failed. Services were not restarted.
-    pause
-    exit /b 1
-)
-call npm run build
-if %errorlevel% neq 0 (
-    echo ERROR: Frontend build failed.
+    echo ERROR: Frontend update failed. The last verified build was preserved.
+    echo Review C:\MTO\logs\frontend_build.out.log and frontend_build.err.log.
     pause
     exit /b 1
 )

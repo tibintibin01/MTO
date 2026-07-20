@@ -81,8 +81,8 @@ class DashboardApp(ctk.CTk):
         # 1. Initialize Specialized Coordinators
         self.watchdog = SessionWatchdog(self, 60, self.logout_automatic)
         self.notifier = NotificationListener({
-            "on_open": lambda: self.status_bar.set_ws_status(True),
-            "on_close": lambda: self.status_bar.set_ws_status(False),
+            "on_open": lambda: self.after(0, self.status_bar.set_ws_status, True),
+            "on_close": lambda: self.after(0, self.status_bar.set_ws_status, False),
             "on_notification": self._handle_notification,
             "on_progress": self._handle_progress
         })
@@ -380,6 +380,7 @@ class DashboardApp(ctk.CTk):
 
         def confirm():
             dialog.destroy()
+            self.notifier.stop()
             auth.logout()
             self.logged_out = True
             self.destroy()
@@ -421,6 +422,7 @@ class DashboardApp(ctk.CTk):
         dialog.focus_set()
 
     def logout_automatic(self):
+        self.notifier.stop()
         auth.logout()
         self.logged_out = True
         expired_win = ctk.CTkToplevel(self)

@@ -20,6 +20,7 @@ yarn-error.log*
 out/
 build/
 dist/
+frontend/.mto-built-tree
 
 # Database
 mto_local.db

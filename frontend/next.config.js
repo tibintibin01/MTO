@@ -129,6 +129,10 @@ const securityHeaders = [
 const nextConfig = {
   reactStrictMode: true,
 
+  // The updater builds into a staging directory, then swaps it into .next
+  // only after a successful build. Normal npm start continues to use .next.
+  distDir: process.env.MTO_NEXT_DIST_DIR || '.next',
+
   // Security headers on every response
   async headers() {
     return [
