@@ -302,6 +302,20 @@ def get_barangay_breakdown(current_user: dict = Depends(get_current_user), db_se
 def get_analytics_kpis(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
     return pay_svc.get_collection_kpis(db_session=db_session)
 
+
+@router.get("/analytics/operational", tags=["Analytics"], dependencies=[Depends(read_only)])
+def get_operational_analytics(
+    year: Optional[int] = None,
+    barangay: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    return pay_svc.get_operational_analytics(
+        year=year,
+        barangay=barangay,
+        db_session=db_session,
+    )
+
 @router.get("/api/analytics/dashboard")
 def get_analytics_dashboard(user: str = Depends(get_current_user), db_session: Session = Depends(get_db)):
     """Returns a comprehensive set of treasury analytics data including year-over-year comparison."""

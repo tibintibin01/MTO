@@ -1,174 +1,587 @@
-import customtkinter as ctk
-import tkinter as tk
-from tkinter import messagebox
+# -*- coding: utf-8 -*-
+from datetime import datetime
 import threading
 import webbrowser
-from matplotlib.figure import Figure
+
+import customtkinter as ctk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+import matplotlib.ticker as mticker
+from tkinter import messagebox
+
 import api_clients.payment_service as payment_svc
+from api_clients.offline_manager import manager as offline_manager
 from theme_manager import ModernTheme
 
+
 class AnalyticsDashboardPage:
+    """Operational RPT collection dashboard for municipal staff."""
+
+    PAGE_BG = "#0b1220"
+    CARD_BG = "#111c31"
+    PANEL_BG = "#0d1729"
+    BORDER = "#263b5a"
+    TEXT = "#f8fafc"
+    MUTED = "#9fb2cc"
+    BLUE = "#38bdf8"
+    GREEN = "#10b981"
+    AMBER = "#f59e0b"
+    PURPLE = "#a78bfa"
+    RED = "#ef4444"
+
     def __init__(self, parent, user=None):
         self.parent = parent
         self.user = user
-        
-        self.container = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        self.container.pack(fill="both", expand=True, padx=20, pady=20)
-        
+        self._loading = False
+        self._chart_canvases = {}
+        self._filters_ready = False
+
+        self.container = ctk.CTkScrollableFrame(
+            parent,
+            fg_color=self.PAGE_BG,
+            corner_radius=0,
+        )
+        self.container.pack(fill="both", expand=True)
+        self.content = ctk.CTkFrame(self.container, fg_color="transparent")
+        self.content.pack(fill="both", expand=True, padx=22, pady=18)
+
         self.setup_ui()
         self.load_data()
 
     def open_external_dashboard(self):
-        """Launches the high-fidelity web dashboard in the default browser with a secure token."""
+        """Open the detailed authenticated web analytics view."""
         from api_clients.api_helper import BASE_URL, get_token
+
         token = get_token()
         if not token:
-            messagebox.showerror("Auth Error", "Your session has expired. Please re-login.")
+            messagebox.showerror("Session Expired", "Please sign in again to continue.")
             return
         webbrowser.open(f"{BASE_URL}/analytics?t={token}")
 
     def setup_ui(self):
-        # Header
-        header_fr = ctk.CTkFrame(self.container, fg_color="transparent")
-        header_fr.pack(fill="x", pady=(0, 20))
-        
+        header = ctk.CTkFrame(self.content, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 14))
+
+        title_group = ctk.CTkFrame(header, fg_color="transparent")
+        title_group.pack(side="left")
         ctk.CTkLabel(
-            header_fr, text="MUNICIPAL ANALYTICS HUB", font=("Segoe UI", 24, "bold")
-        ).pack(side="left")
-        
-        ctk.CTkButton(
-            header_fr, text="🔄 REFRESH DATA", command=self.load_data, width=150, fg_color="#3498db"
-        ).pack(side="right", padx=(10, 0))
+            title_group,
+            text="MUNICIPAL ANALYTICS HUB",
+            font=(ModernTheme.FONT_FAMILY, 25, "bold"),
+            text_color=self.TEXT,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            title_group,
+            text="Verified collection performance from linked payment allocations.",
+            font=(ModernTheme.FONT_FAMILY, 11),
+            text_color=self.MUTED,
+        ).pack(anchor="w", pady=(2, 0))
+
+        self.last_refresh_label = ctk.CTkLabel(
+            header,
+            text="Loading current data...",
+            font=(ModernTheme.FONT_FAMILY, 10),
+            text_color=self.MUTED,
+        )
+        self.last_refresh_label.pack(side="right", padx=(12, 0), anchor="s")
+
+        self._build_filter_bar()
+        self._build_kpis()
+        self._build_charts()
+        self._build_operational_row()
+
+    def _build_filter_bar(self):
+        bar = ctk.CTkFrame(
+            self.content,
+            fg_color=self.CARD_BG,
+            border_width=1,
+            border_color=self.BORDER,
+            corner_radius=7,
+        )
+        bar.pack(fill="x", pady=(0, 12))
+
+        ctk.CTkLabel(
+            bar,
+            text="COLLECTION YEAR",
+            font=(ModernTheme.FONT_FAMILY, 9, "bold"),
+            text_color=self.MUTED,
+        ).pack(side="left", padx=(14, 7), pady=11)
+        self.year_combo = ctk.CTkComboBox(
+            bar,
+            values=[str(datetime.now().year)],
+            width=110,
+            height=32,
+            state="readonly",
+            fg_color=self.PANEL_BG,
+            border_color=self.BORDER,
+            button_color="#1d4f78",
+            button_hover_color="#25658f",
+            dropdown_fg_color=self.CARD_BG,
+        )
+        self.year_combo.set(str(datetime.now().year))
+        self.year_combo.pack(side="left", pady=10)
+
+        ctk.CTkLabel(
+            bar,
+            text="BARANGAY",
+            font=(ModernTheme.FONT_FAMILY, 9, "bold"),
+            text_color=self.MUTED,
+        ).pack(side="left", padx=(16, 7), pady=11)
+        self.barangay_combo = ctk.CTkComboBox(
+            bar,
+            values=["ALL"],
+            width=205,
+            height=32,
+            state="readonly",
+            fg_color=self.PANEL_BG,
+            border_color=self.BORDER,
+            button_color="#1d4f78",
+            button_hover_color="#25658f",
+            dropdown_fg_color=self.CARD_BG,
+        )
+        self.barangay_combo.set("ALL")
+        self.barangay_combo.pack(side="left", pady=10)
+
+        self.refresh_button = ctk.CTkButton(
+            bar,
+            text="REFRESH DATA",
+            command=self.load_data,
+            width=125,
+            height=32,
+            fg_color="#0284c7",
+            hover_color="#0369a1",
+            font=(ModernTheme.FONT_FAMILY, 10, "bold"),
+        )
+        self.refresh_button.pack(side="left", padx=(12, 0), pady=10)
 
         ctk.CTkButton(
-            header_fr, 
-            text="📈 OPEN HIGH-FIDELITY INSIGHTS", 
-            command=self.open_external_dashboard, 
-            width=220, 
-            fg_color="#8e44ad",
-            hover_color="#9b59b6"
-        ).pack(side="right")
+            bar,
+            text="DETAILED ANALYTICS",
+            command=self.open_external_dashboard,
+            width=145,
+            height=32,
+            fg_color="#243853",
+            hover_color="#304967",
+            border_width=1,
+            border_color="#426080",
+            font=(ModernTheme.FONT_FAMILY, 10, "bold"),
+        ).pack(side="right", padx=12, pady=10)
 
-        # --- KPI CARDS ---
-        self.kpi_fr = ctk.CTkFrame(self.container, fg_color="transparent")
-        self.kpi_fr.pack(fill="x", pady=(0, 20))
-        self.kpi_fr.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        self.year_combo.bind("<Return>", lambda _event: self.load_data())
+        self.barangay_combo.bind("<Return>", lambda _event: self.load_data())
 
-        self.kpi_total = self._create_kpi_card("TOTAL REVENUE", "P 0.00", "#1abc9c", 0)
-        self.kpi_month = self._create_kpi_card("THIS MONTH", "P 0.00", "#3498db", 1)
-        self.kpi_today = self._create_kpi_card("COLLECTED TODAY", "P 0.00", "#e67e22", 2)
-        self.kpi_count = self._create_kpi_card("TOTAL PAYMENTS", "0", "#9b59b6", 3)
+    def _build_kpis(self):
+        self.kpi_frame = ctk.CTkFrame(self.content, fg_color="transparent")
+        self.kpi_frame.pack(fill="x", pady=(0, 12))
+        for column in range(4):
+            self.kpi_frame.grid_columnconfigure(column, weight=1, uniform="kpi")
 
-        # --- CHARTS AREA ---
-        charts_fr = ctk.CTkFrame(self.container, fg_color="transparent")
-        charts_fr.pack(fill="both", expand=True)
-        charts_fr.grid_columnconfigure((0, 1), weight=1)
+        self.kpis = {}
+        definitions = [
+            ("total", "TOTAL COLLECTED", self.BLUE),
+            ("transactions", "PAYMENT TRANSACTIONS", self.PURPLE),
+            ("properties", "PROPERTIES PAID", self.GREEN),
+            ("average", "AVERAGE RECEIPT", self.AMBER),
+        ]
+        for column, (key, title, color) in enumerate(definitions):
+            self.kpis[key] = self._create_kpi_card(column, title, color)
 
-        # 1. Collection Trend (Line Chart)
-        self.trend_card = ctk.CTkFrame(charts_fr, fg_color="white", corner_radius=12)
-        self.trend_card.grid(row=0, column=0, padx=(0, 10), sticky="nsew")
-        ctk.CTkLabel(self.trend_card, text="MONTHLY COLLECTION TREND", font=("Segoe UI", 12, "bold")).pack(pady=10)
-        
-        # 2. Barangay Breakdown (Bar Chart)
-        self.brgy_card = ctk.CTkFrame(charts_fr, fg_color="white", corner_radius=12)
-        self.brgy_card.grid(row=0, column=1, padx=(10, 0), sticky="nsew")
-        ctk.CTkLabel(self.brgy_card, text="REVENUE BY BARANGAY", font=("Segoe UI", 12, "bold")).pack(pady=10)
+    def _create_kpi_card(self, column, title, color):
+        card = ctk.CTkFrame(
+            self.kpi_frame,
+            fg_color=self.CARD_BG,
+            border_width=1,
+            border_color=self.BORDER,
+            corner_radius=7,
+            height=112,
+        )
+        card.grid(row=0, column=column, padx=(0 if column == 0 else 6, 0), sticky="nsew")
+        card.grid_propagate(False)
 
-    def _create_kpi_card(self, title, value, color, col):
-        card = ctk.CTkFrame(self.kpi_fr, fg_color="white", corner_radius=12)
-        card.grid(row=0, column=col, padx=5, sticky="nsew")
-        
-        ctk.CTkLabel(card, text=title, font=("Segoe UI", 10, "bold"), text_color="gray").pack(pady=(15, 0))
-        val_lbl = ctk.CTkLabel(card, text=value, font=("Segoe UI", 22, "bold"), text_color=color)
-        val_lbl.pack(pady=(0, 15))
-        return val_lbl
+        ctk.CTkLabel(
+            card,
+            text=title,
+            font=(ModernTheme.FONT_FAMILY, 9, "bold"),
+            text_color=self.MUTED,
+        ).pack(anchor="w", padx=14, pady=(14, 2))
+        value = ctk.CTkLabel(
+            card,
+            text="--",
+            font=(ModernTheme.FONT_FAMILY, 21, "bold"),
+            text_color=color,
+        )
+        value.pack(anchor="w", padx=14)
+        context = ctk.CTkLabel(
+            card,
+            text="Loading...",
+            font=(ModernTheme.FONT_FAMILY, 9),
+            text_color=self.MUTED,
+        )
+        context.pack(anchor="w", padx=14, pady=(3, 0))
+        return {"value": value, "context": context}
+
+    def _build_charts(self):
+        charts = ctk.CTkFrame(self.content, fg_color="transparent")
+        charts.pack(fill="x", pady=(0, 12))
+        charts.grid_columnconfigure((0, 1), weight=1, uniform="chart")
+
+        self.trend_plot_frame = self._create_chart_card(
+            charts,
+            0,
+            "MONTHLY COLLECTION TREND",
+            "Cash posted during the selected collection year",
+        )
+        self.barangay_plot_frame = self._create_chart_card(
+            charts,
+            1,
+            "TOP BARANGAYS BY COLLECTION",
+            "Linked collections ranked by property location",
+        )
+
+    def _create_chart_card(self, parent, column, title, subtitle):
+        card = ctk.CTkFrame(
+            parent,
+            fg_color=self.CARD_BG,
+            border_width=1,
+            border_color=self.BORDER,
+            corner_radius=7,
+            height=330,
+        )
+        card.grid(row=0, column=column, padx=(0 if column == 0 else 6, 0), sticky="nsew")
+        card.grid_propagate(False)
+
+        heading = ctk.CTkFrame(card, fg_color="transparent")
+        heading.pack(fill="x", padx=14, pady=(12, 0))
+        ctk.CTkLabel(
+            heading,
+            text=title,
+            font=(ModernTheme.FONT_FAMILY, 11, "bold"),
+            text_color=self.TEXT,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            heading,
+            text=subtitle,
+            font=(ModernTheme.FONT_FAMILY, 9),
+            text_color=self.MUTED,
+        ).pack(anchor="w", pady=(1, 0))
+
+        plot_frame = ctk.CTkFrame(card, fg_color=self.PANEL_BG, corner_radius=5)
+        plot_frame.pack(fill="both", expand=True, padx=12, pady=10)
+        return plot_frame
+
+    def _build_operational_row(self):
+        row = ctk.CTkFrame(self.content, fg_color="transparent")
+        row.pack(fill="x")
+        row.grid_columnconfigure(0, weight=3)
+        row.grid_columnconfigure(1, weight=1)
+
+        recent_card = ctk.CTkFrame(
+            row,
+            fg_color=self.CARD_BG,
+            border_width=1,
+            border_color=self.BORDER,
+            corner_radius=7,
+            height=250,
+        )
+        recent_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        recent_card.grid_propagate(False)
+        ctk.CTkLabel(
+            recent_card,
+            text="RECENT RECEIPTS IN SELECTED PERIOD",
+            font=(ModernTheme.FONT_FAMILY, 11, "bold"),
+            text_color=self.TEXT,
+        ).pack(anchor="w", padx=14, pady=(13, 7))
+        self.recent_rows = ctk.CTkFrame(recent_card, fg_color="transparent")
+        self.recent_rows.pack(fill="both", expand=True, padx=12, pady=(0, 10))
+
+        status_card = ctk.CTkFrame(
+            row,
+            fg_color=self.CARD_BG,
+            border_width=1,
+            border_color=self.BORDER,
+            corner_radius=7,
+            height=250,
+        )
+        status_card.grid(row=0, column=1, sticky="nsew")
+        status_card.grid_propagate(False)
+        ctk.CTkLabel(
+            status_card,
+            text="SYSTEM STATUS",
+            font=(ModernTheme.FONT_FAMILY, 11, "bold"),
+            text_color=self.TEXT,
+        ).pack(anchor="w", padx=14, pady=(13, 10))
+
+        self.sync_status = self._status_line(status_card, "SYNC QUEUE")
+        self.date_status = self._status_line(status_card, "DATE QUALITY")
+        self.source_status = self._status_line(status_card, "DATA SOURCE")
+
+    def _status_line(self, parent, title):
+        frame = ctk.CTkFrame(parent, fg_color=self.PANEL_BG, corner_radius=5)
+        frame.pack(fill="x", padx=12, pady=(0, 8))
+        ctk.CTkLabel(
+            frame,
+            text=title,
+            width=88,
+            anchor="w",
+            font=(ModernTheme.FONT_FAMILY, 8, "bold"),
+            text_color=self.MUTED,
+        ).pack(side="left", padx=(10, 3), pady=10)
+        value = ctk.CTkLabel(
+            frame,
+            text="Checking...",
+            anchor="w",
+            font=(ModernTheme.FONT_FAMILY, 9, "bold"),
+            text_color=self.TEXT,
+        )
+        value.pack(side="left", fill="x", expand=True, padx=(0, 8), pady=10)
+        return value
 
     def load_data(self):
+        if self._loading:
+            return
+        self._loading = True
+        self.refresh_button.configure(state="disabled", text="LOADING...")
+        self.last_refresh_label.configure(text="Refreshing verified data...")
+
+        year = self.year_combo.get().strip()
+        barangay = self.barangay_combo.get().strip() or "ALL"
+
         def worker():
             try:
-                kpis = payment_svc.get_analytics_kpis()
-                trends = payment_svc.get_monthly_collection_trend(months=12)
-                brgy_data = payment_svc.get_barangay_breakdown()
-                
-                self.container.after(0, lambda: self._update_ui(kpis, trends, brgy_data))
-            except Exception as e:
-                self.container.after(0, lambda: messagebox.showerror("Analytics Error", f"Failed to fetch data: {e}"))
+                data = payment_svc.get_operational_analytics(
+                    year=year,
+                    barangay=barangay,
+                )
+                self.container.after(0, lambda: self._update_ui(data))
+            except Exception as exc:
+                self.container.after(0, lambda: self._handle_error(exc))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _update_ui(self, kpis, trends, brgy_data):
-        # Update KPIs
-        self.kpi_total.configure(text=f"P {kpis['total_revenue']:,.2f}")
-        self.kpi_month.configure(text=f"P {kpis['month']:,.2f}")
-        self.kpi_today.configure(text=f"P {kpis['today']:,.2f}")
-        self.kpi_count.configure(text=f"{kpis['payment_count']:,}")
+    def _handle_error(self, exc):
+        self._loading = False
+        self.refresh_button.configure(state="normal", text="REFRESH DATA")
+        self.last_refresh_label.configure(text="Refresh failed")
+        messagebox.showerror("Analytics Error", f"Unable to load analytics data.\n\n{exc}")
 
-        # Update Trend Chart
-        self._plot_trend(trends)
-        
-        # Update Barangay Chart
-        self._plot_barangay(brgy_data)
+    def _update_ui(self, data):
+        filters = data.get("filters", {})
+        kpis = data.get("kpis", {})
+        selected_year = int(filters.get("year", datetime.now().year))
 
-    def _plot_trend(self, trends):
-        for widget in self.trend_card.winfo_children():
-            if isinstance(widget, tk.Canvas): widget.destroy()
-            
-        fig = Figure(figsize=(5, 4), dpi=100)
-        ax = fig.add_subplot(111)
-        
-        months = [t["month"] for t in trends]
-        totals = [t["total"] for t in trends]
-        
-        ax.plot(months, totals, marker='o', linestyle='-', color='#3498db', linewidth=2)
-        ax.fill_between(months, totals, alpha=0.2, color='#3498db')
-        
-        ax.set_title("")
-        ax.set_ylabel("Revenue (PHP)")
+        years = [str(value) for value in filters.get("years", [selected_year])]
+        barangays = filters.get("barangays", ["ALL"])
+        self.year_combo.configure(values=years)
+        self.barangay_combo.configure(values=barangays)
+        self.year_combo.set(str(selected_year))
+        self.barangay_combo.set(filters.get("barangay", "ALL"))
+        self._filters_ready = True
 
-        # Format Y-axis as ₱1.2M instead of 1e6 scientific notation
-        import matplotlib.ticker as mticker
-        ax.yaxis.set_major_formatter(mticker.FuncFormatter(
-            lambda x, _: f"₱{x/1_000_000:.1f}M" if x >= 1_000_000
-                    else f"₱{x/1_000:.0f}K" if x >= 1_000
-                    else f"₱{x:.0f}"
-        ))
+        self.kpis["total"]["value"].configure(
+            text=self._money(kpis.get("total_collected", 0))
+        )
+        self.kpis["total"]["context"].configure(
+            text=self._comparison(kpis.get("total_change_pct"), selected_year - 1)
+        )
+        self.kpis["transactions"]["value"].configure(
+            text=f"{int(kpis.get('transactions', 0)):,}"
+        )
+        self.kpis["transactions"]["context"].configure(
+            text=self._comparison(kpis.get("transaction_change_pct"), selected_year - 1)
+        )
+        self.kpis["properties"]["value"].configure(
+            text=f"{int(kpis.get('properties_paid', 0)):,}"
+        )
+        self.kpis["properties"]["context"].configure(
+            text="Unique properties with allocated payments"
+        )
+        self.kpis["average"]["value"].configure(
+            text=self._money(kpis.get("average_receipt", 0))
+        )
+        self.kpis["average"]["context"].configure(text="Per payment transaction")
 
-        fig.autofmt_xdate()
-        fig.tight_layout()
+        self._plot_trend(data.get("trend", []), filters.get("period_end", ""))
+        self._plot_barangay(data.get("barangays", []))
+        self._render_recent(data.get("recent", []))
+        self._render_status(data.get("quality", {}))
 
-        canvas = FigureCanvasTkAgg(fig, master=self.trend_card)
+        self._loading = False
+        self.refresh_button.configure(state="normal", text="REFRESH DATA")
+        self.last_refresh_label.configure(
+            text=f"Last refreshed: {datetime.now():%b %d, %Y  %I:%M %p}"
+        )
+
+    @staticmethod
+    def _money(value):
+        return f"P {float(value or 0):,.2f}"
+
+    @staticmethod
+    def _comparison(change, prior_year):
+        if change is None:
+            return f"No {prior_year} baseline available"
+        direction = "up" if change >= 0 else "down"
+        return f"{abs(float(change)):.1f}% {direction} vs {prior_year}"
+
+    @staticmethod
+    def _axis_money(value, _position=None):
+        absolute = abs(value)
+        if absolute >= 1_000_000:
+            return f"P {value / 1_000_000:.1f}M"
+        if absolute >= 1_000:
+            return f"P {value / 1_000:.0f}K"
+        return f"P {value:.0f}"
+
+    def _prepare_axis(self, figure, axis):
+        figure.patch.set_facecolor(self.PANEL_BG)
+        axis.set_facecolor(self.PANEL_BG)
+        axis.tick_params(colors=self.MUTED, labelsize=8, length=0)
+        axis.grid(axis="y", color="#2a3c55", alpha=0.55, linewidth=0.6)
+        axis.set_axisbelow(True)
+        for spine in axis.spines.values():
+            spine.set_visible(False)
+
+    def _replace_chart(self, key, frame, figure):
+        old_canvas = self._chart_canvases.get(key)
+        if old_canvas is not None:
+            try:
+                old_canvas.get_tk_widget().destroy()
+            except Exception:
+                pass
+        canvas = FigureCanvasTkAgg(figure, master=frame)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+        self._chart_canvases[key] = canvas
 
-    def _plot_barangay(self, brgy_data):
-        for widget in self.brgy_card.winfo_children():
-            if isinstance(widget, tk.Canvas): widget.destroy()
-            
-        fig = Figure(figsize=(5, 4), dpi=100)
-        ax = fig.add_subplot(111)
-        
-        # Top 10 barangays
-        top_data = brgy_data[:10]
-        names = [d["barangay"][:10] for d in top_data]
-        values = [d["total"] for d in top_data]
-        
-        bars = ax.bar(names, values, color='#1abc9c')
-        
-        ax.set_title("")
-        ax.set_ylabel("Total Collection (PHP)")
+    def _plot_trend(self, trends, period_end):
+        labels = [row.get("label", "") for row in trends]
+        totals = [float(row.get("total", 0) or 0) for row in trends]
 
-        # Format Y-axis as ₱1.2M instead of 1e6 scientific notation
-        import matplotlib.ticker as mticker
-        ax.yaxis.set_major_formatter(mticker.FuncFormatter(
-            lambda x, _: f"₱{x/1_000_000:.1f}M" if x >= 1_000_000
-                    else f"₱{x/1_000:.0f}K" if x >= 1_000
-                    else f"₱{x:.0f}"
-        ))
+        figure = Figure(figsize=(7.2, 3.0), dpi=90)
+        axis = figure.add_subplot(111)
+        self._prepare_axis(figure, axis)
+        x_values = list(range(len(labels)))
+        axis.plot(
+            x_values,
+            totals,
+            color=self.BLUE,
+            linewidth=2.1,
+            marker="o",
+            markersize=4,
+            markerfacecolor=self.PAGE_BG,
+            markeredgewidth=1.4,
+        )
+        axis.fill_between(x_values, totals, color=self.BLUE, alpha=0.12)
+        axis.set_xticks(x_values)
+        axis.set_xticklabels(labels)
+        axis.yaxis.set_major_formatter(mticker.FuncFormatter(self._axis_money))
+        if period_end:
+            try:
+                current_index = datetime.strptime(period_end, "%Y-%m-%d").month - 1
+                axis.axvspan(current_index - 0.38, current_index + 0.38, color=self.AMBER, alpha=0.08)
+            except ValueError:
+                pass
+        if not any(totals):
+            axis.set_ylim(0, 1)
+        figure.tight_layout(pad=1.0)
+        self._replace_chart("trend", self.trend_plot_frame, figure)
 
-        fig.autofmt_xdate()
-        fig.tight_layout()
+    def _plot_barangay(self, rows):
+        rows = list(reversed(rows[:10]))
+        names = [str(row.get("barangay", "UNSPECIFIED"))[:22] for row in rows]
+        totals = [float(row.get("total", 0) or 0) for row in rows]
 
-        canvas = FigureCanvasTkAgg(fig, master=self.brgy_card)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+        figure = Figure(figsize=(7.2, 3.0), dpi=90)
+        axis = figure.add_subplot(111)
+        self._prepare_axis(figure, axis)
+        axis.grid(axis="x", color="#2a3c55", alpha=0.55, linewidth=0.6)
+        axis.grid(axis="y", visible=False)
+        axis.barh(names, totals, color=self.GREEN, height=0.55, alpha=0.9)
+        axis.xaxis.set_major_formatter(mticker.FuncFormatter(self._axis_money))
+        axis.tick_params(axis="y", labelsize=7.5)
+        if not rows:
+            axis.text(
+                0.5,
+                0.5,
+                "No allocated collections in this period",
+                transform=axis.transAxes,
+                ha="center",
+                va="center",
+                color=self.MUTED,
+                fontsize=9,
+            )
+        figure.tight_layout(pad=1.0)
+        self._replace_chart("barangay", self.barangay_plot_frame, figure)
+
+    def _render_recent(self, rows):
+        for child in self.recent_rows.winfo_children():
+            child.destroy()
+
+        widths = (90, 100, 120, 1, 105)
+        headers = ("DATE", "OR NUMBER", "TD NUMBER", "OWNER", "AMOUNT")
+        header = ctk.CTkFrame(self.recent_rows, fg_color="#1b2c45", corner_radius=3)
+        header.pack(fill="x", pady=(0, 3))
+        for column, title in enumerate(headers):
+            header.grid_columnconfigure(column, weight=1 if widths[column] == 1 else 0)
+            ctk.CTkLabel(
+                header,
+                text=title,
+                width=widths[column] if widths[column] != 1 else 0,
+                anchor="w",
+                font=(ModernTheme.FONT_FAMILY, 8, "bold"),
+                text_color=self.MUTED,
+            ).grid(row=0, column=column, sticky="ew", padx=8, pady=6)
+
+        if not rows:
+            ctk.CTkLabel(
+                self.recent_rows,
+                text="No receipts found for the selected period.",
+                font=(ModernTheme.FONT_FAMILY, 10),
+                text_color=self.MUTED,
+            ).pack(pady=42)
+            return
+
+        for index, row in enumerate(rows[:6]):
+            frame = ctk.CTkFrame(
+                self.recent_rows,
+                fg_color=self.PANEL_BG if index % 2 == 0 else "#132139",
+                corner_radius=0,
+            )
+            frame.pack(fill="x")
+            values = (
+                str(row.get("date", ""))[:10],
+                str(row.get("or_number", "-")),
+                str(row.get("td_number", "-")),
+                str(row.get("owner", "-"))[:34],
+                self._money(row.get("amount", 0)),
+            )
+            for column, value in enumerate(values):
+                frame.grid_columnconfigure(column, weight=1 if widths[column] == 1 else 0)
+                ctk.CTkLabel(
+                    frame,
+                    text=value,
+                    width=widths[column] if widths[column] != 1 else 0,
+                    anchor="e" if column == 4 else "w",
+                    font=(ModernTheme.FONT_FAMILY, 9, "bold" if column == 4 else "normal"),
+                    text_color=self.TEXT if column != 4 else self.GREEN,
+                ).grid(row=0, column=column, sticky="ew", padx=8, pady=6)
+
+    def _render_status(self, quality):
+        pending = int(offline_manager.get_queue_count() or 0)
+        future_count = int(quality.get("future_dated_payments", 0) or 0)
+
+        self.sync_status.configure(
+            text="Queue clear" if pending == 0 else f"{pending} pending item{'s' if pending != 1 else ''}",
+            text_color=self.GREEN if pending == 0 else self.AMBER,
+        )
+        self.date_status.configure(
+            text=(
+                "No future-dated receipts"
+                if future_count == 0
+                else f"Review {future_count} future-dated receipt{'s' if future_count != 1 else ''}"
+            ),
+            text_color=self.GREEN if future_count == 0 else self.RED,
+        )
+        self.source_status.configure(
+            text="Linked payment allocations",
+            text_color=self.BLUE,
+        )

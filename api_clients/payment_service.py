@@ -48,6 +48,15 @@ def get_analytics_kpis():
     return api_request("GET", "/analytics/kpis")
 
 
+def get_operational_analytics(year=None, barangay=None):
+    params = {}
+    if year not in (None, ""):
+        params["year"] = int(year)
+    if barangay and str(barangay).upper() != "ALL":
+        params["barangay"] = str(barangay)
+    return api_request("GET", "/analytics/operational", params=params)
+
+
 def save_receipt_record(property_id, payment_id, details, file_path, user_name):
     data = {
         "property_id": property_id,

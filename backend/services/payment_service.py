@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
+import calendar
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from backend.database import SessionLocal
 from backend.models import ReceiptHistory
@@ -26,6 +27,15 @@ def _d(value) -> Decimal:
 def _clean_remarks(value):
     text = str(value or "").strip()
     return text[:500] if text else None
+
+
+def _iso_date(value) -> str:
+    """Serialize SQL date expressions consistently across MariaDB and SQLite."""
+    if not value:
+        return ""
+    if hasattr(value, "date"):
+        value = value.date()
+    return str(value.isoformat() if hasattr(value, "isoformat") else value)[:10]
 
 
 def has_payment_remarks_column(db_session: Session = None) -> bool:
@@ -274,6 +284,224 @@ def get_collection_kpis(db_session: Session = None):
         "payment_count": int(total[1] or 0),
         "today": float(_d(today_amt)),
         "month": float(_d(month_amt)),
+    }
+
+
+def get_operational_analytics(year=None, barangay=None, db_session: Session = None):
+    """Return one internally consistent dataset for the desktop Analytics Hub.
+
+    Collection amounts come from payment allocations rather than the denormalized
+    ``payments.amount`` field. This keeps the dashboard aligned with billing and
+    reconciliation reports, including split and partial payments.
+    """
+    current_day = today()
+    try:
+        selected_year = int(year or current_day.year)
+    except (TypeError, ValueError):
+        selected_year = current_day.year
+    selected_year = max(2000, min(selected_year, current_day.year))
+
+    selected_barangay = str(barangay or "ALL").strip().upper() or "ALL"
+    effective_date = func.coalesce(Payment.date_paid, Payment.created_at)
+    selected_end = (
+        current_day if selected_year == current_day.year else date(selected_year, 12, 31)
+    )
+
+    def period_filters(period_year, period_end, include_barangay=True):
+        filters = [
+            Property.deleted_at == None,
+            year_of(effective_date) == period_year,
+            effective_date <= datetime.combine(period_end, datetime.max.time()),
+        ]
+        if include_barangay and selected_barangay != "ALL":
+            filters.append(func.upper(func.coalesce(Property.barangay, "")) == selected_barangay)
+        return filters
+
+    def allocation_query(*columns):
+        return (
+            db_session.query(*columns)
+            .select_from(PaymentBilling)
+            .join(Payment, Payment.id == PaymentBilling.payment_id)
+            .join(Property, Property.id == Payment.property_id)
+        )
+
+    def aggregate(period_year, period_end):
+        row = allocation_query(
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("total"),
+            func.count(func.distinct(Payment.id)).label("transactions"),
+            func.count(func.distinct(Payment.property_id)).label("properties"),
+        ).filter(*period_filters(period_year, period_end)).first()
+        return {
+            "total": float(_d(row.total if row else 0)),
+            "transactions": int((row.transactions if row else 0) or 0),
+            "properties": int((row.properties if row else 0) or 0),
+        }
+
+    current = aggregate(selected_year, selected_end)
+    prior_year = selected_year - 1
+    if selected_year == current_day.year:
+        prior_day = min(current_day.day, calendar.monthrange(prior_year, current_day.month)[1])
+        prior_end = date(prior_year, current_day.month, prior_day)
+    else:
+        prior_end = date(prior_year, 12, 31)
+    prior = aggregate(prior_year, prior_end)
+
+    total_change_pct = None
+    if prior["total"]:
+        total_change_pct = ((current["total"] - prior["total"]) / prior["total"]) * 100
+
+    transaction_change_pct = None
+    if prior["transactions"]:
+        transaction_change_pct = (
+            (current["transactions"] - prior["transactions"])
+            / prior["transactions"]
+        ) * 100
+
+    month_rows = allocation_query(
+        month_of(effective_date).label("month_number"),
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("total"),
+    ).filter(
+        *period_filters(selected_year, selected_end)
+    ).group_by(
+        month_of(effective_date)
+    ).order_by(
+        month_of(effective_date)
+    ).all()
+    month_totals = {int(row.month_number): float(_d(row.total)) for row in month_rows}
+    trend = [
+        {
+            "month": month_number,
+            "label": calendar.month_abbr[month_number],
+            "total": month_totals.get(month_number, 0.0),
+        }
+        for month_number in range(1, 13)
+    ]
+
+    barangay_rows = allocation_query(
+        func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("total"),
+    ).filter(
+        *period_filters(selected_year, selected_end)
+    ).group_by(
+        func.coalesce(Property.barangay, "UNSPECIFIED")
+    ).order_by(
+        func.sum(PaymentBilling.amount_paid).desc()
+    ).limit(10).all()
+
+    recent_rows = allocation_query(
+        Payment.id.label("payment_id"),
+        effective_date.label("date_paid"),
+        Payment.or_number,
+        Property.td_number,
+        Property.owner_name,
+        Payment.tax_year,
+        func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("amount"),
+    ).filter(
+        *period_filters(selected_year, selected_end)
+    ).group_by(
+        Payment.id,
+        effective_date,
+        Payment.or_number,
+        Property.td_number,
+        Property.owner_name,
+        Payment.tax_year,
+    ).order_by(
+        effective_date.desc(), Payment.id.desc()
+    ).limit(6).all()
+
+    future_filters = [
+        Property.deleted_at == None,
+        effective_date > datetime.combine(current_day, datetime.max.time()),
+    ]
+    if selected_barangay != "ALL":
+        future_filters.append(
+            func.upper(func.coalesce(Property.barangay, "")) == selected_barangay
+        )
+    future_count = (
+        db_session.query(func.count(func.distinct(Payment.id)))
+        .select_from(Payment)
+        .join(Property, Property.id == Payment.property_id)
+        .filter(*future_filters)
+        .scalar()
+        or 0
+    )
+
+    year_rows = (
+        db_session.query(year_of(effective_date).label("payment_year"))
+        .select_from(Payment)
+        .join(Property, Property.id == Payment.property_id)
+        .filter(
+            Property.deleted_at == None,
+            effective_date <= datetime.combine(current_day, datetime.max.time()),
+        )
+        .distinct()
+        .order_by(year_of(effective_date).desc())
+        .all()
+    )
+    years = sorted(
+        {
+            int(row.payment_year)
+            for row in year_rows
+            if row.payment_year is not None and int(row.payment_year) <= current_day.year
+        },
+        reverse=True,
+    )
+    if selected_year not in years:
+        years.insert(0, selected_year)
+
+    barangay_options = [
+        str(row[0]).strip().upper()
+        for row in db_session.query(Property.barangay)
+        .filter(
+            Property.deleted_at == None,
+            Property.barangay != None,
+            func.trim(Property.barangay) != "",
+        )
+        .distinct()
+        .order_by(Property.barangay)
+        .all()
+    ]
+
+    return {
+        "filters": {
+            "year": selected_year,
+            "years": years,
+            "barangay": selected_barangay,
+            "barangays": ["ALL", *barangay_options],
+            "period_end": selected_end.isoformat(),
+        },
+        "kpis": {
+            "total_collected": current["total"],
+            "transactions": current["transactions"],
+            "properties_paid": current["properties"],
+            "average_receipt": (
+                current["total"] / current["transactions"]
+                if current["transactions"]
+                else 0.0
+            ),
+            "prior_total": prior["total"],
+            "prior_transactions": prior["transactions"],
+            "total_change_pct": total_change_pct,
+            "transaction_change_pct": transaction_change_pct,
+        },
+        "trend": trend,
+        "barangays": [
+            {"barangay": row.barangay, "total": float(_d(row.total))}
+            for row in barangay_rows
+        ],
+        "recent": [
+            {
+                "payment_id": row.payment_id,
+                "date": _iso_date(row.date_paid),
+                "or_number": row.or_number or "-",
+                "td_number": row.td_number,
+                "owner": row.owner_name,
+                "tax_year": row.tax_year or "-",
+                "amount": float(_d(row.amount)),
+            }
+            for row in recent_rows
+        ],
+        "quality": {"future_dated_payments": int(future_count)},
     }
 
 
