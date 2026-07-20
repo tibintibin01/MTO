@@ -17,12 +17,31 @@ router = APIRouter(tags=["Health"])
 
 
 @router.get("/readyz")
-async def readyz():
+def readyz():
     """
-    Lightweight liveness probe for Kubernetes.
-    Returns 200 immediately — no DB check.
+    Readiness probe for the database and login-critical session schema.
+    Returns 200 only when the API can access the database and auth schema.
     """
-    return {"status": "alive"}
+    from sqlalchemy import text
+    from backend.database import SessionLocal
+
+    try:
+        with SessionLocal() as db_session:
+            db_session.execute(text("SELECT 1"))
+            db_session.execute(
+                text(
+                    "SELECT client_ip, user_agent, device_name, "
+                    "last_used_at, revoked_at "
+                    "FROM refresh_tokens WHERE 1 = 0"
+                )
+            )
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="Database or authentication schema is not ready",
+        )
+
+    return {"status": "ready"}
 
 
 @router.get("/healthz")

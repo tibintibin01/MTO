@@ -46,10 +46,27 @@ async def lifespan(app: FastAPI):
     """
     # --- STARTUP ---
     mto_logger.info("API Server started successfully.")
+
+    # Login depends on these columns. Treat schema repair failure as a startup
+    # failure so the updater cannot report a false-ready API.
+    from backend.database import SessionLocal
+    from backend.services.migration_service import (
+        ensure_refresh_token_session_columns,
+    )
+    try:
+        with SessionLocal() as db:
+            ensure_refresh_token_session_columns(db)
+        mto_logger.info("Authentication session schema verified on startup.")
+    except Exception as e:
+        mto_logger.critical(
+            f"Authentication session schema verification failed: {e}"
+        )
+        raise RuntimeError(
+            "Authentication database schema is not ready"
+        ) from e
     
     # Refresh dashboard stats so the first page load shows real numbers.
     try:
-        from backend.database import SessionLocal
         from backend.services.migration_service import ensure_payment_remarks_column
         from backend.services.stats_service import refresh_system_stats
         with SessionLocal() as db:

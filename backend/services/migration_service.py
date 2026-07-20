@@ -211,6 +211,67 @@ MIGRATIONS = [
 ]
 
 
+REFRESH_TOKEN_SESSION_COLUMNS = {
+    "client_ip": "VARCHAR(45) NULL",
+    "user_agent": "VARCHAR(500) NULL",
+    "device_name": "VARCHAR(128) NULL",
+    "last_used_at": "DATETIME NULL",
+    "revoked_at": "DATETIME NULL",
+}
+
+
+def get_missing_refresh_token_session_columns(db_session: Session) -> set[str]:
+    """Return login-session columns missing from an existing deployment."""
+    inspector = inspect(db_session.connection())
+    if not inspector.has_table("refresh_tokens"):
+        raise RuntimeError("Required refresh_tokens table is missing")
+
+    existing = {
+        column["name"] for column in inspector.get_columns("refresh_tokens")
+    }
+    return set(REFRESH_TOKEN_SESSION_COLUMNS) - existing
+
+
+def ensure_refresh_token_session_columns(db_session: Session) -> None:
+    """Idempotently upgrade legacy refresh_tokens tables used during login."""
+    missing = get_missing_refresh_token_session_columns(db_session)
+    if not missing:
+        return
+
+    try:
+        for column_name, column_sql in REFRESH_TOKEN_SESSION_COLUMNS.items():
+            if column_name in missing:
+                db_session.execute(
+                    text(
+                        f"ALTER TABLE refresh_tokens ADD COLUMN "
+                        f"{column_name} {column_sql}"
+                    )
+                )
+
+        db_session.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_refresh_tokens_user_active_expiry "
+                "ON refresh_tokens (user_id, is_revoked, expires_at)"
+            )
+        )
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        raise
+
+    remaining = get_missing_refresh_token_session_columns(db_session)
+    if remaining:
+        raise RuntimeError(
+            "Refresh-token schema repair did not create: "
+            + ", ".join(sorted(remaining))
+        )
+
+    print(
+        "Schema repair applied: refresh_tokens session metadata columns created."
+    )
+
+
 def ensure_payment_remarks_column(db_session: Session) -> None:
     """Repair deployments where the migration was recorded but the real column is missing."""
     try:
