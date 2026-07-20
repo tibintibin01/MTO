@@ -37,11 +37,14 @@ set "MTO_API_TASK_INSTALLED="
 schtasks /Query /TN "MTO Treasury API" >nul 2>&1
 if %errorlevel% equ 0 (
     set "MTO_API_TASK_INSTALLED=1"
-    schtasks /End /TN "MTO Treasury API" >nul 2>&1
 )
-taskkill /f /fi "WINDOWTITLE eq MTO Backend" >nul 2>&1
-taskkill /f /fi "WINDOWTITLE eq MTO Frontend" >nul 2>&1
-timeout /t 3 >nul
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\stop_mto_runtime.ps1" -ProjectRoot "C:\MTO"
+if %errorlevel% neq 0 (
+    echo ERROR: Existing MTO services could not be stopped safely.
+    echo Run this updater as Administrator, then try again.
+    pause
+    exit /b 1
+)
 echo Done.
 echo.
 
@@ -87,7 +90,13 @@ if defined MTO_API_TASK_INSTALLED (
 ) else (
     start "MTO Backend" cmd /k "python scripts\run_api_supervisor.py"
 )
-timeout /t 5 >nul
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\wait_for_mto_api.ps1" -TimeoutSeconds 90
+if %errorlevel% neq 0 (
+    echo ERROR: The updated API did not become ready.
+    echo Review C:\MTO\logs\api_supervisor.log before opening client applications.
+    pause
+    exit /b 1
+)
 cd C:\MTO\frontend
 start "MTO Frontend" cmd /k "npm start"
 echo Done.
