@@ -35,6 +35,18 @@ class SessionWatchdog:
             self._warning_win = None
 
     def start_monitoring(self):
+        # API requests clear local credentials when the server reports that
+        # this workstation's session was revoked. Detect that state here so
+        # the desktop returns to login instead of continuing with a dead
+        # session or displaying a misleading offline indicator.
+        from api_clients.api_helper import get_token
+
+        if not get_token():
+            self._warning_shown = False
+            self._warning_win = None
+            self.logout_callback()
+            return
+
         elapsed = (datetime.now() - self.last_activity).total_seconds()
         timeout_secs = self.timeout_minutes * 60
 

@@ -1,10 +1,46 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional
 from backend.deps import get_current_user, admin_only, get_db, Session
 from backend.schemas import UserCreateSchema, UserUpdateSchema, PasswordResetSchema
 import backend.services.auth_service as auth_svc
 
 router = APIRouter(prefix="/users", tags=["Admin"], dependencies=[Depends(admin_only)])
+
+
+@router.get("/{user_id}/active-sessions")
+async def list_active_sessions(
+    user_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    return {
+        "items": auth_svc.get_active_sessions(user_id, current_user, db_session)
+    }
+
+
+@router.post("/active-sessions/{session_id}/revoke")
+async def revoke_active_session(
+    session_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    try:
+        user_id = auth_svc.revoke_managed_session(
+            session_id, current_user, db_session
+        )
+        return {"status": "revoked", "user_id": user_id}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/{user_id}/active-sessions/revoke-others")
+async def revoke_other_sessions(
+    user_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    count = auth_svc.revoke_other_user_sessions(user_id, current_user, db_session)
+    return {"status": "revoked", "count": count}
 
 @router.get("")
 async def list_users(

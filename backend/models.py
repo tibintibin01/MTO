@@ -171,6 +171,14 @@ class SystemStats(Base):
 
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
+    __table_args__ = (
+        Index(
+            "ix_refresh_tokens_user_active_expiry",
+            "user_id",
+            "is_revoked",
+            "expires_at",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -178,6 +186,11 @@ class RefreshToken(Base):
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     is_revoked = Column(Boolean, default=False)
+    client_ip = Column(String(45), nullable=True)
+    user_agent = Column(String(500), nullable=True)
+    device_name = Column(String(128), nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
 
 
 class IdempotencyKey(Base):

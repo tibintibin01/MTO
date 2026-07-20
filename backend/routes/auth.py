@@ -41,7 +41,12 @@ async def login_for_access_token(
     """
     try:
         user_data = auth_svc.verify_user_login(
-            form_data.username, form_data.password, db_session=db_session
+            form_data.username,
+            form_data.password,
+            db_session=db_session,
+            client_ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            device_name="OAuth client",
         )
         if not user_data:
             raise HTTPException(
@@ -81,7 +86,14 @@ async def login(credentials: Dict[str, str], request: Request, response: Respons
     mto_logger.info(f"Login attempt received for user: {username}", ip=request.client.host)
     
     try:
-        user_data = auth_svc.verify_user_login(username, password, db_session=db_session)
+        user_data = auth_svc.verify_user_login(
+            username,
+            password,
+            db_session=db_session,
+            client_ip=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            device_name=credentials.get("device_name"),
+        )
     except ValueError as ve:
         msg = str(ve)
         mto_logger.security(f"Login failed: {msg}", user=username, ip=request.client.host)

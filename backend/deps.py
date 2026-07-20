@@ -346,6 +346,7 @@ async def get_current_user(request: Request, token: Optional[str] = None, db_ses
         username: str = payload.get("sub")
         role: str = payload.get("role")
         iat: int | None = payload.get("iat")   # issued-at timestamp (Unix epoch)
+        session_id: int | None = payload.get("sid")
 
         if username is None or role is None or user_id is None:
             raise credentials_exception
@@ -360,7 +361,7 @@ async def get_current_user(request: Request, token: Optional[str] = None, db_ses
     # Verify the user still exists, is active, and has not been soft-deleted.
     # Also check password_changed_at: if the token was issued before the last
     # password change, reject it immediately — even within the 1-hour window.
-    from backend.models import User
+    from backend.models import User, RefreshToken
     from sqlalchemy.orm import load_only
 
     user = (
@@ -387,6 +388,28 @@ async def get_current_user(request: Request, token: Optional[str] = None, db_ses
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # New access tokens are bound to a revocable refresh-session row. Tokens
+    # issued before this feature have no sid and remain valid until their normal
+    # one-hour expiry, which keeps deployments backward compatible.
+    if session_id is not None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        active_session = (
+            db_session.query(RefreshToken.id)
+            .filter(
+                RefreshToken.id == session_id,
+                RefreshToken.user_id == user_id,
+                RefreshToken.is_revoked == False,
+                RefreshToken.expires_at > now,
+            )
+            .first()
+        )
+        if active_session is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This session has been signed out. Please log in again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     # Reject tokens issued before the last password change.
     # password_changed_at is a naive MariaDB datetime — compare with naive iat.
     if iat is not None and user.password_changed_at is not None:
@@ -406,7 +429,12 @@ async def get_current_user(request: Request, token: Optional[str] = None, db_ses
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-    return {"id": user_id, "username": username, "role": role}
+    return {
+        "id": user_id,
+        "username": username,
+        "role": role,
+        "session_id": session_id,
+    }
 
 async def verify_csrf_token(request: Request):
     """

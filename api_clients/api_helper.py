@@ -159,6 +159,18 @@ def get_token():
     return _SESSION_TOKEN
 
 
+def get_refresh_token():
+    """Returns the refresh token for logout/session management."""
+    return _REFRESH_TOKEN
+
+
+def clear_tokens():
+    """Clears all local credentials after logout or server-side revocation."""
+    global _SESSION_TOKEN, _REFRESH_TOKEN
+    _SESSION_TOKEN = None
+    _REFRESH_TOKEN = None
+
+
 def _try_refresh() -> bool:
     """
     Attempts to get a new access token using the stored refresh token.
@@ -184,6 +196,8 @@ def _try_refresh() -> bool:
             if new_token:
                 _SESSION_TOKEN = new_token
                 return True
+        elif resp.status_code in (400, 401):
+            clear_tokens()
     except Exception:
         pass
     return False
@@ -316,6 +330,12 @@ def api_request(
         # Provide a more descriptive error message
         status_code = getattr(e.response, "status_code", "N/A")
         error_msg = f"API Communication Error (Status {status_code}): {str(e)}"
+
+        # A 401 means the credentials expired or were revoked by an
+        # administrator. The API is reachable, so never treat this as an
+        # offline event or retain credentials that can no longer be used.
+        if status_code == 401:
+            clear_tokens()
         
         # If it's a 503 or 504, we might treat it as offline too
         if status_code in [502, 503, 504]:

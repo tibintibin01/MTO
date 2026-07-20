@@ -174,6 +174,278 @@ class InputDialog(ctk.CTkToplevel):
         self.result = None
         self.destroy()
 
+
+class SessionManagerDialog(ctk.CTkToplevel):
+    """Administrator view of active workstation sessions for one user."""
+
+    def __init__(self, parent, user_record):
+        super().__init__(parent)
+        self.user_record = user_record
+        self._sessions = {}
+        self.title(f"Active Sessions - {user_record['username']}")
+        self.geometry("940x560")
+        self.minsize(780, 480)
+        self.configure(fg_color="#101827")
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self.attributes("-topmost", True)
+        self._build()
+        self.after(80, self.refresh_sessions)
+
+    def _build(self):
+        header = ctk.CTkFrame(self, fg_color="#13243a", corner_radius=0, height=92)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        title_fr = ctk.CTkFrame(header, fg_color="transparent")
+        title_fr.pack(side="left", fill="y", padx=26, pady=16)
+        ctk.CTkLabel(
+            title_fr,
+            text="ACTIVE SESSIONS",
+            font=("Segoe UI", 19, "bold"),
+            text_color="white",
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            title_fr,
+            text=f"{self.user_record['full_name']}  |  {self.user_record['username']}",
+            font=("Segoe UI", 11),
+            text_color="#9fb3cc",
+        ).pack(anchor="w", pady=(4, 0))
+
+        self.summary_lbl = ctk.CTkLabel(
+            header,
+            text="Loading...",
+            font=("Segoe UI", 11, "bold"),
+            text_color="#38bdf8",
+        )
+        self.summary_lbl.pack(side="right", padx=26)
+
+        info = ctk.CTkFrame(self, fg_color="#17243a", corner_radius=7)
+        info.pack(fill="x", padx=22, pady=(18, 12))
+        ctk.CTkLabel(
+            info,
+            text=(
+                "Each login is listed as a separate workstation session. "
+                "Revoking one signs out that device on its next request."
+            ),
+            font=("Segoe UI", 10),
+            text_color="#b7c6da",
+            anchor="w",
+        ).pack(fill="x", padx=16, pady=10)
+
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure(
+            "Session.Treeview",
+            rowheight=38,
+            font=("Segoe UI", 10),
+            background="#111c30",
+            fieldbackground="#111c30",
+            foreground="white",
+            borderwidth=0,
+        )
+        style.configure(
+            "Session.Treeview.Heading",
+            font=("Segoe UI", 9, "bold"),
+            background="#263955",
+            foreground="white",
+            relief="flat",
+        )
+        style.map("Session.Treeview", background=[("selected", "#1679b8")])
+
+        table_fr = ctk.CTkFrame(self, fg_color="#111c30", corner_radius=6)
+        table_fr.pack(fill="both", expand=True, padx=22, pady=(0, 12))
+        columns = ("id", "device", "ip", "signed_in", "last_seen", "expires", "status")
+        self.tree = ttk.Treeview(
+            table_fr, columns=columns, show="headings", style="Session.Treeview"
+        )
+        headings = {
+            "device": "WORKSTATION",
+            "ip": "IP ADDRESS",
+            "signed_in": "SIGNED IN",
+            "last_seen": "LAST USED",
+            "expires": "EXPIRES",
+            "status": "STATUS",
+        }
+        self.tree.heading("id", text="")
+        self.tree.column("id", width=0, stretch=tk.NO)
+        for key, text_value in headings.items():
+            self.tree.heading(key, text=text_value)
+        self.tree.column("device", width=190)
+        self.tree.column("ip", width=110, anchor="center")
+        self.tree.column("signed_in", width=145, anchor="center")
+        self.tree.column("last_seen", width=145, anchor="center")
+        self.tree.column("expires", width=145, anchor="center")
+        self.tree.column("status", width=90, anchor="center")
+        self.tree.tag_configure("current", background="#12374b", foreground="#7dd3fc")
+        self.tree.tag_configure("other", background="#111c30", foreground="white")
+        self.tree.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.tree.configure(yscrollcommand=scrollbar.set)
+
+        actions = ctk.CTkFrame(self, fg_color="transparent")
+        actions.pack(fill="x", padx=22, pady=(0, 18))
+        ctk.CTkButton(
+            actions,
+            text="CLOSE",
+            command=self.destroy,
+            width=100,
+            height=38,
+            fg_color="#334155",
+            hover_color="#475569",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="left")
+        self.refresh_btn = ctk.CTkButton(
+            actions,
+            text="REFRESH",
+            command=self.refresh_sessions,
+            width=110,
+            height=38,
+            fg_color="#2563a8",
+            hover_color="#1d4f87",
+            font=("Segoe UI", 10, "bold"),
+        )
+        self.refresh_btn.pack(side="right", padx=(8, 0))
+        self.revoke_btn = ctk.CTkButton(
+            actions,
+            text="REVOKE SELECTED",
+            command=self.revoke_selected,
+            width=155,
+            height=38,
+            fg_color="#c0392b",
+            hover_color="#9f2f24",
+            font=("Segoe UI", 10, "bold"),
+        )
+        self.revoke_btn.pack(side="right", padx=(8, 0))
+        self.revoke_others_btn = ctk.CTkButton(
+            actions,
+            text="SIGN OUT OTHER SESSIONS",
+            command=self.revoke_others,
+            width=205,
+            height=38,
+            fg_color="#d97706",
+            hover_color="#b45309",
+            font=("Segoe UI", 10, "bold"),
+        )
+        self.revoke_others_btn.pack(side="right")
+
+    @staticmethod
+    def _format_timestamp(value):
+        if not value:
+            return "Not recorded"
+        return str(value).replace("T", " ")[:16]
+
+    def _set_busy(self, busy):
+        state = "disabled" if busy else "normal"
+        self.refresh_btn.configure(state=state)
+        self.revoke_btn.configure(state=state)
+        self.revoke_others_btn.configure(state=state)
+        if busy:
+            self.summary_lbl.configure(text="Contacting server...")
+
+    def refresh_sessions(self):
+        self._set_busy(True)
+
+        def worker():
+            try:
+                rows = auth.get_active_sessions(self.user_record["id"])
+                self.after(0, lambda: self._show_sessions(rows))
+            except Exception as exc:
+                self.after(0, lambda err=exc: self._show_error("Session Error", err))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_sessions(self, rows):
+        self._set_busy(False)
+        self._sessions = {int(row["id"]): row for row in rows}
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for row in rows:
+            is_current = bool(row.get("is_current"))
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    row["id"],
+                    row.get("device_name") or "Unknown workstation",
+                    row.get("client_ip") or "Unknown",
+                    self._format_timestamp(row.get("created_at")),
+                    self._format_timestamp(row.get("last_used_at")),
+                    self._format_timestamp(row.get("expires_at")),
+                    "CURRENT" if is_current else "ACTIVE",
+                ),
+                tags=("current" if is_current else "other",),
+            )
+        count = len(rows)
+        self.summary_lbl.configure(
+            text=f"{count} active session{'s' if count != 1 else ''}"
+        )
+
+    def _show_error(self, title, error):
+        self._set_busy(False)
+        self.summary_lbl.configure(text="Unable to load sessions", text_color="#f87171")
+        ErrorDialog(self, title, str(error))
+
+    def revoke_selected(self):
+        selection = self.tree.selection()
+        if not selection:
+            ErrorDialog(self, "Select Session", "Select a workstation session first.")
+            return
+        session_id = int(self.tree.item(selection[0])["values"][0])
+        row = self._sessions.get(session_id, {})
+        if row.get("is_current"):
+            ErrorDialog(
+                self,
+                "Current Session",
+                "Use Log Out to close the workstation session you are currently using.",
+            )
+            return
+        dlg = ConfirmDialog(
+            self,
+            "Revoke Workstation Session",
+            f"Sign out {row.get('device_name') or 'this workstation'}?",
+            confirm_text="Sign Out Device",
+            danger=True,
+            icon="!",
+        )
+        self.wait_window(dlg)
+        if not dlg.result:
+            return
+        self._run_revoke(lambda: auth.revoke_active_session(session_id))
+
+    def revoke_others(self):
+        dlg = ConfirmDialog(
+            self,
+            "Sign Out Other Sessions",
+            (
+                "Revoke every active session for this account except the current "
+                "administrator session, when applicable?"
+            ),
+            confirm_text="Sign Out Others",
+            danger=True,
+            icon="!",
+        )
+        self.wait_window(dlg)
+        if not dlg.result:
+            return
+        self._run_revoke(
+            lambda: auth.revoke_other_sessions(self.user_record["id"])
+        )
+
+    def _run_revoke(self, operation):
+        self._set_busy(True)
+
+        def worker():
+            try:
+                operation()
+                self.after(0, self.refresh_sessions)
+            except Exception as exc:
+                self.after(0, lambda err=exc: self._show_error("Revoke Failed", err))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+
 class UserAccessPage:
     def __init__(self, parent, user):
         self.parent = parent
@@ -287,8 +559,18 @@ class UserAccessPage:
         # High-Security Actions
         ctk.CTkLabel(self.action_fr, text=tr("users.admin_panel.security_label"), font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_GRAY).pack(anchor="w")
         
-        ctk.CTkButton(self.action_fr, text=tr("users.admin_panel.btn_reset"), command=self.reset_password, 
+        ctk.CTkButton(self.action_fr, text=tr("users.admin_panel.btn_reset"), command=self.reset_password,
                       font=ModernTheme.BUTTON, fg_color=ModernTheme.WARNING).pack(fill="x", pady=(10, 10))
+
+        self.sessions_btn = ctk.CTkButton(
+            self.action_fr,
+            text="MANAGE ACTIVE SESSIONS",
+            command=self.open_session_manager,
+            font=ModernTheme.BUTTON,
+            fg_color="#2563a8",
+            hover_color="#1d4f87",
+        )
+        self.sessions_btn.pack(fill="x", pady=(0, 10))
         
         self.delete_btn = ctk.CTkButton(self.action_fr, text=f"🗑️ {tr('users.admin_panel.btn_delete')}", command=self.delete_user_account,
                                        font=ModernTheme.BUTTON, fg_color="#c0392b") # Red for danger
@@ -313,6 +595,7 @@ class UserAccessPage:
         self.status_sw.configure(state=state)
         self.save_changes_btn.configure(state=state)
         self.delete_btn.configure(state=state)
+        self.sessions_btn.configure(state=state)
         # Note: Password reset is special, handled in its own func
 
     def refresh_users(self):
@@ -428,6 +711,11 @@ class UserAccessPage:
             self.refresh_users, 
             self.refresh_audit_trace
         )
+
+    def open_session_manager(self):
+        if not self.selected_user:
+            return
+        SessionManagerDialog(self.container, dict(self.selected_user))
 
     def delete_user_account(self):
         if not self.selected_user: return

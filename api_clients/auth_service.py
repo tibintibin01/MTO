@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 # Client-side Auth Service (Thin Client)
-from api_clients.api_helper import api_request, set_token
+from api_clients.api_helper import (
+    api_request,
+    clear_tokens,
+    get_refresh_token,
+    set_token,
+)
+import platform
 
 ROLE_PERMISSIONS = {
     "admin": {
@@ -68,7 +74,11 @@ def has_permission(user, permission):
 
 def verify_user_login(username, password):
     try:
-        payload = {"username": username, "password": password}
+        payload = {
+            "username": username,
+            "password": password,
+            "device_name": platform.node() or "Windows workstation",
+        }
         user_info = api_request(
             "POST", "/api/auth/login", data=payload, queue_offline=False
         )
@@ -126,8 +136,23 @@ class AccountDisabledError(Exception):
 
 
 def logout():
-    """Clears the global bearer token for client logout/session expiration."""
-    set_token(None)
+    """Revokes the server session and always clears local credentials."""
+    refresh_token = get_refresh_token()
+    try:
+        if refresh_token:
+            api_request(
+                "POST",
+                "/api/auth/logout",
+                data={"refresh_token": refresh_token},
+                queue_offline=False,
+                timeout=10,
+            )
+    except Exception:
+        # Logout must still remove local credentials when the server is down
+        # or when the session was already revoked by an administrator.
+        pass
+    finally:
+        clear_tokens()
 
 
 def get_all_users():
@@ -164,6 +189,19 @@ def create_user(full_name, username, password, role):
 
 def delete_user(user_id):
     return api_request("DELETE", f"/users/{user_id}")
+
+
+def get_active_sessions(user_id):
+    result = api_request("GET", f"/users/{user_id}/active-sessions")
+    return result.get("items", []) if isinstance(result, dict) else []
+
+
+def revoke_active_session(session_id):
+    return api_request("POST", f"/users/active-sessions/{session_id}/revoke")
+
+
+def revoke_other_sessions(user_id):
+    return api_request("POST", f"/users/{user_id}/active-sessions/revoke-others")
 
 
 def get_audit_logs(user_id=None):
