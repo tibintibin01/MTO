@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findOwnerMatches, findResult, loadPortalSnapshot, PortalSnapshotConfigError } from "../../../../../lib/portalSnapshot";
+import { findOwnerMatches, findResult, loadPortalSnapshot, PortalSnapshotConfigError, PortalSnapshotDataError } from "../../../../../lib/portalSnapshot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,7 +42,9 @@ export async function GET(request: NextRequest) {
       count: matches.length,
     });
   } catch (error) {
-    if (error instanceof PortalSnapshotConfigError) return json(503, { detail: error.message });
+    if (error instanceof PortalSnapshotConfigError || error instanceof PortalSnapshotDataError) {
+      return json(503, { detail: "Portal data is temporarily unavailable. Please contact the Municipal Treasury Office." });
+    }
     console.error("Portal owner lookup failed", error);
     return json(500, { detail: "Unable to search portal data." });
   }

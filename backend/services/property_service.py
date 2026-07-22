@@ -4,7 +4,14 @@ from datetime import datetime, timezone
 from sqlalchemy import text, func, cast, Integer
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
-from backend.models import Property, PropertyAssessmentHistory, PropertyBilling, Payment, AuditLog, TaxPolicy
+from backend.models import (
+    Property,
+    PropertyAssessmentHistory,
+    PropertyBilling,
+    Payment,
+    AuditLog,
+    TaxPolicy,
+)
 from backend.services.auth_service import get_username, require_permission
 import backend.services.billing_service as billing
 import backend.services.payment_service as payment
@@ -63,12 +70,14 @@ def _get_total_rate(prop, db_session):
     basic, sef = _get_policy_rates(prop.tax_year, db_session)
     return basic + sef
 
+
 class SyncConflictError(Exception):
     """Custom exception raised when a version mismatch is detected during save."""
+
     def __init__(self, server_data, client_data):
         self.server_data = server_data
         self.client_data = client_data
-        self.is_sync_conflict = True # Marker for cross-module identification
+        self.is_sync_conflict = True  # Marker for cross-module identification
         super().__init__("Offline Sync Conflict Detected.")
 
 
@@ -119,13 +128,22 @@ def _normalize_effectivity_date(value):
 
 
 def _effectivity_year_expr(model):
-    year_source = func.coalesce(func.nullif(func.trim(model.effectivity_date), ""), model.tax_year)
+    year_source = func.coalesce(
+        func.nullif(func.trim(model.effectivity_date), ""), model.tax_year
+    )
     return cast(func.substr(year_source, 1, 4), Integer)
 
 
 def search_properties(
-    term, limit=100, cursor=None, kind=None, year_start=None, year_end=None,
-    as_of_year=None, barangay=None, db_session: Session = None
+    term,
+    limit=100,
+    cursor=None,
+    kind=None,
+    year_start=None,
+    year_end=None,
+    as_of_year=None,
+    barangay=None,
+    db_session: Session = None,
 ):
     """
     Enhanced search with optional filters and fuzzy owner-name matching.
@@ -157,33 +175,33 @@ def search_properties(
             # Looks like a spaced TD number — convert spaces to dashes
             dashed_term = clean_term.replace(" ", "-")
             query = query.filter(
-                (Property.td_number == dashed_term) |
-                (Property.pin == dashed_term) |
-                (Property.prev_td_number == dashed_term) |
-                (Property.td_number.like(f"%{dashed_term}%")) |
-                (Property.pin.like(f"%{dashed_term}%")) |
-                (Property.prev_td_number.like(f"%{dashed_term}%"))
+                (Property.td_number == dashed_term)
+                | (Property.pin == dashed_term)
+                | (Property.prev_td_number == dashed_term)
+                | (Property.td_number.like(f"%{dashed_term}%"))
+                | (Property.pin.like(f"%{dashed_term}%"))
+                | (Property.prev_td_number.like(f"%{dashed_term}%"))
             )
             is_id_search = True
         elif "-" in clean_term:
             normalized_term = clean_term.upper()
             # Structured TD number / PIN — exact match only
             query = query.filter(
-                (func.upper(func.trim(Property.td_number)) == normalized_term) |
-                (func.upper(func.trim(Property.pin)) == normalized_term) |
-                (func.upper(func.trim(Property.prev_td_number)) == normalized_term)
+                (func.upper(func.trim(Property.td_number)) == normalized_term)
+                | (func.upper(func.trim(Property.pin)) == normalized_term)
+                | (func.upper(func.trim(Property.prev_td_number)) == normalized_term)
             )
             is_id_search = True
         else:
             # Name / location search — broad LIKE to pull candidates, then fuzzy-rank
             like_term = f"%{clean_term}%"
             query = query.filter(
-                (Property.td_number.like(like_term)) |
-                (Property.prev_td_number.like(like_term)) |
-                (Property.owner_name.like(like_term)) |
-                (Property.payor_name.like(like_term)) |
-                (Property.pin.like(like_term)) |
-                (Property.location.like(like_term))
+                (Property.td_number.like(like_term))
+                | (Property.prev_td_number.like(like_term))
+                | (Property.owner_name.like(like_term))
+                | (Property.payor_name.like(like_term))
+                | (Property.pin.like(like_term))
+                | (Property.location.like(like_term))
             )
 
     if kind and kind != "ALL":
@@ -264,13 +282,31 @@ def search_properties(
 
     return [
         (
-            p.id, p.td_number, p.owner_name, p.payor_name, p.lot_number, p.area, p.location, p.kind_of_property,
-            p.accountable_officer, float(p.assessed_value or 0),
+            p.id,
+            p.td_number,
+            p.owner_name,
+            p.payor_name,
+            p.lot_number,
+            p.area,
+            p.location,
+            p.kind_of_property,
+            p.accountable_officer,
+            float(p.assessed_value or 0),
             float(p.assessed_value or 0) * _get_basic_rate(p, db_session),
             float(p.assessed_value or 0) * _get_sef_rate(p, db_session),
-            float(p.penalty or 0), float(p.discount or 0),
-            float(p.assessed_value or 0) * _get_total_rate(p, db_session) + float(p.penalty or 0) - float(p.discount or 0),
-            p.or_number, p.or_date, p.tax_year, p.pin, p.block_number, p.prev_td_number, p.effectivity_date, p.barangay
+            float(p.penalty or 0),
+            float(p.discount or 0),
+            float(p.assessed_value or 0) * _get_total_rate(p, db_session)
+            + float(p.penalty or 0)
+            - float(p.discount or 0),
+            p.or_number,
+            p.or_date,
+            p.tax_year,
+            p.pin,
+            p.block_number,
+            p.prev_td_number,
+            p.effectivity_date,
+            p.barangay,
         )
         for p in results
     ]
@@ -278,12 +314,22 @@ def search_properties(
 
 def get_barangays(db_session: Session):
     """Returns a list of all unique barangay names in the database."""
-    results = db_session.query(Property.barangay).filter(Property.barangay != None, Property.barangay != "").distinct().order_by(Property.barangay.asc()).all()
+    results = (
+        db_session.query(Property.barangay)
+        .filter(Property.barangay != None, Property.barangay != "")
+        .distinct()
+        .order_by(Property.barangay.asc())
+        .all()
+    )
     return [r[0] for r in results]
 
 
 def get_property_by_id(property_id, db_session: Session):
-    return db_session.query(Property).filter(Property.id == property_id, Property.deleted_at == None).first()
+    return (
+        db_session.query(Property)
+        .filter(Property.id == property_id, Property.deleted_at == None)
+        .first()
+    )
 
 
 def _property_effectivity_year(prop):
@@ -307,10 +353,15 @@ def _td_chain_for_property(seed_prop, db_session: Session):
 
     # Walk backwards through Previous TD links.
     while current and _td_text(current.prev_td_number):
-        parent = db_session.query(Property).filter(
-            Property.deleted_at == None,
-            func.upper(func.trim(Property.td_number)) == _td_text(current.prev_td_number),
-        ).first()
+        parent = (
+            db_session.query(Property)
+            .filter(
+                Property.deleted_at == None,
+                func.upper(func.trim(Property.td_number))
+                == _td_text(current.prev_td_number),
+            )
+            .first()
+        )
         if not parent or parent.id in visited:
             break
         by_id[parent.id] = parent
@@ -327,10 +378,15 @@ def _td_chain_for_property(seed_prop, db_session: Session):
         if current.id in scanned:
             continue
         scanned.add(current.id)
-        children = db_session.query(Property).filter(
-            Property.deleted_at == None,
-            func.upper(func.trim(Property.prev_td_number)) == _td_text(current.td_number),
-        ).all()
+        children = (
+            db_session.query(Property)
+            .filter(
+                Property.deleted_at == None,
+                func.upper(func.trim(Property.prev_td_number))
+                == _td_text(current.td_number),
+            )
+            .all()
+        )
         children.sort(key=lambda p: (_property_effectivity_year(p) or 9999, p.id or 0))
         for child in children:
             if child.id not in by_id:
@@ -357,21 +413,31 @@ def resolve_property_for_tax_year(td_number, tax_year, db_session: Session):
     except (TypeError, ValueError):
         return None
 
-    seed = db_session.query(Property).filter(
-        Property.deleted_at == None,
-        func.upper(func.trim(Property.td_number)) == td,
-    ).first()
-    if not seed:
-        seed = db_session.query(Property).filter(
+    seed = (
+        db_session.query(Property)
+        .filter(
             Property.deleted_at == None,
-            func.upper(func.trim(Property.prev_td_number)) == td,
-        ).order_by(Property.id.asc()).first()
+            func.upper(func.trim(Property.td_number)) == td,
+        )
+        .first()
+    )
+    if not seed:
+        seed = (
+            db_session.query(Property)
+            .filter(
+                Property.deleted_at == None,
+                func.upper(func.trim(Property.prev_td_number)) == td,
+            )
+            .order_by(Property.id.asc())
+            .first()
+        )
     if not seed:
         return None
 
     chain = _td_chain_for_property(seed, db_session)
     eligible = [
-        prop for prop in chain
+        prop
+        for prop in chain
         if _property_effectivity_year(prop) is None
         or _property_effectivity_year(prop) <= year
     ]
@@ -404,7 +470,10 @@ def resolve_payment_target(td_number, tax_year, db_session: Session):
 
 
 def _has_payment_payload(data):
-    return bool(str(data.get("OR Number") or "").strip() or str(data.get("Amount Paid") or "").strip())
+    return bool(
+        str(data.get("OR Number") or "").strip()
+        or str(data.get("Amount Paid") or "").strip()
+    )
 
 
 def _payment_only_payload(prop, data, user=None):
@@ -420,7 +489,9 @@ def _payment_only_payload(prop, data, user=None):
     payload["PIN"] = prop.pin
     payload["Previous TD Number"] = prop.prev_td_number
     payload["Effectivity Date"] = prop.effectivity_date
-    payload["Accountable Officer"] = payload.get("Accountable Officer") or get_username(user)
+    payload["Accountable Officer"] = payload.get("Accountable Officer") or get_username(
+        user
+    )
     return payload
 
 
@@ -428,13 +499,16 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
     """
     Main orchestrator for saving or updating a property using ORM.
     """
-    from backend.services.validation_service import enforce_property_rules, ValidationError
+    from backend.services.validation_service import (
+        enforce_property_rules,
+        ValidationError,
+    )
     from backend.services.history_service import log_data_change
-    
+
     try:
         # 1. Validate
         enforce_property_rules(data)
-        
+
         # 2. Get or Create Property
         if editing_id:
             prop = db_session.query(Property).filter(Property.id == editing_id).first()
@@ -450,7 +524,8 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                         for year in tax_years
                     ]
                     missing_years = [
-                        year for year, target in zip(tax_years, target_props)
+                        year
+                        for year, target in zip(tax_years, target_props)
                         if target is None
                     ]
                     if missing_years:
@@ -498,14 +573,16 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                     "billing_sync": {"updated": 0, "years": []},
                     "prior_assessment_sync": {"updated": 0, "years": []},
                 }
-            
+
             # Conflict Detection
             client_version = data.get("version", 0)
             if client_version is not None and int(client_version) < prop.version:
                 raise SyncConflictError(prop.__dict__, data)
-            
+
             action = "UPDATE"
-            before_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
+            before_data = {
+                c.name: getattr(prop, c.name) for c in prop.__table__.columns
+            }
         else:
             prop = Property()
             db_session.add(prop)
@@ -518,7 +595,9 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             return cleaned.upper() if cleaned else None
 
         new_td_number = _up(data.get("TD Number", prop.td_number))
-        duplicate_query = db_session.query(Property).filter(Property.td_number == new_td_number)
+        duplicate_query = db_session.query(Property).filter(
+            Property.td_number == new_td_number
+        )
         if prop.id:
             duplicate_query = duplicate_query.filter(Property.id != prop.id)
         duplicate = duplicate_query.first()
@@ -533,13 +612,20 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
 
         prop.td_number = new_td_number
         prop.owner_name = _up(data.get("Owner Name", prop.owner_name))
-        prop.payor_name = _up(data.get("Payor", prop.payor_name) or data.get("Owner Name", prop.owner_name))
+        prop.payor_name = _up(
+            data.get("Payor", prop.payor_name)
+            or data.get("Owner Name", prop.owner_name)
+        )
         prop.lot_number = _up(data.get("Lot Number", prop.lot_number))
         prop.area = _up(data.get("Area", prop.area))
         prop.location = _up(data.get("Location", prop.location))
         prop.kind_of_property = _up(data.get("Kind of Property", prop.kind_of_property))
-        prop.accountable_officer = _up(data.get("Accountable Officer", prop.accountable_officer))
-        prop.assessed_value = clean_currency(data.get("Assessed Value", prop.assessed_value))
+        prop.accountable_officer = _up(
+            data.get("Accountable Officer", prop.accountable_officer)
+        )
+        prop.assessed_value = clean_currency(
+            data.get("Assessed Value", prop.assessed_value)
+        )
         prop.penalty = clean_currency(data.get("Penalty", prop.penalty))
         prop.discount = clean_currency(data.get("Discount", prop.discount))
         prop.or_number = _up(data.get("OR Number", prop.or_number))
@@ -548,17 +634,21 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
         prop.pin = _up(data.get("PIN", prop.pin))
         prop.block_number = _up(data.get("Block Number", prop.block_number))
         prop.prev_td_number = _up(data.get("Previous TD Number", prop.prev_td_number))
-        prop.effectivity_date = _normalize_effectivity_date(data.get("Effectivity Date", prop.effectivity_date))
-        prop.barangay = _up(data.get("Barangay", prop.barangay) or data.get("Location", prop.location))
-        
+        prop.effectivity_date = _normalize_effectivity_date(
+            data.get("Effectivity Date", prop.effectivity_date)
+        )
+        prop.barangay = _up(
+            data.get("Barangay", prop.barangay) or data.get("Location", prop.location)
+        )
+
         if editing_id:
             prop.version += 1
         else:
             prop.version = 1
             prop.deleted_at = None
 
-        db_session.flush() # Get ID for new properties
-        
+        db_session.flush()  # Get ID for new properties
+
         # 4. Log Change
         after_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
         log_data_change(
@@ -571,18 +661,24 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             username=get_username(user) if user else "unknown",
             db_session=db_session,
         )
-        
+
         # 5. Financial Sync
         _sync_financial_records(prop.id, data, db_session)
 
         billing_sync = {"updated": 0, "years": []}
-        old_assessed = clean_currency(before_data.get("assessed_value")) if before_data else None
+        old_assessed = (
+            clean_currency(before_data.get("assessed_value")) if before_data else None
+        )
         new_assessed = clean_currency(prop.assessed_value)
         username = get_username(user) if user else "unknown"
         new_effective_year = assessment_year(prop.effectivity_date or prop.tax_year)
 
         # Preserve the superseded assessment before applying a later valuation.
-        if before_data and old_assessed is not None and abs(old_assessed - new_assessed) > 0.009:
+        if (
+            before_data
+            and old_assessed is not None
+            and abs(old_assessed - new_assessed) > 0.009
+        ):
             old_effective_year = assessment_year(
                 before_data.get("effectivity_date") or before_data.get("tax_year")
             )
@@ -632,12 +728,17 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                 db_session,
             )
             corrected_years = []
-            rows = db_session.query(PropertyBilling).filter(
-                PropertyBilling.property_id == prop.id,
-                PropertyBilling.is_archived == False,
-                PropertyBilling.tax_year >= prior_year,
-                PropertyBilling.tax_year < new_effective_year,
-            ).with_for_update().all()
+            rows = (
+                db_session.query(PropertyBilling)
+                .filter(
+                    PropertyBilling.property_id == prop.id,
+                    PropertyBilling.is_archived == False,
+                    PropertyBilling.tax_year >= prior_year,
+                    PropertyBilling.tax_year < new_effective_year,
+                )
+                .with_for_update()
+                .all()
+            )
             for row in rows:
                 if assessment_money(row.assessed_value) != prior_value:
                     row.assessed_value = prior_value
@@ -655,7 +756,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                 effective_year=prop.effectivity_date or prop.tax_year,
                 db_session=db_session,
             )
-        
+
         db_session.commit()
         return {
             "ok": True,
@@ -683,16 +784,34 @@ def _sync_financial_records(prop_id, data, db_session: Session):
     av = clean_currency(data.get("Assessed Value"))
     pen = clean_currency(data.get("Penalty"))
     disc = clean_currency(data.get("Discount"))
-    
+
     # Penalty/discount entered for a multi-year receipt are split across years
     # for backward compatibility. Assessed value is not split: each tax year
     # gets the historical value effective for that year.
     pen_shares = billing.split_amount_across_years(pen, len(tax_years))
     disc_shares = billing.split_amount_across_years(disc, len(tax_years))
-    
-    should_pay = bool(data.get("OR Number"))
+
+    or_no = str(data.get("OR Number") or "").strip()
+    should_pay = bool(or_no)
+    paid = clean_currency(data.get("Amount Paid")) if should_pay else 0.0
+    or_dt_raw = data.get("OR Date")
+    normalized_or_date = billing.normalize_date_input(or_dt_raw) if should_pay else None
+    if should_pay:
+        if not billing.looks_like_valid_or_number(or_no):
+            raise HTTPException(
+                status_code=422, detail="Enter a valid Official Receipt number."
+            )
+        if paid <= 0:
+            raise HTTPException(
+                status_code=422, detail="A posted payment must be greater than zero."
+            )
+        if not normalized_or_date:
+            raise HTTPException(
+                status_code=422, detail="A valid Official Receipt date is required."
+            )
+
     billing_rows = []
-    
+
     for year, p_s, d_s in zip(tax_years, pen_shares, disc_shares):
         a_s = billing.resolve_assessed_value_for_billing_year(
             prop_id,
@@ -701,32 +820,24 @@ def _sync_financial_records(prop_id, data, db_session: Session):
             db_session=db_session,
         )
         billing_rows.append(
-            billing.sync_property_billing(prop_id, year, a_s, p_s, d_s, has_payment=should_pay, db_session=db_session)
+            # Payment allocations are the only source that may mark a billing
+            # row paid. Pre-filling every selected year as fully paid causes a
+            # partial multi-year receipt to settle years that received nothing.
+            billing.sync_property_billing(
+                prop_id, year, a_s, p_s, d_s, has_payment=False, db_session=db_session
+            )
         )
-        
+
     if should_pay:
-        paid = clean_currency(data.get("Amount Paid"))
         allocated = billing.allocate_payment_amount(billing_rows, paid)
-        
+
         # Every legitimate installment is immutable and receives its own
         # Payment row. Previously this code reused a row by property + OR +
         # date, so posting another tax year with the same receipt/date replaced
         # the old tax year and deleted its PaymentBilling allocation.
         from backend.models import Payment
-        or_no = str(data.get("OR Number") or "").strip()
-        or_dt_raw = data.get("OR Date")
-        
-        # Parse or_date if it's a string
-        or_dt = None
-        if or_dt_raw:
-            if isinstance(or_dt_raw, str):
-                try:
-                    or_dt = datetime.strptime(or_dt_raw, "%Y-%m-%d")
-                except ValueError:
-                    # or_date string is not in expected format; leave or_dt as None
-                    pass
-            elif isinstance(or_dt_raw, datetime):
-                or_dt = or_dt_raw
+
+        or_dt = datetime.strptime(normalized_or_date, "%Y-%m-%d")
 
         payor_name = data.get("Payor") or data.get("Owner Name")
         tax_year_str = billing.format_tax_years(data.get("Tax Year"))
@@ -753,7 +864,7 @@ def _sync_financial_records(prop_id, data, db_session: Session):
         can_store_remarks = payment.has_payment_remarks_column(db_session)
         pay_obj = Payment(property_id=prop_id)
         db_session.add(pay_obj)
-            
+
         pay_obj.amount = paid
         pay_obj.or_number = or_no
         pay_obj.date_paid = or_dt
@@ -762,12 +873,11 @@ def _sync_financial_records(prop_id, data, db_session: Session):
         if can_store_remarks:
             pay_obj.remarks = remarks
         pay_obj.payor_name = payor_name
-        pay_obj.penalty = pen    # store penalty on Payment record
+        pay_obj.penalty = pen  # store penalty on Payment record
         pay_obj.discount = disc  # store discount on Payment record
-        
-        db_session.flush() # Get payment_id
-        billing.sync_payment_billings(pay_obj.id, allocated, db_session=db_session)
 
+        db_session.flush()  # Get payment_id
+        billing.sync_payment_billings(pay_obj.id, allocated, db_session=db_session)
 
 
 @require_permission("property_edit")
@@ -777,15 +887,17 @@ def update_property_details(prop_id, data, user):
 
 
 @require_permission("property_delete")
-def soft_delete_property(property_id, user=None, ip_address=None, db_session: Session = None):
+def soft_delete_property(
+    property_id, user=None, ip_address=None, db_session: Session = None
+):
     """Soft deletes a property - requires 'property_delete' permission."""
     prop = db_session.query(Property).filter(Property.id == property_id).first()
     if not prop:
         return 0
-    
+
     old_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
     prop.deleted_at = datetime.now(timezone.utc)
-    
+
     if user:
         audit = AuditLog(
             user_id=user.get("id"),
@@ -794,12 +906,20 @@ def soft_delete_property(property_id, user=None, ip_address=None, db_session: Se
             table_name="properties",
             record_id=property_id,
             old_values=json.dumps(old_data, default=str),
-            new_values=json.dumps({"deleted_at": prop.deleted_at.isoformat() if hasattr(prop.deleted_at, "isoformat") else str(prop.deleted_at)}),
+            new_values=json.dumps(
+                {
+                    "deleted_at": (
+                        prop.deleted_at.isoformat()
+                        if hasattr(prop.deleted_at, "isoformat")
+                        else str(prop.deleted_at)
+                    )
+                }
+            ),
             ip_address=ip_address,
-            timestamp=datetime.now(timezone.utc)
+            timestamp=datetime.now(timezone.utc),
         )
         db_session.add(audit)
-        
+
     deleted_at = prop.deleted_at
     db_session.commit()
     return {
@@ -817,7 +937,11 @@ def get_deleted_properties(limit=50, cursor=None, db_session: Session = None):
     if cursor:
         query = query.filter(Property.id < int(cursor))
 
-    rows = query.order_by(Property.deleted_at.desc(), Property.id.desc()).limit(safe_limit + 1).all()
+    rows = (
+        query.order_by(Property.deleted_at.desc(), Property.id.desc())
+        .limit(safe_limit + 1)
+        .all()
+    )
 
     has_more = len(rows) > safe_limit
     items = rows[:safe_limit]
@@ -847,11 +971,12 @@ def restore_property(property_id, user=None, db_session: Session = None):
     prop = db_session.query(Property).filter(Property.id == property_id).first()
     if not prop:
         return 0
-    
+
     prop.deleted_at = None
-    
+
     if user:
         from datetime import datetime, timezone
+
         audit = AuditLog(
             user_id=user.get("id"),
             username=user.get("username", "unknown"),
@@ -860,10 +985,10 @@ def restore_property(property_id, user=None, db_session: Session = None):
             record_id=property_id,
             old_values=str({"deleted_at": "deleted"}),
             new_values=str({"deleted_at": None}),
-            timestamp=datetime.now(timezone.utc)
+            timestamp=datetime.now(timezone.utc),
         )
         db_session.add(audit)
-        
+
     db_session.commit()
     return 1
 
@@ -881,9 +1006,7 @@ def purge_property(property_id, user=None, db_session: Session = None):
       5. payments          (FK → properties.id RESTRICT)
       6. property          (the record itself)
     """
-    from backend.models import (
-        PaymentBilling, ReceiptHistory, PropertyAssessmentHistory
-    )
+    from backend.models import PaymentBilling, ReceiptHistory, PropertyAssessmentHistory
 
     prop = db_session.query(Property).filter(Property.id == property_id).first()
     if not prop:
@@ -894,8 +1017,10 @@ def purge_property(property_id, user=None, db_session: Session = None):
     try:
         # 1. payment_billings — must go before payments
         payment_ids = [
-            r[0] for r in db_session.query(Payment.id)
-            .filter(Payment.property_id == property_id).all()
+            r[0]
+            for r in db_session.query(Payment.id)
+            .filter(Payment.property_id == property_id)
+            .all()
         ]
         if payment_ids:
             db_session.query(PaymentBilling).filter(
@@ -918,9 +1043,9 @@ def purge_property(property_id, user=None, db_session: Session = None):
         ).delete(synchronize_session=False)
 
         # 5. payments
-        db_session.query(Payment).filter(
-            Payment.property_id == property_id
-        ).delete(synchronize_session=False)
+        db_session.query(Payment).filter(Payment.property_id == property_id).delete(
+            synchronize_session=False
+        )
 
         # 6. the property itself
         db_session.delete(prop)
@@ -929,6 +1054,7 @@ def purge_property(property_id, user=None, db_session: Session = None):
         # Audit log
         if user:
             from backend.services.history_service import log_data_change
+
             log_data_change(
                 user_id=user.get("id") if isinstance(user, dict) else 0,
                 username=get_username(user),
@@ -947,61 +1073,63 @@ def purge_property(property_id, user=None, db_session: Session = None):
         db_session.rollback()
         raise
 
-    if user:
-        from backend.services.history_service import log_data_change
-        log_data_change(
-            user_id=user.get("id") if isinstance(user, dict) else 0,
-            username=get_username(user),
-            table_name="properties",
-            record_id=property_id,
-            action="PURGE",
-            before=full_data,
-            after=None,
-            db_session=db_session
-        )
-    return 1
-
 
 def get_unspecified_properties(db_session: Session = None):
     """Fetches all properties where barangay is NULL, empty, or 'UNSPECIFIED'."""
-    results = db_session.query(Property).filter(
-        Property.deleted_at == None,
-        (Property.barangay == None) | (text("TRIM(barangay) = ''")) | (Property.barangay == "UNSPECIFIED")
-    ).order_by(Property.owner_name.asc()).all()
+    results = (
+        db_session.query(Property)
+        .filter(
+            Property.deleted_at == None,
+            (Property.barangay == None)
+            | (text("TRIM(barangay) = ''"))
+            | (Property.barangay == "UNSPECIFIED"),
+        )
+        .order_by(Property.owner_name.asc())
+        .all()
+    )
 
-    return [
-        (p.id, p.td_number, p.owner_name, p.location, p.barangay)
-        for p in results
-    ]
+    return [(p.id, p.td_number, p.owner_name, p.location, p.barangay) for p in results]
 
 
 @require_permission("property_edit")
-def bulk_update_barangay(property_ids, new_barangay, user=None, db_session: Session = None):
+def bulk_update_barangay(
+    property_ids, new_barangay, user=None, db_session: Session = None
+):
     """Updates the barangay for multiple properties at once."""
     if not property_ids or not new_barangay:
         return 0
-    count = db_session.query(Property).filter(Property.id.in_(property_ids)).update(
-        {Property.barangay: new_barangay}, synchronize_session=False
-    )
-    db_session.commit()
-
-    if count and user:
-        from backend.services.history_service import log_data_change
-        log_data_change(
-            user_id=user.get("id") if isinstance(user, dict) else 0,
-            username=get_username(user),
-            table_name="properties",
-            record_id=0,
-            action="BULK_UPDATE_BARANGAY",
-            before={"ids": property_ids},
-            after={"barangay": new_barangay},
-            db_session=db_session
+    try:
+        count = (
+            db_session.query(Property)
+            .filter(Property.id.in_(property_ids))
+            .update({Property.barangay: new_barangay}, synchronize_session=False)
         )
+        if count and user:
+            from backend.services.history_service import log_data_change
+
+            log_data_change(
+                user_id=user.get("id") if isinstance(user, dict) else 0,
+                username=get_username(user),
+                table_name="properties",
+                record_id=0,
+                action="BULK_UPDATE_BARANGAY",
+                before={"ids": property_ids},
+                after={"barangay": new_barangay},
+                db_session=db_session,
+            )
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        raise
     return count
 
 
 def get_property_by_td(td_number, db_session: Session = None):
-    prop = db_session.query(Property).filter(Property.td_number == td_number, Property.deleted_at == None).first()
+    prop = (
+        db_session.query(Property)
+        .filter(Property.td_number == td_number, Property.deleted_at == None)
+        .first()
+    )
     if not prop:
         return None
     return {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
@@ -1053,7 +1181,9 @@ def get_assessment_roll(limit=100, cursor=None, db_session: Session = None):
     }
 
 
-def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 2023, db_session: Session = None):
+def get_receivables_by_barangay(
+    report_year: int = None, data_start_year: int = 2023, db_session: Session = None
+):
     """
     Returns receivables breakdown by barangay.
 
@@ -1070,6 +1200,7 @@ def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 
     close_session = False
     if not db_session:
         from backend.database import SessionLocal
+
         db_session = SessionLocal()
         close_session = True
 
@@ -1082,6 +1213,7 @@ def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 
         # Join TaxPolicy per billing year so the rate reflects any policy changes.
         # Uses COALESCE to fall back to 1%+1%=2% if no policy row exists for a year.
         from backend.models import TaxPolicy as _TaxPolicy
+
         tp_alias = db_session.query(_TaxPolicy).subquery()
 
         due_query = (
@@ -1089,14 +1221,18 @@ def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 
                 func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
                 func.sum(PropertyBilling.assessed_value).label("total_assessed"),
                 func.sum(
-                    (PropertyBilling.assessed_value *
-                     func.coalesce(
-                         db_session.query(_TaxPolicy.basic_rate + _TaxPolicy.sef_rate)
-                         .filter(_TaxPolicy.tax_year == PropertyBilling.tax_year)
-                         .correlate(PropertyBilling)
-                         .scalar_subquery(),
-                         0.02
-                     ))
+                    (
+                        PropertyBilling.assessed_value
+                        * func.coalesce(
+                            db_session.query(
+                                _TaxPolicy.basic_rate + _TaxPolicy.sef_rate
+                            )
+                            .filter(_TaxPolicy.tax_year == PropertyBilling.tax_year)
+                            .correlate(PropertyBilling)
+                            .scalar_subquery(),
+                            0.02,
+                        )
+                    )
                     + PropertyBilling.penalty
                     - PropertyBilling.discount
                 ).label("total_due"),
@@ -1165,8 +1301,10 @@ def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 
         results = []
         for brgy, d in sorted(
             data.items(),
-            key=lambda x: x[1]["total_due"] - x[1]["total_discount"] - x[1]["total_collected"],
-            reverse=True
+            key=lambda x: x[1]["total_due"]
+            - x[1]["total_discount"]
+            - x[1]["total_collected"],
+            reverse=True,
         ):
             # Correct formula: Total Due already has discount subtracted in the SQL
             # (assessed*0.02 + penalty - discount), so receivable = total_due - collected
@@ -1175,15 +1313,17 @@ def get_receivables_by_barangay(report_year: int = None, data_start_year: int = 
             # is informational. Receivable = total_due - total_collected is correct.
             # However the sort should use the same formula for consistency.
             receivable = d["total_due"] - d["total_collected"]
-            results.append((
-                brgy,
-                d["total_assessed"],
-                d["total_due"],
-                d["total_penalty"],
-                d["total_discount"],
-                d["total_collected"],
-                receivable,
-            ))
+            results.append(
+                (
+                    brgy,
+                    d["total_assessed"],
+                    d["total_due"],
+                    d["total_penalty"],
+                    d["total_discount"],
+                    d["total_collected"],
+                    receivable,
+                )
+            )
 
         return results
 

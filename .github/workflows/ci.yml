@@ -25,6 +25,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        # Black is enforced as a ratchet on changed Python files. Full history
+        # is required so pull-request and multi-commit push ranges are reliable.
+        fetch-depth: 0
 
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -38,8 +42,28 @@ jobs:
         pip install -r requirements.txt
         pip install -r dev-requirements.txt
 
-    - name: 📏 Lint with Black
-      run: black --check .
+    - name: 📏 Lint changed Python files with Black
+      shell: bash
+      run: |
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          diff_range="${{ github.event.pull_request.base.sha }}...${{ github.sha }}"
+        elif [[ "${{ github.event.before }}" =~ ^0+$ ]]; then
+          diff_range="${{ github.sha }}^...${{ github.sha }}"
+        else
+          diff_range="${{ github.event.before }}...${{ github.sha }}"
+        fi
+
+        mapfile -t python_files < <(
+          git diff --name-only --diff-filter=ACMR "$diff_range" -- '*.py'
+        )
+
+        if (( ${#python_files[@]} == 0 )); then
+          echo "No changed Python files to check."
+          exit 0
+        fi
+
+        printf 'Checking %s\n' "${python_files[@]}"
+        black --check -- "${python_files[@]}"
 
     - name: 🧼 Lint with Flake8
       run: |

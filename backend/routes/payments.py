@@ -14,19 +14,25 @@ from utils.logger import mto_logger
 
 router = APIRouter(prefix="/payments", tags=["Financial"])
 
+
 class PaymentUpdateRequest(BaseModel):
     or_number: str = Field(..., min_length=1)
     date_paid: str = Field(..., min_length=1)
     tax_year: str = Field(..., min_length=4)
-    amount: float
-    penalty: float = 0.0
-    discount: float = 0.0
+    amount: float = Field(..., gt=0)
+    penalty: float = Field(default=0.0, ge=0)
+    discount: float = Field(default=0.0, ge=0)
     remarks: Optional[str] = None
+
+
 @router.get("/recent")
 def get_recent_payments(
-    limit: int = 8, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    limit: int = 8,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     return pay_svc.get_recent_payments(limit, db_session=db_session)
+
 
 @router.get("/records")
 def get_payment_records(
@@ -34,22 +40,30 @@ def get_payment_records(
     limit: int = 50,
     cursor: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
-    db_session: Session = Depends(get_db)
+    db_session: Session = Depends(get_db),
 ):
-    return pay_svc.get_payment_receipt_records(term, limit=limit, cursor=cursor, db_session=db_session)
+    return pay_svc.get_payment_receipt_records(
+        term, limit=limit, cursor=cursor, db_session=db_session
+    )
+
 
 @router.get("/{payment_id}/details")
 def get_payment_details(
-    payment_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    payment_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     res = pay_svc.get_payment_receipt_details(payment_id, db_session=db_session)
     if not res:
         raise HTTPException(status_code=404, detail="Payment details not found")
     return res
 
+
 @router.post("/receipt-record")
 def save_receipt_record(
-    data: ReceiptRecordSchema, current_user: dict = Depends(write_access), db_session: Session = Depends(get_db)
+    data: ReceiptRecordSchema,
+    current_user: dict = Depends(write_access),
+    db_session: Session = Depends(get_db),
 ):
     return pay_svc.save_receipt_record(
         data.property_id,
@@ -58,26 +72,41 @@ def save_receipt_record(
         data.file_path,
         data.user_name,
         current_user=current_user,
-        db_session=db_session
+        db_session=db_session,
     )
 
+
 @router.get("/ledger")
-def get_payment_ledger(term: str, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_payment_ledger(
+    term: str,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
     return pay_svc.get_unified_payment_history(term, db_session=db_session)
 
+
 @router.get("/next-or")
-def get_next_or_number(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_next_or_number(
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
     return {"next_or": pay_svc.get_next_or_number(db_session=db_session)}
+
 
 @router.get("/trend")
 def get_collection_trend(
-    months: int = 6, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    months: int = 6,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     return pay_svc.get_monthly_collection_trend(months, db_session=db_session)
 
+
 @router.post("/{payment_id}/receipt-pdf")
 async def generate_receipt_pdf(
-    payment_id: int, current_user: dict = Depends(write_access), db_session: Session = Depends(get_db)
+    payment_id: int,
+    current_user: dict = Depends(write_access),
+    db_session: Session = Depends(get_db),
 ):
     details = pay_svc.get_payment_receipt_details(payment_id, db_session=db_session)
     if not details:
@@ -87,7 +116,9 @@ async def generate_receipt_pdf(
 
     # PDF generation is CPU/IO-bound — offload to a thread to avoid
     # blocking the async event loop under concurrent requests.
-    pdf_path = await asyncio.to_thread(receipt_gen.generate_or_receipt, details, base_dir)
+    pdf_path = await asyncio.to_thread(
+        receipt_gen.generate_or_receipt, details, base_dir
+    )
     file_name = os.path.basename(pdf_path)
 
     # Determine the final stored path (local or S3 key) before persisting
@@ -95,32 +126,48 @@ async def generate_receipt_pdf(
 
     if storage_service.enabled:
         s3_key = f"receipts/{file_name}"
-        uploaded_key = await asyncio.to_thread(storage_service.upload_file, pdf_path, s3_key)
+        uploaded_key = await asyncio.to_thread(
+            storage_service.upload_file, pdf_path, s3_key
+        )
         if uploaded_key:
-            presigned_url = await asyncio.to_thread(storage_service.generate_presigned_url, s3_key)
+            presigned_url = await asyncio.to_thread(
+                storage_service.generate_presigned_url, s3_key
+            )
             stored_path = s3_key  # Store the S3 key so it can be re-signed later
             if presigned_url:
                 try:
                     os.remove(pdf_path)
                 except Exception as cleanup_err:
-                    mto_logger.warning(f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}")
+                    mto_logger.warning(
+                        f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}"
+                    )
                 # Update receipt_history with the new S3 path before redirecting
                 try:
                     pay_svc.save_receipt_record(
-                        details["property_id"], payment_id, details,
-                        stored_path, current_user.get("username", "system"),
-                        current_user=current_user, db_session=db_session,
+                        details["property_id"],
+                        payment_id,
+                        details,
+                        stored_path,
+                        current_user.get("username", "system"),
+                        current_user=current_user,
+                        db_session=db_session,
                     )
                 except Exception as save_err:
-                    mto_logger.warning(f"Failed to update receipt_history after S3 upload: {save_err}")
+                    mto_logger.warning(
+                        f"Failed to update receipt_history after S3 upload: {save_err}"
+                    )
                 return RedirectResponse(presigned_url, status_code=307)
 
     # Update receipt_history so the ledger "View Receipt" always opens the latest file
     try:
         pay_svc.save_receipt_record(
-            details["property_id"], payment_id, details,
-            stored_path, current_user.get("username", "system"),
-            current_user=current_user, db_session=db_session,
+            details["property_id"],
+            payment_id,
+            details,
+            stored_path,
+            current_user.get("username", "system"),
+            current_user=current_user,
+            db_session=db_session,
         )
     except Exception as save_err:
         mto_logger.warning(f"Failed to update receipt_history: {save_err}")
@@ -136,28 +183,40 @@ def update_payment(
     db_session: Session = Depends(get_db),
 ):
     try:
-        return pay_svc.update_payment_record(payment_id, data.model_dump(), current_user, db_session=db_session)
+        return pay_svc.update_payment_record(
+            payment_id, data.model_dump(), current_user, db_session=db_session
+        )
     except Exception as e:
         mto_logger.error(f"Payment update failed for id={payment_id}: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
+
 @router.delete("/{payment_id}")
 def delete_payment(
-    payment_id: int, current_user: dict = Depends(write_access), db_session: Session = Depends(get_db)
+    payment_id: int,
+    current_user: dict = Depends(write_access),
+    db_session: Session = Depends(get_db),
 ):
     try:
-        return pay_svc.delete_payment_record(payment_id, current_user, db_session=db_session)
+        return pay_svc.delete_payment_record(
+            payment_id, current_user, db_session=db_session
+        )
     except Exception as e:
         mto_logger.error(f"Payment deletion failed for id={payment_id}: {e}")
-        raise HTTPException(status_code=400, detail="Payment could not be deleted. It may be linked to other records.")
+        raise HTTPException(
+            status_code=400,
+            detail="Payment could not be deleted. It may be linked to other records.",
+        )
 
 
 # ---------------------------------------------------------------------------
 # Batch delete — for correcting bulk import mistakes
 # ---------------------------------------------------------------------------
 
+
 class BatchDeletePreviewRequest(BaseModel):
     or_numbers: list
+
 
 class BatchDeleteCommitRequest(BaseModel):
     payment_ids: list
@@ -174,7 +233,9 @@ def payment_cleanup_candidates(
     Preview payment rows that may explain reconciliation drift.
     This does not delete or modify anything.
     """
-    return pay_svc.get_payment_cleanup_candidates(year=year, limit=limit, db_session=db_session)
+    return pay_svc.get_payment_cleanup_candidates(
+        year=year, limit=limit, db_session=db_session
+    )
 
 
 @router.post("/batch-delete/preview")
@@ -221,13 +282,13 @@ def batch_delete_preview(
         "preview": [
             {
                 "payment_id": r[0],
-                "or_number":  r[1],
-                "tax_year":   r[2],
-                "amount":     float(r[3] or 0),
-                "discount":   float(r[4] or 0),
-                "penalty":    float(r[5] or 0),
-                "date_paid":  r[6].strftime("%Y-%m-%d") if r[6] else None,
-                "td_number":  r[7],
+                "or_number": r[1],
+                "tax_year": r[2],
+                "amount": float(r[3] or 0),
+                "discount": float(r[4] or 0),
+                "penalty": float(r[5] or 0),
+                "date_paid": r[6].strftime("%Y-%m-%d") if r[6] else None,
+                "td_number": r[7],
                 "owner_name": r[8],
             }
             for r in rows
@@ -268,8 +329,8 @@ def batch_delete_preview_by_ids(
         .all()
     )
 
-    found_ids  = {r[0] for r in rows}
-    not_found  = [i for i in id_list if i not in found_ids]
+    found_ids = {r[0] for r in rows}
+    not_found = [i for i in id_list if i not in found_ids]
 
     return {
         "found": len(rows),
@@ -278,13 +339,13 @@ def batch_delete_preview_by_ids(
         "preview": [
             {
                 "payment_id": r[0],
-                "or_number":  r[1],
-                "tax_year":   r[2],
-                "amount":     float(r[3] or 0),
-                "discount":   float(r[4] or 0),
-                "penalty":    float(r[5] or 0),
-                "date_paid":  r[6].strftime("%Y-%m-%d") if r[6] else None,
-                "td_number":  r[7],
+                "or_number": r[1],
+                "tax_year": r[2],
+                "amount": float(r[3] or 0),
+                "discount": float(r[4] or 0),
+                "penalty": float(r[5] or 0),
+                "date_paid": r[6].strftime("%Y-%m-%d") if r[6] else None,
+                "td_number": r[7],
                 "owner_name": r[8],
             }
             for r in rows
@@ -313,7 +374,9 @@ def batch_delete_commit(
 
     for pid in payment_ids:
         try:
-            pay_svc.delete_payment_record(pid, current_user, db_session=db_session, current_user=current_user)
+            pay_svc.delete_payment_record(
+                pid, current_user, db_session=db_session, current_user=current_user
+            )
             deleted += 1
         except Exception as e:
             failed.append({"payment_id": pid, "reason": str(e)[:120]})
