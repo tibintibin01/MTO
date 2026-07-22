@@ -1027,7 +1027,7 @@ class SystemAdminPage:
 
             except Exception as e:
                 self.container.after(
-                    0, lambda: messagebox.showerror("Sync Error", str(e))
+                    0, lambda err=e: messagebox.showerror("Sync Error", str(err))
                 )
             finally:
                 if self.container.winfo_exists():

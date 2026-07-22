@@ -2087,7 +2087,7 @@ class ReportsPage:
                             
                 self.container.after(0, save_file)
             except Exception as e:
-                self.container.after(0, lambda: messagebox.showerror("Export Failed", str(e)))
+                self.container.after(0, lambda err=e: messagebox.showerror("Export Failed", str(err)))
             finally:
                 self.container.after(0, lambda: [
                     self._hide_loading(),
@@ -2308,7 +2308,7 @@ class ManageDepositsModal(ctk.CTkToplevel):
                 data = reports_api.list_bank_deposits(self.start_date, self.end_date)
                 self.after(0, lambda: self._update_table(data))
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Error", f"Failed to load deposits: {e}"))
+                self.after(0, lambda err=e: messagebox.showerror("Error", f"Failed to load deposits: {err}"))
                 
         threading.Thread(target=worker, daemon=True).start()
         
@@ -2359,7 +2359,7 @@ class ManageDepositsModal(ctk.CTkToplevel):
                     show_toast(self.winfo_toplevel(), "Deposit logged successfully.", type="success")
                 ])
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Error", str(e)))
+                self.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
                 
         threading.Thread(target=worker, daemon=True).start()
         
@@ -2385,7 +2385,7 @@ class ManageDepositsModal(ctk.CTkToplevel):
                     show_toast(self.winfo_toplevel(), "Deposit deleted.", type="info")
                 ])
             except Exception as e:
-                self.after(0, lambda: messagebox.showerror("Error", str(e)))
+                self.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
                 
         threading.Thread(target=worker, daemon=True).start()
 

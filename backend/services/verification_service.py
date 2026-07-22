@@ -199,17 +199,14 @@ def perform_restore_test(file_path, db_session: Session = None):
         if db_pass:
             env["MYSQL_PWD"] = db_pass
 
-        is_win = os.name == "nt"
-        shell_required = is_win and "\\" not in mysql_path
-
         with open(file_path, "r", encoding="utf-8") as f:
-            subprocess.run(cmd, stdin=f, check=True, timeout=600, shell=shell_required, env=env)
+            subprocess.run(cmd, stdin=f, check=True, timeout=600, env=env)
 
         required_tables = ("users", "properties", "payments", "property_billings", "backup_history")
         placeholders = ", ".join(["%s"] * len(required_tables))
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT table_name FROM information_schema.tables "
+                "SELECT table_name FROM information_schema.tables "  # nosec B608
                 f"WHERE table_schema = %s AND table_name IN ({placeholders})",
                 (temp_db_name, *required_tables),
             )
@@ -218,9 +215,9 @@ def perform_restore_test(file_path, db_session: Session = None):
             if missing_tables:
                 raise RuntimeError(f"missing tables after restore: {', '.join(missing_tables)}")
 
-            cur.execute(f"SELECT COUNT(*) FROM `{temp_db_name}`.`properties`")
+            cur.execute(f"SELECT COUNT(*) FROM `{temp_db_name}`.`properties`")  # nosec B608
             property_count = cur.fetchone()[0]
-            cur.execute(f"SELECT COUNT(*) FROM `{temp_db_name}`.`payments`")
+            cur.execute(f"SELECT COUNT(*) FROM `{temp_db_name}`.`payments`")  # nosec B608
             payment_count = cur.fetchone()[0]
 
         if property_count > 0:

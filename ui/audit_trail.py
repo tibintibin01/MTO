@@ -6,6 +6,7 @@ from datetime import datetime
 import api_clients.system_service as sys_svc
 from theme_manager import ModernTheme
 from utils import tr
+from ui_components import ErrorDialog, show_toast
 
 class AuditTrailPage:
     def __init__(self, parent, user=None):
