@@ -17,7 +17,9 @@ jobs:
       MTO_ENVIRONMENT: test
       ENVIRONMENT: test
       # JWT secret must be set — secrets_manager.py now fails fast if missing.
-      MTO_JWT_SECRET: ${{ secrets.MTO_JWT_SECRET }}
+      # Deterministic test-only key; production continues to require an
+      # external high-entropy secret and never reads this CI environment.
+      MTO_JWT_SECRET: ci_only_not_for_production_0123456789_ABCDEFGHIJKLMNOPQRSTUVWXYZ
       # DB password can be empty in test mode (SQLite is used instead).
       MTO_DB_PASSWORD: ""
       # Suppress the MTO_API_KEY requirement for tests that don't use it.
