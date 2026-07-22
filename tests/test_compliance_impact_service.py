@@ -11,7 +11,9 @@ from backend.services.compliance_impact_service import build_compliance_impact_r
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
 
     @event.listens_for(engine, "connect")
     def _fk(connection, _):
@@ -66,14 +68,24 @@ def test_report_marks_stale_paid_cache_as_newly_compliant(db):
     )
     db.add(payment)
     db.flush()
-    db.add(PaymentBilling(payment_id=payment.id, billing_id=billing.id, tax_year=2025, amount_paid=2_000))
+    db.add(
+        PaymentBilling(
+            payment_id=payment.id,
+            billing_id=billing.id,
+            tax_year=2025,
+            amount_paid=2_000,
+        )
+    )
     db.commit()
 
     report = build_compliance_impact_report(as_of_year=2025, db_session=db)
 
     assert report["counts"]["newly_compliant"] == 1
     assert report["affected_accounts"][0]["td_number"] == "TD-STALE-CACHE"
-    assert "linked_payments_reconcile_stale_billing_cache" in report["affected_accounts"][0]["reasons"]
+    assert (
+        "linked_payments_reconcile_stale_billing_cache"
+        in report["affected_accounts"][0]["reasons"]
+    )
 
 
 def test_report_removes_aggregate_cross_year_credit_from_compliant(db):

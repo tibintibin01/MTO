@@ -14,12 +14,14 @@ sys.path.insert(0, desktop_client_dir)
 
 # Mocking CustomTkinter to avoid GUI initialization during tests
 import customtkinter
+
 customtkinter.set_appearance_mode = MagicMock()
 customtkinter.set_default_color_theme = MagicMock()
 
 from ui.navigation import NavigationSidebar
 from ui.status_bar import ConnectivityStatusBar
 from ui.dashboard_home import DashboardHomePage
+
 
 class TestNavigationSidebar(unittest.TestCase):
     def test_navigation_sets_active_page_and_calls_loader(self):
@@ -42,7 +44,10 @@ class TestNavigationSidebar(unittest.TestCase):
         result = sidebar.create_nav_btn("Assessment Roll", callback)
 
         self.assertIs(result, button)
-        sidebar._add_nav.assert_called_once_with("assessment_roll", "Assessment Roll", callback)
+        sidebar._add_nav.assert_called_once_with(
+            "assessment_roll", "Assessment Roll", callback
+        )
+
 
 class TestStatusBar(unittest.TestCase):
     def test_status_bar_updates_without_gui_mainloop(self):
@@ -53,15 +58,19 @@ class TestStatusBar(unittest.TestCase):
         bar.winfo_exists = MagicMock(return_value=False)
         bar.after = MagicMock()
 
-        with patch("ui.status_bar.api.get_connection_status", return_value="OFFLINE"), patch(
-            "ui.status_bar.manager.get_queue_count", return_value=2
+        with (
+            patch("ui.status_bar.api.get_connection_status", return_value="OFFLINE"),
+            patch("ui.status_bar.manager.get_queue_count", return_value=2),
         ):
             bar.update_status()
 
         bar.status_dot.configure.assert_called_once_with(text_color="#e74c3c")
-        bar.status_lbl.configure.assert_called_once_with(text="OFFLINE MODE (LOCAL SAVE ACTIVE)")
+        bar.status_lbl.configure.assert_called_once_with(
+            text="OFFLINE MODE (LOCAL SAVE ACTIVE)"
+        )
         bar.queue_lbl.configure.assert_called_once_with(text="PENDING SYNC: 2 ITEMS")
         bar.after.assert_not_called()
+
 
 class TestDashboardHome(unittest.TestCase):
     def test_dashboard_refresh_schedules_render_with_service_data(self):
@@ -75,7 +84,9 @@ class TestDashboardHome(unittest.TestCase):
         home._update_ui = MagicMock()
         home._hide_loading = MagicMock()
 
-        with patch("ui.dashboard_home.system.get_system_stats", return_value={"pool": {}}):
+        with patch(
+            "ui.dashboard_home.system.get_system_stats", return_value={"pool": {}}
+        ):
             home.refresh_data()
 
         home.callbacks["get_summary"].assert_called_once_with()
@@ -86,6 +97,7 @@ class TestDashboardHome(unittest.TestCase):
             {"total_properties": 100, "infra_stats": {"pool": {}}},
             [],
         )
+
 
 if __name__ == "__main__":
     unittest.main()

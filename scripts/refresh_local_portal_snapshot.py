@@ -36,11 +36,20 @@ def _snapshot_is_current(path: Path, secret: str, max_age_hours: float) -> bool:
     try:
         snapshot = json.loads(path.read_text(encoding="utf-8"))
         properties = snapshot.get("properties")
-        if snapshot.get("schema_version") != SNAPSHOT_SCHEMA_VERSION or not isinstance(properties, list):
+        if snapshot.get("schema_version") != SNAPSHOT_SCHEMA_VERSION or not isinstance(
+            properties, list
+        ):
             return False
         if snapshot.get("record_count") != len(properties):
             return False
-        sample = next((row for row in properties if row.get("td_number") and row.get("td_lookup_hash")), None)
+        sample = next(
+            (
+                row
+                for row in properties
+                if row.get("td_number") and row.get("td_lookup_hash")
+            ),
+            None,
+        )
         if properties and (
             sample is None
             or _lookup_hash(sample["td_number"], secret) != sample["td_lookup_hash"]
@@ -49,7 +58,9 @@ def _snapshot_is_current(path: Path, secret: str, max_age_hours: float) -> bool:
         published = _published_at(snapshot.get("published_at"))
         if published is None:
             return False
-        age_hours = (datetime.now(timezone.utc) - published.astimezone(timezone.utc)).total_seconds() / 3600
+        age_hours = (
+            datetime.now(timezone.utc) - published.astimezone(timezone.utc)
+        ).total_seconds() / 3600
         return age_hours <= max_age_hours
     except (OSError, ValueError, TypeError, StopIteration):
         return False
@@ -63,7 +74,9 @@ def main() -> int:
 
     secret = str(getattr(mto_config, "PORTAL_LOOKUP_SECRET", "") or "").strip()
     if len(secret) < 32:
-        print("[PORTAL] Snapshot refresh skipped: MTO_PORTAL_LOOKUP_SECRET is not configured.")
+        print(
+            "[PORTAL] Snapshot refresh skipped: MTO_PORTAL_LOOKUP_SECRET is not configured."
+        )
         return 2
 
     latest_path = Path(portal_snapshot_directory()) / "portal_snapshot_latest.json"
@@ -78,7 +91,9 @@ def main() -> int:
             snapshot = generate_portal_snapshot(session)
             file_info = save_portal_snapshot(snapshot)
         except SQLAlchemyError:
-            print("[PORTAL] Snapshot refresh failed: unable to connect to the configured database.")
+            print(
+                "[PORTAL] Snapshot refresh failed: unable to connect to the configured database."
+            )
             return 3
     finally:
         session.rollback()

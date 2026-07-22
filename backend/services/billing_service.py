@@ -91,6 +91,7 @@ def calculate_current_billing_amounts(
 #   tax_rate_subquery(db_session, billing_tax_year_col) → scalar subquery
 # ---------------------------------------------------------------------------
 
+
 def basic_rate_expr():
     """Basic tax rate expression — requires TaxPolicy to be joined/outerjoined."""
     return func.coalesce(TaxPolicy.basic_rate, 0.0100)
@@ -155,15 +156,19 @@ def _valid_property_billing_scope(db_session: Session):
     property_effectivity_year = _property_effectivity_year_expr(Property)
     replacement = aliased(Property)
     replacement_effectivity_year = _property_effectivity_year_expr(replacement)
-    effective_replacement_exists = db_session.query(replacement.id).filter(
-        replacement.deleted_at == None,
-        replacement.prev_td_number != None,
-        func.trim(replacement.prev_td_number) != "",
-        func.upper(func.trim(replacement.prev_td_number))
-        == func.upper(func.trim(Property.td_number)),
-        replacement_effectivity_year != None,
-        replacement_effectivity_year <= PropertyBilling.tax_year,
-    ).exists()
+    effective_replacement_exists = (
+        db_session.query(replacement.id)
+        .filter(
+            replacement.deleted_at == None,
+            replacement.prev_td_number != None,
+            func.trim(replacement.prev_td_number) != "",
+            func.upper(func.trim(replacement.prev_td_number))
+            == func.upper(func.trim(Property.td_number)),
+            replacement_effectivity_year != None,
+            replacement_effectivity_year <= PropertyBilling.tax_year,
+        )
+        .exists()
+    )
 
     return (
         PropertyBilling.is_archived == False,
@@ -215,19 +220,23 @@ def tax_rate_subquery(db_session: Session, billing_tax_year_col):
         .filter(TaxPolicy.tax_year == billing_tax_year_col)
         .correlate(PropertyBilling)
         .scalar_subquery(),
-        0.02
+        0.02,
     )
 
 
-def _paid_to_billing_expr(db_session: Session, *, year_lt=None, year_lte=None, year_eq=None):
+def _paid_to_billing_expr(
+    db_session: Session, *, year_lt=None, year_lte=None, year_eq=None
+):
     """Payments applied to the outer PropertyBilling row, filtered by OR date year."""
     pb_pay = aliased(PaymentBilling)
     pay = aliased(Payment)
-    query = db_session.query(func.coalesce(func.sum(pb_pay.amount_paid), 0)).join(
-        pay, pay.id == pb_pay.payment_id
-    ).filter(
-        pb_pay.billing_id == PropertyBilling.id,
-        pay.date_paid != None,
+    query = (
+        db_session.query(func.coalesce(func.sum(pb_pay.amount_paid), 0))
+        .join(pay, pay.id == pb_pay.payment_id)
+        .filter(
+            pb_pay.billing_id == PropertyBilling.id,
+            pay.date_paid != None,
+        )
     )
     paid_year = year_of(pay.date_paid)
     if year_lt is not None:
@@ -238,51 +247,73 @@ def _paid_to_billing_expr(db_session: Session, *, year_lt=None, year_lte=None, y
         query = query.filter(paid_year == int(year_eq))
     return query.correlate(PropertyBilling).scalar_subquery()
 
+
 def sync_property_billing(
-    property_id, tax_year, assessed_value, penalty, discount=0.0, has_payment=False, db_session: Session = None
+    property_id,
+    tax_year,
+    assessed_value,
+    penalty,
+    discount=0.0,
+    has_payment=False,
+    db_session: Session = None,
 ):
     """Creates or updates the billing snapshot for one property and one tax year."""
     normalized_tax_year = (
-        int(tax_year) if tax_year and str(tax_year).strip().isdigit() else datetime.now(timezone.utc).year
+        int(tax_year)
+        if tax_year and str(tax_year).strip().isdigit()
+        else datetime.now(timezone.utc).year
     )
     assessed_value = Decimal(str(assessed_value or 0))
     penalty = Decimal(str(penalty or 0))
     discount = Decimal(str(discount or 0))
-    
+
     policy = None
     if db_session:
-        policy = db_session.query(TaxPolicy).filter(TaxPolicy.tax_year == normalized_tax_year).first()
+        policy = (
+            db_session.query(TaxPolicy)
+            .filter(TaxPolicy.tax_year == normalized_tax_year)
+            .first()
+        )
         if policy and not isinstance(policy, TaxPolicy):
             policy = None
-        
+
     basic_rate = Decimal(str(policy.basic_rate)) if policy else Decimal("0.01")
     sef_rate = Decimal(str(policy.sef_rate)) if policy else Decimal("0.01")
-    
-    basic_amount = (assessed_value * basic_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    sef_amount = (assessed_value * sef_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    basic_amount = (assessed_value * basic_rate).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    sef_amount = (assessed_value * sef_rate).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
     total_amount = basic_amount + sef_amount + penalty - discount
     initial_amount_paid = total_amount if has_payment else Decimal("0.00")
 
-    billing = db_session.query(PropertyBilling).filter(
-        PropertyBilling.property_id == property_id,
-        PropertyBilling.tax_year == normalized_tax_year
-    ).with_for_update().first()
-    
+    billing = (
+        db_session.query(PropertyBilling)
+        .filter(
+            PropertyBilling.property_id == property_id,
+            PropertyBilling.tax_year == normalized_tax_year,
+        )
+        .with_for_update()
+        .first()
+    )
+
     if not billing:
         billing = PropertyBilling(
             property_id=property_id,
             tax_year=normalized_tax_year,
-            amount_paid=initial_amount_paid
+            amount_paid=initial_amount_paid,
         )
         db_session.add(billing)
-    
+
     billing.assessed_value = assessed_value
     billing.penalty = penalty
     billing.discount = discount
     billing.updated_at = datetime.now(timezone.utc)
-    
-    db_session.flush() # Get ID
-    
+
+    db_session.flush()  # Get ID
+
     return {
         "billing_id": billing.id,
         "tax_year": normalized_tax_year,
@@ -293,8 +324,14 @@ def sync_property_billing(
         "sef_amount": float(sef_amount),
         "total_amount": float(total_amount),
         "amount_paid": float(billing.amount_paid),
-        "balance_amount": float(max(Decimal("0.00"), total_amount - billing.amount_paid)),
-        "billing_status": "Paid" if billing.amount_paid >= total_amount else "Partial" if billing.amount_paid > 0 else "Pending",
+        "balance_amount": float(
+            max(Decimal("0.00"), total_amount - billing.amount_paid)
+        ),
+        "billing_status": (
+            "Paid"
+            if billing.amount_paid >= total_amount
+            else "Partial" if billing.amount_paid > 0 else "Pending"
+        ),
     }
 
 
@@ -425,11 +462,16 @@ def repair_billing_assessed_value_snapshots(
         }
 
     sample_limit = max(1, min(int(sample_limit or 100), 500))
-    props = db_session.query(Property).filter(
-        Property.deleted_at == None,
-        Property.assessed_value != None,
-        Property.assessed_value > 0,
-    ).order_by(Property.id.asc()).all()
+    props = (
+        db_session.query(Property)
+        .filter(
+            Property.deleted_at == None,
+            Property.assessed_value != None,
+            Property.assessed_value > 0,
+        )
+        .order_by(Property.id.asc())
+        .all()
+    )
 
     sample = []
     affected_property_ids = set()
@@ -458,17 +500,21 @@ def repair_billing_assessed_value_snapshots(
             rows_to_update += 1
             affected_property_ids.add(prop.id)
             if len(sample) < sample_limit:
-                sample.append({
-                    "property_id": prop.id,
-                    "billing_id": row.id,
-                    "td_number": prop.td_number,
-                    "owner_name": prop.owner_name,
-                    "barangay": prop.barangay,
-                    "tax_year": int(row.tax_year or 0),
-                    "old_assessed_value": float(current),
-                    "new_assessed_value": float(new_value),
-                    "effectivity_year": _year_from_value(prop.effectivity_date or prop.tax_year),
-                })
+                sample.append(
+                    {
+                        "property_id": prop.id,
+                        "billing_id": row.id,
+                        "td_number": prop.td_number,
+                        "owner_name": prop.owner_name,
+                        "barangay": prop.barangay,
+                        "tax_year": int(row.tax_year or 0),
+                        "old_assessed_value": float(current),
+                        "new_assessed_value": float(new_value),
+                        "effectivity_year": _year_from_value(
+                            prop.effectivity_date or prop.tax_year
+                        ),
+                    }
+                )
 
             if not dry_run:
                 row.assessed_value = new_value
@@ -500,7 +546,9 @@ def allocate_payment_amount(billing_rows, amount_paid):
         return (0, int(ty_str)) if ty_str.isdigit() else (1, ty_str)
 
     for billing_row in sorted(billing_rows, key=_sort_key):
-        due_amount = max(Decimal("0.00"), Decimal(str(billing_row.get("total_amount") or 0)))
+        due_amount = max(
+            Decimal("0.00"), Decimal(str(billing_row.get("total_amount") or 0))
+        )
         applied_amount = min(due_amount, remaining)
         row_copy = dict(billing_row)
         row_copy["applied_amount"] = float(applied_amount)
@@ -549,7 +597,12 @@ def normalize_tax_years(value):
             range_parts = [p.strip() for p in part.split("-") if p.strip()]
             if len(range_parts) == 2:
                 start, end = range_parts
-                if start.isdigit() and end.isdigit() and len(start) == 4 and len(end) == 4:
+                if (
+                    start.isdigit()
+                    and end.isdigit()
+                    and len(start) == 4
+                    and len(end) == 4
+                ):
                     start_year = int(start)
                     end_year = int(end)
                     if end_year >= start_year and (end_year - start_year) <= 15:
@@ -557,7 +610,6 @@ def normalize_tax_years(value):
                             normalized.append(str(year))
                         continue
         normalized.append(part)
-
 
     deduped = []
     seen = set()
@@ -664,22 +716,28 @@ def recalculate_billing_balances(billing_ids, db_session: Session = None):
             seen.append(billing_id)
 
     for billing_id in seen:
-        total_paid, total_penalty, total_discount = db_session.query(
-            func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
-            func.coalesce(func.sum(Payment.penalty), 0),
-            func.coalesce(func.sum(Payment.discount), 0),
-        ).outerjoin(
-            Payment, Payment.id == PaymentBilling.payment_id
-        ).filter(
-            PaymentBilling.billing_id == billing_id
-        ).one()
+        total_paid, total_penalty, total_discount = (
+            db_session.query(
+                func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
+                func.coalesce(func.sum(Payment.penalty), 0),
+                func.coalesce(func.sum(Payment.discount), 0),
+            )
+            .outerjoin(Payment, Payment.id == PaymentBilling.payment_id)
+            .filter(PaymentBilling.billing_id == billing_id)
+            .one()
+        )
 
-        db_session.query(PropertyBilling).filter(PropertyBilling.id == billing_id).update({
-            PropertyBilling.amount_paid: float(total_paid or 0),
-            PropertyBilling.penalty: float(total_penalty or 0),
-            PropertyBilling.discount: float(total_discount or 0),
-            PropertyBilling.updated_at: datetime.now(timezone.utc)
-        }, synchronize_session=False)
+        db_session.query(PropertyBilling).filter(
+            PropertyBilling.id == billing_id
+        ).update(
+            {
+                PropertyBilling.amount_paid: float(total_paid or 0),
+                PropertyBilling.penalty: float(total_penalty or 0),
+                PropertyBilling.discount: float(total_discount or 0),
+                PropertyBilling.updated_at: datetime.now(timezone.utc),
+            },
+            synchronize_session=False,
+        )
 
 
 def sync_payment_billings(payment_id, billing_rows, db_session: Session = None):
@@ -687,26 +745,30 @@ def sync_payment_billings(payment_id, billing_rows, db_session: Session = None):
         return
 
     # 1. Clear existing links
-    db_session.query(PaymentBilling).filter(PaymentBilling.payment_id == payment_id).delete()
-    
+    db_session.query(PaymentBilling).filter(
+        PaymentBilling.payment_id == payment_id
+    ).delete()
+
     affected_billing_ids = []
     for billing_row in billing_rows:
         if not billing_row.get("billing_id"):
             continue
-            
-        applied_amount = float(billing_row.get("applied_amount", billing_row.get("total_amount", 0)) or 0)
+
+        applied_amount = float(
+            billing_row.get("applied_amount", billing_row.get("total_amount", 0)) or 0
+        )
         if applied_amount <= 0:
             continue
-            
+
         link = PaymentBilling(
             payment_id=payment_id,
             billing_id=billing_row["billing_id"],
             tax_year=billing_row["tax_year"],
-            amount_paid=applied_amount
+            amount_paid=applied_amount,
         )
         db_session.add(link)
         affected_billing_ids.append(billing_row["billing_id"])
-        
+
     db_session.flush()
     recalculate_billing_balances(affected_billing_ids, db_session=db_session)
 
@@ -760,34 +822,44 @@ def repair_payment_billing_allocations(
         if len(sample) < sample_limit:
             sample.append(item)
 
-    linked_paid_expr = db_session.query(
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
-    ).filter(
-        PaymentBilling.billing_id == PropertyBilling.id
-    ).correlate(PropertyBilling).scalar_subquery()
+    linked_paid_expr = (
+        db_session.query(func.coalesce(func.sum(PaymentBilling.amount_paid), 0))
+        .filter(PaymentBilling.billing_id == PropertyBilling.id)
+        .correlate(PropertyBilling)
+        .scalar_subquery()
+    )
 
-    mismatch_rows = db_session.query(PropertyBilling.id, PropertyBilling.property_id).join(
-        Property, Property.id == PropertyBilling.property_id
-    ).filter(
-        Property.deleted_at == None,
-        func.abs(PropertyBilling.amount_paid - linked_paid_expr) > 0.01,
-    ).all()
+    mismatch_rows = (
+        db_session.query(PropertyBilling.id, PropertyBilling.property_id)
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .filter(
+            Property.deleted_at == None,
+            func.abs(PropertyBilling.amount_paid - linked_paid_expr) > 0.01,
+        )
+        .all()
+    )
     for billing_id, property_id in mismatch_rows:
         if billing_id:
             affected_billing_ids.add(int(billing_id))
         if property_id:
             affected_property_ids.add(int(property_id))
 
-    has_links = db_session.query(PaymentBilling.id).filter(
-        PaymentBilling.payment_id == Payment.id
-    ).exists()
-    payment_rows = db_session.query(Payment, Property).join(
-        Property, Property.id == Payment.property_id
-    ).filter(
-        Property.deleted_at == None,
-        Payment.amount != None,
-        ~has_links,
-    ).order_by(Payment.id.asc()).all()
+    has_links = (
+        db_session.query(PaymentBilling.id)
+        .filter(PaymentBilling.payment_id == Payment.id)
+        .exists()
+    )
+    payment_rows = (
+        db_session.query(Payment, Property)
+        .join(Property, Property.id == Payment.property_id)
+        .filter(
+            Property.deleted_at == None,
+            Payment.amount != None,
+            ~has_links,
+        )
+        .order_by(Payment.id.asc())
+        .all()
+    )
 
     for payment, prop in payment_rows:
         years = []
@@ -797,39 +869,49 @@ def repair_payment_billing_allocations(
                 years.append(int(part))
         if len(years) != 1:
             skipped += 1
-            add_sample({
-                "action": "skipped_ambiguous_tax_year",
-                "td_number": prop.td_number,
-                "owner_name": prop.owner_name,
-                "or_number": payment.or_number,
-                "tax_year": payment.tax_year,
-                "amount": float(Decimal(str(payment.amount or 0))),
-            })
+            add_sample(
+                {
+                    "action": "skipped_ambiguous_tax_year",
+                    "td_number": prop.td_number,
+                    "owner_name": prop.owner_name,
+                    "or_number": payment.or_number,
+                    "tax_year": payment.tax_year,
+                    "amount": float(Decimal(str(payment.amount or 0))),
+                }
+            )
             continue
 
         tax_year = years[0]
-        amount = Decimal(str(payment.amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        amount = Decimal(str(payment.amount or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
         if amount <= Decimal("0.00"):
             skipped += 1
             continue
 
-        billing = db_session.query(PropertyBilling).filter(
-            PropertyBilling.property_id == prop.id,
-            PropertyBilling.tax_year == tax_year,
-        ).first()
+        billing = (
+            db_session.query(PropertyBilling)
+            .filter(
+                PropertyBilling.property_id == prop.id,
+                PropertyBilling.tax_year == tax_year,
+            )
+            .first()
+        )
 
         missing_links += 1
         affected_property_ids.add(int(prop.id))
-        add_sample({
-            "action": "create_payment_billing_link",
-            "td_number": prop.td_number,
-            "owner_name": prop.owner_name,
-            "or_number": payment.or_number,
-            "payment_id": payment.id,
-            "tax_year": tax_year,
-            "amount": float(amount),
-            "billing_exists": bool(billing),
-        })
+        add_sample(
+            {
+                "action": "create_payment_billing_link",
+                "td_number": prop.td_number,
+                "owner_name": prop.owner_name,
+                "or_number": payment.or_number,
+                "payment_id": payment.id,
+                "tax_year": tax_year,
+                "amount": float(amount),
+                "billing_exists": bool(billing),
+            }
+        )
 
         if dry_run:
             continue
@@ -853,24 +935,27 @@ def repair_payment_billing_allocations(
             db_session.flush()
             created_billings += 1
 
-        db_session.add(PaymentBilling(
-            payment_id=payment.id,
-            billing_id=billing.id,
-            tax_year=tax_year,
-            amount_paid=amount,
-        ))
+        db_session.add(
+            PaymentBilling(
+                payment_id=payment.id,
+                billing_id=billing.id,
+                tax_year=tax_year,
+                amount_paid=amount,
+            )
+        )
         affected_billing_ids.add(int(billing.id))
 
-    single_link_rows = db_session.query(Payment, PaymentBilling, PropertyBilling, Property).join(
-        PaymentBilling, PaymentBilling.payment_id == Payment.id
-    ).join(
-        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
-    ).join(
-        Property, Property.id == Payment.property_id
-    ).filter(
-        Property.deleted_at == None,
-        Payment.amount != None,
-    ).all()
+    single_link_rows = (
+        db_session.query(Payment, PaymentBilling, PropertyBilling, Property)
+        .join(PaymentBilling, PaymentBilling.payment_id == Payment.id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .join(Property, Property.id == Payment.property_id)
+        .filter(
+            Property.deleted_at == None,
+            Payment.amount != None,
+        )
+        .all()
+    )
 
     link_counts = {}
     for payment, _link, _billing, _prop in single_link_rows:
@@ -879,57 +964,88 @@ def repair_payment_billing_allocations(
     for payment, link, billing, prop in single_link_rows:
         if link_counts.get(payment.id, 0) != 1:
             continue
-        years = [int(str(part).strip()) for part in normalize_tax_years(payment.tax_year) if str(part).strip().isdigit()]
+        years = [
+            int(str(part).strip())
+            for part in normalize_tax_years(payment.tax_year)
+            if str(part).strip().isdigit()
+        ]
         if len(years) != 1 or years[0] != int(billing.tax_year):
             continue
 
-        expected_amount = Decimal(str(payment.amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        current_amount = Decimal(str(link.amount_paid or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        expected_amount = Decimal(str(payment.amount or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        current_amount = Decimal(str(link.amount_paid or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
         if abs(expected_amount - current_amount) <= Decimal("0.01"):
             continue
 
         stale_link_amounts += 1
         affected_property_ids.add(int(prop.id))
         affected_billing_ids.add(int(billing.id))
-        add_sample({
-            "action": "fix_stale_link_amount",
-            "td_number": prop.td_number,
-            "owner_name": prop.owner_name,
-            "or_number": payment.or_number,
-            "payment_id": payment.id,
-            "tax_year": int(billing.tax_year),
-            "old_amount": float(current_amount),
-            "amount": float(expected_amount),
-        })
+        add_sample(
+            {
+                "action": "fix_stale_link_amount",
+                "td_number": prop.td_number,
+                "owner_name": prop.owner_name,
+                "or_number": payment.or_number,
+                "payment_id": payment.id,
+                "tax_year": int(billing.tax_year),
+                "old_amount": float(current_amount),
+                "amount": float(expected_amount),
+            }
+        )
         if not dry_run:
             link.amount_paid = expected_amount
 
-    summary_rows = db_session.query(
-        PropertyBilling,
-        Property,
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
-        func.coalesce(func.sum(Payment.penalty), 0),
-        func.coalesce(func.sum(Payment.discount), 0),
-        func.count(PaymentBilling.id),
-    ).join(
-        Property, Property.id == PropertyBilling.property_id
-    ).outerjoin(
-        PaymentBilling, PaymentBilling.billing_id == PropertyBilling.id
-    ).outerjoin(
-        Payment, Payment.id == PaymentBilling.payment_id
-    ).filter(
-        Property.deleted_at == None,
-    ).group_by(PropertyBilling.id, Property.id).all()
+    summary_rows = (
+        db_session.query(
+            PropertyBilling,
+            Property,
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
+            func.coalesce(func.sum(Payment.penalty), 0),
+            func.coalesce(func.sum(Payment.discount), 0),
+            func.count(PaymentBilling.id),
+        )
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(PaymentBilling, PaymentBilling.billing_id == PropertyBilling.id)
+        .outerjoin(Payment, Payment.id == PaymentBilling.payment_id)
+        .filter(
+            Property.deleted_at == None,
+        )
+        .group_by(PropertyBilling.id, Property.id)
+        .all()
+    )
 
-    for billing, prop, linked_paid, linked_penalty, linked_discount, link_count in summary_rows:
+    for (
+        billing,
+        prop,
+        linked_paid,
+        linked_penalty,
+        linked_discount,
+        link_count,
+    ) in summary_rows:
         if int(link_count or 0) <= 0:
             continue
-        expected_paid = Decimal(str(linked_paid or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        expected_penalty = Decimal(str(linked_penalty or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        expected_discount = Decimal(str(linked_discount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        current_paid = Decimal(str(billing.amount_paid or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        current_penalty = Decimal(str(billing.penalty or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        current_discount = Decimal(str(billing.discount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        expected_paid = Decimal(str(linked_paid or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        expected_penalty = Decimal(str(linked_penalty or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        expected_discount = Decimal(str(linked_discount or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        current_paid = Decimal(str(billing.amount_paid or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        current_penalty = Decimal(str(billing.penalty or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        current_discount = Decimal(str(billing.discount or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
 
         if (
             abs(current_paid - expected_paid) <= Decimal("0.01")
@@ -941,18 +1057,20 @@ def repair_payment_billing_allocations(
         stale_billing_summaries += 1
         affected_property_ids.add(int(prop.id))
         affected_billing_ids.add(int(billing.id))
-        add_sample({
-            "action": "fix_billing_summary",
-            "td_number": prop.td_number,
-            "owner_name": prop.owner_name,
-            "tax_year": int(billing.tax_year),
-            "old_paid": float(current_paid),
-            "amount": float(expected_paid),
-            "old_penalty": float(current_penalty),
-            "new_penalty": float(expected_penalty),
-            "old_discount": float(current_discount),
-            "new_discount": float(expected_discount),
-        })
+        add_sample(
+            {
+                "action": "fix_billing_summary",
+                "td_number": prop.td_number,
+                "owner_name": prop.owner_name,
+                "tax_year": int(billing.tax_year),
+                "old_paid": float(current_paid),
+                "amount": float(expected_paid),
+                "old_penalty": float(current_penalty),
+                "new_penalty": float(expected_penalty),
+                "old_discount": float(current_discount),
+                "new_discount": float(expected_discount),
+            }
+        )
         if not dry_run:
             billing.amount_paid = expected_paid
             billing.penalty = expected_penalty
@@ -963,7 +1081,9 @@ def repair_payment_billing_allocations(
     rows_recalculated = 0
     if not dry_run and affected_billing_ids:
         db_session.flush()
-        recalculate_billing_balances(sorted(affected_billing_ids), db_session=db_session)
+        recalculate_billing_balances(
+            sorted(affected_billing_ids), db_session=db_session
+        )
         rows_recalculated = rows_to_recalculate
         db_session.flush()
 
@@ -994,51 +1114,67 @@ def get_property_billing_history(
     basic_rate_expr = func.coalesce(TaxPolicy.basic_rate, 0.0100)
     sef_rate_expr = func.coalesce(TaxPolicy.sef_rate, 0.0100)
     current = _billing_current_amount_exprs(db_session, as_of_date)
-    
-    query = db_session.query(
-        PropertyBilling.tax_year,
-        PropertyBilling.assessed_value,
-        (PropertyBilling.assessed_value * basic_rate_expr).label('basic_amount'),
-        (PropertyBilling.assessed_value * sef_rate_expr).label('sef_amount'),
-        current["total_penalty"].label('penalty'),
-        current["total_due"].label('total_amount'),
-        current["paid"].label('amount_paid'),
-        current["balance"].label('balance_amount'),
-        case(
-            (current["paid"] <= 0, 'Pending'),
-            (current["balance"] <= 0, 'Paid'),
-            else_='Partial'
-        ).label('billing_status'),
 
-        PropertyBilling.updated_at
-    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        *_valid_property_billing_scope(db_session),
+    query = (
+        db_session.query(
+            PropertyBilling.tax_year,
+            PropertyBilling.assessed_value,
+            (PropertyBilling.assessed_value * basic_rate_expr).label("basic_amount"),
+            (PropertyBilling.assessed_value * sef_rate_expr).label("sef_amount"),
+            current["total_penalty"].label("penalty"),
+            current["total_due"].label("total_amount"),
+            current["paid"].label("amount_paid"),
+            current["balance"].label("balance_amount"),
+            case(
+                (current["paid"] <= 0, "Pending"),
+                (current["balance"] <= 0, "Paid"),
+                else_="Partial",
+            ).label("billing_status"),
+            PropertyBilling.updated_at,
+        )
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            *_valid_property_billing_scope(db_session),
+        )
     )
-    
+
     if property_id:
         query = query.filter(PropertyBilling.property_id == property_id)
     elif term:
         like_term = f"%{term}%"
-        query = query.filter(or_(
-            Property.td_number.like(like_term),
-            Property.owner_name.like(like_term),
-            Property.location.like(like_term)
-        ))
+        query = query.filter(
+            or_(
+                Property.td_number.like(like_term),
+                Property.owner_name.like(like_term),
+                Property.location.like(like_term),
+            )
+        )
     else:
         return []
-        
-    results = query.order_by(PropertyBilling.tax_year.desc(), PropertyBilling.updated_at.desc()).limit(safe_limit).all()
+
+    results = (
+        query.order_by(
+            PropertyBilling.tax_year.desc(), PropertyBilling.updated_at.desc()
+        )
+        .limit(safe_limit)
+        .all()
+    )
     return [list(r) for r in results]
 
 
-def get_property_statement_data(property_id, as_of_date=None, db_session: Session = None):
-    prop = db_session.query(Property).filter(Property.id == property_id, Property.deleted_at == None).first()
+def get_property_statement_data(
+    property_id, as_of_date=None, db_session: Session = None
+):
+    prop = (
+        db_session.query(Property)
+        .filter(Property.id == property_id, Property.deleted_at == None)
+        .first()
+    )
     if not prop:
         return None
-        
+
     billing_rows_raw = get_property_billing_history(
         property_id=property_id,
         limit=500,
@@ -1093,26 +1229,34 @@ def get_property_statement_data(property_id, as_of_date=None, db_session: Sessio
         "total_balance": total_balance,
         "total_paid": total_paid,
         "grand_total": grand_total,
-        "billing_rows": billing_rows
+        "billing_rows": billing_rows,
     }
 
 
-
-
-def get_report_details(selected_month="All", selected_year="All", limit=200, cursor=None, db_session: Session = None):
+def get_report_details(
+    selected_month="All",
+    selected_year="All",
+    limit=200,
+    cursor=None,
+    db_session: Session = None,
+):
     safe_limit = min(max(1, int(limit)), 500)
 
-    query = db_session.query(
-        Payment.id,
-        Payment.date_paid,
-        Payment.or_number,
-        Property.td_number,
-        Property.owner_name,
-        Property.kind_of_property,
-        Payment.tax_year,
-        Payment.amount,
-        Payment.posted_by
-    ).join(Property, Property.id == Payment.property_id).filter(Property.deleted_at == None)
+    query = (
+        db_session.query(
+            Payment.id,
+            Payment.date_paid,
+            Payment.or_number,
+            Property.td_number,
+            Property.owner_name,
+            Property.kind_of_property,
+            Payment.tax_year,
+            Payment.amount,
+            Payment.posted_by,
+        )
+        .join(Property, Property.id == Payment.property_id)
+        .filter(Property.deleted_at == None)
+    )
 
     if selected_month != "All":
         query = query.filter(month_of(Payment.date_paid) == int(selected_month))
@@ -1137,35 +1281,44 @@ def get_report_details(selected_month="All", selected_year="All", limit=200, cur
 
 def _billing_effective_amount_exprs(db_session: Session):
     """Use linked payments as the authoritative billing amounts when they exist."""
-    linked_paid_expr = db_session.query(
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
-    ).filter(
-        PaymentBilling.billing_id == PropertyBilling.id
-    ).correlate(PropertyBilling).scalar_subquery()
-    linked_penalty_expr = db_session.query(
-        func.coalesce(func.sum(Payment.penalty), 0)
-    ).join(
-        PaymentBilling, PaymentBilling.payment_id == Payment.id
-    ).filter(
-        PaymentBilling.billing_id == PropertyBilling.id
-    ).correlate(PropertyBilling).scalar_subquery()
-    linked_discount_expr = db_session.query(
-        func.coalesce(func.sum(Payment.discount), 0)
-    ).join(
-        PaymentBilling, PaymentBilling.payment_id == Payment.id
-    ).filter(
-        PaymentBilling.billing_id == PropertyBilling.id
-    ).correlate(PropertyBilling).scalar_subquery()
-    linked_count_expr = db_session.query(
-        func.count(PaymentBilling.id)
-    ).filter(
-        PaymentBilling.billing_id == PropertyBilling.id
-    ).correlate(PropertyBilling).scalar_subquery()
+    linked_paid_expr = (
+        db_session.query(func.coalesce(func.sum(PaymentBilling.amount_paid), 0))
+        .filter(PaymentBilling.billing_id == PropertyBilling.id)
+        .correlate(PropertyBilling)
+        .scalar_subquery()
+    )
+    linked_penalty_expr = (
+        db_session.query(func.coalesce(func.sum(Payment.penalty), 0))
+        .join(PaymentBilling, PaymentBilling.payment_id == Payment.id)
+        .filter(PaymentBilling.billing_id == PropertyBilling.id)
+        .correlate(PropertyBilling)
+        .scalar_subquery()
+    )
+    linked_discount_expr = (
+        db_session.query(func.coalesce(func.sum(Payment.discount), 0))
+        .join(PaymentBilling, PaymentBilling.payment_id == Payment.id)
+        .filter(PaymentBilling.billing_id == PropertyBilling.id)
+        .correlate(PropertyBilling)
+        .scalar_subquery()
+    )
+    linked_count_expr = (
+        db_session.query(func.count(PaymentBilling.id))
+        .filter(PaymentBilling.billing_id == PropertyBilling.id)
+        .correlate(PropertyBilling)
+        .scalar_subquery()
+    )
 
     return {
-        "paid": case((linked_count_expr > 0, linked_paid_expr), else_=PropertyBilling.amount_paid),
-        "penalty": case((linked_count_expr > 0, linked_penalty_expr), else_=PropertyBilling.penalty),
-        "discount": case((linked_count_expr > 0, linked_discount_expr), else_=PropertyBilling.discount),
+        "paid": case(
+            (linked_count_expr > 0, linked_paid_expr), else_=PropertyBilling.amount_paid
+        ),
+        "penalty": case(
+            (linked_count_expr > 0, linked_penalty_expr), else_=PropertyBilling.penalty
+        ),
+        "discount": case(
+            (linked_count_expr > 0, linked_discount_expr),
+            else_=PropertyBilling.discount,
+        ),
         "linked_count": linked_count_expr,
     }
 
@@ -1182,10 +1335,7 @@ def _billing_current_amount_exprs(db_session: Session, as_of_date=None):
         .scalar_subquery(),
         0.02,
     )
-    raw_months = (
-        (int(as_of.year) - PropertyBilling.tax_year) * 12
-        + int(as_of.month)
-    )
+    raw_months = (int(as_of.year) - PropertyBilling.tax_year) * 12 + int(as_of.month)
     months = case(
         (raw_months < 0, 0),
         (raw_months > MAX_PENALTY_MONTHS, MAX_PENALTY_MONTHS),
@@ -1225,78 +1375,105 @@ def get_rpt_receivables_summary(report_year, db_session: Session = None):
     effective = _billing_effective_amount_exprs(db_session)
     effective_penalty_expr = effective["penalty"]
     effective_discount_expr = effective["discount"]
-    due_expr = (PropertyBilling.assessed_value * total_rate_expr) + effective_penalty_expr - effective_discount_expr
+    due_expr = (
+        (PropertyBilling.assessed_value * total_rate_expr)
+        + effective_penalty_expr
+        - effective_discount_expr
+    )
     paid_before_year = _paid_to_billing_expr(db_session, year_lt=ry)
     paid_through_year = _paid_to_billing_expr(db_session, year_lte=ry)
 
     # Beginning receivable is a point-in-time balance at the start of the selected fiscal year.
     # It must not include payments posted after that year, even if PropertyBilling.amount_paid is cumulative today.
-    beg = db_session.query(
-        func.coalesce(func.sum(greatest(due_expr - paid_before_year, 0)), 0)
-    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        PropertyBilling.tax_year < ry,
-    ).scalar()
+    beg = (
+        db_session.query(
+            func.coalesce(func.sum(greatest(due_expr - paid_before_year, 0)), 0)
+        )
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year < ry,
+        )
+        .scalar()
+    )
 
-    curr_row = db_session.query(
-        func.coalesce(func.sum(PropertyBilling.assessed_value * total_rate_expr), 0),
-        func.coalesce(func.sum(effective_penalty_expr), 0),
-        func.coalesce(func.sum(effective_discount_expr), 0),
-        func.coalesce(func.sum(due_expr), 0),
-    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        PropertyBilling.tax_year == ry,
-    ).one()
+    curr_row = (
+        db_session.query(
+            func.coalesce(
+                func.sum(PropertyBilling.assessed_value * total_rate_expr), 0
+            ),
+            func.coalesce(func.sum(effective_penalty_expr), 0),
+            func.coalesce(func.sum(effective_discount_expr), 0),
+            func.coalesce(func.sum(due_expr), 0),
+        )
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year == ry,
+        )
+        .one()
+    )
     curr_levy = float(curr_row[0] or 0)
     curr_penalty = float(curr_row[1] or 0)
     curr_discount = float(curr_row[2] or 0)
     curr_net = float(curr_row[3] or 0)
 
-    calendar_applicable_collections = db_session.query(
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
-    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
-        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
-    ).join(Property, Property.id == Payment.property_id).filter(
-        Property.deleted_at == None,
-        Payment.date_paid != None,
-        year_of(Payment.date_paid) == ry,
-        PropertyBilling.tax_year <= ry,
-    ).scalar()
+    calendar_applicable_collections = (
+        db_session.query(func.coalesce(func.sum(PaymentBilling.amount_paid), 0))
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .join(Property, Property.id == Payment.property_id)
+        .filter(
+            Property.deleted_at == None,
+            Payment.date_paid != None,
+            year_of(Payment.date_paid) == ry,
+            PropertyBilling.tax_year <= ry,
+        )
+        .scalar()
+    )
 
-    prepaid_current_year = db_session.query(
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
-    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
-        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
-    ).join(Property, Property.id == Payment.property_id).filter(
-        Property.deleted_at == None,
-        Payment.date_paid != None,
-        year_of(Payment.date_paid) < ry,
-        PropertyBilling.tax_year == ry,
-    ).scalar()
+    prepaid_current_year = (
+        db_session.query(func.coalesce(func.sum(PaymentBilling.amount_paid), 0))
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .join(Property, Property.id == Payment.property_id)
+        .filter(
+            Property.deleted_at == None,
+            Payment.date_paid != None,
+            year_of(Payment.date_paid) < ry,
+            PropertyBilling.tax_year == ry,
+        )
+        .scalar()
+    )
 
-    future_year_prepayments = db_session.query(
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
-    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
-        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
-    ).join(Property, Property.id == Payment.property_id).filter(
-        Property.deleted_at == None,
-        Payment.date_paid != None,
-        year_of(Payment.date_paid) == ry,
-        PropertyBilling.tax_year > ry,
-    ).scalar()
+    future_year_prepayments = (
+        db_session.query(func.coalesce(func.sum(PaymentBilling.amount_paid), 0))
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .join(Property, Property.id == Payment.property_id)
+        .filter(
+            Property.deleted_at == None,
+            Payment.date_paid != None,
+            year_of(Payment.date_paid) == ry,
+            PropertyBilling.tax_year > ry,
+        )
+        .scalar()
+    )
 
-    end = db_session.query(
-        func.coalesce(func.sum(greatest(due_expr - paid_through_year, 0)), 0)
-    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        PropertyBilling.tax_year <= ry,
-    ).scalar()
+    end = (
+        db_session.query(
+            func.coalesce(func.sum(greatest(due_expr - paid_through_year, 0)), 0)
+        )
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year <= ry,
+        )
+        .scalar()
+    )
 
     calendar_applicable_collections = float(calendar_applicable_collections or 0)
     prepaid_current_year = float(prepaid_current_year or 0)
@@ -1338,101 +1515,176 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
     effective = _billing_effective_amount_exprs(db_session)
     effective_penalty_expr = effective["penalty"]
     effective_discount_expr = effective["discount"]
-    due_expr = (PropertyBilling.assessed_value * total) + effective_penalty_expr - effective_discount_expr
+    due_expr = (
+        (PropertyBilling.assessed_value * total)
+        + effective_penalty_expr
+        - effective_discount_expr
+    )
     paid_through_year = _paid_to_billing_expr(db_session, year_lte=ry)
     balance_as_of_expr = due_expr - paid_through_year
 
-    assessor_row = db_session.query(
-        func.coalesce(func.sum(PropertyBilling.assessed_value), 0),
-        func.count(func.distinct(PropertyBilling.property_id)),
-        func.coalesce(func.sum(PropertyBilling.assessed_value * total), 0),
-        func.coalesce(func.sum(effective_penalty_expr), 0),
-        func.coalesce(func.sum(effective_discount_expr), 0),
-        func.coalesce(func.sum(due_expr), 0),
-        func.coalesce(func.avg(basic), 0.0100),
-        func.coalesce(func.avg(total), 0.0200),
-    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        PropertyBilling.tax_year == ry,
-    ).one()
+    assessor_row = (
+        db_session.query(
+            func.coalesce(func.sum(PropertyBilling.assessed_value), 0),
+            func.count(func.distinct(PropertyBilling.property_id)),
+            func.coalesce(func.sum(PropertyBilling.assessed_value * total), 0),
+            func.coalesce(func.sum(effective_penalty_expr), 0),
+            func.coalesce(func.sum(effective_discount_expr), 0),
+            func.coalesce(func.sum(due_expr), 0),
+            func.coalesce(func.avg(basic), 0.0100),
+            func.coalesce(func.avg(total), 0.0200),
+        )
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year == ry,
+        )
+        .one()
+    )
 
     basic_share = case((total > 0, basic / total), else_=0.5)
     applied_filter = or_(
         and_(year_of(Payment.date_paid) == ry, PropertyBilling.tax_year <= ry),
         and_(year_of(Payment.date_paid) < ry, PropertyBilling.tax_year == ry),
     )
-    treasury_row = db_session.query(
-        func.coalesce(func.sum(PaymentBilling.amount_paid * basic_share), 0),
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
-        func.count(func.distinct(Payment.property_id)),
-    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
-        Property, Property.id == Payment.property_id
-    ).join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        Payment.date_paid != None,
-        applied_filter,
-    ).one()
+    treasury_row = (
+        db_session.query(
+            func.coalesce(func.sum(PaymentBilling.amount_paid * basic_share), 0),
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
+            func.count(func.distinct(Payment.property_id)),
+        )
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .join(Property, Property.id == Payment.property_id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            Payment.date_paid != None,
+            applied_filter,
+        )
+        .one()
+    )
 
-    cash_collected_this_year = db_session.query(
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
-    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
-        Property, Property.id == Payment.property_id
-    ).filter(
-        Property.deleted_at == None,
-        Payment.date_paid != None,
-        year_of(Payment.date_paid) == ry,
-    ).scalar()
+    cash_collected_this_year = (
+        db_session.query(func.coalesce(func.sum(PaymentBilling.amount_paid), 0))
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .join(Property, Property.id == Payment.property_id)
+        .filter(
+            Property.deleted_at == None,
+            Payment.date_paid != None,
+            year_of(Payment.date_paid) == ry,
+        )
+        .scalar()
+    )
 
-    calendar_applicable_collections = db_session.query(
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
-    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
-        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
-    ).join(Property, Property.id == Payment.property_id).filter(
-        Property.deleted_at == None,
-        Payment.date_paid != None,
-        year_of(Payment.date_paid) == ry,
-        PropertyBilling.tax_year <= ry,
-    ).scalar()
+    calendar_applicable_collections = (
+        db_session.query(func.coalesce(func.sum(PaymentBilling.amount_paid), 0))
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .join(Property, Property.id == Payment.property_id)
+        .filter(
+            Property.deleted_at == None,
+            Payment.date_paid != None,
+            year_of(Payment.date_paid) == ry,
+            PropertyBilling.tax_year <= ry,
+        )
+        .scalar()
+    )
 
-    prepaid_current_year = db_session.query(
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
-    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
-        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
-    ).join(Property, Property.id == Payment.property_id).filter(
-        Property.deleted_at == None,
-        Payment.date_paid != None,
-        year_of(Payment.date_paid) < ry,
-        PropertyBilling.tax_year == ry,
-    ).scalar()
+    prepaid_current_year = (
+        db_session.query(func.coalesce(func.sum(PaymentBilling.amount_paid), 0))
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .join(Property, Property.id == Payment.property_id)
+        .filter(
+            Property.deleted_at == None,
+            Payment.date_paid != None,
+            year_of(Payment.date_paid) < ry,
+            PropertyBilling.tax_year == ry,
+        )
+        .scalar()
+    )
 
-    future_year_prepayments = db_session.query(
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
-    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
-        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
-    ).join(Property, Property.id == Payment.property_id).filter(
-        Property.deleted_at == None,
-        Payment.date_paid != None,
-        year_of(Payment.date_paid) == ry,
-        PropertyBilling.tax_year > ry,
-    ).scalar()
+    future_year_prepayments = (
+        db_session.query(func.coalesce(func.sum(PaymentBilling.amount_paid), 0))
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .join(Property, Property.id == Payment.property_id)
+        .filter(
+            Property.deleted_at == None,
+            Payment.date_paid != None,
+            year_of(Payment.date_paid) == ry,
+            PropertyBilling.tax_year > ry,
+        )
+        .scalar()
+    )
 
-    delinquency_row = db_session.query(
-        func.coalesce(func.sum(case((balance_as_of_expr > 0, balance_as_of_expr), else_=0)), 0),
-        func.coalesce(func.sum(case((and_(PropertyBilling.tax_year == ry, balance_as_of_expr > 0), balance_as_of_expr), else_=0)), 0),
-        func.coalesce(func.sum(case((and_(PropertyBilling.tax_year < ry, balance_as_of_expr > 0), balance_as_of_expr), else_=0)), 0),
-        func.count(func.distinct(case((balance_as_of_expr > 0, PropertyBilling.property_id), else_=None))),
-        func.coalesce(func.sum(case((balance_as_of_expr > 0, effective_penalty_expr), else_=0)), 0),
-        func.count(func.distinct(case((and_(paid_through_year > 0, balance_as_of_expr > 0), PropertyBilling.property_id), else_=None))),
-    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        PropertyBilling.tax_year <= ry,
-    ).one()
+    delinquency_row = (
+        db_session.query(
+            func.coalesce(
+                func.sum(case((balance_as_of_expr > 0, balance_as_of_expr), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                PropertyBilling.tax_year == ry, balance_as_of_expr > 0
+                            ),
+                            balance_as_of_expr,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            and_(PropertyBilling.tax_year < ry, balance_as_of_expr > 0),
+                            balance_as_of_expr,
+                        ),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
+            func.count(
+                func.distinct(
+                    case(
+                        (balance_as_of_expr > 0, PropertyBilling.property_id),
+                        else_=None,
+                    )
+                )
+            ),
+            func.coalesce(
+                func.sum(
+                    case((balance_as_of_expr > 0, effective_penalty_expr), else_=0)
+                ),
+                0,
+            ),
+            func.count(
+                func.distinct(
+                    case(
+                        (
+                            and_(paid_through_year > 0, balance_as_of_expr > 0),
+                            PropertyBilling.property_id,
+                        ),
+                        else_=None,
+                    )
+                )
+            ),
+        )
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year <= ry,
+        )
+        .one()
+    )
 
     return {
         "report_year": ry,
@@ -1453,7 +1705,9 @@ def get_reconciliation_metrics(report_year, db_session: Session = None):
             "accounts_paid": int(treasury_row[2] or 0),
             "partial_payments": int(delinquency_row[5] or 0),
             "cash_collected_this_year": float(cash_collected_this_year or 0),
-            "calendar_applicable_collections": float(calendar_applicable_collections or 0),
+            "calendar_applicable_collections": float(
+                calendar_applicable_collections or 0
+            ),
             "prepaid_current_year": float(prepaid_current_year or 0),
             "future_year_prepayments": float(future_year_prepayments or 0),
         },
@@ -1477,30 +1731,32 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
 
     safe_limit = max(5, min(int(limit or 50), 200))
     total = total_rate_expr()
-    linked_paid_expr = db_session.query(
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0)
-    ).filter(
-        PaymentBilling.billing_id == PropertyBilling.id
-    ).correlate(PropertyBilling).scalar_subquery()
-    linked_penalty_expr = db_session.query(
-        func.coalesce(func.sum(Payment.penalty), 0)
-    ).join(
-        PaymentBilling, PaymentBilling.payment_id == Payment.id
-    ).filter(
-        PaymentBilling.billing_id == PropertyBilling.id
-    ).correlate(PropertyBilling).scalar_subquery()
-    linked_discount_expr = db_session.query(
-        func.coalesce(func.sum(Payment.discount), 0)
-    ).join(
-        PaymentBilling, PaymentBilling.payment_id == Payment.id
-    ).filter(
-        PaymentBilling.billing_id == PropertyBilling.id
-    ).correlate(PropertyBilling).scalar_subquery()
-    linked_count_expr = db_session.query(
-        func.count(PaymentBilling.id)
-    ).filter(
-        PaymentBilling.billing_id == PropertyBilling.id
-    ).correlate(PropertyBilling).scalar_subquery()
+    linked_paid_expr = (
+        db_session.query(func.coalesce(func.sum(PaymentBilling.amount_paid), 0))
+        .filter(PaymentBilling.billing_id == PropertyBilling.id)
+        .correlate(PropertyBilling)
+        .scalar_subquery()
+    )
+    linked_penalty_expr = (
+        db_session.query(func.coalesce(func.sum(Payment.penalty), 0))
+        .join(PaymentBilling, PaymentBilling.payment_id == Payment.id)
+        .filter(PaymentBilling.billing_id == PropertyBilling.id)
+        .correlate(PropertyBilling)
+        .scalar_subquery()
+    )
+    linked_discount_expr = (
+        db_session.query(func.coalesce(func.sum(Payment.discount), 0))
+        .join(PaymentBilling, PaymentBilling.payment_id == Payment.id)
+        .filter(PaymentBilling.billing_id == PropertyBilling.id)
+        .correlate(PropertyBilling)
+        .scalar_subquery()
+    )
+    linked_count_expr = (
+        db_session.query(func.count(PaymentBilling.id))
+        .filter(PaymentBilling.billing_id == PropertyBilling.id)
+        .correlate(PropertyBilling)
+        .scalar_subquery()
+    )
     effective_penalty_expr = case(
         (linked_count_expr > 0, linked_penalty_expr),
         else_=PropertyBilling.penalty,
@@ -1513,7 +1769,11 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
         (linked_count_expr > 0, linked_paid_expr),
         else_=PropertyBilling.amount_paid,
     )
-    due_expr = (PropertyBilling.assessed_value * total) + effective_penalty_expr - effective_discount_expr
+    due_expr = (
+        (PropertyBilling.assessed_value * total)
+        + effective_penalty_expr
+        - effective_discount_expr
+    )
     paid_through_year = _paid_to_billing_expr(db_session, year_lte=ry)
     balance_expr = due_expr - paid_through_year
     raw_cumulative_balance_expr = due_expr - effective_paid_expr
@@ -1521,17 +1781,32 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
 
     summary = get_rpt_receivables_summary(ry, db_session=db_session)
     metrics = get_reconciliation_metrics(ry, db_session=db_session)
-    expected_end = float(summary.get("expected_ending_receivable", summary.get("ending_receivable", 0)) or 0)
+    expected_end = float(
+        summary.get("expected_ending_receivable", summary.get("ending_receivable", 0))
+        or 0
+    )
     tracker_total = float(metrics.get("delinquency", {}).get("total_unpaid", 0) or 0)
     tracker_variance = tracker_total - expected_end
-    raw_tracker_total = db_session.query(
-        func.coalesce(func.sum(case((raw_cumulative_balance_expr > 0, raw_cumulative_balance_expr), else_=0)), 0)
-    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        PropertyBilling.tax_year <= ry,
-    ).scalar()
+    raw_tracker_total = (
+        db_session.query(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (raw_cumulative_balance_expr > 0, raw_cumulative_balance_expr),
+                        else_=0,
+                    )
+                ),
+                0,
+            )
+        )
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year <= ry,
+        )
+        .scalar()
+    )
     raw_tracker_total = float(raw_tracker_total or 0)
     raw_tracker_variance = raw_tracker_total - expected_end
 
@@ -1552,73 +1827,98 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
             "difference": money_float(row[8]) if len(row) > 8 else None,
         }
 
-    payment_link_rows = db_session.query(
-        Property.td_number,
-        Property.owner_name,
-        Property.barangay,
-        PropertyBilling.tax_year,
-        due_expr,
-        PropertyBilling.amount_paid,
-        linked_paid_expr,
-        balance_expr,
-        payment_gap_expr,
-    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        PropertyBilling.tax_year <= ry,
-        func.abs(payment_gap_expr) > 0.01,
-    ).order_by(func.abs(payment_gap_expr).desc()).limit(safe_limit).all()
+    payment_link_rows = (
+        db_session.query(
+            Property.td_number,
+            Property.owner_name,
+            Property.barangay,
+            PropertyBilling.tax_year,
+            due_expr,
+            PropertyBilling.amount_paid,
+            linked_paid_expr,
+            balance_expr,
+            payment_gap_expr,
+        )
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year <= ry,
+            func.abs(payment_gap_expr) > 0.01,
+        )
+        .order_by(func.abs(payment_gap_expr).desc())
+        .limit(safe_limit)
+        .all()
+    )
 
-    overpaid_rows = db_session.query(
-        Property.td_number,
-        Property.owner_name,
-        Property.barangay,
-        PropertyBilling.tax_year,
-        due_expr,
-        PropertyBilling.amount_paid,
-        linked_paid_expr,
-        balance_expr,
-        balance_expr,
-    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        PropertyBilling.tax_year <= ry,
-        balance_expr < -0.01,
-    ).order_by(balance_expr.asc()).limit(safe_limit).all()
+    overpaid_rows = (
+        db_session.query(
+            Property.td_number,
+            Property.owner_name,
+            Property.barangay,
+            PropertyBilling.tax_year,
+            due_expr,
+            PropertyBilling.amount_paid,
+            linked_paid_expr,
+            balance_expr,
+            balance_expr,
+        )
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year <= ry,
+            balance_expr < -0.01,
+        )
+        .order_by(balance_expr.asc())
+        .limit(safe_limit)
+        .all()
+    )
 
-    largest_balance_rows = db_session.query(
-        Property.td_number,
-        Property.owner_name,
-        Property.barangay,
-        PropertyBilling.tax_year,
-        due_expr,
-        PropertyBilling.amount_paid,
-        linked_paid_expr,
-        balance_expr,
-        balance_expr,
-    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        PropertyBilling.tax_year <= ry,
-        balance_expr > 0.01,
-    ).order_by(balance_expr.desc()).limit(safe_limit).all()
+    largest_balance_rows = (
+        db_session.query(
+            Property.td_number,
+            Property.owner_name,
+            Property.barangay,
+            PropertyBilling.tax_year,
+            due_expr,
+            PropertyBilling.amount_paid,
+            linked_paid_expr,
+            balance_expr,
+            balance_expr,
+        )
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year <= ry,
+            balance_expr > 0.01,
+        )
+        .order_by(balance_expr.desc())
+        .limit(safe_limit)
+        .all()
+    )
 
     def payment_group_rows(year_filter, issue):
-        rows = db_session.query(
-            PropertyBilling.tax_year,
-            func.count(PaymentBilling.id),
-            func.count(func.distinct(PropertyBilling.property_id)),
-            func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
-        ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
-            PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
-        ).join(Property, Property.id == PropertyBilling.property_id).filter(
-            Property.deleted_at == None,
-            year_of(Payment.date_paid) == ry,
-            year_filter,
-        ).group_by(PropertyBilling.tax_year).order_by(PropertyBilling.tax_year).all()
+        rows = (
+            db_session.query(
+                PropertyBilling.tax_year,
+                func.count(PaymentBilling.id),
+                func.count(func.distinct(PropertyBilling.property_id)),
+                func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
+            )
+            .join(Payment, Payment.id == PaymentBilling.payment_id)
+            .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+            .join(Property, Property.id == PropertyBilling.property_id)
+            .filter(
+                Property.deleted_at == None,
+                year_of(Payment.date_paid) == ry,
+                year_filter,
+            )
+            .group_by(PropertyBilling.tax_year)
+            .order_by(PropertyBilling.tax_year)
+            .all()
+        )
         return [
             {
                 "issue": issue,
@@ -1630,22 +1930,35 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
             for row in rows
         ]
 
-    prior_year_collections = payment_group_rows(PropertyBilling.tax_year < ry, "Collections posted this year for prior tax years")
-    future_year_collections = payment_group_rows(PropertyBilling.tax_year > ry, "Collections posted this year for future tax years / prepayments")
+    prior_year_collections = payment_group_rows(
+        PropertyBilling.tax_year < ry,
+        "Collections posted this year for prior tax years",
+    )
+    future_year_collections = payment_group_rows(
+        PropertyBilling.tax_year > ry,
+        "Collections posted this year for future tax years / prepayments",
+    )
 
-    outside_rows = db_session.query(
-        PropertyBilling.tax_year,
-        year_of(Payment.date_paid),
-        func.count(PaymentBilling.id),
-        func.count(func.distinct(PropertyBilling.property_id)),
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
-    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
-        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
-    ).join(Property, Property.id == PropertyBilling.property_id).filter(
-        Property.deleted_at == None,
-        PropertyBilling.tax_year == ry,
-        or_(Payment.date_paid == None, year_of(Payment.date_paid) != ry),
-    ).group_by(PropertyBilling.tax_year, year_of(Payment.date_paid)).order_by(year_of(Payment.date_paid)).all()
+    outside_rows = (
+        db_session.query(
+            PropertyBilling.tax_year,
+            year_of(Payment.date_paid),
+            func.count(PaymentBilling.id),
+            func.count(func.distinct(PropertyBilling.property_id)),
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
+        )
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year == ry,
+            or_(Payment.date_paid == None, year_of(Payment.date_paid) != ry),
+        )
+        .group_by(PropertyBilling.tax_year, year_of(Payment.date_paid))
+        .order_by(year_of(Payment.date_paid))
+        .all()
+    )
 
     current_year_paid_outside = [
         {
@@ -1659,23 +1972,29 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
         for row in outside_rows
     ]
 
-
-    outside_detail_rows = db_session.query(
-        Property.td_number,
-        Property.owner_name,
-        Property.barangay,
-        PropertyBilling.tax_year,
-        year_of(Payment.date_paid),
-        Payment.date_paid,
-        Payment.or_number,
-        PaymentBilling.amount_paid,
-    ).join(Payment, Payment.id == PaymentBilling.payment_id).join(
-        PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id
-    ).join(Property, Property.id == PropertyBilling.property_id).filter(
-        Property.deleted_at == None,
-        PropertyBilling.tax_year == ry,
-        or_(Payment.date_paid == None, year_of(Payment.date_paid) != ry),
-    ).order_by(year_of(Payment.date_paid), PaymentBilling.amount_paid.desc()).limit(safe_limit).all()
+    outside_detail_rows = (
+        db_session.query(
+            Property.td_number,
+            Property.owner_name,
+            Property.barangay,
+            PropertyBilling.tax_year,
+            year_of(Payment.date_paid),
+            Payment.date_paid,
+            Payment.or_number,
+            PaymentBilling.amount_paid,
+        )
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.tax_year == ry,
+            or_(Payment.date_paid == None, year_of(Payment.date_paid) != ry),
+        )
+        .order_by(year_of(Payment.date_paid), PaymentBilling.amount_paid.desc())
+        .limit(safe_limit)
+        .all()
+    )
 
     current_year_paid_outside_details = [
         {
@@ -1696,33 +2015,41 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
     # payment should not normally coexist with a missing or incomplete prior
     # year. Work from linked allocations (the accounting source of truth), not
     # the free-form tax-year label displayed on the payment row.
-    sequence_rows = db_session.query(
-        Property.id,
-        Property.td_number,
-        Property.owner_name,
-        Property.barangay,
-        Property.effectivity_date,
-        PropertyBilling.tax_year,
-        due_expr,
-        linked_paid_expr,
-    ).join(Property, Property.id == PropertyBilling.property_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        Property.archived == False,
-        PropertyBilling.is_archived == False,
-        PropertyBilling.tax_year <= ry,
-    ).order_by(Property.id.asc(), PropertyBilling.tax_year.asc()).all()
+    sequence_rows = (
+        db_session.query(
+            Property.id,
+            Property.td_number,
+            Property.owner_name,
+            Property.barangay,
+            Property.effectivity_date,
+            PropertyBilling.tax_year,
+            due_expr,
+            linked_paid_expr,
+        )
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            Property.archived == False,
+            PropertyBilling.is_archived == False,
+            PropertyBilling.tax_year <= ry,
+        )
+        .order_by(Property.id.asc(), PropertyBilling.tax_year.asc())
+        .all()
+    )
 
     sequence_by_property = {}
     for row in sequence_rows:
-        bucket = sequence_by_property.setdefault(int(row[0]), {
-            "td_number": row[1],
-            "owner_name": row[2],
-            "barangay": row[3],
-            "effectivity_year": _year_from_value(row[4]),
-            "years": {},
-        })
+        bucket = sequence_by_property.setdefault(
+            int(row[0]),
+            {
+                "td_number": row[1],
+                "owner_name": row[2],
+                "barangay": row[3],
+                "effectivity_year": _year_from_value(row[4]),
+                "years": {},
+            },
+        )
         bucket["years"][int(row[5])] = {
             "total_due": money_float(row[6]),
             "linked_paid": money_float(row[7]),
@@ -1732,8 +2059,7 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
     for bucket in sequence_by_property.values():
         year_rows = bucket["years"]
         paid_years = sorted(
-            year for year, values in year_rows.items()
-            if values["linked_paid"] > 0.01
+            year for year, values in year_rows.items() if values["linked_paid"] > 0.01
         )
         if not paid_years:
             continue
@@ -1766,18 +2092,20 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
                     else "Partially paid prior year before a later paid year"
                 )
 
-            payment_sequence_gaps.append({
-                "issue": issue,
-                "td_number": bucket["td_number"],
-                "owner_name": bucket["owner_name"],
-                "barangay": bucket["barangay"],
-                "tax_year": gap_year,
-                "gap_status": status,
-                "total_due": total_due_value,
-                "linked_paid": linked_paid_value,
-                "outstanding": outstanding,
-                "later_paid_year": latest_paid_year,
-            })
+            payment_sequence_gaps.append(
+                {
+                    "issue": issue,
+                    "td_number": bucket["td_number"],
+                    "owner_name": bucket["owner_name"],
+                    "barangay": bucket["barangay"],
+                    "tax_year": gap_year,
+                    "gap_status": status,
+                    "total_due": total_due_value,
+                    "linked_paid": linked_paid_value,
+                    "outstanding": outstanding,
+                    "later_paid_year": latest_paid_year,
+                }
+            )
 
     payment_sequence_gaps.sort(
         key=lambda item: (
@@ -1789,32 +2117,38 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
     payment_sequence_gap_count = len(payment_sequence_gaps)
     payment_sequence_gaps = payment_sequence_gaps[:safe_limit]
 
-    unlinked_raw_rows = db_session.query(
-        Payment.id,
-        Property.td_number,
-        Property.owner_name,
-        Property.barangay,
-        Payment.tax_year,
-        Payment.date_paid,
-        Payment.or_number,
-        Payment.amount,
-    ).join(Property, Property.id == Payment.property_id).outerjoin(
-        PaymentBilling, PaymentBilling.payment_id == Payment.id
-    ).filter(
-        Property.deleted_at == None,
-        Payment.amount != None,
-    ).group_by(
-        Payment.id,
-        Property.td_number,
-        Property.owner_name,
-        Property.barangay,
-        Payment.tax_year,
-        Payment.date_paid,
-        Payment.or_number,
-        Payment.amount,
-    ).having(func.count(PaymentBilling.id) == 0).order_by(
-        Payment.date_paid.desc(), Payment.id.desc()
-    ).limit(safe_limit * 4).all()
+    unlinked_raw_rows = (
+        db_session.query(
+            Payment.id,
+            Property.td_number,
+            Property.owner_name,
+            Property.barangay,
+            Payment.tax_year,
+            Payment.date_paid,
+            Payment.or_number,
+            Payment.amount,
+        )
+        .join(Property, Property.id == Payment.property_id)
+        .outerjoin(PaymentBilling, PaymentBilling.payment_id == Payment.id)
+        .filter(
+            Property.deleted_at == None,
+            Payment.amount != None,
+        )
+        .group_by(
+            Payment.id,
+            Property.td_number,
+            Property.owner_name,
+            Property.barangay,
+            Payment.tax_year,
+            Payment.date_paid,
+            Payment.or_number,
+            Payment.amount,
+        )
+        .having(func.count(PaymentBilling.id) == 0)
+        .order_by(Payment.date_paid.desc(), Payment.id.desc())
+        .limit(safe_limit * 4)
+        .all()
+    )
 
     unlinked_payments = []
     for row in unlinked_raw_rows:
@@ -1826,17 +2160,19 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
         if years and not any(year <= ry for year in years):
             continue
         display_year = years[0] if len(years) == 1 else (str(row[4] or "") or None)
-        unlinked_payments.append({
-            "issue": "Payment exists in ledger but has no billing allocation link",
-            "payment_id": int(row[0]),
-            "td_number": row[1],
-            "owner_name": row[2],
-            "barangay": row[3],
-            "tax_year": display_year,
-            "payment_date": row[5].strftime("%Y-%m-%d") if row[5] else None,
-            "or_number": row[6],
-            "amount": money_float(row[7]),
-        })
+        unlinked_payments.append(
+            {
+                "issue": "Payment exists in ledger but has no billing allocation link",
+                "payment_id": int(row[0]),
+                "td_number": row[1],
+                "owner_name": row[2],
+                "barangay": row[3],
+                "tax_year": display_year,
+                "payment_date": row[5].strftime("%Y-%m-%d") if row[5] else None,
+                "or_number": row[6],
+                "amount": money_float(row[7]),
+            }
+        )
         if len(unlinked_payments) >= safe_limit:
             break
 
@@ -1847,10 +2183,18 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
         "tracker_variance": tracker_variance,
         "raw_tracker_total_unpaid": raw_tracker_total,
         "raw_tracker_variance": raw_tracker_variance,
-        "payment_link_mismatches": [billing_row(row, "Recorded paid does not match linked payment allocations") for row in payment_link_rows],
+        "payment_link_mismatches": [
+            billing_row(row, "Recorded paid does not match linked payment allocations")
+            for row in payment_link_rows
+        ],
         "unlinked_payments": unlinked_payments,
-        "overpaid_or_credit_rows": [billing_row(row, "Overpaid / credit balance row") for row in overpaid_rows],
-        "largest_open_balances": [billing_row(row, "Largest open receivable row") for row in largest_balance_rows],
+        "overpaid_or_credit_rows": [
+            billing_row(row, "Overpaid / credit balance row") for row in overpaid_rows
+        ],
+        "largest_open_balances": [
+            billing_row(row, "Largest open receivable row")
+            for row in largest_balance_rows
+        ],
         "prior_year_collections": prior_year_collections,
         "future_year_collections": future_year_collections,
         "current_year_paid_outside_selected_year": current_year_paid_outside,
@@ -1858,6 +2202,8 @@ def get_reconciliation_diagnostics(report_year, limit=50, db_session: Session = 
         "payment_sequence_gap_count": payment_sequence_gap_count,
         "payment_sequence_gaps": payment_sequence_gaps,
     }
+
+
 def get_compliant_accounts(
     barangay: str = None,
     search: str = None,
@@ -1892,7 +2238,7 @@ def get_compliant_accounts(
         .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
         .correlate(PropertyBilling)
         .scalar_subquery(),
-        0.02
+        0.02,
     )
 
     effective = _billing_effective_amount_exprs(db_session)
@@ -1951,8 +2297,8 @@ def get_compliant_accounts(
         # compliant because 0.00 >= 0.00 is true — even if nothing was ever paid.
         .having(
             and_(
-                total_due_expr > 0,          # must have something due
-                total_paid_expr > 0,         # must have actually paid something
+                total_due_expr > 0,  # must have something due
+                total_paid_expr > 0,  # must have actually paid something
                 total_paid_expr >= total_due_expr,  # must be fully paid
             )
         )
@@ -1966,15 +2312,17 @@ def get_compliant_accounts(
     if search and str(search).strip():
         term = str(search).strip()
         like_term = f"%{term}%"
-        query = query.filter(or_(
-            Property.td_number.like(like_term),
-            Property.prev_td_number.like(like_term),
-            Property.pin.like(like_term),
-            Property.owner_name.like(like_term),
-            Property.payor_name.like(like_term),
-            Property.location.like(like_term),
-            Property.barangay.like(like_term),
-        ))
+        query = query.filter(
+            or_(
+                Property.td_number.like(like_term),
+                Property.prev_td_number.like(like_term),
+                Property.pin.like(like_term),
+                Property.owner_name.like(like_term),
+                Property.payor_name.like(like_term),
+                Property.location.like(like_term),
+                Property.barangay.like(like_term),
+            )
+        )
 
     if cursor:
         query = query.filter(Property.id > int(cursor))
@@ -2009,7 +2357,9 @@ def get_compliant_accounts(
     }
 
 
-def _compliance_v2_per_property(as_of_year: int, db_session: Session, assigned_barangays_only: bool = False):
+def _compliance_v2_per_property(
+    as_of_year: int, db_session: Session, assigned_barangays_only: bool = False
+):
     """Build per-property totals while preserving each tax year's balance."""
     selected_year = int(as_of_year)
     rate_expr = func.coalesce(
@@ -2118,18 +2468,22 @@ def get_compliant_accounts_v2(
         .filter(per_property.c.open_years == 0)
     )
     if barangay and barangay.upper() != "ALL":
-        query = query.filter(func.coalesce(Property.barangay, "UNSPECIFIED") == barangay)
+        query = query.filter(
+            func.coalesce(Property.barangay, "UNSPECIFIED") == barangay
+        )
     if search and str(search).strip():
         like_term = f"%{str(search).strip()}%"
-        query = query.filter(or_(
-            Property.td_number.like(like_term),
-            Property.prev_td_number.like(like_term),
-            Property.pin.like(like_term),
-            Property.owner_name.like(like_term),
-            Property.payor_name.like(like_term),
-            Property.location.like(like_term),
-            Property.barangay.like(like_term),
-        ))
+        query = query.filter(
+            or_(
+                Property.td_number.like(like_term),
+                Property.prev_td_number.like(like_term),
+                Property.pin.like(like_term),
+                Property.owner_name.like(like_term),
+                Property.payor_name.like(like_term),
+                Property.location.like(like_term),
+                Property.barangay.like(like_term),
+            )
+        )
     if cursor:
         query = query.filter(Property.id > int(cursor))
 
@@ -2161,7 +2515,9 @@ def get_compliant_accounts_v2(
     }
 
 
-def get_compliant_summary_by_barangay_v2(as_of_year: int = None, db_session: Session = None):
+def get_compliant_summary_by_barangay_v2(
+    as_of_year: int = None, db_session: Session = None
+):
     selected_year = int(as_of_year or datetime.now(timezone.utc).year)
     per_property = _compliance_v2_per_property(
         selected_year,
@@ -2190,14 +2546,16 @@ def get_compliant_summary_by_barangay_v2(as_of_year: int = None, db_session: Ses
     for row in rows:
         total = int(row[1] or 0)
         compliant = int(row[2] or 0)
-        result.append({
-            "barangay": row[0],
-            "total_properties": total,
-            "compliant_count": compliant,
-            "delinquent_count": int(row[3] or 0),
-            "compliance_rate": round(compliant / total * 100, 1) if total else 0.0,
-            "total_collected": float(row[4] or 0),
-        })
+        result.append(
+            {
+                "barangay": row[0],
+                "total_properties": total,
+                "compliant_count": compliant,
+                "delinquent_count": int(row[3] or 0),
+                "compliance_rate": round(compliant / total * 100, 1) if total else 0.0,
+                "total_collected": float(row[4] or 0),
+            }
+        )
     return result
 
 
@@ -2225,7 +2583,7 @@ def get_compliant_summary_by_barangay(
         .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
         .correlate(PropertyBilling)
         .scalar_subquery(),
-        0.02
+        0.02,
     )
 
     effective = _billing_effective_amount_exprs(db_session)
@@ -2309,14 +2667,16 @@ def get_compliant_summary_by_barangay(
         total = int(r[1] or 0)
         compliant = int(r[2] or 0)
         rate = round((compliant / total * 100), 1) if total > 0 else 0.0
-        result.append({
-            "barangay": r[0],
-            "total_properties": total,
-            "compliant_count": compliant,
-            "delinquent_count": int(r[3] or 0),
-            "compliance_rate": rate,
-            "collected_from_compliant": float(r[4] or 0),
-        })
+        result.append(
+            {
+                "barangay": r[0],
+                "total_properties": total,
+                "compliant_count": compliant,
+                "delinquent_count": int(r[3] or 0),
+                "compliance_rate": rate,
+                "collected_from_compliant": float(r[4] or 0),
+            }
+        )
 
     return result
 
@@ -2345,20 +2705,24 @@ def get_delinquent_accounts(
     current = _billing_current_amount_exprs(db_session, as_of_date)
     balance_expr = func.sum(current["balance"])
 
-    query = db_session.query(
-        Property.id,
-        Property.td_number,
-        Property.owner_name,
-        Property.location,
-        func.sum(current["total_due"]).label("total_due"),
-        func.sum(current["paid"]).label("total_paid"),
-        balance_expr.label("balance"),
-    ).join(
-        PropertyBilling, PropertyBilling.property_id == Property.id
-    ).filter(
-        Property.deleted_at == None,
-        *_valid_property_billing_scope(db_session),
-    ).group_by(Property.id).having(balance_expr > 0)
+    query = (
+        db_session.query(
+            Property.id,
+            Property.td_number,
+            Property.owner_name,
+            Property.location,
+            func.sum(current["total_due"]).label("total_due"),
+            func.sum(current["paid"]).label("total_paid"),
+            balance_expr.label("balance"),
+        )
+        .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+        .filter(
+            Property.deleted_at == None,
+            *_valid_property_billing_scope(db_session),
+        )
+        .group_by(Property.id)
+        .having(balance_expr > 0)
+    )
 
     if cursor:
         query = query.filter(Property.id > int(cursor))
@@ -2407,17 +2771,18 @@ def get_collections_worklist(
 
     # Aggregate payment links once. Four correlated subqueries per billing row
     # made this endpoint progressively slower as the ledger grew.
-    allocation_totals = db_session.query(
-        PaymentBilling.billing_id.label("billing_id"),
-        func.count(PaymentBilling.id).label("linked_count"),
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("linked_paid"),
-        func.coalesce(func.sum(Payment.penalty), 0).label("linked_penalty"),
-        func.coalesce(func.sum(Payment.discount), 0).label("linked_discount"),
-    ).join(
-        Payment, Payment.id == PaymentBilling.payment_id
-    ).group_by(
-        PaymentBilling.billing_id
-    ).subquery()
+    allocation_totals = (
+        db_session.query(
+            PaymentBilling.billing_id.label("billing_id"),
+            func.count(PaymentBilling.id).label("linked_count"),
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("linked_paid"),
+            func.coalesce(func.sum(Payment.penalty), 0).label("linked_penalty"),
+            func.coalesce(func.sum(Payment.discount), 0).label("linked_discount"),
+        )
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .group_by(PaymentBilling.billing_id)
+        .subquery()
+    )
 
     replacement_cutoffs = _replacement_cutoffs_subquery(db_session)
 
@@ -2439,10 +2804,7 @@ def get_collections_worklist(
         TaxPolicy.sef_rate, 0.01
     )
     penalty_rate = func.coalesce(TaxPolicy.penalty_rate, 0.02)
-    raw_months = (
-        (int(today.year) - PropertyBilling.tax_year) * 12
-        + int(today.month)
-    )
+    raw_months = (int(today.year) - PropertyBilling.tax_year) * 12 + int(today.month)
     penalty_months = case(
         (raw_months < 0, 0),
         (raw_months > MAX_PENALTY_MONTHS, MAX_PENALTY_MONTHS),
@@ -2458,52 +2820,52 @@ def get_collections_worklist(
         remaining_principal * penalty_rate * penalty_months,
         2,
     )
-    total_due = (
-        tax_principal
-        + effective_penalty
-        + accrued_penalty
-        - effective_discount
-    )
+    total_due = tax_principal + effective_penalty + accrued_penalty - effective_discount
     billing_balance = greatest(total_due - effective_paid, 0)
     balance_expr = func.sum(billing_balance)
     total_paid_expr = func.sum(effective_paid)
     earliest_year_expr = func.min(PropertyBilling.tax_year)
     barangay_expr = func.coalesce(Property.barangay, "UNSPECIFIED")
 
-    account_query = db_session.query(
-        Property.id.label("id"),
-        Property.td_number.label("td_number"),
-        Property.owner_name.label("owner_name"),
-        Property.location.label("location"),
-        barangay_expr.label("barangay"),
-        func.sum(total_due).label("total_due"),
-        total_paid_expr.label("total_paid"),
-        balance_expr.label("balance"),
-        earliest_year_expr.label("earliest_year"),
-        func.count(PropertyBilling.id).label("years_billed"),
-    ).join(
-        PropertyBilling, PropertyBilling.property_id == Property.id
-    ).outerjoin(
-        allocation_totals,
-        allocation_totals.c.billing_id == PropertyBilling.id,
-    ).outerjoin(
-        TaxPolicy,
-        TaxPolicy.tax_year == PropertyBilling.tax_year,
-    ).outerjoin(
-        replacement_cutoffs,
-        replacement_cutoffs.c.previous_td_key
-        == func.upper(func.trim(Property.td_number)),
-    ).filter(
-        Property.deleted_at == None,
-        PropertyBilling.is_archived == False,
-        or_(
-            _property_effectivity_year_expr(Property) == None,
-            _property_effectivity_year_expr(Property) <= PropertyBilling.tax_year,
-        ),
-        or_(
-            replacement_cutoffs.c.replacement_year == None,
-            PropertyBilling.tax_year < replacement_cutoffs.c.replacement_year,
-        ),
+    account_query = (
+        db_session.query(
+            Property.id.label("id"),
+            Property.td_number.label("td_number"),
+            Property.owner_name.label("owner_name"),
+            Property.location.label("location"),
+            barangay_expr.label("barangay"),
+            func.sum(total_due).label("total_due"),
+            total_paid_expr.label("total_paid"),
+            balance_expr.label("balance"),
+            earliest_year_expr.label("earliest_year"),
+            func.count(PropertyBilling.id).label("years_billed"),
+        )
+        .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+        .outerjoin(
+            allocation_totals,
+            allocation_totals.c.billing_id == PropertyBilling.id,
+        )
+        .outerjoin(
+            TaxPolicy,
+            TaxPolicy.tax_year == PropertyBilling.tax_year,
+        )
+        .outerjoin(
+            replacement_cutoffs,
+            replacement_cutoffs.c.previous_td_key
+            == func.upper(func.trim(Property.td_number)),
+        )
+        .filter(
+            Property.deleted_at == None,
+            PropertyBilling.is_archived == False,
+            or_(
+                _property_effectivity_year_expr(Property) == None,
+                _property_effectivity_year_expr(Property) <= PropertyBilling.tax_year,
+            ),
+            or_(
+                replacement_cutoffs.c.replacement_year == None,
+                PropertyBilling.tax_year < replacement_cutoffs.c.replacement_year,
+            ),
+        )
     )
 
     if barangay and barangay.strip() and barangay.upper() != "ALL":
@@ -2512,15 +2874,17 @@ def get_collections_worklist(
     if search and str(search).strip():
         term = str(search).strip()
         like_term = f"%{term}%"
-        account_query = account_query.filter(or_(
-            Property.td_number.like(like_term),
-            Property.prev_td_number.like(like_term),
-            Property.pin.like(like_term),
-            Property.owner_name.like(like_term),
-            Property.payor_name.like(like_term),
-            Property.location.like(like_term),
-            Property.barangay.like(like_term),
-        ))
+        account_query = account_query.filter(
+            or_(
+                Property.td_number.like(like_term),
+                Property.prev_td_number.like(like_term),
+                Property.pin.like(like_term),
+                Property.owner_name.like(like_term),
+                Property.payor_name.like(like_term),
+                Property.location.like(like_term),
+                Property.barangay.like(like_term),
+            )
+        )
 
     account_query = account_query.group_by(
         Property.id,
@@ -2542,13 +2906,9 @@ def get_collections_worklist(
     if min_age_days:
         cutoff = today - timedelta(days=max(0, int(min_age_days)))
         latest_eligible_year = (
-            cutoff.year
-            if cutoff >= date(cutoff.year, 2, 1)
-            else cutoff.year - 1
+            cutoff.year if cutoff >= date(cutoff.year, 2, 1) else cutoff.year - 1
         )
-        account_query = account_query.having(
-            earliest_year_expr <= latest_eligible_year
-        )
+        account_query = account_query.having(earliest_year_expr <= latest_eligible_year)
 
     # Execute the jurisdiction aggregate once. The previous implementation
     # wrapped this query twice (page + summary), forcing MariaDB to repeat the
@@ -2556,7 +2916,7 @@ def get_collections_worklist(
     # inexpensive to sort and summarize in Python and avoid a second DB pass.
     account_rows = account_query.all()
     account_rows.sort(key=lambda row: (-float(row.balance or 0), int(row.id)))
-    rows = account_rows[safe_offset:safe_offset + safe_limit]
+    rows = account_rows[safe_offset : safe_offset + safe_limit]
 
     def _age_days(earliest_year) -> int:
         try:
@@ -2579,20 +2939,22 @@ def get_collections_worklist(
     page = []
     for row in rows:
         age = _age_days(row.earliest_year)
-        page.append({
-            "id": row.id,
-            "td_number": row.td_number,
-            "owner_name": row.owner_name,
-            "location": row.location,
-            "barangay": row.barangay,
-            "total_due": float(row.total_due or 0),
-            "total_paid": float(row.total_paid or 0),
-            "balance": float(row.balance or 0),
-            "earliest_year": int(row.earliest_year) if row.earliest_year else None,
-            "years_billed": int(row.years_billed or 0),
-            "age_days": age,
-            "aging_bucket": _bucket(age),
-        })
+        page.append(
+            {
+                "id": row.id,
+                "td_number": row.td_number,
+                "owner_name": row.owner_name,
+                "location": row.location,
+                "barangay": row.barangay,
+                "total_due": float(row.total_due or 0),
+                "total_paid": float(row.total_paid or 0),
+                "balance": float(row.balance or 0),
+                "earliest_year": int(row.earliest_year) if row.earliest_year else None,
+                "years_billed": int(row.years_billed or 0),
+                "age_days": age,
+                "aging_bucket": _bucket(age),
+            }
+        )
 
     total_matching = len(account_rows)
     total_balance = sum(float(row.balance or 0) for row in account_rows)
@@ -2624,14 +2986,17 @@ def calculate_penalty(principal, months_late, tax_year=None, db_session=None):
     policy is configured for that year or no db_session is provided.
     """
     from decimal import Decimal, ROUND_HALF_UP
+
     DEFAULT_PENALTY_RATE = Decimal("0.02")
 
     rate = DEFAULT_PENALTY_RATE
     if db_session and tax_year:
         try:
-            policy = db_session.query(TaxPolicy).filter(
-                TaxPolicy.tax_year == int(tax_year)
-            ).first()
+            policy = (
+                db_session.query(TaxPolicy)
+                .filter(TaxPolicy.tax_year == int(tax_year))
+                .first()
+            )
             if policy:
                 rate = Decimal(str(policy.penalty_rate))
         except Exception:
@@ -2650,27 +3015,31 @@ def get_total_due(property_id, db_session: Session = None):
     data = get_property_statement_data(property_id, db_session=db_session)
     if not data:
         return None
-        
-    prop = db_session.query(Property).filter(Property.id == property_id).first() if db_session else None
+
+    prop = (
+        db_session.query(Property).filter(Property.id == property_id).first()
+        if db_session
+        else None
+    )
     tax_year = datetime.now(timezone.utc).year
     if prop and prop.tax_year and str(prop.tax_year).strip().isdigit():
         tax_year = int(prop.tax_year)
-        
-    policy = db_session.query(TaxPolicy).filter(TaxPolicy.tax_year == tax_year).first() if db_session else None
+
+    policy = (
+        db_session.query(TaxPolicy).filter(TaxPolicy.tax_year == tax_year).first()
+        if db_session
+        else None
+    )
     if policy and not isinstance(policy, TaxPolicy):
         policy = None
     basic_rate = float(policy.basic_rate) if policy else 0.01
     sef_rate = float(policy.sef_rate) if policy else 0.01
-    
+
     return {
         "assessed_value": data["assessed_value"],
         "basic": data["assessed_value"] * basic_rate,
         "sef": data["assessed_value"] * sef_rate,
-        "total_due": data["total_balance"] + data["total_paid"], # Simplified for test
+        "total_due": data["total_balance"] + data["total_paid"],  # Simplified for test
         "grand_total": data["grand_total"],
-        "billing_rows": data["billing_rows"]
+        "billing_rows": data["billing_rows"],
     }
-
-
-
-

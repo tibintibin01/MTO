@@ -2,6 +2,12 @@ import pytest
 from pydantic import ValidationError
 
 from backend.routes.payments import PaymentUpdateRequest
+from backend.services.payment_service import looks_like_valid_or_number
+
+
+def test_payment_service_or_number_validator_is_available():
+    assert looks_like_valid_or_number("OR-VALID")
+    assert not looks_like_valid_or_number("<script>")
 
 
 @pytest.mark.parametrize("amount", [0, -1])

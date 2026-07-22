@@ -26,16 +26,23 @@ def _money(value: Any) -> float:
 def _legacy_compliant(rows: list[dict[str, Any]]) -> tuple[bool, float, float]:
     total_due = _money(sum(row["due"] for row in rows))
     total_paid = _money(sum(row["stored_paid"] for row in rows))
-    compliant = total_due > 0 and total_paid > 0 and total_paid + MONEY_TOLERANCE >= total_due
+    compliant = (
+        total_due > 0 and total_paid > 0 and total_paid + MONEY_TOLERANCE >= total_due
+    )
     return compliant, total_due, total_paid
 
 
-def _proposed_compliant(rows: list[dict[str, Any]]) -> tuple[bool, float, float, list[dict[str, Any]]]:
+def _proposed_compliant(
+    rows: list[dict[str, Any]]
+) -> tuple[bool, float, float, list[dict[str, Any]]]:
     active_rows = [
-        row for row in rows
+        row
+        for row in rows
         if row["tax_year"] >= BILLING_DATA_START_YEAR and not row["is_archived"]
     ]
-    by_year: dict[int, dict[str, float]] = defaultdict(lambda: {"due": 0.0, "paid": 0.0})
+    by_year: dict[int, dict[str, float]] = defaultdict(
+        lambda: {"due": 0.0, "paid": 0.0}
+    )
     for row in active_rows:
         year = int(row["tax_year"])
         by_year[year]["due"] += row["due"]
@@ -45,17 +52,21 @@ def _proposed_compliant(rows: list[dict[str, Any]]) -> tuple[bool, float, float,
     for year in sorted(by_year):
         due = _money(by_year[year]["due"])
         paid = _money(by_year[year]["paid"])
-        year_balances.append({
-            "tax_year": year,
-            "due": due,
-            "paid": paid,
-            "balance": _money(max(due - paid, 0)),
-            "credit": _money(max(paid - due, 0)),
-        })
+        year_balances.append(
+            {
+                "tax_year": year,
+                "due": due,
+                "paid": paid,
+                "balance": _money(max(due - paid, 0)),
+                "credit": _money(max(paid - due, 0)),
+            }
+        )
 
     total_due = _money(sum(year["due"] for year in year_balances))
     total_paid = _money(sum(year["paid"] for year in year_balances))
-    positive_obligations = [year for year in year_balances if year["due"] > MONEY_TOLERANCE]
+    positive_obligations = [
+        year for year in year_balances if year["due"] > MONEY_TOLERANCE
+    ]
     compliant = (
         total_due > MONEY_TOLERANCE
         and total_paid > MONEY_TOLERANCE
@@ -73,15 +84,27 @@ def _change_reasons(
 ) -> list[str]:
     reasons: list[str] = []
     if proposed_compliant and not legacy_compliant:
-        if any(row["tax_year"] < BILLING_DATA_START_YEAR and row["due"] > row["stored_paid"] + MONEY_TOLERANCE for row in rows):
+        if any(
+            row["tax_year"] < BILLING_DATA_START_YEAR
+            and row["due"] > row["stored_paid"] + MONEY_TOLERANCE
+            for row in rows
+        ):
             reasons.append("legacy_pre_2023_balance_excluded")
-        if any(row["is_archived"] and row["due"] > row["stored_paid"] + MONEY_TOLERANCE for row in rows):
+        if any(
+            row["is_archived"] and row["due"] > row["stored_paid"] + MONEY_TOLERANCE
+            for row in rows
+        ):
             reasons.append("archived_balance_excluded")
-        if any(abs(row["effective_paid"] - row["stored_paid"]) > MONEY_TOLERANCE for row in rows):
+        if any(
+            abs(row["effective_paid"] - row["stored_paid"]) > MONEY_TOLERANCE
+            for row in rows
+        ):
             reasons.append("linked_payments_reconcile_stale_billing_cache")
     elif legacy_compliant and not proposed_compliant:
         has_open_year = any(year["balance"] > MONEY_TOLERANCE for year in year_balances)
-        has_credit_year = any(year["credit"] > MONEY_TOLERANCE for year in year_balances)
+        has_credit_year = any(
+            year["credit"] > MONEY_TOLERANCE for year in year_balances
+        )
         if has_open_year and has_credit_year:
             reasons.append("cross_year_credit_masks_unpaid_year")
         elif has_open_year:
@@ -129,7 +152,9 @@ def build_compliance_impact_report(
         .filter(Property.deleted_at == None)
         .filter(PropertyBilling.tax_year <= selected_year)
         .filter(*_compliance_property_scope(selected_year, db_session))
-        .order_by(Property.id.asc(), PropertyBilling.tax_year.asc(), PropertyBilling.id.asc())
+        .order_by(
+            Property.id.asc(), PropertyBilling.tax_year.asc(), PropertyBilling.id.asc()
+        )
         .all()
     )
 
@@ -161,21 +186,28 @@ def build_compliance_impact_report(
         stored_paid = _money(row[8])
         link_count, linked_paid = linked_by_billing.get(billing_id, (0, 0.0))
         effective_paid = _money(linked_paid if link_count > 0 else stored_paid)
-        due = _money(float(row[5] or 0) * rate + float(row[6] or 0) - float(row[7] or 0))
-        account = properties.setdefault(property_id, {
-            "property_id": property_id,
-            "td_number": row[1],
-            "barangay": row[2],
-            "rows": [],
-        })
-        account["rows"].append({
-            "billing_id": billing_id,
-            "tax_year": tax_year,
-            "due": due,
-            "stored_paid": stored_paid,
-            "effective_paid": effective_paid,
-            "is_archived": bool(row[9]),
-        })
+        due = _money(
+            float(row[5] or 0) * rate + float(row[6] or 0) - float(row[7] or 0)
+        )
+        account = properties.setdefault(
+            property_id,
+            {
+                "property_id": property_id,
+                "td_number": row[1],
+                "barangay": row[2],
+                "rows": [],
+            },
+        )
+        account["rows"].append(
+            {
+                "billing_id": billing_id,
+                "tax_year": tax_year,
+                "due": due,
+                "stored_paid": stored_paid,
+                "effective_paid": effective_paid,
+                "is_archived": bool(row[9]),
+            }
+        )
 
     counts = {
         "unchanged_compliant": 0,
@@ -187,7 +219,9 @@ def build_compliance_impact_report(
     for account in properties.values():
         rows = account.pop("rows")
         legacy_ok, legacy_due, legacy_paid = _legacy_compliant(rows)
-        proposed_ok, proposed_due, proposed_paid, year_balances = _proposed_compliant(rows)
+        proposed_ok, proposed_due, proposed_paid, year_balances = _proposed_compliant(
+            rows
+        )
         if legacy_ok and proposed_ok:
             category = "unchanged_compliant"
         elif not legacy_ok and proposed_ok:
@@ -199,22 +233,26 @@ def build_compliance_impact_report(
         counts[category] += 1
 
         if legacy_ok != proposed_ok and len(affected) < safe_limit:
-            affected.append({
-                **account,
-                "change": category,
-                "reasons": _change_reasons(rows, legacy_ok, proposed_ok, year_balances),
-                "legacy": {
-                    "compliant": legacy_ok,
-                    "total_due": legacy_due,
-                    "total_paid": legacy_paid,
-                },
-                "proposed": {
-                    "compliant": proposed_ok,
-                    "total_due": proposed_due,
-                    "total_paid": proposed_paid,
-                    "year_balances": year_balances,
-                },
-            })
+            affected.append(
+                {
+                    **account,
+                    "change": category,
+                    "reasons": _change_reasons(
+                        rows, legacy_ok, proposed_ok, year_balances
+                    ),
+                    "legacy": {
+                        "compliant": legacy_ok,
+                        "total_due": legacy_due,
+                        "total_paid": legacy_paid,
+                    },
+                    "proposed": {
+                        "compliant": proposed_ok,
+                        "total_due": proposed_due,
+                        "total_paid": proposed_paid,
+                        "year_balances": year_balances,
+                    },
+                }
+            )
 
     changed_total = counts["newly_compliant"] + counts["removed_from_compliant"]
     return {

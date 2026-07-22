@@ -10,7 +10,9 @@ from backend.services.history_service import log_data_change
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine, autocommit=False, autoflush=False)
     session = Session()
@@ -87,12 +89,15 @@ def test_user_change_and_audit_commit_together(db):
     db.add(user)
     db.commit()
 
-    assert update_user_role(
-        user.id,
-        "assessor",
-        {"id": 99, "username": "system-admin"},
-        db,
-    ) is True
+    assert (
+        update_user_role(
+            user.id,
+            "assessor",
+            {"id": 99, "username": "system-admin"},
+            db,
+        )
+        is True
+    )
 
     db.expire_all()
     updated_user = db.query(User).filter(User.id == user.id).one()

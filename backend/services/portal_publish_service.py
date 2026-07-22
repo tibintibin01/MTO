@@ -22,7 +22,14 @@ import requests
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from backend.models import Payment, PaymentBilling, Property, PropertyAssessmentHistory, PropertyBilling, TaxPolicy
+from backend.models import (
+    Payment,
+    PaymentBilling,
+    Property,
+    PropertyAssessmentHistory,
+    PropertyBilling,
+    TaxPolicy,
+)
 from backend.services.assessment_value_service import (
     assessed_value_for_year,
     assessment_versions,
@@ -68,7 +75,9 @@ def _lookup_hash(value: str, secret: str) -> str | None:
     if not value or not secret:
         return None
     normalized = str(value).strip().upper()
-    return hmac.new(secret.encode("utf-8"), normalized.encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.new(
+        secret.encode("utf-8"), normalized.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
 
 
 def _owner_lookup_values(owner_name: str) -> set[str]:
@@ -101,7 +110,9 @@ def _owner_lookup_hash(value: str, secret: str) -> str | None:
     return digest[:24] if digest else None
 
 
-def _add_owner_index(owner_index: dict[str, list[int]], record_index: int, owner_name: str, secret: str) -> None:
+def _add_owner_index(
+    owner_index: dict[str, list[int]], record_index: int, owner_name: str, secret: str
+) -> None:
     if not secret:
         return
     for value in _owner_lookup_values(owner_name):
@@ -200,7 +211,9 @@ def generate_portal_snapshot(db_session: Session) -> dict:
         link_counts = {}
         if payment_ids:
             link_counts = dict(
-                db_session.query(PaymentBilling.payment_id, func.count(PaymentBilling.id))
+                db_session.query(
+                    PaymentBilling.payment_id, func.count(PaymentBilling.id)
+                )
                 .filter(PaymentBilling.payment_id.in_(payment_ids))
                 .group_by(PaymentBilling.payment_id)
                 .all()
@@ -225,12 +238,17 @@ def generate_portal_snapshot(db_session: Session) -> dict:
     for payment in payment_rows:
         payments_by_property[int(payment.property_id)].append(payment)
 
-    histories_by_property: dict[int, list[PropertyAssessmentHistory]] = defaultdict(list)
+    histories_by_property: dict[int, list[PropertyAssessmentHistory]] = defaultdict(
+        list
+    )
     history_rows = (
         db_session.query(PropertyAssessmentHistory)
         .join(Property, Property.id == PropertyAssessmentHistory.property_id)
         .filter(Property.deleted_at == None)
-        .order_by(PropertyAssessmentHistory.property_id.asc(), PropertyAssessmentHistory.id.asc())
+        .order_by(
+            PropertyAssessmentHistory.property_id.asc(),
+            PropertyAssessmentHistory.id.asc(),
+        )
         .all()
     )
     for history in history_rows:
@@ -290,19 +308,25 @@ def generate_portal_snapshot(db_session: Session) -> dict:
             total_paid += paid
             total_balance += balance
             total_credit += credit
-            years.append({
-                "tax_year": tax_year,
-                "assessed_value": assessed,
-                "basic": basic,
-                "sef": sef,
-                "penalty": penalty,
-                "discount": discount,
-                "total_due": due,
-                "amount_paid": paid,
-                "balance": balance,
-                "credit": credit,
-                "status": "Paid" if paid >= due and due > 0 else "Partial" if paid > 0 else "Unpaid",
-            })
+            years.append(
+                {
+                    "tax_year": tax_year,
+                    "assessed_value": assessed,
+                    "basic": basic,
+                    "sef": sef,
+                    "penalty": penalty,
+                    "discount": discount,
+                    "total_due": due,
+                    "amount_paid": paid,
+                    "balance": balance,
+                    "credit": credit,
+                    "status": (
+                        "Paid"
+                        if paid >= due and due > 0
+                        else "Partial" if paid > 0 else "Unpaid"
+                    ),
+                }
+            )
 
         total_due = round(total_due, 2)
         total_paid = round(total_paid, 2)
@@ -333,42 +357,50 @@ def generate_portal_snapshot(db_session: Session) -> dict:
         if payments:
             latest = payments[0]
             last_payment = {
-                "date_paid": latest.date_paid.strftime("%Y-%m-%d") if latest.date_paid else None,
+                "date_paid": (
+                    latest.date_paid.strftime("%Y-%m-%d") if latest.date_paid else None
+                ),
                 "period": latest.tax_year,
                 "amount": _peso(latest.amount),
             }
 
         record_index = len(records)
-        _add_owner_index(owner_lookup_index, record_index, prop.owner_name, lookup_secret)
-        records.append({
-            "td_number": prop.td_number,
-            "td_lookup_hash": _lookup_hash(prop.td_number, lookup_secret),
-            "pin_masked": _mask_pin(prop.pin),
-            "pin_lookup_hash": _lookup_hash(prop.pin, lookup_secret),
-            "owner_name": _mask_owner_name(prop.owner_name),
-            "barangay": prop.barangay,
-            "location": prop.location,
-            "kind": prop.kind_of_property,
-            "assessed_value": _peso(effective_assessed),
-            "assessment_as_of_year": as_of_year,
-            "future_assessment": future_assessment,
-            "status": _status_from_balance(years, balance),
-            "balance": balance,
-            "total_credit": total_credit,
-            "total_due": total_due,
-            "total_paid": total_paid,
-            "billing_breakdown": years,
-            "payment_history": [
-                {
-                    "or_number": _mask_or(p.or_number),
-                    "date_paid": p.date_paid.strftime("%Y-%m-%d") if p.date_paid else None,
-                    "amount": _peso(p.amount),
-                    "period": p.tax_year,
-                }
-                for p in payments
-            ],
-            "last_payment": last_payment,
-        })
+        _add_owner_index(
+            owner_lookup_index, record_index, prop.owner_name, lookup_secret
+        )
+        records.append(
+            {
+                "td_number": prop.td_number,
+                "td_lookup_hash": _lookup_hash(prop.td_number, lookup_secret),
+                "pin_masked": _mask_pin(prop.pin),
+                "pin_lookup_hash": _lookup_hash(prop.pin, lookup_secret),
+                "owner_name": _mask_owner_name(prop.owner_name),
+                "barangay": prop.barangay,
+                "location": prop.location,
+                "kind": prop.kind_of_property,
+                "assessed_value": _peso(effective_assessed),
+                "assessment_as_of_year": as_of_year,
+                "future_assessment": future_assessment,
+                "status": _status_from_balance(years, balance),
+                "balance": balance,
+                "total_credit": total_credit,
+                "total_due": total_due,
+                "total_paid": total_paid,
+                "billing_breakdown": years,
+                "payment_history": [
+                    {
+                        "or_number": _mask_or(p.or_number),
+                        "date_paid": (
+                            p.date_paid.strftime("%Y-%m-%d") if p.date_paid else None
+                        ),
+                        "amount": _peso(p.amount),
+                        "period": p.tax_year,
+                    }
+                    for p in payments
+                ],
+                "last_payment": last_payment,
+            }
+        )
 
     snapshot = {
         "schema_version": SNAPSHOT_SCHEMA_VERSION,
@@ -377,7 +409,9 @@ def generate_portal_snapshot(db_session: Session) -> dict:
         "data_start_year": DATA_START_YEAR,
         "record_count": len(records),
         "properties": records,
-        "owner_lookup_index": {key: value for key, value in sorted(owner_lookup_index.items())},
+        "owner_lookup_index": {
+            key: value for key, value in sorted(owner_lookup_index.items())
+        },
     }
     checksum = _snapshot_checksum(snapshot)
     snapshot["checksum"] = checksum
@@ -449,7 +483,7 @@ def publish_portal_snapshot(db_session: Session, dry_run: bool = False) -> dict:
             "Snapshot saved locally. Missing server configuration: "
             + ", ".join(missing_configuration)
             + ". Run python scripts/configure_portal_publish.py on the API server, "
-              "then restart the API."
+            "then restart the API."
         )
         return result
 

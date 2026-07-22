@@ -4,7 +4,14 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
-from backend.deps import get_current_user, write_access, read_only, admin_only, get_db, Session
+from backend.deps import (
+    get_current_user,
+    write_access,
+    read_only,
+    admin_only,
+    get_db,
+    Session,
+)
 import backend.services.billing_service as bill_svc
 import backend.services.property_service as prop_svc
 import backend.services.system_service as sys_svc
@@ -54,14 +61,21 @@ def _fetch_all_assessment_roll_items(
 
 
 @router.get("/billing/summary")
-def get_billing_summary(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_billing_summary(
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
     return sys_svc.get_dashboard_summary(db_session=db_session)
+
 
 @router.get("/properties/{property_id}/statement")
 def get_property_statement(
-    property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    property_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     return bill_svc.get_property_statement_data(property_id, db_session=db_session)
+
 
 @router.get("/billing/assessment-roll")
 def get_assessment_roll(
@@ -70,7 +84,10 @@ def get_assessment_roll(
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
-    return prop_svc.get_assessment_roll(limit=limit, cursor=cursor, db_session=db_session)
+    return prop_svc.get_assessment_roll(
+        limit=limit, cursor=cursor, db_session=db_session
+    )
+
 
 @router.get("/billing/report-details")
 def get_report_details(
@@ -79,20 +96,27 @@ def get_report_details(
     limit: int = 200,
     cursor: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
-    db_session: Session = Depends(get_db)
+    db_session: Session = Depends(get_db),
 ):
-    return bill_svc.get_report_details(month, year, limit=limit, cursor=cursor, db_session=db_session)
+    return bill_svc.get_report_details(
+        month, year, limit=limit, cursor=cursor, db_session=db_session
+    )
+
 
 @router.get("/billing/receivables-summary")
 def get_receivables_summary(
-    year: str, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    year: str,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     return bill_svc.get_rpt_receivables_summary(year, db_session=db_session)
 
 
 @router.get("/billing/reconciliation-metrics")
 def get_reconciliation_metrics(
-    year: str, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    year: str,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     return bill_svc.get_reconciliation_metrics(year, db_session=db_session)
 
@@ -104,7 +128,10 @@ def get_reconciliation_diagnostics(
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
-    return bill_svc.get_reconciliation_diagnostics(year, limit=limit, db_session=db_session)
+    return bill_svc.get_reconciliation_diagnostics(
+        year, limit=limit, db_session=db_session
+    )
+
 
 @router.get("/billing/delinquents")
 def get_delinquent_list(
@@ -113,7 +140,9 @@ def get_delinquent_list(
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
-    return bill_svc.get_delinquent_accounts(limit=limit, cursor=cursor, db_session=db_session)
+    return bill_svc.get_delinquent_accounts(
+        limit=limit, cursor=cursor, db_session=db_session
+    )
 
 
 @router.get("/billing/collections", dependencies=[Depends(read_only)])
@@ -212,6 +241,7 @@ def get_compliant_impact_preview(
         db_session=db_session,
     )
 
+
 @router.get("/reports/receivables-by-barangay")
 def get_receivables_by_barangay(
     year: Optional[int] = None,
@@ -237,9 +267,7 @@ async def export_receivables_by_barangay_pdf(
     Generates a print-ready PDF of the Receivables by Barangay report
     for the requested year (or all years when year is omitted).
     """
-    rows = prop_svc.get_receivables_by_barangay(
-        report_year=year, db_session=db_session
-    )
+    rows = prop_svc.get_receivables_by_barangay(report_year=year, db_session=db_session)
     if barangay and barangay != "ALL":
         rows = [r for r in rows if r[0] == barangay]
 
@@ -256,9 +284,13 @@ async def export_receivables_by_barangay_pdf(
 
         if storage_service.enabled:
             s3_key = f"reports/{file_name}"
-            uploaded_key = await asyncio.to_thread(storage_service.upload_file, pdf_path, s3_key)
+            uploaded_key = await asyncio.to_thread(
+                storage_service.upload_file, pdf_path, s3_key
+            )
             if uploaded_key:
-                presigned_url = await asyncio.to_thread(storage_service.generate_presigned_url, s3_key)
+                presigned_url = await asyncio.to_thread(
+                    storage_service.generate_presigned_url, s3_key
+                )
                 if presigned_url:
                     try:
                         os.remove(pdf_path)
@@ -269,7 +301,10 @@ async def export_receivables_by_barangay_pdf(
         return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
     except Exception as e:
         import traceback
-        mto_logger.error(f"Failed to generate Receivables by Barangay PDF: {e}\n{traceback.format_exc()}")
+
+        mto_logger.error(
+            f"Failed to generate Receivables by Barangay PDF: {e}\n{traceback.format_exc()}"
+        )
         raise HTTPException(status_code=500, detail=f"PDF Generation Failed: {str(e)}")
 
 
@@ -296,15 +331,23 @@ async def export_assessment_roll_pdf(
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pdf_path = await asyncio.to_thread(
-            report_gen.generate_assessment_roll_pdf, items, base_dir, barangay, as_of_year
+            report_gen.generate_assessment_roll_pdf,
+            items,
+            base_dir,
+            barangay,
+            as_of_year,
         )
         file_name = os.path.basename(pdf_path)
 
         if storage_service.enabled:
             s3_key = f"reports/{file_name}"
-            uploaded_key = await asyncio.to_thread(storage_service.upload_file, pdf_path, s3_key)
+            uploaded_key = await asyncio.to_thread(
+                storage_service.upload_file, pdf_path, s3_key
+            )
             if uploaded_key:
-                presigned_url = await asyncio.to_thread(storage_service.generate_presigned_url, s3_key)
+                presigned_url = await asyncio.to_thread(
+                    storage_service.generate_presigned_url, s3_key
+                )
                 if presigned_url:
                     try:
                         os.remove(pdf_path)
@@ -315,24 +358,45 @@ async def export_assessment_roll_pdf(
         return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
     except Exception as e:
         import traceback
-        mto_logger.error(f"Failed to generate Assessment Roll PDF: {e}\n{traceback.format_exc()}")
+
+        mto_logger.error(
+            f"Failed to generate Assessment Roll PDF: {e}\n{traceback.format_exc()}"
+        )
         raise HTTPException(status_code=500, detail=f"PDF Generation Failed: {str(e)}")
 
 
 @router.get("/analytics/trends", tags=["Analytics"], dependencies=[Depends(read_only)])
-def get_analytics_trends(months: int = 12, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_analytics_trends(
+    months: int = 12,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
     return pay_svc.get_monthly_collection_trend(months, db_session=db_session)
 
-@router.get("/analytics/barangay-breakdown", tags=["Analytics"], dependencies=[Depends(read_only)])
-def get_barangay_breakdown(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+
+@router.get(
+    "/analytics/barangay-breakdown",
+    tags=["Analytics"],
+    dependencies=[Depends(read_only)],
+)
+def get_barangay_breakdown(
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
     return pay_svc.get_revenue_by_barangay(db_session=db_session)
 
+
 @router.get("/analytics/kpis", tags=["Analytics"], dependencies=[Depends(read_only)])
-def get_analytics_kpis(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_analytics_kpis(
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
     return pay_svc.get_collection_kpis(db_session=db_session)
 
 
-@router.get("/analytics/operational", tags=["Analytics"], dependencies=[Depends(read_only)])
+@router.get(
+    "/analytics/operational", tags=["Analytics"], dependencies=[Depends(read_only)]
+)
 def get_operational_analytics(
     year: Optional[int] = None,
     barangay: Optional[str] = None,
@@ -345,29 +409,35 @@ def get_operational_analytics(
         db_session=db_session,
     )
 
+
 @router.get("/api/analytics/dashboard")
-def get_analytics_dashboard(user: str = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_analytics_dashboard(
+    user: str = Depends(get_current_user), db_session: Session = Depends(get_db)
+):
     """Returns a comprehensive set of treasury analytics data including year-over-year comparison."""
     return {
-        "summary":   analytics.get_collection_summary(db_session=db_session),
+        "summary": analytics.get_collection_summary(db_session=db_session),
         "last_year": analytics.get_last_year_summary(db_session=db_session),
-        "trend":     analytics.get_monthly_revenue_trend(db_session=db_session),
+        "trend": analytics.get_monthly_revenue_trend(db_session=db_session),
         "barangays": analytics.get_barangay_distribution(db_session=db_session),
-        "years":     analytics.get_tax_year_distribution(db_session=db_session),
+        "years": analytics.get_tax_year_distribution(db_session=db_session),
     }
-
-
-
 
 
 @router.get("/properties/{property_id}/computation-pdf", tags=["Financial"])
 async def generate_computation_pdf(
-    property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    property_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     try:
-        details = bill_svc.get_property_statement_data(property_id, db_session=db_session)
+        details = bill_svc.get_property_statement_data(
+            property_id, db_session=db_session
+        )
         if not details:
-            raise HTTPException(status_code=404, detail="Property billing data not found")
+            raise HTTPException(
+                status_code=404, detail="Property billing data not found"
+            )
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pdf_path = await asyncio.to_thread(
@@ -377,14 +447,20 @@ async def generate_computation_pdf(
 
         if storage_service.enabled:
             s3_key = f"computations/{file_name}"
-            uploaded_key = await asyncio.to_thread(storage_service.upload_file, pdf_path, s3_key)
+            uploaded_key = await asyncio.to_thread(
+                storage_service.upload_file, pdf_path, s3_key
+            )
             if uploaded_key:
-                presigned_url = await asyncio.to_thread(storage_service.generate_presigned_url, s3_key)
+                presigned_url = await asyncio.to_thread(
+                    storage_service.generate_presigned_url, s3_key
+                )
                 if presigned_url:
                     try:
                         os.remove(pdf_path)
                     except Exception as cleanup_err:
-                        mto_logger.warning(f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}")
+                        mto_logger.warning(
+                            f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}"
+                        )
                     return RedirectResponse(presigned_url, status_code=307)
 
         return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
@@ -392,17 +468,27 @@ async def generate_computation_pdf(
         raise
     except Exception as e:
         import traceback
-        mto_logger.error(f"Failed to generate computation PDF for property {property_id} | Error: {str(e)}\n{traceback.format_exc()}")
+
+        mto_logger.error(
+            f"Failed to generate computation PDF for property {property_id} | Error: {str(e)}\n{traceback.format_exc()}"
+        )
         raise HTTPException(status_code=500, detail=f"PDF Generation Failed: {str(e)}")
+
 
 @router.get("/properties/{property_id}/statement-pdf", tags=["Financial"])
 async def generate_statement_pdf(
-    property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    property_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     try:
-        details = bill_svc.get_property_statement_data(property_id, db_session=db_session)
+        details = bill_svc.get_property_statement_data(
+            property_id, db_session=db_session
+        )
         if not details:
-            raise HTTPException(status_code=404, detail="Property billing data not found")
+            raise HTTPException(
+                status_code=404, detail="Property billing data not found"
+            )
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pdf_path = await asyncio.to_thread(
@@ -412,14 +498,20 @@ async def generate_statement_pdf(
 
         if storage_service.enabled:
             s3_key = f"statements/{file_name}"
-            uploaded_key = await asyncio.to_thread(storage_service.upload_file, pdf_path, s3_key)
+            uploaded_key = await asyncio.to_thread(
+                storage_service.upload_file, pdf_path, s3_key
+            )
             if uploaded_key:
-                presigned_url = await asyncio.to_thread(storage_service.generate_presigned_url, s3_key)
+                presigned_url = await asyncio.to_thread(
+                    storage_service.generate_presigned_url, s3_key
+                )
                 if presigned_url:
                     try:
                         os.remove(pdf_path)
                     except Exception as cleanup_err:
-                        mto_logger.warning(f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}")
+                        mto_logger.warning(
+                            f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}"
+                        )
                     return RedirectResponse(presigned_url, status_code=307)
 
         return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
@@ -427,8 +519,12 @@ async def generate_statement_pdf(
         raise
     except Exception as e:
         import traceback
-        mto_logger.error(f"Failed to generate SOA PDF for property {property_id} | Error: {str(e)}\n{traceback.format_exc()}")
+
+        mto_logger.error(
+            f"Failed to generate SOA PDF for property {property_id} | Error: {str(e)}\n{traceback.format_exc()}"
+        )
         raise HTTPException(status_code=500, detail=f"PDF Generation Failed: {str(e)}")
+
 
 class BulkSOARequest(BaseModel):
     property_ids: List[int] = Field(..., min_length=1, max_length=200)
@@ -470,7 +566,9 @@ async def generate_bulk_soa_pdf(
 
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        pdf_path = await asyncio.to_thread(soa_gen.bulk_generate_soa, statements, base_dir)
+        pdf_path = await asyncio.to_thread(
+            soa_gen.bulk_generate_soa, statements, base_dir
+        )
         file_name = os.path.basename(pdf_path)
 
         mto_logger.info(
@@ -480,9 +578,13 @@ async def generate_bulk_soa_pdf(
 
         if storage_service.enabled:
             s3_key = f"statements/{file_name}"
-            uploaded_key = await asyncio.to_thread(storage_service.upload_file, pdf_path, s3_key)
+            uploaded_key = await asyncio.to_thread(
+                storage_service.upload_file, pdf_path, s3_key
+            )
             if uploaded_key:
-                presigned_url = await asyncio.to_thread(storage_service.generate_presigned_url, s3_key)
+                presigned_url = await asyncio.to_thread(
+                    storage_service.generate_presigned_url, s3_key
+                )
                 if presigned_url:
                     try:
                         os.remove(pdf_path)
@@ -496,6 +598,7 @@ async def generate_bulk_soa_pdf(
 
     except Exception as e:
         import traceback
+
         mto_logger.error(
             f"Bulk SOA generation failed | Error: {str(e)}\n{traceback.format_exc()}"
         )
@@ -506,12 +609,18 @@ async def generate_bulk_soa_pdf(
 
 @router.get("/properties/{property_id}/notice-pdf", tags=["Financial"])
 async def generate_notice_pdf(
-    property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    property_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     try:
-        details = bill_svc.get_property_statement_data(property_id, db_session=db_session)
+        details = bill_svc.get_property_statement_data(
+            property_id, db_session=db_session
+        )
         if not details:
-            raise HTTPException(status_code=404, detail="Property billing data not found")
+            raise HTTPException(
+                status_code=404, detail="Property billing data not found"
+            )
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pdf_path = await asyncio.to_thread(
@@ -521,14 +630,20 @@ async def generate_notice_pdf(
 
         if storage_service.enabled:
             s3_key = f"notices/{file_name}"
-            uploaded_key = await asyncio.to_thread(storage_service.upload_file, pdf_path, s3_key)
+            uploaded_key = await asyncio.to_thread(
+                storage_service.upload_file, pdf_path, s3_key
+            )
             if uploaded_key:
-                presigned_url = await asyncio.to_thread(storage_service.generate_presigned_url, s3_key)
+                presigned_url = await asyncio.to_thread(
+                    storage_service.generate_presigned_url, s3_key
+                )
                 if presigned_url:
                     try:
                         os.remove(pdf_path)
                     except Exception as cleanup_err:
-                        mto_logger.warning(f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}")
+                        mto_logger.warning(
+                            f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}"
+                        )
                     return RedirectResponse(presigned_url, status_code=307)
 
         return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
@@ -536,7 +651,10 @@ async def generate_notice_pdf(
         raise
     except Exception as e:
         import traceback
-        mto_logger.error(f"Failed to generate Notice PDF for property {property_id} | Error: {str(e)}\n{traceback.format_exc()}")
+
+        mto_logger.error(
+            f"Failed to generate Notice PDF for property {property_id} | Error: {str(e)}\n{traceback.format_exc()}"
+        )
         raise HTTPException(status_code=500, detail=f"PDF Generation Failed: {str(e)}")
 
 
@@ -547,9 +665,13 @@ async def generate_notice_preview(
     db_session: Session = Depends(get_db),
 ):
     try:
-        details = bill_svc.get_property_statement_data(property_id, db_session=db_session)
+        details = bill_svc.get_property_statement_data(
+            property_id, db_session=db_session
+        )
         if not details:
-            raise HTTPException(status_code=404, detail="Property billing data not found")
+            raise HTTPException(
+                status_code=404, detail="Property billing data not found"
+            )
 
         details["prepared_by"] = (
             current_user.get("full_name")
@@ -570,6 +692,7 @@ async def generate_notice_preview(
         raise
     except Exception as e:
         import traceback
+
         mto_logger.error(
             f"Failed to generate notice preview for property {property_id} | "
             f"Error: {str(e)}\n{traceback.format_exc()}"
@@ -586,9 +709,16 @@ async def serve_analytics_dashboard():
     If the token is missing or invalid, the page shows an UNAUTHORIZED message.
     """
     from fastapi.responses import FileResponse
-    html_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "analytics.html")
+
+    html_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "static",
+        "analytics.html",
+    )
     if not os.path.exists(html_path):
-        raise HTTPException(status_code=404, detail="Analytics dashboard file not found.")
+        raise HTTPException(
+            status_code=404, detail="Analytics dashboard file not found."
+        )
     return FileResponse(html_path, media_type="text/html")
 
 
@@ -596,10 +726,13 @@ async def serve_analytics_dashboard():
 # Excel Export — for COA auditors and management reporting
 # ---------------------------------------------------------------------------
 
+
 class ExportReportRequest(BaseModel):
     month: str = "All"
     year: str = "All"
-    report_type: str = "collections"   # collections | delinquents | assessment_roll | receivables
+    report_type: str = (
+        "collections"  # collections | delinquents | assessment_roll | receivables
+    )
     barangay: Optional[str] = None
     year_start: Optional[int] = None
     year_end: Optional[int] = None
@@ -638,30 +771,34 @@ async def export_billing_excel(
         ws = wb.active
 
         # ── Shared styles ────────────────────────────────────────────────────
-        header_font  = Font(bold=True, color="FFFFFF", size=11)
-        header_fill  = PatternFill("solid", fgColor="1F4E78")
-        title_font   = Font(bold=True, size=13)
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        header_fill = PatternFill("solid", fgColor="1F4E78")
+        title_font = Font(bold=True, size=13)
         center_align = Alignment(horizontal="center", vertical="center")
-        right_align  = Alignment(horizontal="right")
-        thin_border  = Border(
-            left=Side(style="thin"), right=Side(style="thin"),
-            top=Side(style="thin"), bottom=Side(style="thin"),
+        right_align = Alignment(horizontal="right")
+        thin_border = Border(
+            left=Side(style="thin"),
+            right=Side(style="thin"),
+            top=Side(style="thin"),
+            bottom=Side(style="thin"),
         )
-        currency_fmt = '#,##0.00'
-        date_str     = datetime.now(timezone.utc).strftime("%B %d, %Y %I:%M %p UTC")
+        currency_fmt = "#,##0.00"
+        date_str = datetime.now(timezone.utc).strftime("%B %d, %Y %I:%M %p UTC")
 
         def style_header_row(ws, row_num: int, col_count: int):
             for col in range(1, col_count + 1):
                 cell = ws.cell(row=row_num, column=col)
-                cell.font   = header_font
-                cell.fill   = header_fill
+                cell.font = header_font
+                cell.fill = header_fill
                 cell.alignment = center_align
                 cell.border = thin_border
 
         def auto_width(ws):
             for col in ws.columns:
                 max_len = max((len(str(c.value or "")) for c in col), default=10)
-                ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 4, 50)
+                ws.column_dimensions[get_column_letter(col[0].column)].width = min(
+                    max_len + 4, 50
+                )
 
         # ── Report: Collections ───────────────────────────────────────────────
         if data.report_type == "collections":
@@ -675,8 +812,17 @@ async def export_billing_excel(
             ws["A1"].alignment = center_align
             ws["A2"].alignment = center_align
 
-            headers = ["TD Number", "Owner Name", "Barangay", "Tax Year",
-                       "OR Number", "Date Paid", "Basic", "SEF", "Total Paid"]
+            headers = [
+                "TD Number",
+                "Owner Name",
+                "Barangay",
+                "Tax Year",
+                "OR Number",
+                "Date Paid",
+                "Basic",
+                "SEF",
+                "Total Paid",
+            ]
             for col_idx, h in enumerate(headers, 1):
                 ws.cell(row=4, column=col_idx, value=h)
             style_header_row(ws, 4, len(headers))
@@ -691,9 +837,12 @@ async def export_billing_excel(
             for row_idx, row in enumerate(rows or [], start=5):
                 if isinstance(row, dict):
                     vals = [
-                        row.get("td_number", ""), row.get("owner_name", ""),
-                        row.get("barangay", ""), row.get("tax_year", ""),
-                        row.get("or_number", ""), row.get("date_paid", ""),
+                        row.get("td_number", ""),
+                        row.get("owner_name", ""),
+                        row.get("barangay", ""),
+                        row.get("tax_year", ""),
+                        row.get("or_number", ""),
+                        row.get("date_paid", ""),
                         float(row.get("basic_amount", 0) or 0),
                         float(row.get("sef_amount", 0) or 0),
                         float(row.get("amount_paid", 0) or 0),
@@ -710,8 +859,8 @@ async def export_billing_excel(
 
                 if len(vals) >= 9:
                     total_basic += float(vals[6] or 0)
-                    total_sef   += float(vals[7] or 0)
-                    total_paid  += float(vals[8] or 0)
+                    total_sef += float(vals[7] or 0)
+                    total_paid += float(vals[8] or 0)
 
             # Totals row
             total_row = len(rows or []) + 5
@@ -733,12 +882,22 @@ async def export_billing_excel(
             ws.merge_cells("A2:G2")
             ws["A1"].alignment = center_align
 
-            headers = ["TD Number", "Owner Name", "Location", "Total Due", "Total Paid", "Balance", "Status"]
+            headers = [
+                "TD Number",
+                "Owner Name",
+                "Location",
+                "Total Due",
+                "Total Paid",
+                "Balance",
+                "Status",
+            ]
             for col_idx, h in enumerate(headers, 1):
                 ws.cell(row=4, column=col_idx, value=h)
             style_header_row(ws, 4, len(headers))
 
-            result = bill_svc.get_delinquent_accounts(limit=10000, cursor=None, db_session=db_session)
+            result = bill_svc.get_delinquent_accounts(
+                limit=10000, cursor=None, db_session=db_session
+            )
             items = result.get("items", []) if isinstance(result, dict) else result
 
             total_balance = 0.0
@@ -746,7 +905,8 @@ async def export_billing_excel(
                 if isinstance(item, dict):
                     balance = float(item.get("balance", 0) or 0)
                     vals = [
-                        item.get("td_number", ""), item.get("owner_name", ""),
+                        item.get("td_number", ""),
+                        item.get("owner_name", ""),
                         item.get("location", ""),
                         float(item.get("total_due", 0) or 0),
                         float(item.get("total_paid", 0) or 0),
@@ -766,7 +926,9 @@ async def export_billing_excel(
                 total_balance += float(vals[5] or 0)
 
             total_row = len(items or []) + 5
-            ws.cell(row=total_row, column=5, value="TOTAL BALANCE").font = Font(bold=True)
+            ws.cell(row=total_row, column=5, value="TOTAL BALANCE").font = Font(
+                bold=True
+            )
             cell = ws.cell(row=total_row, column=6, value=total_balance)
             cell.font = Font(bold=True)
             cell.number_format = currency_fmt
@@ -790,14 +952,22 @@ async def export_billing_excel(
             style_header_row(ws, 4, 2)
 
             # Single computation path — same service the on-screen view uses.
-            summary = bill_svc.get_rpt_receivables_summary(data.year, db_session=db_session)
+            summary = bill_svc.get_rpt_receivables_summary(
+                data.year, db_session=db_session
+            )
 
             line_items = [
-                ("Beginning Receivable",      float(summary.get("beginning_receivable", 0) or 0)),
-                ("Current-Year Assessment",   float(summary.get("current_year_assessment", 0) or 0)),
-                ("Collections",               float(summary.get("collections", 0) or 0)),
-                ("Adjustments",               float(summary.get("adjustments", 0) or 0)),
-                ("Ending Receivable",         float(summary.get("ending_receivable", 0) or 0)),
+                (
+                    "Beginning Receivable",
+                    float(summary.get("beginning_receivable", 0) or 0),
+                ),
+                (
+                    "Current-Year Assessment",
+                    float(summary.get("current_year_assessment", 0) or 0),
+                ),
+                ("Collections", float(summary.get("collections", 0) or 0)),
+                ("Adjustments", float(summary.get("adjustments", 0) or 0)),
+                ("Ending Receivable", float(summary.get("ending_receivable", 0) or 0)),
             ]
 
             for offset, (label, amount) in enumerate(line_items):
@@ -819,24 +989,42 @@ async def export_billing_excel(
             ws.title = "Receivables by Barangay"
             ws["A1"] = "MUNICIPAL TREASURY OFFICE — RECEIVABLES BY BARANGAY"
             ws["A1"].font = title_font
-            
-            brgy_filter = data.barangay if data.barangay and data.barangay != "ALL" else None
+
+            brgy_filter = (
+                data.barangay if data.barangay and data.barangay != "ALL" else None
+            )
             brgy_lbl = f"Barangay: {brgy_filter}" if brgy_filter else "All Barangays"
-            ws["A2"] = f"As of Year: {data.year}  ·  {brgy_lbl}    Generated: {date_str}"
+            ws["A2"] = (
+                f"As of Year: {data.year}  ·  {brgy_lbl}    Generated: {date_str}"
+            )
             ws["A2"].font = Font(italic=True, size=10)
             ws.merge_cells("A1:G1")
             ws.merge_cells("A2:G2")
             ws["A1"].alignment = center_align
             ws["A2"].alignment = center_align
 
-            headers = ["Barangay", "Assessed Value", "Total Due", "Penalty", "Discount", "Collected", "Total Receivable"]
+            headers = [
+                "Barangay",
+                "Assessed Value",
+                "Total Due",
+                "Penalty",
+                "Discount",
+                "Collected",
+                "Total Receivable",
+            ]
             for col_idx, h in enumerate(headers, 1):
                 ws.cell(row=4, column=col_idx, value=h)
             style_header_row(ws, 4, len(headers))
 
-            y_val = None if data.year == "All" or data.year == "All Years" else int(data.year)
-            rows = prop_svc.get_receivables_by_barangay(report_year=y_val, db_session=db_session)
-            
+            y_val = (
+                None
+                if data.year == "All" or data.year == "All Years"
+                else int(data.year)
+            )
+            rows = prop_svc.get_receivables_by_barangay(
+                report_year=y_val, db_session=db_session
+            )
+
             if brgy_filter:
                 rows = [r for r in rows if r[0] == brgy_filter]
 
@@ -872,8 +1060,10 @@ async def export_billing_excel(
             ws.title = "Assessment Roll"
             ws["A1"] = "MUNICIPAL TREASURY OFFICE — ASSESSMENT ROLL"
             ws["A1"].font = title_font
-            
-            brgy_filter = data.barangay if data.barangay and data.barangay != "ALL" else None
+
+            brgy_filter = (
+                data.barangay if data.barangay and data.barangay != "ALL" else None
+            )
             brgy_lbl = f"Barangay: {brgy_filter}" if brgy_filter else "All Barangays"
             year_lbl = ""
             if data.as_of_year:
@@ -895,8 +1085,12 @@ async def export_billing_excel(
                 "PREVIOUS TD",
                 "EFFECTIVITY",
             ]
-            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
-            ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
+            ws.merge_cells(
+                start_row=1, start_column=1, end_row=1, end_column=len(headers)
+            )
+            ws.merge_cells(
+                start_row=2, start_column=1, end_row=2, end_column=len(headers)
+            )
             ws["A1"].alignment = center_align
             ws["A2"].alignment = center_align
 
@@ -920,7 +1114,11 @@ async def export_billing_excel(
                 lot = item[4] if len(item) > 4 and item[4] else ""
                 block = item[19] if len(item) > 19 and item[19] else ""
                 lot_blk = f"{lot} / {block}" if lot and block else (lot or block or "")
-                location = item[22] if len(item) > 22 and item[22] else (item[6] if len(item) > 6 else "")
+                location = (
+                    item[22]
+                    if len(item) > 22 and item[22]
+                    else (item[6] if len(item) > 6 else "")
+                )
 
                 vals = [
                     item[1] or "",
@@ -952,7 +1150,9 @@ async def export_billing_excel(
     excel_bytes = await asyncio.to_thread(_build_workbook)
 
     report_label = data.report_type.replace("_", "-")
-    period_label = f"{data.month}-{data.year}" if data.report_type == "collections" else "all"
+    period_label = (
+        f"{data.month}-{data.year}" if data.report_type == "collections" else "all"
+    )
     filename = f"MTO_{report_label}_{period_label}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.xlsx"
 
     mto_logger.info(

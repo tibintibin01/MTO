@@ -7,18 +7,18 @@ from utils import tr, LocalizationManager
 # Icon map — one icon per nav item key
 # ---------------------------------------------------------------------------
 NAV_ICONS = {
-    "dashboard":     "🏠",
-    "property":      "🏢",
-    "ledger":        "📋",
+    "dashboard": "🏠",
+    "property": "🏢",
+    "ledger": "📋",
     "delinquencies": "⚠️",
-    "compliant":     "✅",
-    "reports":       "📊",
-    "analytics":     "📈",
-    "assessment":    "📜",
-    "audit":         "🔍",
-    "health":        "💻",
-    "settings":      "⚙️",
-    "help":          "❓",
+    "compliant": "✅",
+    "reports": "📊",
+    "analytics": "📈",
+    "assessment": "📜",
+    "audit": "🔍",
+    "health": "💻",
+    "settings": "⚙️",
+    "help": "❓",
     "rate_limiting": "🛑",
 }
 
@@ -29,8 +29,8 @@ class NavigationSidebar(ctk.CTkFrame):
         self.user_data = user_data
         self.username = username
         self.callbacks = callbacks
-        self._active_key = None          # key of the currently active nav item
-        self._nav_items = {}             # key → {"btn": btn, "command": fn}
+        self._active_key = None  # key of the currently active nav item
+        self._nav_items = {}  # key → {"btn": btn, "command": fn}
 
         self.setup_ui()
 
@@ -175,48 +175,80 @@ class NavigationSidebar(ctk.CTkFrame):
         from ui.delinquency_dashboard import DelinquencyDashboardPage
         from ui.compliant_dashboard import CompliantDashboardPage
 
-        self._add_nav("dashboard", tr("dashboard.nav.dashboard"),
-                      lambda: self._navigate("dashboard", DashboardHomePage))
+        self._add_nav(
+            "dashboard",
+            tr("dashboard.nav.dashboard"),
+            lambda: self._navigate("dashboard", DashboardHomePage),
+        )
 
         if auth.has_permission(self.user_data, "property_view"):
-            self._add_nav("property", tr("dashboard.nav.property"),
-                          lambda: self._navigate("property", PropertyPage))
+            self._add_nav(
+                "property",
+                tr("dashboard.nav.property"),
+                lambda: self._navigate("property", PropertyPage),
+            )
 
         if auth.has_permission(self.user_data, "ledger_view"):
-            self._add_nav("ledger", tr("dashboard.nav.ledger"),
-                          lambda: self._navigate("ledger", LedgerPage))
+            self._add_nav(
+                "ledger",
+                tr("dashboard.nav.ledger"),
+                lambda: self._navigate("ledger", LedgerPage),
+            )
 
-        self._add_nav("delinquencies", tr("dashboard.nav.delinquencies"),
-                      lambda: self._navigate("delinquencies", DelinquencyDashboardPage))
+        self._add_nav(
+            "delinquencies",
+            tr("dashboard.nav.delinquencies"),
+            lambda: self._navigate("delinquencies", DelinquencyDashboardPage),
+        )
 
         # Compliant Properties — visible to all roles with property_view permission
         if auth.has_permission(self.user_data, "property_view"):
-            self._add_nav("compliant", "Compliant Properties",
-                          lambda: self._navigate("compliant", CompliantDashboardPage))
+            self._add_nav(
+                "compliant",
+                "Compliant Properties",
+                lambda: self._navigate("compliant", CompliantDashboardPage),
+            )
 
         # ── Section label ────────────────────────────────────────────────────
         self._section_label("COLLECTION")
 
         if auth.has_permission(self.user_data, "report_view"):
-            self._add_nav("reports", tr("dashboard.nav.reports"),
-                          lambda: self._navigate("reports", ReportsPage))
-            self._add_nav("analytics", tr("dashboard.nav.analytics"),
-                          lambda: self._navigate("analytics", AnalyticsDashboardPage))
+            self._add_nav(
+                "reports",
+                tr("dashboard.nav.reports"),
+                lambda: self._navigate("reports", ReportsPage),
+            )
+            self._add_nav(
+                "analytics",
+                tr("dashboard.nav.analytics"),
+                lambda: self._navigate("analytics", AnalyticsDashboardPage),
+            )
 
         if auth.has_permission(self.user_data, "property_view"):
-            self._add_nav("assessment", tr("dashboard.nav.assessment"),
-                          lambda: self._navigate("assessment", AssessmentRollPage))
+            self._add_nav(
+                "assessment",
+                tr("dashboard.nav.assessment"),
+                lambda: self._navigate("assessment", AssessmentRollPage),
+            )
 
-        if any(auth.has_permission(self.user_data, p)
-               for p in ["manage_users", "view_logs", "recycle_manage", "backup_restore"]):
-            self._add_nav("settings", tr("dashboard.nav.settings"),
-                          lambda: self._navigate("settings", SystemAdminPage))
+        if any(
+            auth.has_permission(self.user_data, p)
+            for p in ["manage_users", "view_logs", "recycle_manage", "backup_restore"]
+        ):
+            self._add_nav(
+                "settings",
+                tr("dashboard.nav.settings"),
+                lambda: self._navigate("settings", SystemAdminPage),
+            )
 
         # ── Section label ────────────────────────────────────────────────────
         self._section_label("SYSTEM HELP")
 
-        self._add_nav("help", tr("dashboard.nav.help"),
-                      lambda: self._navigate("help", SystemHelpPage))
+        self._add_nav(
+            "help",
+            tr("dashboard.nav.help"),
+            lambda: self._navigate("help", SystemHelpPage),
+        )
 
         # Activate dashboard by default
         self._set_active("dashboard")

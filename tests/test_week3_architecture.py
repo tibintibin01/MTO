@@ -12,9 +12,22 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
 from backend.models import TaxPolicy, Job, Property, PropertyBilling, PaymentBilling
-from backend.services.billing_service import sync_property_billing, get_property_billing_history, get_total_due
-from backend.services.import_service import save_import_cache, load_import_cache, prune_old_import_cache
-from backend.services.job_service import submit_job, _job_submitted_event, _try_claim_job
+from backend.services.billing_service import (
+    sync_property_billing,
+    get_property_billing_history,
+    get_total_due,
+)
+from backend.services.import_service import (
+    save_import_cache,
+    load_import_cache,
+    prune_old_import_cache,
+)
+from backend.services.job_service import (
+    submit_job,
+    _job_submitted_event,
+    _try_claim_job,
+)
+
 
 @pytest.fixture()
 def engine():
@@ -22,13 +35,16 @@ def engine():
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},
     )
+
     @event.listens_for(eng, "connect")
     def enable_fk(dbapi_conn, _):
         dbapi_conn.execute("PRAGMA foreign_keys = ON")
+
     Base.metadata.create_all(eng)
     yield eng
     Base.metadata.drop_all(eng)
     eng.dispose()
+
 
 @pytest.fixture()
 def db(engine):
@@ -37,6 +53,7 @@ def db(engine):
     yield session
     session.rollback()
     session.close()
+
 
 def test_tax_policy_custom_rates_and_fallbacks(db):
     """Test that billing calculations fetch custom rates from TaxPolicy and fallback correctly."""
@@ -47,19 +64,19 @@ def test_tax_policy_custom_rates_and_fallbacks(db):
         owner_name="JUAN DELA CRUZ",
         assessed_value=100000.00,
         penalty=0.0,
-        discount=0.0
+        discount=0.0,
     )
     db.add(prop)
     db.commit()
 
     # 1. Test fallback behavior (no TaxPolicy configured)
     res_fallback = sync_property_billing(
-                property_id=prop.id,
+        property_id=prop.id,
         tax_year=2026,
         assessed_value=100000.00,
         penalty=50.00,
         discount=10.00,
-        db_session=db
+        db_session=db,
     )
     # Expected with 1% basic, 1% sef = 2% total. 2000.00 + 50.00 - 10.00 = 2040.00
     assert res_fallback["basic_amount"] == 1000.00
@@ -69,20 +86,20 @@ def test_tax_policy_custom_rates_and_fallbacks(db):
     # 2. Configure a custom TaxPolicy
     custom_policy = TaxPolicy(
         tax_year=2026,
-        basic_rate=Decimal("0.0150"), # 1.5%
-        sef_rate=Decimal("0.0050"),   # 0.5%
-        penalty_rate=Decimal("0.0200") # 2%
+        basic_rate=Decimal("0.0150"),  # 1.5%
+        sef_rate=Decimal("0.0050"),  # 0.5%
+        penalty_rate=Decimal("0.0200"),  # 2%
     )
     db.add(custom_policy)
     db.commit()
 
     res_custom = sync_property_billing(
-                property_id=prop.id,
+        property_id=prop.id,
         tax_year=2026,
         assessed_value=100000.00,
         penalty=50.00,
         discount=10.00,
-        db_session=db
+        db_session=db,
     )
     # Expected: 1.5% of 100,000 = 1500.00 basic. 0.5% of 100,000 = 500.00 sef. Total = 2000 + 50 - 10 = 2040.
     assert res_custom["basic_amount"] == 1500.00
@@ -92,28 +109,31 @@ def test_tax_policy_custom_rates_and_fallbacks(db):
 
 def test_import_caching_utilities(tmp_path):
     """Test save_import_cache, load_import_cache, and prune_old_import_cache utilities."""
-    sample_data = [{"td_number": "TD-TEST-1", "owner_name": "Alice"}, {"td_number": "TD-TEST-2", "owner_name": "Bob"}]
-    
+    sample_data = [
+        {"td_number": "TD-TEST-1", "owner_name": "Alice"},
+        {"td_number": "TD-TEST-2", "owner_name": "Bob"},
+    ]
+
     # 1. Save data to cache
     token = save_import_cache(sample_data, cache_dir=tmp_path)
     assert token is not None
     assert len(token) > 0
-    
+
     # 2. Check if cache file exists
     file_path = tmp_path / f"import_{token}.json"
     assert os.path.exists(file_path)
-    
+
     # 3. Load from cache (should delete immediately after load)
     loaded_data = load_import_cache(token, cache_dir=tmp_path)
     assert loaded_data == sample_data
     assert not os.path.exists(file_path)
-    
+
     # 4. Pruning test
     token2 = save_import_cache(sample_data, cache_dir=tmp_path)
     file_path2 = tmp_path / f"import_{token2}.json"
     assert os.path.exists(file_path2)
     # Force older timestamp
-    old_time = time.time() - 4000 # older than 1 hour
+    old_time = time.time() - 4000  # older than 1 hour
     os.utime(file_path2, (old_time, old_time))
     prune_old_import_cache(max_age_seconds=3600, cache_dir=tmp_path)
     assert not os.path.exists(file_path2)
@@ -129,14 +149,14 @@ def test_job_worker_wake_signal(db):
     # Ensure event is cleared
     _job_submitted_event.clear()
     assert not _job_submitted_event.is_set()
-    
+
     # Submit job
     submit_job(
         job_type="backup",
         submitted_by="test_user",
         payload={"dummy": "value"},
-        db_session=db
+        db_session=db,
     )
-    
+
     # Verify the event got set immediately
     assert _job_submitted_event.is_set()

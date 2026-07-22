@@ -18,7 +18,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--year", type=int, required=True, help="Obligation year to evaluate through.")
+    parser.add_argument(
+        "--year", type=int, required=True, help="Obligation year to evaluate through."
+    )
     parser.add_argument("--detail-limit", type=int, default=500)
     parser.add_argument("--output", type=Path, help="Optional JSON output path.")
     args = parser.parse_args()
@@ -32,7 +34,9 @@ def main() -> int:
                 db_session=session,
             )
         except SQLAlchemyError:
-            print("[COMPLIANCE] Unable to connect to the configured database; no report was generated.")
+            print(
+                "[COMPLIANCE] Unable to connect to the configured database; no report was generated."
+            )
             return 3
     finally:
         # No commit is ever issued by this command.

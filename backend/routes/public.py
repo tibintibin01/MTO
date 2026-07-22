@@ -21,7 +21,7 @@ router = APIRouter(prefix="/public", tags=["Public Portal"])
 #   - 1–50 characters
 #   - Only alphanumeric, hyphen, dot, slash, hash, space
 #   - Must start with an alphanumeric character (no leading special chars)
-_QUERY_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9\-./# ]{0,49}$')
+_QUERY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-./# ]{0,49}$")
 _MAX_QUERY_LEN = 50
 
 # Earliest year for which billing data exists. Records before this were
@@ -170,19 +170,25 @@ def _compute_billing_breakdown(property_id: int, db_session: Session):
         total_balance += balance
         total_credit += credit
 
-        years.append({
-            "tax_year": int(r.tax_year),
-            "assessed_value": assessed,
-            "basic": basic,
-            "sef": sef,
-            "penalty": penalty,
-            "discount": discount,
-            "total_due": due,
-            "amount_paid": paid,
-            "balance": balance,
-            "credit": credit,
-            "status": "Paid" if paid >= due and due > 0 else "Partial" if paid > 0 else "Unpaid",
-        })
+        years.append(
+            {
+                "tax_year": int(r.tax_year),
+                "assessed_value": assessed,
+                "basic": basic,
+                "sef": sef,
+                "penalty": penalty,
+                "discount": discount,
+                "total_due": due,
+                "amount_paid": paid,
+                "balance": balance,
+                "credit": credit,
+                "status": (
+                    "Paid"
+                    if paid >= due and due > 0
+                    else "Partial" if paid > 0 else "Unpaid"
+                ),
+            }
+        )
 
     # Keep excess payments as unapplied credits. They must not automatically
     # reduce a different tax year's outstanding receivable.
@@ -214,7 +220,9 @@ def _derive_status(breakdown: dict) -> str:
 
 @router.get("/property/{query}")
 @limiter.limit("10/minute")
-def search_property_public(query: str, request: Request, db_session: Session = Depends(get_db)):
+def search_property_public(
+    query: str, request: Request, db_session: Session = Depends(get_db)
+):
     """
     Publicly accessible property inquiry endpoint for the web portal.
 
@@ -226,10 +234,14 @@ def search_property_public(query: str, request: Request, db_session: Session = D
     """
     _validate_public_query(query)
 
-    prop = db_session.query(Property).filter(
-        (Property.td_number == query) | (Property.pin == query),
-        Property.deleted_at == None
-    ).first()
+    prop = (
+        db_session.query(Property)
+        .filter(
+            (Property.td_number == query) | (Property.pin == query),
+            Property.deleted_at == None,
+        )
+        .first()
+    )
 
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found.")
@@ -247,7 +259,9 @@ def search_property_public(query: str, request: Request, db_session: Session = D
     last_payment = None
     if last_pay:
         last_payment = {
-            "date_paid": last_pay.date_paid.strftime("%Y-%m-%d") if last_pay.date_paid else None,
+            "date_paid": (
+                last_pay.date_paid.strftime("%Y-%m-%d") if last_pay.date_paid else None
+            ),
             "period": last_pay.tax_year,
             "amount": float(last_pay.amount or 0),
         }
@@ -272,29 +286,40 @@ def search_property_public(query: str, request: Request, db_session: Session = D
 
 @router.get("/property/{query}/history")
 @limiter.limit("10/minute")
-def get_property_history_public(query: str, request: Request, db_session: Session = Depends(get_db)):
+def get_property_history_public(
+    query: str, request: Request, db_session: Session = Depends(get_db)
+):
     """
     Exposes payment history for a property with rate-limiting protection.
     Rate-limited to 10 requests/minute per IP.
     """
     _validate_public_query(query)
 
-    prop = db_session.query(Property).filter(
-        (Property.td_number == query) | (Property.pin == query),
-        Property.deleted_at == None
-    ).first()
+    prop = (
+        db_session.query(Property)
+        .filter(
+            (Property.td_number == query) | (Property.pin == query),
+            Property.deleted_at == None,
+        )
+        .first()
+    )
 
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found.")
 
-    payments = db_session.query(Payment).filter(Payment.property_id == prop.id).order_by(Payment.date_paid.desc()).all()
+    payments = (
+        db_session.query(Payment)
+        .filter(Payment.property_id == prop.id)
+        .order_by(Payment.date_paid.desc())
+        .all()
+    )
 
     return [
         {
             "or_number": p.or_number[:3] + "****" if p.or_number else None,
             "date_paid": p.date_paid.strftime("%Y-%m-%d") if p.date_paid else None,
             "amount": float(p.amount or 0),
-            "period": p.tax_year
+            "period": p.tax_year,
         }
         for p in payments
     ]
@@ -309,7 +334,7 @@ def get_property_history_public(query: str, request: Request, db_session: Sessio
 # The taxpayer recognises their own record and taps through; a scraper learns
 # nothing useful.
 
-_BARANGAY_RE = re.compile(r'^[A-Za-z0-9 .\-ñÑ]{1,60}$')
+_BARANGAY_RE = re.compile(r"^[A-Za-z0-9 .\-ñÑ]{1,60}$")
 
 
 def _mask_td_tail(td: str) -> str:
@@ -397,9 +422,12 @@ def find_property_by_owner(
 # privacy policy — the financial breakdown is the value, and the rightful
 # owner already knows their own name.
 
+
 @router.get("/property/{query}/soa")
 @limiter.limit("5/minute")
-def download_soa_public(query: str, request: Request, db_session: Session = Depends(get_db)):
+def download_soa_public(
+    query: str, request: Request, db_session: Session = Depends(get_db)
+):
     """
     Generates and returns a Statement of Account PDF for the given property.
     Rate-limited to 5 requests/minute per IP (PDF generation is heavier).
@@ -410,24 +438,34 @@ def download_soa_public(query: str, request: Request, db_session: Session = Depe
 
     _validate_public_query(query)
 
-    prop = db_session.query(Property).filter(
-        (Property.td_number == query) | (Property.pin == query),
-        Property.deleted_at == None
-    ).first()
+    prop = (
+        db_session.query(Property)
+        .filter(
+            (Property.td_number == query) | (Property.pin == query),
+            Property.deleted_at == None,
+        )
+        .first()
+    )
 
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found.")
 
     breakdown = _compute_billing_breakdown(prop.id, db_session)
     if not breakdown["years"]:
-        raise HTTPException(status_code=404, detail="No billing records to generate a statement.")
+        raise HTTPException(
+            status_code=404, detail="No billing records to generate a statement."
+        )
 
     # Map the computed breakdown to the SOA generator's expected row shape,
     # using MASKED owner/payor to match the public inquiry privacy policy.
     statement_data = {
         "td_number": prop.td_number,
         "owner_name": _mask_owner_name(prop.owner_name),
-        "payor_name": _mask_owner_name(prop.payor_name) if prop.payor_name else _mask_owner_name(prop.owner_name),
+        "payor_name": (
+            _mask_owner_name(prop.payor_name)
+            if prop.payor_name
+            else _mask_owner_name(prop.owner_name)
+        ),
         "location": prop.location,
         "kind_of_property": prop.kind_of_property,
         "accountable_officer": "—",  # not exposed publicly
@@ -448,6 +486,7 @@ def download_soa_public(query: str, request: Request, db_session: Session = Depe
     }
 
     from backend.generators import soa_gen
+
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     pdf_path = soa_gen.generate_statement_of_account(statement_data, base_dir)
     file_name = os.path.basename(pdf_path)

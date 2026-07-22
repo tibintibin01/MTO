@@ -11,7 +11,9 @@ from backend.services.payment_service import save_receipt_record
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
 
     @event.listens_for(engine, "connect")
     def _fk(connection, _):
@@ -28,7 +30,9 @@ def db():
 
 
 def _payment(db):
-    prop = Property(td_number="TD-RECEIPT", owner_name="Receipt Test", assessed_value=100_000)
+    prop = Property(
+        td_number="TD-RECEIPT", owner_name="Receipt Test", assessed_value=100_000
+    )
     db.add(prop)
     db.flush()
     payment = Payment(
@@ -49,15 +53,17 @@ def test_client_controlled_old_path_is_never_deleted(db, tmp_path, monkeypatch):
     outside_file = tmp_path / "outside.pdf"
     outside_file.write_bytes(b"must remain")
     prop, payment = _payment(db)
-    db.add(ReceiptHistory(
-        property_id=prop.id,
-        payment_id=payment.id,
-        or_number=payment.or_number,
-        amount=payment.amount,
-        file_path=str(outside_file),
-        generated_by="cashier",
-        generated_at=datetime.now(timezone.utc),
-    ))
+    db.add(
+        ReceiptHistory(
+            property_id=prop.id,
+            payment_id=payment.id,
+            or_number=payment.or_number,
+            amount=payment.amount,
+            file_path=str(outside_file),
+            generated_by="cashier",
+            generated_at=datetime.now(timezone.utc),
+        )
+    )
     db.commit()
     monkeypatch.setattr(
         "backend.services.payment_service._LOCAL_RECEIPT_ROOTS",
@@ -77,7 +83,9 @@ def test_client_controlled_old_path_is_never_deleted(db, tmp_path, monkeypatch):
     assert outside_file.read_bytes() == b"must remain"
 
 
-def test_server_receipt_cleanup_stays_inside_trusted_directory(db, tmp_path, monkeypatch):
+def test_server_receipt_cleanup_stays_inside_trusted_directory(
+    db, tmp_path, monkeypatch
+):
     trusted_root = tmp_path / "trusted"
     trusted_root.mkdir()
     old_file = trusted_root / "old.pdf"
@@ -85,15 +93,17 @@ def test_server_receipt_cleanup_stays_inside_trusted_directory(db, tmp_path, mon
     old_file.write_bytes(b"old")
     new_file.write_bytes(b"new")
     prop, payment = _payment(db)
-    db.add(ReceiptHistory(
-        property_id=prop.id,
-        payment_id=payment.id,
-        or_number=payment.or_number,
-        amount=payment.amount,
-        file_path=str(old_file),
-        generated_by="cashier",
-        generated_at=datetime.now(timezone.utc),
-    ))
+    db.add(
+        ReceiptHistory(
+            property_id=prop.id,
+            payment_id=payment.id,
+            or_number=payment.or_number,
+            amount=payment.amount,
+            file_path=str(old_file),
+            generated_by="cashier",
+            generated_at=datetime.now(timezone.utc),
+        )
+    )
     db.commit()
     monkeypatch.setattr(
         "backend.services.payment_service._LOCAL_RECEIPT_ROOTS",

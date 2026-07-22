@@ -11,7 +11,11 @@ from sqlalchemy.types import Date
 from sqlalchemy.orm import Session
 from backend.models import Payment, Property, PropertyBilling, PaymentBilling, TaxPolicy
 from backend.services.auth_service import get_username, require_permission
-from backend.services.billing_service import format_tax_years, normalize_date_input
+from backend.services.billing_service import (
+    format_tax_years,
+    looks_like_valid_or_number,
+    normalize_date_input,
+)
 from utils.db_compat import year_of, month_of, today
 
 
@@ -95,7 +99,11 @@ def _payment_remarks_expr(db_session: Session = None):
 
 
 def find_duplicate_payment(
-    property_id, or_number, tax_year_text, exclude_payment_id=None, db_session: Session = None
+    property_id,
+    or_number,
+    tax_year_text,
+    exclude_payment_id=None,
+    db_session: Session = None,
 ):
     normalized_years = format_tax_years(tax_year_text)
     if not property_id or not or_number or not normalized_years:
@@ -110,11 +118,11 @@ def find_duplicate_payment(
     ).filter(
         Payment.property_id == property_id,
         Payment.or_number == or_number,
-        func.coalesce(Payment.tax_year, '') == normalized_years
+        func.coalesce(Payment.tax_year, "") == normalized_years,
     )
     if exclude_payment_id:
         query = query.filter(Payment.id != exclude_payment_id)
-    
+
     row = query.order_by(Payment.id.desc()).first()
     if not row:
         return None
@@ -128,7 +136,12 @@ def find_duplicate_payment(
 
 
 def find_duplicate_payment_entry(
-    td_number, or_number, or_date, tax_year_text, exclude_payment_id=None, db_session: Session = None
+    td_number,
+    or_number,
+    or_date,
+    tax_year_text,
+    exclude_payment_id=None,
+    db_session: Session = None,
 ):
     td_text = str(td_number or "").strip()
     or_text = str(or_number or "").strip()
@@ -139,26 +152,30 @@ def find_duplicate_payment_entry(
 
     date_start = datetime.strptime(date_text, "%Y-%m-%d")
     date_end = date_start + timedelta(days=1)
-    row = db_session.query(
-        Payment.id.label("payment_id"),
-        Payment.property_id,
-        Payment.or_number,
-        Payment.date_paid,
-        Payment.tax_year,
-        Payment.amount,
-        Property.td_number,
-        Property.owner_name,
-    ).join(Property, Property.id == Payment.property_id).filter(
-        Property.deleted_at == None,
-        Property.td_number == td_text,
-        Payment.or_number == or_text,
-        Payment.date_paid >= date_start,
-        Payment.date_paid < date_end,
-        func.coalesce(Payment.tax_year, '') == normalized_years
+    row = (
+        db_session.query(
+            Payment.id.label("payment_id"),
+            Payment.property_id,
+            Payment.or_number,
+            Payment.date_paid,
+            Payment.tax_year,
+            Payment.amount,
+            Property.td_number,
+            Property.owner_name,
+        )
+        .join(Property, Property.id == Payment.property_id)
+        .filter(
+            Property.deleted_at == None,
+            Property.td_number == td_text,
+            Payment.or_number == or_text,
+            Payment.date_paid >= date_start,
+            Payment.date_paid < date_end,
+            func.coalesce(Payment.tax_year, "") == normalized_years,
+        )
     )
     if exclude_payment_id:
         row = row.filter(Payment.id != exclude_payment_id)
-    
+
     result = row.order_by(Payment.id.desc()).first()
     if not result:
         return None
@@ -174,18 +191,25 @@ def find_duplicate_payment_entry(
     }
 
 
-def get_existing_payment_amount(property_id, or_number, or_date, tax_year_text, db_session: Session = None):
+def get_existing_payment_amount(
+    property_id, or_number, or_date, tax_year_text, db_session: Session = None
+):
     normalized_years = format_tax_years(tax_year_text)
     normalized_date = normalize_date_input(or_date)
     if not property_id or not or_number or not normalized_date or not normalized_years:
         return None
-    
-    row = db_session.query(Payment.amount).filter(
-        Payment.property_id == property_id,
-        Payment.or_number == str(or_number).strip(),
-        Payment.date_paid == normalized_date,
-        func.coalesce(Payment.tax_year, '') == normalized_years
-    ).order_by(Payment.id.desc()).first()
+
+    row = (
+        db_session.query(Payment.amount)
+        .filter(
+            Payment.property_id == property_id,
+            Payment.or_number == str(or_number).strip(),
+            Payment.date_paid == normalized_date,
+            func.coalesce(Payment.tax_year, "") == normalized_years,
+        )
+        .order_by(Payment.id.desc())
+        .first()
+    )
     return float(_d(row[0])) if row else None
 
 
@@ -193,7 +217,12 @@ def get_next_or_number(default_prefix="OR-", db_session: Session = None):
     from backend.models import ORSequence
 
     # Query with exclusive row-level lock
-    seq = db_session.query(ORSequence).filter(ORSequence.prefix == default_prefix).with_for_update().first()
+    seq = (
+        db_session.query(ORSequence)
+        .filter(ORSequence.prefix == default_prefix)
+        .with_for_update()
+        .first()
+    )
 
     if not seq:
         # No sequence row yet — seed from the latest payments so existing OR
@@ -208,10 +237,13 @@ def get_next_or_number(default_prefix="OR-", db_session: Session = None):
         digits_len = 6
         prefix_str = default_prefix
 
-        rows = db_session.query(Payment.or_number).filter(
-            Payment.or_number != None,
-            Payment.or_number != ""
-        ).order_by(Payment.id.desc()).limit(20).all()
+        rows = (
+            db_session.query(Payment.or_number)
+            .filter(Payment.or_number != None, Payment.or_number != "")
+            .order_by(Payment.id.desc())
+            .limit(20)
+            .all()
+        )
 
         for row in rows:
             current = str(row[0]).strip()
@@ -224,11 +256,13 @@ def get_next_or_number(default_prefix="OR-", db_session: Session = None):
 
         try:
             with SessionLocal() as seed_db:
-                seed_db.add(ORSequence(
-                    prefix=default_prefix,
-                    next_value=next_val,
-                    digits=digits_len,
-                ))
+                seed_db.add(
+                    ORSequence(
+                        prefix=default_prefix,
+                        next_value=next_val,
+                        digits=digits_len,
+                    )
+                )
                 seed_db.commit()
         except Exception:
             # Another concurrent request already inserted the row — that's fine.
@@ -236,9 +270,12 @@ def get_next_or_number(default_prefix="OR-", db_session: Session = None):
 
         # Re-fetch on the caller's session with the exclusive lock now that the
         # row definitely exists (either we just created it or a peer did).
-        seq = db_session.query(ORSequence).filter(
-            ORSequence.prefix == default_prefix
-        ).with_for_update().first()
+        seq = (
+            db_session.query(ORSequence)
+            .filter(ORSequence.prefix == default_prefix)
+            .with_for_update()
+            .first()
+        )
 
     or_num = f"{seq.prefix}{seq.next_value:0{seq.digits}d}"
 
@@ -256,30 +293,45 @@ def get_next_or_number(default_prefix="OR-", db_session: Session = None):
 
 def get_recent_payments(limit=8, db_session: Session = None):
     safe_limit = max(1, int(limit))
-    rows = db_session.query(
-        Payment.date_paid, Payment.or_number, Property.td_number, Property.owner_name, Payment.tax_year, Payment.amount, Payment.id
-    ).join(Property, Property.id == Payment.property_id).filter(
-        Property.deleted_at == None
-    ).order_by(
-        func.coalesce(Payment.date_paid, cast(Payment.created_at, Date)).desc(), Payment.id.desc()
-    ).limit(safe_limit).all()
+    rows = (
+        db_session.query(
+            Payment.date_paid,
+            Payment.or_number,
+            Property.td_number,
+            Property.owner_name,
+            Payment.tax_year,
+            Payment.amount,
+            Payment.id,
+        )
+        .join(Property, Property.id == Payment.property_id)
+        .filter(Property.deleted_at == None)
+        .order_by(
+            func.coalesce(Payment.date_paid, cast(Payment.created_at, Date)).desc(),
+            Payment.id.desc(),
+        )
+        .limit(safe_limit)
+        .all()
+    )
     return [list(r) for r in rows]
 
 
 def get_monthly_collection_trend(months=6, db_session: Session = None):
     safe_months = max(1, int(months))
     from datetime import datetime, timedelta, timezone
+
     start_date = datetime.now(timezone.utc) - timedelta(days=30 * safe_months)
 
     effective_date = func.coalesce(Payment.date_paid, cast(Payment.created_at, Date))
-    yr = year_of(effective_date).label('yr')
-    mo = month_of(effective_date).label('mo')
+    yr = year_of(effective_date).label("yr")
+    mo = month_of(effective_date).label("mo")
 
-    results = db_session.query(
-        yr, mo, func.sum(Payment.amount).label('total')
-    ).filter(
-        effective_date >= start_date
-    ).group_by('yr', 'mo').order_by('yr', 'mo').all()
+    results = (
+        db_session.query(yr, mo, func.sum(Payment.amount).label("total"))
+        .filter(effective_date >= start_date)
+        .group_by("yr", "mo")
+        .order_by("yr", "mo")
+        .all()
+    )
 
     return [
         {"month": f"{int(r.yr):04d}-{int(r.mo):02d}", "total": float(_d(r.total))}
@@ -288,29 +340,39 @@ def get_monthly_collection_trend(months=6, db_session: Session = None):
 
 
 def get_revenue_by_barangay(db_session: Session = None):
-    results = db_session.query(
-        func.coalesce(Property.barangay, 'UNSPECIFIED').label('brgy'),
-        func.sum(Payment.amount).label('total')
-    ).join(Property, Property.id == Payment.property_id).filter(
-        Property.deleted_at == None
-    ).group_by('brgy').order_by(func.sum(Payment.amount).desc()).all()
-    
+    results = (
+        db_session.query(
+            func.coalesce(Property.barangay, "UNSPECIFIED").label("brgy"),
+            func.sum(Payment.amount).label("total"),
+        )
+        .join(Property, Property.id == Payment.property_id)
+        .filter(Property.deleted_at == None)
+        .group_by("brgy")
+        .order_by(func.sum(Payment.amount).desc())
+        .all()
+    )
+
     return [{"barangay": r[0], "total": float(_d(r[1]))} for r in results]
 
 
 def get_collection_kpis(db_session: Session = None):
     from datetime import datetime, timezone
+
     now = datetime.now(timezone.utc)
     today_date = now.date()
     month_start = today_date.replace(day=1)
 
     total = db_session.query(func.sum(Payment.amount), func.count(Payment.id)).first()
-    today_amt = db_session.query(func.sum(Payment.amount)).filter(
-        cast(Payment.date_paid, Date) == today_date
-    ).scalar()
-    month_amt = db_session.query(func.sum(Payment.amount)).filter(
-        cast(Payment.date_paid, Date) >= month_start
-    ).scalar()
+    today_amt = (
+        db_session.query(func.sum(Payment.amount))
+        .filter(cast(Payment.date_paid, Date) == today_date)
+        .scalar()
+    )
+    month_amt = (
+        db_session.query(func.sum(Payment.amount))
+        .filter(cast(Payment.date_paid, Date) >= month_start)
+        .scalar()
+    )
 
     return {
         "total_revenue": float(_d(total[0])),
@@ -337,7 +399,9 @@ def get_operational_analytics(year=None, barangay=None, db_session: Session = No
     selected_barangay = str(barangay or "ALL").strip().upper() or "ALL"
     effective_date = func.coalesce(Payment.date_paid, Payment.created_at)
     selected_end = (
-        current_day if selected_year == current_day.year else date(selected_year, 12, 31)
+        current_day
+        if selected_year == current_day.year
+        else date(selected_year, 12, 31)
     )
 
     def period_filters(period_year, period_end, include_barangay=True):
@@ -347,7 +411,9 @@ def get_operational_analytics(year=None, barangay=None, db_session: Session = No
             effective_date <= datetime.combine(period_end, datetime.max.time()),
         ]
         if include_barangay and selected_barangay != "ALL":
-            filters.append(func.upper(func.coalesce(Property.barangay, "")) == selected_barangay)
+            filters.append(
+                func.upper(func.coalesce(Property.barangay, "")) == selected_barangay
+            )
         return filters
 
     def allocation_query(*columns):
@@ -359,11 +425,15 @@ def get_operational_analytics(year=None, barangay=None, db_session: Session = No
         )
 
     def aggregate(period_year, period_end):
-        row = allocation_query(
-            func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("total"),
-            func.count(func.distinct(Payment.id)).label("transactions"),
-            func.count(func.distinct(Payment.property_id)).label("properties"),
-        ).filter(*period_filters(period_year, period_end)).first()
+        row = (
+            allocation_query(
+                func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("total"),
+                func.count(func.distinct(Payment.id)).label("transactions"),
+                func.count(func.distinct(Payment.property_id)).label("properties"),
+            )
+            .filter(*period_filters(period_year, period_end))
+            .first()
+        )
         return {
             "total": float(_d(row.total if row else 0)),
             "transactions": int((row.transactions if row else 0) or 0),
@@ -373,7 +443,9 @@ def get_operational_analytics(year=None, barangay=None, db_session: Session = No
     current = aggregate(selected_year, selected_end)
     prior_year = selected_year - 1
     if selected_year == current_day.year:
-        prior_day = min(current_day.day, calendar.monthrange(prior_year, current_day.month)[1])
+        prior_day = min(
+            current_day.day, calendar.monthrange(prior_year, current_day.month)[1]
+        )
         prior_end = date(prior_year, current_day.month, prior_day)
     else:
         prior_end = date(prior_year, 12, 31)
@@ -386,20 +458,19 @@ def get_operational_analytics(year=None, barangay=None, db_session: Session = No
     transaction_change_pct = None
     if prior["transactions"]:
         transaction_change_pct = (
-            (current["transactions"] - prior["transactions"])
-            / prior["transactions"]
+            (current["transactions"] - prior["transactions"]) / prior["transactions"]
         ) * 100
 
-    month_rows = allocation_query(
-        month_of(effective_date).label("month_number"),
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("total"),
-    ).filter(
-        *period_filters(selected_year, selected_end)
-    ).group_by(
-        month_of(effective_date)
-    ).order_by(
-        month_of(effective_date)
-    ).all()
+    month_rows = (
+        allocation_query(
+            month_of(effective_date).label("month_number"),
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("total"),
+        )
+        .filter(*period_filters(selected_year, selected_end))
+        .group_by(month_of(effective_date))
+        .order_by(month_of(effective_date))
+        .all()
+    )
     month_totals = {int(row.month_number): float(_d(row.total)) for row in month_rows}
     trend = [
         {
@@ -410,37 +481,41 @@ def get_operational_analytics(year=None, barangay=None, db_session: Session = No
         for month_number in range(1, 13)
     ]
 
-    barangay_rows = allocation_query(
-        func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("total"),
-    ).filter(
-        *period_filters(selected_year, selected_end)
-    ).group_by(
-        func.coalesce(Property.barangay, "UNSPECIFIED")
-    ).order_by(
-        func.sum(PaymentBilling.amount_paid).desc()
-    ).limit(10).all()
+    barangay_rows = (
+        allocation_query(
+            func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("total"),
+        )
+        .filter(*period_filters(selected_year, selected_end))
+        .group_by(func.coalesce(Property.barangay, "UNSPECIFIED"))
+        .order_by(func.sum(PaymentBilling.amount_paid).desc())
+        .limit(10)
+        .all()
+    )
 
-    recent_rows = allocation_query(
-        Payment.id.label("payment_id"),
-        effective_date.label("date_paid"),
-        Payment.or_number,
-        Property.td_number,
-        Property.owner_name,
-        Payment.tax_year,
-        func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("amount"),
-    ).filter(
-        *period_filters(selected_year, selected_end)
-    ).group_by(
-        Payment.id,
-        effective_date,
-        Payment.or_number,
-        Property.td_number,
-        Property.owner_name,
-        Payment.tax_year,
-    ).order_by(
-        effective_date.desc(), Payment.id.desc()
-    ).limit(6).all()
+    recent_rows = (
+        allocation_query(
+            Payment.id.label("payment_id"),
+            effective_date.label("date_paid"),
+            Payment.or_number,
+            Property.td_number,
+            Property.owner_name,
+            Payment.tax_year,
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("amount"),
+        )
+        .filter(*period_filters(selected_year, selected_end))
+        .group_by(
+            Payment.id,
+            effective_date,
+            Payment.or_number,
+            Property.td_number,
+            Property.owner_name,
+            Payment.tax_year,
+        )
+        .order_by(effective_date.desc(), Payment.id.desc())
+        .limit(6)
+        .all()
+    )
 
     future_filters = [
         Property.deleted_at == None,
@@ -475,7 +550,8 @@ def get_operational_analytics(year=None, barangay=None, db_session: Session = No
         {
             int(row.payment_year)
             for row in year_rows
-            if row.payment_year is not None and int(row.payment_year) <= current_day.year
+            if row.payment_year is not None
+            and int(row.payment_year) <= current_day.year
         },
         reverse=True,
     )
@@ -553,39 +629,43 @@ def get_unified_payment_history(term, db_session: Session = None):
     from backend.services.billing_service import basic_rate_expr, sef_rate_expr
 
     like_term = f"%{term}%"
-    results = db_session.query(
-        Payment.id.label('payment_id'),
-        Payment.date_paid,
-        Payment.or_number,
-        Payment.tax_year,
-        # Use TaxPolicy rates instead of hardcoded 0.01
-        (Property.assessed_value * basic_rate_expr()).label('basic'),
-        (Property.assessed_value * sef_rate_expr()).label('sef'),
-        Payment.penalty,
-        Payment.discount,
-        Payment.amount,
-        Payment.posted_by,
-        _payment_remarks_expr(db_session),
-        ReceiptHistory.file_path,
-        ReceiptHistory.id.label('receipt_id'),
-        Property.td_number,
-        Property.owner_name,
-        Property.id.label('property_id'),
-        Property.barangay,
-        Property.kind_of_property,
-    ).join(Property, Property.id == Payment.property_id).outerjoin(
-        ReceiptHistory, ReceiptHistory.payment_id == Payment.id
-    ).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == Property.tax_year
-    ).filter(
-        Property.deleted_at == None,
-        or_(
-            Property.td_number == term,
-            Property.owner_name.like(like_term),
-            Payment.or_number.like(like_term)
+    results = (
+        db_session.query(
+            Payment.id.label("payment_id"),
+            Payment.date_paid,
+            Payment.or_number,
+            Payment.tax_year,
+            # Use TaxPolicy rates instead of hardcoded 0.01
+            (Property.assessed_value * basic_rate_expr()).label("basic"),
+            (Property.assessed_value * sef_rate_expr()).label("sef"),
+            Payment.penalty,
+            Payment.discount,
+            Payment.amount,
+            Payment.posted_by,
+            _payment_remarks_expr(db_session),
+            ReceiptHistory.file_path,
+            ReceiptHistory.id.label("receipt_id"),
+            Property.td_number,
+            Property.owner_name,
+            Property.id.label("property_id"),
+            Property.barangay,
+            Property.kind_of_property,
         )
-    ).order_by(Payment.date_paid.desc(), Payment.id.desc()).all()
-    
+        .join(Property, Property.id == Payment.property_id)
+        .outerjoin(ReceiptHistory, ReceiptHistory.payment_id == Payment.id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == Property.tax_year)
+        .filter(
+            Property.deleted_at == None,
+            or_(
+                Property.td_number == term,
+                Property.owner_name.like(like_term),
+                Payment.or_number.like(like_term),
+            ),
+        )
+        .order_by(Payment.date_paid.desc(), Payment.id.desc())
+        .all()
+    )
+
     return [list(r) for r in results]
 
 
@@ -597,50 +677,57 @@ def get_payment_ledger(td_number, db_session: Session = None):
     from backend.models import TaxPolicy
     from backend.services.billing_service import basic_rate_expr, sef_rate_expr
 
-    results = db_session.query(
-        Payment.date_paid,
-        Payment.or_number,
-        Payment.tax_year,
-        (Property.assessed_value * basic_rate_expr()).label('basic'),
-        (Property.assessed_value * sef_rate_expr()).label('sef'),
-        Payment.penalty,
-        Payment.discount,
-        Payment.amount,
-        _payment_remarks_expr(db_session)
-    ).join(Property, Property.id == Payment.property_id).outerjoin(
-        TaxPolicy, TaxPolicy.tax_year == Property.tax_year
-    ).filter(
-        Property.td_number == td_number,
-        Property.deleted_at == None
-    ).order_by(Payment.date_paid.desc(), Payment.id.desc()).all()
+    results = (
+        db_session.query(
+            Payment.date_paid,
+            Payment.or_number,
+            Payment.tax_year,
+            (Property.assessed_value * basic_rate_expr()).label("basic"),
+            (Property.assessed_value * sef_rate_expr()).label("sef"),
+            Payment.penalty,
+            Payment.discount,
+            Payment.amount,
+            _payment_remarks_expr(db_session),
+        )
+        .join(Property, Property.id == Payment.property_id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == Property.tax_year)
+        .filter(Property.td_number == td_number, Property.deleted_at == None)
+        .order_by(Payment.date_paid.desc(), Payment.id.desc())
+        .all()
+    )
     return [list(r) for r in results]
 
 
-def get_payment_receipt_records(term, limit=50, cursor=None, db_session: Session = None):
+def get_payment_receipt_records(
+    term, limit=50, cursor=None, db_session: Session = None
+):
     safe_limit = min(max(1, int(limit)), 200)
 
     like_term = f"%{term}%"
-    query = db_session.query(
-        Payment.id,
-        Payment.date_paid,
-        Property.td_number,
-        Property.owner_name,
-        Property.kind_of_property,
-        Payment.or_number,
-        Payment.tax_year,
-        Payment.amount,
-        ReceiptHistory.file_path,
-        ReceiptHistory.generated_by,
-        ReceiptHistory.status,
-        ReceiptHistory.id.label('rh_id')
-    ).join(Property, Property.id == Payment.property_id).outerjoin(
-        ReceiptHistory, ReceiptHistory.payment_id == Payment.id
-    ).filter(
-        Property.deleted_at == None,
-        or_(
-            Property.td_number.like(like_term),
-            Property.owner_name.like(like_term),
-            Payment.or_number.like(like_term)
+    query = (
+        db_session.query(
+            Payment.id,
+            Payment.date_paid,
+            Property.td_number,
+            Property.owner_name,
+            Property.kind_of_property,
+            Payment.or_number,
+            Payment.tax_year,
+            Payment.amount,
+            ReceiptHistory.file_path,
+            ReceiptHistory.generated_by,
+            ReceiptHistory.status,
+            ReceiptHistory.id.label("rh_id"),
+        )
+        .join(Property, Property.id == Payment.property_id)
+        .outerjoin(ReceiptHistory, ReceiptHistory.payment_id == Payment.id)
+        .filter(
+            Property.deleted_at == None,
+            or_(
+                Property.td_number.like(like_term),
+                Property.owner_name.like(like_term),
+                Payment.or_number.like(like_term),
+            ),
         )
     )
 
@@ -662,34 +749,35 @@ def get_payment_receipt_records(term, limit=50, cursor=None, db_session: Session
 
 
 def get_payment_receipt_details(payment_id, db_session: Session = None):
-    row = db_session.query(
-        Property.id.label('property_id'),
-        Property.td_number,
-        Property.owner_name,
-        Property.payor_name,
-        Property.lot_number,
-        Property.area,
-        Property.location,
-        Property.kind_of_property,
-        Property.accountable_officer,
-        Property.assessed_value,
-        Payment.penalty,
-        Payment.discount,
-        Payment.id.label('payment_id'),
-        Payment.amount,
-        Payment.or_number,
-        Payment.date_paid,
-        Payment.tax_year,
-        _payment_remarks_expr(db_session),
-        ReceiptHistory.file_path,
-        ReceiptHistory.id.label('rh_id')
-    ).join(Property, Property.id == Payment.property_id).outerjoin(
-        ReceiptHistory, ReceiptHistory.payment_id == Payment.id
-    ).filter(
-        Payment.id == payment_id,
-        Property.deleted_at == None
-    ).first()
-    
+    row = (
+        db_session.query(
+            Property.id.label("property_id"),
+            Property.td_number,
+            Property.owner_name,
+            Property.payor_name,
+            Property.lot_number,
+            Property.area,
+            Property.location,
+            Property.kind_of_property,
+            Property.accountable_officer,
+            Property.assessed_value,
+            Payment.penalty,
+            Payment.discount,
+            Payment.id.label("payment_id"),
+            Payment.amount,
+            Payment.or_number,
+            Payment.date_paid,
+            Payment.tax_year,
+            _payment_remarks_expr(db_session),
+            ReceiptHistory.file_path,
+            ReceiptHistory.id.label("rh_id"),
+        )
+        .join(Property, Property.id == Payment.property_id)
+        .outerjoin(ReceiptHistory, ReceiptHistory.payment_id == Payment.id)
+        .filter(Payment.id == payment_id, Property.deleted_at == None)
+        .first()
+    )
+
     if not row:
         return None
     return {
@@ -718,9 +806,16 @@ def get_payment_receipt_details(payment_id, db_session: Session = None):
 
 @require_permission("receipt_generate")
 def save_receipt_record(
-    property_id, payment_id, details, file_path, user_name, db_session: Session = None, **kwargs
+    property_id,
+    payment_id,
+    details,
+    file_path,
+    user_name,
+    db_session: Session = None,
+    **kwargs,
 ):
     from datetime import datetime, timezone
+
     payment = db_session.query(Payment).filter(Payment.id == payment_id).first()
     if not payment:
         raise ValueError("Payment record not found.")
@@ -728,7 +823,11 @@ def save_receipt_record(
         raise ValueError("Receipt property does not match the payment record.")
 
     # Check if a receipt already exists for this payment
-    rh = db_session.query(ReceiptHistory).filter(ReceiptHistory.payment_id == payment_id).first()
+    rh = (
+        db_session.query(ReceiptHistory)
+        .filter(ReceiptHistory.payment_id == payment_id)
+        .first()
+    )
     if rh:
         # Delete the old PDF from disk before overwriting the path so stale
         # files don't accumulate in the receipts directory.
@@ -744,12 +843,15 @@ def save_receipt_record(
                 old_path.unlink()
             except OSError as del_err:
                 from utils import log_error_to_file
-                log_error_to_file(f"Could not delete old receipt file '{old_path}'", del_err)
+
+                log_error_to_file(
+                    f"Could not delete old receipt file '{old_path}'", del_err
+                )
 
         rh.file_path = file_path
         rh.generated_by = get_username(user_name)
         rh.generated_at = datetime.now(timezone.utc)
-        rh.status = 'PDF READY'
+        rh.status = "PDF READY"
     else:
         rh = ReceiptHistory(
             property_id=property_id,
@@ -758,7 +860,7 @@ def save_receipt_record(
             file_path=file_path,
             generated_by=get_username(user_name),
             generated_at=datetime.now(timezone.utc),
-            status='PDF READY'
+            status="PDF READY",
         )
         db_session.add(rh)
 
@@ -766,9 +868,10 @@ def save_receipt_record(
     return {"id": rh.id}
 
 
-
 @require_permission("payment_post")
-def update_payment_record(payment_id, data, user_name, db_session: Session = None, **kwargs):
+def update_payment_record(
+    payment_id, data, user_name, db_session: Session = None, **kwargs
+):
     """Update a single payment row and keep PropertyBilling totals in sync."""
     from datetime import datetime
     from backend.services.system_service import log_action
@@ -778,13 +881,24 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
         sync_payment_billings,
     )
 
-    payment = db_session.query(Payment).filter(Payment.id == payment_id).with_for_update().first()
+    payment = (
+        db_session.query(Payment)
+        .filter(Payment.id == payment_id)
+        .with_for_update()
+        .first()
+    )
     if not payment:
         raise Exception("Payment record not found.")
 
-    links = db_session.query(PaymentBilling).filter(PaymentBilling.payment_id == payment.id).all()
+    links = (
+        db_session.query(PaymentBilling)
+        .filter(PaymentBilling.payment_id == payment.id)
+        .all()
+    )
     if len(links) > 1:
-        raise Exception("This payment is allocated to multiple tax years. Please delete and repost it instead of editing in-place.")
+        raise Exception(
+            "This payment is allocated to multiple tax years. Please delete and repost it instead of editing in-place."
+        )
 
     prop = db_session.query(Property).filter(Property.id == payment.property_id).first()
     if not prop:
@@ -798,7 +912,9 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
         raise Exception("Enter a valid Official Receipt number.")
     years = [part.strip() for part in tax_year_text.split(",") if part.strip()]
     if len(years) != 1 or not years[0].isdigit():
-        raise Exception("Edit Payment supports one tax year at a time. For multi-year corrections, delete and repost the payment.")
+        raise Exception(
+            "Edit Payment supports one tax year at a time. For multi-year corrections, delete and repost the payment."
+        )
     tax_year = int(years[0])
 
     date_text = normalize_date_input(data.get("date_paid") or data.get("or_date"))
@@ -806,7 +922,11 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
         raise Exception("Invalid OR Date. Use YYYY-MM-DD.")
     date_paid = datetime.strptime(date_text, "%Y-%m-%d")
 
-    amount = _d(data.get("amount") if data.get("amount") is not None else data.get("amount_paid"))
+    amount = _d(
+        data.get("amount")
+        if data.get("amount") is not None
+        else data.get("amount_paid")
+    )
     penalty = _d(data.get("penalty"))
     discount = _d(data.get("discount"))
     if amount <= 0:
@@ -822,7 +942,9 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
         db_session=db_session,
     )
     if duplicate:
-        raise Exception(f"Another payment already uses OR {or_number} for tax year {tax_year_text}.")
+        raise Exception(
+            f"Another payment already uses OR {or_number} for tax year {tax_year_text}."
+        )
 
     old_or = payment.or_number
     old_amount = _d(payment.amount)
@@ -830,27 +952,44 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
     old_discount = _d(payment.discount)
     old_billing_ids = [link.billing_id for link in links if link.billing_id]
     if not old_billing_ids and str(payment.tax_year or "").strip().isdigit():
-        legacy_billing = db_session.query(PropertyBilling).filter(
-            PropertyBilling.property_id == payment.property_id,
-            PropertyBilling.tax_year == int(str(payment.tax_year).strip()),
-        ).with_for_update().first()
+        legacy_billing = (
+            db_session.query(PropertyBilling)
+            .filter(
+                PropertyBilling.property_id == payment.property_id,
+                PropertyBilling.tax_year == int(str(payment.tax_year).strip()),
+            )
+            .with_for_update()
+            .first()
+        )
         if legacy_billing:
             old_billing_ids.append(legacy_billing.id)
 
     try:
         for billing_id in dict.fromkeys(old_billing_ids):
-            billing = db_session.query(PropertyBilling).filter(PropertyBilling.id == billing_id).with_for_update().first()
+            billing = (
+                db_session.query(PropertyBilling)
+                .filter(PropertyBilling.id == billing_id)
+                .with_for_update()
+                .first()
+            )
             if billing:
                 billing.penalty = max(_d(0), _d(billing.penalty) - old_penalty)
                 billing.discount = max(_d(0), _d(billing.discount) - old_discount)
 
-        db_session.query(PaymentBilling).filter(PaymentBilling.payment_id == payment.id).delete()
+        db_session.query(PaymentBilling).filter(
+            PaymentBilling.payment_id == payment.id
+        ).delete()
         recalculate_billing_balances(old_billing_ids, db_session=db_session)
 
-        billing = db_session.query(PropertyBilling).filter(
-            PropertyBilling.property_id == payment.property_id,
-            PropertyBilling.tax_year == tax_year,
-        ).with_for_update().first()
+        billing = (
+            db_session.query(PropertyBilling)
+            .filter(
+                PropertyBilling.property_id == payment.property_id,
+                PropertyBilling.tax_year == tax_year,
+            )
+            .with_for_update()
+            .first()
+        )
         if not billing:
             billing = PropertyBilling(
                 property_id=payment.property_id,
@@ -884,7 +1023,13 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
         db_session.flush()
         sync_payment_billings(
             payment.id,
-            [{"billing_id": billing.id, "tax_year": tax_year, "applied_amount": amount}],
+            [
+                {
+                    "billing_id": billing.id,
+                    "tax_year": tax_year,
+                    "applied_amount": amount,
+                }
+            ],
             db_session=db_session,
         )
 
@@ -900,9 +1045,11 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
 
     try:
         from backend.services.stats_service import refresh_system_stats
+
         refresh_system_stats(db_session=db_session)
     except Exception as stats_err:
         from utils import log_error_to_file
+
         log_error_to_file("Stats refresh failed after payment edit", stats_err)
 
     return {"success": True, "message": "Payment updated successfully."}
@@ -936,38 +1083,65 @@ def get_payment_cleanup_candidates(year=None, limit=500, db_session: Session = N
     rows, stale allocation years, and overpaid billing rows.
     """
     if db_session is None:
-        return {"year": year, "found": 0, "total_candidates": 0, "summary": {}, "preview": []}
+        return {
+            "year": year,
+            "found": 0,
+            "total_candidates": 0,
+            "summary": {},
+            "preview": [],
+        }
 
     safe_limit = max(1, min(int(limit or 500), 1000))
     review_year = int(year or today().year)
     candidates = {}
 
-    def add_candidate(payment, prop, reason, link=None, billing=None, credit_amount=0, severity=50):
+    def add_candidate(
+        payment, prop, reason, link=None, billing=None, credit_amount=0, severity=50
+    ):
         if not payment or not prop:
             return
         key = int(payment.id)
-        item = candidates.setdefault(key, {
-            "payment_id": int(payment.id),
-            "or_number": payment.or_number,
-            "tax_year": payment.tax_year,
-            "amount": float(_d(payment.amount)),
-            "discount": float(_d(payment.discount)),
-            "penalty": float(_d(payment.penalty)),
-            "date_paid": payment.date_paid.strftime("%Y-%m-%d") if payment.date_paid else None,
-            "td_number": prop.td_number,
-            "owner_name": prop.owner_name,
-            "barangay": prop.barangay,
-            "link_tax_year": int(link.tax_year) if link and link.tax_year is not None else None,
-            "billing_tax_year": int(billing.tax_year) if billing and billing.tax_year is not None else None,
-            "linked_amount": float(_d(link.amount_paid)) if link else 0.0,
-            "credit_amount": float(abs(credit_amount or 0)),
-            "cleanup_reason": reason,
-            "_severity": severity,
-        })
-        reasons = {part.strip() for part in str(item.get("cleanup_reason") or "").split(";") if part.strip()}
+        item = candidates.setdefault(
+            key,
+            {
+                "payment_id": int(payment.id),
+                "or_number": payment.or_number,
+                "tax_year": payment.tax_year,
+                "amount": float(_d(payment.amount)),
+                "discount": float(_d(payment.discount)),
+                "penalty": float(_d(payment.penalty)),
+                "date_paid": (
+                    payment.date_paid.strftime("%Y-%m-%d")
+                    if payment.date_paid
+                    else None
+                ),
+                "td_number": prop.td_number,
+                "owner_name": prop.owner_name,
+                "barangay": prop.barangay,
+                "link_tax_year": (
+                    int(link.tax_year) if link and link.tax_year is not None else None
+                ),
+                "billing_tax_year": (
+                    int(billing.tax_year)
+                    if billing and billing.tax_year is not None
+                    else None
+                ),
+                "linked_amount": float(_d(link.amount_paid)) if link else 0.0,
+                "credit_amount": float(abs(credit_amount or 0)),
+                "cleanup_reason": reason,
+                "_severity": severity,
+            },
+        )
+        reasons = {
+            part.strip()
+            for part in str(item.get("cleanup_reason") or "").split(";")
+            if part.strip()
+        }
         reasons.add(reason)
         item["cleanup_reason"] = "; ".join(sorted(reasons))
-        item["credit_amount"] = max(float(item.get("credit_amount") or 0), float(abs(credit_amount or 0)))
+        item["credit_amount"] = max(
+            float(item.get("credit_amount") or 0), float(abs(credit_amount or 0))
+        )
         item["_severity"] = max(int(item.get("_severity", 0)), int(severity))
 
     rows = (
@@ -984,26 +1158,39 @@ def get_payment_cleanup_candidates(year=None, limit=500, db_session: Session = N
     duplicate_seen = {}
     for payment, prop, link, billing in rows:
         visible_year = _extract_single_year(payment.tax_year)
-        billing_year = int(billing.tax_year) if billing and billing.tax_year is not None else None
+        billing_year = (
+            int(billing.tax_year) if billing and billing.tax_year is not None else None
+        )
         link_year = int(link.tax_year) if link and link.tax_year is not None else None
 
         if visible_year and billing_year and visible_year != billing_year:
             add_candidate(
-                payment, prop,
+                payment,
+                prop,
                 f"Visible year {visible_year} is linked to billing year {billing_year}",
-                link=link, billing=billing, severity=95,
+                link=link,
+                billing=billing,
+                severity=95,
             )
         if link_year and billing_year and link_year != billing_year:
             add_candidate(
-                payment, prop,
+                payment,
+                prop,
                 f"Allocation year {link_year} does not match billing year {billing_year}",
-                link=link, billing=billing, severity=90,
+                link=link,
+                billing=billing,
+                severity=90,
             )
-        if payment.date_paid and (payment.date_paid.year < 1900 or payment.date_paid.year > review_year + 3):
+        if payment.date_paid and (
+            payment.date_paid.year < 1900 or payment.date_paid.year > review_year + 3
+        ):
             add_candidate(
-                payment, prop,
+                payment,
+                prop,
                 f"Unusual OR date {payment.date_paid.strftime('%Y-%m-%d')}",
-                link=link, billing=billing, severity=85,
+                link=link,
+                billing=billing,
+                severity=85,
             )
 
         duplicate_key = (
@@ -1013,21 +1200,30 @@ def get_payment_cleanup_candidates(year=None, limit=500, db_session: Session = N
             str(payment.tax_year or "").strip(),
             str(_d(payment.amount).quantize(Decimal("0.01"))),
         )
-        duplicate_seen.setdefault(duplicate_key, []).append((payment, prop, link, billing))
+        duplicate_seen.setdefault(duplicate_key, []).append(
+            (payment, prop, link, billing)
+        )
 
     for group in duplicate_seen.values():
         if len(group) <= 1:
             continue
         for payment, prop, link, billing in group:
             add_candidate(
-                payment, prop,
+                payment,
+                prop,
                 f"Possible duplicate receipt row ({len(group)} same property/OR/date/year/amount)",
-                link=link, billing=billing, severity=75,
+                link=link,
+                billing=billing,
+                severity=75,
             )
 
-    rate_expr = func.coalesce(TaxPolicy.basic_rate, 0.01) + func.coalesce(TaxPolicy.sef_rate, 0.01)
+    rate_expr = func.coalesce(TaxPolicy.basic_rate, 0.01) + func.coalesce(
+        TaxPolicy.sef_rate, 0.01
+    )
     credit_expr = PropertyBilling.amount_paid - (
-        (PropertyBilling.assessed_value * rate_expr) + PropertyBilling.penalty - PropertyBilling.discount
+        (PropertyBilling.assessed_value * rate_expr)
+        + PropertyBilling.penalty
+        - PropertyBilling.discount
     )
     overpaid_rows = (
         db_session.query(PropertyBilling.id, credit_expr.label("credit_amount"))
@@ -1042,7 +1238,9 @@ def get_payment_cleanup_candidates(year=None, limit=500, db_session: Session = N
         .limit(1000)
         .all()
     )
-    overpaid_by_billing = {int(row[0]): float(row[1] or 0) for row in overpaid_rows if row[0]}
+    overpaid_by_billing = {
+        int(row[0]): float(row[1] or 0) for row in overpaid_rows if row[0]
+    }
     if overpaid_by_billing:
         linked_overpaid = (
             db_session.query(Payment, Property, PaymentBilling, PropertyBilling)
@@ -1056,7 +1254,8 @@ def get_payment_cleanup_candidates(year=None, limit=500, db_session: Session = N
         )
         for payment, prop, link, billing in linked_overpaid:
             add_candidate(
-                payment, prop,
+                payment,
+                prop,
                 f"Billing year {int(billing.tax_year)} has credit balance",
                 link=link,
                 billing=billing,
@@ -1066,16 +1265,36 @@ def get_payment_cleanup_candidates(year=None, limit=500, db_session: Session = N
 
     preview = sorted(
         candidates.values(),
-        key=lambda item: (-int(item.get("_severity", 0)), -float(item.get("credit_amount") or 0), item.get("td_number") or ""),
+        key=lambda item: (
+            -int(item.get("_severity", 0)),
+            -float(item.get("credit_amount") or 0),
+            item.get("td_number") or "",
+        ),
     )[:safe_limit]
     for item in preview:
         item.pop("_severity", None)
 
     summary = {
-        "visible_link_mismatch": sum(1 for item in candidates.values() if "Visible year" in item.get("cleanup_reason", "")),
-        "allocation_year_mismatch": sum(1 for item in candidates.values() if "Allocation year" in item.get("cleanup_reason", "")),
-        "unusual_dates": sum(1 for item in candidates.values() if "Unusual OR date" in item.get("cleanup_reason", "")),
-        "possible_duplicates": sum(1 for item in candidates.values() if "Possible duplicate" in item.get("cleanup_reason", "")),
+        "visible_link_mismatch": sum(
+            1
+            for item in candidates.values()
+            if "Visible year" in item.get("cleanup_reason", "")
+        ),
+        "allocation_year_mismatch": sum(
+            1
+            for item in candidates.values()
+            if "Allocation year" in item.get("cleanup_reason", "")
+        ),
+        "unusual_dates": sum(
+            1
+            for item in candidates.values()
+            if "Unusual OR date" in item.get("cleanup_reason", "")
+        ),
+        "possible_duplicates": sum(
+            1
+            for item in candidates.values()
+            if "Possible duplicate" in item.get("cleanup_reason", "")
+        ),
         "credit_balance_rows": len(overpaid_by_billing),
     }
     return {
@@ -1107,7 +1326,11 @@ def delete_payment_record(payment_id, user_name, db_session: Session = None, **k
     pen = _d(payment.penalty)
     disc = _d(payment.discount)
     or_no = payment.or_number
-    links = db_session.query(PaymentBilling).filter(PaymentBilling.payment_id == payment.id).all()
+    links = (
+        db_session.query(PaymentBilling)
+        .filter(PaymentBilling.payment_id == payment.id)
+        .all()
+    )
     billing_ids = [link.billing_id for link in links if link.billing_id]
 
     try:
@@ -1117,16 +1340,26 @@ def delete_payment_record(payment_id, user_name, db_session: Session = None, **k
         if not billing_ids:
             visible_year = _extract_single_year(payment.tax_year)
             if visible_year:
-                billing = db_session.query(PropertyBilling).filter(
-                    PropertyBilling.property_id == prop_id,
-                    PropertyBilling.tax_year == visible_year
-                ).with_for_update().first()
+                billing = (
+                    db_session.query(PropertyBilling)
+                    .filter(
+                        PropertyBilling.property_id == prop_id,
+                        PropertyBilling.tax_year == visible_year,
+                    )
+                    .with_for_update()
+                    .first()
+                )
                 if billing:
                     billing_ids.append(billing.id)
 
         unique_billing_ids = list(dict.fromkeys(billing_ids))
         if len(unique_billing_ids) == 1:
-            billing = db_session.query(PropertyBilling).filter(PropertyBilling.id == unique_billing_ids[0]).with_for_update().first()
+            billing = (
+                db_session.query(PropertyBilling)
+                .filter(PropertyBilling.id == unique_billing_ids[0])
+                .with_for_update()
+                .first()
+            )
             if billing:
                 billing.penalty = max(_d(0), _d(billing.penalty) - pen)
                 billing.discount = max(_d(0), _d(billing.discount) - disc)
@@ -1135,10 +1368,15 @@ def delete_payment_record(payment_id, user_name, db_session: Session = None, **k
         db_session.delete(payment)
         db_session.flush()
         from backend.services.billing_service import recalculate_billing_balances
+
         recalculate_billing_balances(unique_billing_ids, db_session=db_session)
 
         # 4. Stage audit log — same transaction as the deletion and billing reversal
-        log_action(user_name, f"Deleted Payment OR {or_no} (Amount: {amt}) and reversed billing.", db_session=db_session)
+        log_action(
+            user_name,
+            f"Deleted Payment OR {or_no} (Amount: {amt}) and reversed billing.",
+            db_session=db_session,
+        )
 
         # 5. Single atomic commit: billing reversal + deletion + audit
         db_session.commit()
@@ -1150,9 +1388,11 @@ def delete_payment_record(payment_id, user_name, db_session: Session = None, **k
     # 6. Refresh stats outside the transaction — a failure here is non-fatal
     try:
         from backend.services.stats_service import refresh_system_stats
+
         refresh_system_stats(db_session=db_session)
     except Exception as stats_err:
         from utils import log_error_to_file
+
         log_error_to_file("Stats refresh failed after payment deletion", stats_err)
 
     return {"success": True, "message": "Payment deleted successfully."}
