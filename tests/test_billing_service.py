@@ -30,6 +30,7 @@ from backend.services.billing_service import (
     sync_existing_billing_assessed_value,
 )
 from backend.services.property_service import get_receivables_by_barangay
+from utils.config import config as mto_config
 from backend.services.property_service import _sync_financial_records
 from backend.services.payment_service import get_unified_payment_history
 
@@ -302,6 +303,62 @@ def _property_with_billing(db, td, barangay, paid=2_000.0):
     return prop
 
 
+def test_currency_safe_compliance_includes_exact_cent_and_rejects_cent_shortage(db):
+    fully_paid = Property(
+        td_number="TD-CURRENCY-PRECISION",
+        owner_name="Precision Paid",
+        barangay="LIPIT",
+        assessed_value=51_077.0,
+    )
+    one_cent_short = Property(
+        td_number="TD-ONE-CENT-SHORT",
+        owner_name="Real Shortage",
+        barangay="LIPIT",
+        assessed_value=51_077.0,
+    )
+    db.add_all([fully_paid, one_cent_short])
+    db.flush()
+    db.add_all(
+        [
+            PropertyBilling(
+                property_id=fully_paid.id,
+                tax_year=2026,
+                assessed_value=51_077.0,
+                penalty=0,
+                discount=0,
+                amount_paid=1_021.54,
+            ),
+            PropertyBilling(
+                property_id=one_cent_short.id,
+                tax_year=2026,
+                assessed_value=51_077.0,
+                penalty=0,
+                discount=0,
+                amount_paid=1_021.53,
+            ),
+        ]
+    )
+    db.commit()
+
+    accounts = get_compliant_accounts(barangay="LIPIT", as_of_year=2026, db_session=db)
+    summary = get_compliant_summary_by_barangay(as_of_year=2026, db_session=db)
+
+    assert accounts["classification_version"] == "legacy_currency_safe"
+    assert [row["td_number"] for row in accounts["items"]] == ["TD-CURRENCY-PRECISION"]
+    assert accounts["items"][0]["total_due"] == pytest.approx(1_021.54)
+    assert accounts["items"][0]["total_paid"] == pytest.approx(1_021.54)
+    assert summary == [
+        {
+            "barangay": "LIPIT",
+            "total_properties": 2,
+            "compliant_count": len(accounts["items"]),
+            "delinquent_count": 1,
+            "compliance_rate": 50.0,
+            "collected_from_compliant": pytest.approx(1_021.54),
+        }
+    ]
+
+
 def test_compliant_summary_excludes_unassigned_barangay_rows(db):
     _property_with_billing(db, "TD-REAL", "NORTH POBLACION")
     _property_with_billing(db, "TD-NULL", None)
@@ -510,7 +567,13 @@ def test_compliance_v2_uses_linked_payment_and_matching_latest_or(db):
     assert result["items"][0]["last_or"] == "AAA-LATEST"
 
 
-def test_compliance_v2_uses_supported_active_billing_window(db):
+def test_compliance_v2_uses_explicitly_approved_billing_window(db, monkeypatch):
+    monkeypatch.setattr(mto_config, "COMPLIANCE_DATA_START_YEAR", 2023)
+    monkeypatch.setattr(
+        mto_config,
+        "COMPLIANCE_EXCLUDE_ARCHIVED_BILLINGS",
+        True,
+    )
     prop = Property(
         td_number="TD-V2-WINDOW",
         owner_name="V2 Window",
@@ -548,6 +611,47 @@ def test_compliance_v2_uses_supported_active_billing_window(db):
 
     assert [row["td_number"] for row in result["items"]] == ["TD-V2-WINDOW"]
     assert result["items"][0]["years_covered"] == 1
+
+
+def test_compliance_v2_conservative_default_keeps_old_and_archived_obligations(
+    db, monkeypatch
+):
+    monkeypatch.setattr(mto_config, "COMPLIANCE_DATA_START_YEAR", 0)
+    monkeypatch.setattr(
+        mto_config,
+        "COMPLIANCE_EXCLUDE_ARCHIVED_BILLINGS",
+        False,
+    )
+    prop = Property(
+        td_number="TD-V2-CONSERVATIVE",
+        owner_name="V2 Conservative",
+        barangay="BUENAVISTA",
+        assessed_value=100_000.0,
+    )
+    db.add(prop)
+    db.flush()
+    db.add_all(
+        [
+            PropertyBilling(
+                property_id=prop.id,
+                tax_year=2022,
+                assessed_value=100_000.0,
+                amount_paid=0.0,
+            ),
+            PropertyBilling(
+                property_id=prop.id,
+                tax_year=2024,
+                assessed_value=100_000.0,
+                amount_paid=2_000.0,
+                is_archived=True,
+            ),
+        ]
+    )
+    db.commit()
+
+    result = get_compliant_accounts_v2(as_of_year=2025, db_session=db)
+
+    assert result["items"] == []
 
 
 def test_compliance_through_year_switches_to_effective_replacement(db):

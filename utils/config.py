@@ -67,6 +67,13 @@ class MTOSettings(BaseSettings):
     # V2 requires every supported tax year to be fully settled. Keep disabled
     # until the admin impact preview has been reviewed on the live database.
     ENABLE_COMPLIANCE_V2: bool = False
+    # Zero means all recorded tax years remain obligations. Set a positive
+    # start year only after the Treasurer formally approves excluding older
+    # records from compliance classification.
+    COMPLIANCE_DATA_START_YEAR: int = Field(default=0, ge=0, le=2100)
+    # Archived billings remain obligations by default. Excluding them is an
+    # explicit policy decision and must be previewed before activation.
+    COMPLIANCE_EXCLUDE_ARCHIVED_BILLINGS: bool = False
     MAINTENANCE_MODE: bool = False
 
     # --- PUBLIC PORTAL PUBLISH ---
