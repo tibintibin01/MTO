@@ -43,6 +43,9 @@ class MTOSettings(BaseSettings):
     ENABLE_DELINQUENCY_NOTICES: bool = False
     ENABLE_CLOUD_BACKUP: bool = False
     ENABLE_SENTRY_TELEMETRY: bool = True
+    # V2 requires every supported tax year to be fully settled. Keep disabled
+    # until the admin impact preview has been reviewed on the live database.
+    ENABLE_COMPLIANCE_V2: bool = False
     MAINTENANCE_MODE: bool = False
 
     
@@ -50,6 +53,9 @@ class MTOSettings(BaseSettings):
     PORTAL_PUBLISH_URL: str = Field(default="")
     PORTAL_PUBLISH_TOKEN: str = Field(default="")
     PORTAL_LOOKUP_SECRET: str = Field(default="")
+    # Optional shared directory used by a locally hosted Next.js portal.
+    # When blank, snapshots retain the legacy BACKUP_DIR/portal_snapshots path.
+    PORTAL_SNAPSHOT_DIR: str = Field(default="")
 
     # --- SCHEDULED BACKUP ---
     # BACKUP_SCHEDULE controls automatic backup frequency.

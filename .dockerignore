@@ -51,6 +51,7 @@ backend/computations/
 receipts/
 statements/
 backups/
+portal_data/
 import_cache/
 temp_docs/
 

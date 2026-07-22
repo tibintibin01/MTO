@@ -18,9 +18,9 @@ class PaymentUpdateRequest(BaseModel):
     or_number: str = Field(..., min_length=1)
     date_paid: str = Field(..., min_length=1)
     tax_year: str = Field(..., min_length=4)
-    amount: float
-    penalty: float = 0.0
-    discount: float = 0.0
+    amount: float = Field(..., gt=0)
+    penalty: float = Field(default=0.0, ge=0)
+    discount: float = Field(default=0.0, ge=0)
     remarks: Optional[str] = None
 @router.get("/recent")
 def get_recent_payments(

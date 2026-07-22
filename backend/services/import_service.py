@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import pandas as pd
 import io
+import os
 import re
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
@@ -953,7 +954,17 @@ def commit_payment_import(data_list, user, db_session: Session = None):
         raise
 
 
-def save_import_cache(data: list) -> str | None:
+def _resolve_import_cache_dir(cache_dir=None) -> str:
+    """Return an explicit cache directory or the existing production default."""
+    if cache_dir is not None:
+        return os.fspath(cache_dir)
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "import_cache",
+    )
+
+
+def save_import_cache(data: list, cache_dir=None) -> str | None:
     """
     Saves the validated dictionary array as a JSON file under
     import_cache/import_{token}.json and returns a secure UUID token.
@@ -962,10 +973,9 @@ def save_import_cache(data: list) -> str | None:
     error, etc.). The caller should check for None and skip adding the token
     to the response rather than letting an OSError propagate to the client.
     """
-    import os
     import json
     import uuid
-    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "import_cache")
+    cache_dir = _resolve_import_cache_dir(cache_dir)
     try:
         if not os.path.exists(cache_dir):
             os.makedirs(cache_dir, exist_ok=True)
@@ -978,17 +988,15 @@ def save_import_cache(data: list) -> str | None:
         mto_logger.error(f"save_import_cache: failed to write cache file: {e}")
         return None
 
-def load_import_cache(token: str) -> Optional[list]:
+def load_import_cache(token: str, cache_dir=None) -> Optional[list]:
     """Reads the JSON array back from the cache file and immediately deletes it to conserve server space."""
-    import os
     import json
     if not token or not isinstance(token, str):
         return None
-    # Sanitize token to prevent directory traversal
-    clean_token = re.sub(r'[^a-f0-9]', '', token.lower())
-    if not clean_token:
+    clean_token = token.lower()
+    if not re.fullmatch(r"[a-f0-9]{32}", clean_token):
         return None
-    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "import_cache")
+    cache_dir = _resolve_import_cache_dir(cache_dir)
     file_path = os.path.join(cache_dir, f"import_{clean_token}.json")
     if not os.path.exists(file_path):
         return None
@@ -1004,10 +1012,9 @@ def load_import_cache(token: str) -> Optional[list]:
         mto_logger.error(f"Failed to load import cache for token {token}: {e}")
         return None
 
-def prune_old_import_cache(max_age_seconds: int = 3600):
+def prune_old_import_cache(max_age_seconds: int = 3600, cache_dir=None):
     """Background file utility to delete any validation cache files older than 1 hour."""
-    import os
-    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "import_cache")
+    cache_dir = _resolve_import_cache_dir(cache_dir)
     if not os.path.exists(cache_dir):
         return
     now = datetime.now(timezone.utc).timestamp()

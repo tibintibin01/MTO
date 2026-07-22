@@ -64,6 +64,10 @@ statements/
 # Import validation cache — contains taxpayer data, must never be committed
 import_cache/
 
+# Sanitized public portal snapshots are generated at runtime and may still
+# contain tax-account metadata. Never commit them to source control.
+portal_data/
+
 # Archived raw SQL migrations — superseded by Alembic, kept for reference only
 # These must never be run against the live DB
 migrations/archive/*.sql

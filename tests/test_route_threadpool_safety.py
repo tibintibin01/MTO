@@ -15,6 +15,7 @@ def test_database_heavy_routes_run_in_fastapi_threadpool():
         billing.get_collections_worklist,
         billing.get_compliant_list,
         billing.get_compliant_summary,
+        billing.get_compliant_impact_preview,
         billing.get_receivables_by_barangay,
         properties.list_properties,
         properties.resolve_payment_target,
@@ -48,4 +49,3 @@ def test_database_heavy_routes_run_in_fastapi_threadpool():
 
 def test_pdf_route_keeps_async_thread_offloading():
     assert inspect.iscoroutinefunction(payments.generate_receipt_pdf)
-

@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from backend.database import get_db
 from backend.models import Payment, PaymentBilling, Property, PropertyBilling, TaxPolicy
+from backend.services.billing_service import BILLING_DATA_START_YEAR
 from datetime import datetime, timezone
 from backend.deps import limiter
 import re
@@ -25,7 +26,7 @@ _MAX_QUERY_LEN = 50
 
 # Earliest year for which billing data exists. Records before this were
 # back-filled from legacy effectivity dates and are excluded from balances.
-DATA_START_YEAR = 2023
+DATA_START_YEAR = BILLING_DATA_START_YEAR
 
 
 def _validate_public_query(query: str) -> None:

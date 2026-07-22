@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import calendar
 import re
+from pathlib import Path
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from backend.database import SessionLocal
@@ -12,6 +13,38 @@ from backend.models import Payment, Property, PropertyBilling, PaymentBilling, T
 from backend.services.auth_service import get_username, require_permission
 from backend.services.billing_service import format_tax_years, normalize_date_input
 from utils.db_compat import year_of, month_of, today
+
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_LOCAL_RECEIPT_ROOTS = (
+    (_PROJECT_ROOT / "backend" / "receipts").resolve(),
+    (_PROJECT_ROOT / "receipts").resolve(),
+)
+
+
+def _trusted_local_receipt_path(value):
+    """Return a safe local PDF path, or None for client/S3/foreign paths."""
+    text = str(value or "").strip()
+    if not text or not text.lower().endswith(".pdf"):
+        return None
+    try:
+        candidate = Path(text).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    for root in _LOCAL_RECEIPT_ROOTS:
+        try:
+            candidate.relative_to(root)
+            return candidate
+        except ValueError:
+            continue
+    return None
+
+
+def _trusted_receipt_reference(value) -> bool:
+    if _trusted_local_receipt_path(value) is not None:
+        return True
+    normalized = str(value or "").strip().replace("\\", "/")
+    return bool(re.fullmatch(r"receipts/[A-Za-z0-9._-]+\.pdf", normalized))
 
 
 def _d(value) -> Decimal:
@@ -688,17 +721,27 @@ def save_receipt_record(
     property_id, payment_id, details, file_path, user_name, db_session: Session = None, **kwargs
 ):
     from datetime import datetime, timezone
-    import os
+    payment = db_session.query(Payment).filter(Payment.id == payment_id).first()
+    if not payment:
+        raise ValueError("Payment record not found.")
+    if int(payment.property_id) != int(property_id):
+        raise ValueError("Receipt property does not match the payment record.")
 
     # Check if a receipt already exists for this payment
     rh = db_session.query(ReceiptHistory).filter(ReceiptHistory.payment_id == payment_id).first()
     if rh:
         # Delete the old PDF from disk before overwriting the path so stale
         # files don't accumulate in the receipts directory.
-        old_path = rh.file_path
-        if old_path and old_path != file_path and os.path.isfile(old_path):
+        old_path = _trusted_local_receipt_path(rh.file_path)
+        new_path = _trusted_local_receipt_path(file_path)
+        if (
+            old_path
+            and _trusted_receipt_reference(file_path)
+            and old_path != new_path
+            and old_path.is_file()
+        ):
             try:
-                os.remove(old_path)
+                old_path.unlink()
             except OSError as del_err:
                 from utils import log_error_to_file
                 log_error_to_file(f"Could not delete old receipt file '{old_path}'", del_err)
@@ -751,6 +794,8 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
     tax_year_text = format_tax_years(data.get("tax_year"))
     if not or_number or not tax_year_text:
         raise Exception("OR Number and Tax Year are required.")
+    if not looks_like_valid_or_number(or_number):
+        raise Exception("Enter a valid Official Receipt number.")
     years = [part.strip() for part in tax_year_text.split(",") if part.strip()]
     if len(years) != 1 or not years[0].isdigit():
         raise Exception("Edit Payment supports one tax year at a time. For multi-year corrections, delete and repost the payment.")
@@ -764,8 +809,10 @@ def update_payment_record(payment_id, data, user_name, db_session: Session = Non
     amount = _d(data.get("amount") if data.get("amount") is not None else data.get("amount_paid"))
     penalty = _d(data.get("penalty"))
     discount = _d(data.get("discount"))
-    if amount < 0 or penalty < 0 or discount < 0:
-        raise Exception("Amount, penalty, and discount cannot be negative.")
+    if amount <= 0:
+        raise Exception("Payment amount must be greater than zero.")
+    if penalty < 0 or discount < 0:
+        raise Exception("Penalty and discount cannot be negative.")
 
     duplicate = find_duplicate_payment(
         payment.property_id,

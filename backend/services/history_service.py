@@ -32,8 +32,12 @@ def log_data_change(user_id: int, table_name: str, record_id: int, action: str,
                    db_session: Session = None, username: str = "unknown", ip_address: str = None):
     """
     Records a detailed audit trail including before/after state snapshots.
-    Uses hash-chaining for security.
+    Uses hash-chaining for security. The caller owns the transaction: this
+    function flushes the audit record but never commits independently.
     """
+    if db_session is None:
+        raise ValueError("db_session is required for audit logging.")
+
     # Calculate Delta
     diff_before = {}
     diff_after = {}
@@ -54,12 +58,19 @@ def log_data_change(user_id: int, table_name: str, record_id: int, action: str,
     after_json = json.dumps(clean(diff_after)) if diff_after else None
     
     try:
-        # Get the hash of the latest log entry
-        latest_log = db_session.query(AuditLog).order_by(AuditLog.id.desc()).first()
+        # Serialize concurrent writers where the database supports row locks.
+        latest_log = (
+            db_session.query(AuditLog)
+            .order_by(AuditLog.id.desc())
+            .with_for_update()
+            .first()
+        )
         prev_hash = getattr(latest_log, "current_hash", None) if latest_log else "INITIAL_SEED"
-        
+
+        event_time = datetime.now(timezone.utc)
+
         # Combine all data for current hash
-        current_data = f"{user_id}{table_name}{record_id}{action}{before_json}{after_json}{datetime.now(timezone.utc).isoformat()}"
+        current_data = f"{user_id}{table_name}{record_id}{action}{before_json}{after_json}{event_time.isoformat()}"
         cur_hash = _calculate_audit_hash(prev_hash, current_data)
 
         log_data = dict(
@@ -71,7 +82,7 @@ def log_data_change(user_id: int, table_name: str, record_id: int, action: str,
             old_values=before_json,
             new_values=after_json,
             ip_address=ip_address,
-            timestamp=datetime.now(timezone.utc)
+            timestamp=event_time
         )
         if hasattr(AuditLog, "previous_hash"):
             log_data["previous_hash"] = prev_hash
@@ -80,7 +91,7 @@ def log_data_change(user_id: int, table_name: str, record_id: int, action: str,
 
         log = AuditLog(**log_data)
         db_session.add(log)
-        db_session.commit()
+        db_session.flush()
         return True
     except Exception as e:
         from utils.logger import mto_logger
@@ -88,7 +99,7 @@ def log_data_change(user_id: int, table_name: str, record_id: int, action: str,
             f"CRITICAL: Failed to write audit log — action={action}, "
             f"table={table_name}, record_id={record_id}, user={username}: {e}"
         )
-        return False
+        raise RuntimeError("Failed to write audit log.") from e
 
 
 

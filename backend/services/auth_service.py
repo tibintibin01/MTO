@@ -483,22 +483,26 @@ def update_user_role(user_id, new_role, admin_user, db_session: Session):
     user = db_session.query(User).filter(User.id == user_id).first()
     if not user:
         return False
-    
+
     old_role = user.role
-    user.role = new_role
-    db_session.commit()
-    
-    from backend.services.history_service import log_data_change
-    log_data_change(
-        user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,
-        username=get_username(admin_user),
-        table_name="users",
-        record_id=user_id,
-        action="UPDATE_ROLE",
-        before={"role": old_role},
-        after={"role": new_role},
-        db_session=db_session
-    )
+    try:
+        user.role = new_role
+
+        from backend.services.history_service import log_data_change
+        log_data_change(
+            user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,
+            username=get_username(admin_user),
+            table_name="users",
+            record_id=user_id,
+            action="UPDATE_ROLE",
+            before={"role": old_role},
+            after={"role": new_role},
+            db_session=db_session
+        )
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        raise
     return True
 
 
@@ -506,22 +510,26 @@ def update_user_status(user_id, is_active, admin_user, db_session: Session):
     user = db_session.query(User).filter(User.id == user_id).first()
     if not user:
         return False
-    
+
     old_status = user.is_active
-    user.is_active = is_active
-    db_session.commit()
-    
-    from backend.services.history_service import log_data_change
-    log_data_change(
-        user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,
-        username=get_username(admin_user),
-        table_name="users",
-        record_id=user_id,
-        action="UPDATE_STATUS",
-        before={"is_active": old_status},
-        after={"is_active": is_active},
-        db_session=db_session
-    )
+    try:
+        user.is_active = is_active
+
+        from backend.services.history_service import log_data_change
+        log_data_change(
+            user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,
+            username=get_username(admin_user),
+            table_name="users",
+            record_id=user_id,
+            action="UPDATE_STATUS",
+            before={"is_active": old_status},
+            after={"is_active": is_active},
+            db_session=db_session
+        )
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        raise
     return True
 
 
@@ -534,37 +542,40 @@ def reset_user_password(user_id, new_password, admin_user, db_session: Session):
     if not user:
         return False
 
-    user.password = hash_password(new_password)
-    user.failed_attempts = 0
-    user.lockout_until = None
-    # Use naive UTC to match the token issued-at comparison in get_current_user.
-    # datetime.now() would give local time (UTC+8 in Philippines), causing the
-    # iat comparison to incorrectly reject fresh tokens after a password reset.
-    user.password_changed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    try:
+        user.password = hash_password(new_password)
+        user.failed_attempts = 0
+        user.lockout_until = None
+        # Use naive UTC to match the token issued-at comparison in get_current_user.
+        # datetime.now() would give local time (UTC+8 in Philippines), causing the
+        # iat comparison to incorrectly reject fresh tokens after a password reset.
+        user.password_changed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    # Revoke all existing refresh tokens — the user must log in again
-    # with the new password to get a fresh token pair.
-    revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    db_session.query(RefreshToken).filter(
-        RefreshToken.user_id == user_id
-    ).update(
-        {RefreshToken.is_revoked: True, RefreshToken.revoked_at: revoked_at},
-        synchronize_session=False,
-    )
+        # Revoke all existing refresh tokens — the user must log in again
+        # with the new password to get a fresh token pair.
+        revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db_session.query(RefreshToken).filter(
+            RefreshToken.user_id == user_id
+        ).update(
+            {RefreshToken.is_revoked: True, RefreshToken.revoked_at: revoked_at},
+            synchronize_session=False,
+        )
 
-    db_session.commit()
-
-    from backend.services.history_service import log_data_change
-    log_data_change(
-        user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,
-        username=get_username(admin_user),
-        table_name="users",
-        record_id=user_id,
-        action="RESET_PASSWORD",
-        before=None,
-        after=None,
-        db_session=db_session
-    )
+        from backend.services.history_service import log_data_change
+        log_data_change(
+            user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,
+            username=get_username(admin_user),
+            table_name="users",
+            record_id=user_id,
+            action="RESET_PASSWORD",
+            before=None,
+            after=None,
+            db_session=db_session
+        )
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        raise
     return True
 
 
@@ -574,29 +585,31 @@ def delete_user(user_id, admin_user, db_session: Session):
     if not user:
         return False
         
-    username = user.username
     old_data = {"deleted_at": None, "is_active": user.is_active}
-    
-    # Revoke all their refresh tokens immediately to end active sessions
-    revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    db_session.query(RefreshToken).filter(RefreshToken.user_id == user_id).update(
-        {RefreshToken.is_revoked: True, RefreshToken.revoked_at: revoked_at},
-        synchronize_session=False,
-    )
-    
-    user.deleted_at = datetime.now(timezone.utc)
-    user.is_active = False # Deactivate deleted users
-    db_session.commit()
-    
-    from backend.services.history_service import log_data_change
-    log_data_change(
-        user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,
-        username=get_username(admin_user),
-        table_name="users",
-        record_id=user_id,
-        action="SOFT_DELETE",
-        before=old_data,
-        after={"deleted_at": user.deleted_at.isoformat() if hasattr(user.deleted_at, "isoformat") else str(user.deleted_at), "is_active": False},
-        db_session=db_session
-    )
+    try:
+        # Revoke all their refresh tokens immediately to end active sessions
+        revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db_session.query(RefreshToken).filter(RefreshToken.user_id == user_id).update(
+            {RefreshToken.is_revoked: True, RefreshToken.revoked_at: revoked_at},
+            synchronize_session=False,
+        )
+
+        user.deleted_at = datetime.now(timezone.utc)
+        user.is_active = False # Deactivate deleted users
+
+        from backend.services.history_service import log_data_change
+        log_data_change(
+            user_id=admin_user.get("id") if isinstance(admin_user, dict) else 0,
+            username=get_username(admin_user),
+            table_name="users",
+            record_id=user_id,
+            action="SOFT_DELETE",
+            before=old_data,
+            after={"deleted_at": user.deleted_at.isoformat() if hasattr(user.deleted_at, "isoformat") else str(user.deleted_at), "is_active": False},
+            db_session=db_session
+        )
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        raise
     return True

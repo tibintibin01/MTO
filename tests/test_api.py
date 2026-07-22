@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from backend.deps import get_db
 from backend.main import app
 import pytest
 
@@ -12,14 +13,25 @@ def test_health_check():
 
 def test_deep_healthz():
     """Verify the enterprise deep health probe is active and responsive."""
-    response = client.get("/healthz")
-    assert response.status_code == 200
-    json_data = response.json()
-    assert json_data["status"] == "healthy"
-    assert "database" in json_data
-    assert "cache" in json_data
-    assert "storage" in json_data
-    assert "vault" in json_data
+    class HealthyTestDatabase:
+        def execute(self, statement):
+            return 1
+
+    def override_get_db():
+        yield HealthyTestDatabase()
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        response = client.get("/healthz")
+        assert response.status_code == 200
+        json_data = response.json()
+        assert json_data["status"] == "healthy"
+        assert json_data["database"] == "connected"
+        assert "cache" in json_data
+        assert "storage" in json_data
+        assert "vault" in json_data
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 def test_invalid_login():
@@ -41,3 +53,8 @@ def test_backup_status_access_denied():
     """Verify that sensitive info requires a token."""
     response = client.get("/system/backup/status")
     assert response.status_code == 401  # Unauthorized
+
+
+def test_compliance_impact_preview_requires_admin_authentication():
+    response = client.get("/billing/compliant/impact-preview?as_of_year=2026")
+    assert response.status_code == 401

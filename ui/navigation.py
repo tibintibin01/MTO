@@ -254,6 +254,7 @@ class NavigationSidebar(ctk.CTkFrame):
         btn.pack(fill="x", padx=10, pady=2)
 
         self._nav_items[key] = {"btn": btn, "command": command}
+        return btn
 
     # -----------------------------------------------------------------------
     # Active state management
@@ -294,4 +295,4 @@ class NavigationSidebar(ctk.CTkFrame):
     def create_nav_btn(self, text, command):
         """Deprecated — use _add_nav() instead. Kept for backwards compatibility."""
         key = text.lower().replace(" ", "_")
-        self._add_nav(key, text, command)
+        return self._add_nav(key, text, command)

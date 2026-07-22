@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -11,6 +12,8 @@ from backend.services.portal_publish_service import (
     _owner_lookup_hash,
     _snapshot_checksum,
     generate_portal_snapshot,
+    portal_snapshot_directory,
+    save_portal_snapshot,
 )
 
 
@@ -81,6 +84,29 @@ def test_generate_portal_snapshot_is_sanitized_and_checksummed(db, monkeypatch):
     assert snapshot["owner_lookup_index"][_owner_lookup_hash("JUAN", "test-lookup-secret")] == [0]
     assert "JUAN DELA CRUZ" not in str(snapshot)
     assert "7812345" not in str(snapshot)
+
+
+def test_save_portal_snapshot_uses_configured_directory_and_atomic_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "backend.services.portal_publish_service.mto_config.PORTAL_SNAPSHOT_DIR",
+        str(tmp_path),
+    )
+    snapshot = {
+        "schema_version": 2,
+        "published_at": datetime.now(timezone.utc).isoformat(),
+        "record_count": 0,
+        "properties": [],
+        "owner_lookup_index": {},
+        "checksum": "test",
+    }
+
+    result = save_portal_snapshot(snapshot)
+
+    assert portal_snapshot_directory() == str(tmp_path.resolve())
+    assert result["latest_path"] == str(tmp_path / "portal_snapshot_latest.json")
+    assert result["latest_gzip_path"] == str(tmp_path / "portal_snapshot_latest.json.gz")
+    assert json.loads((tmp_path / "portal_snapshot_latest.json").read_text(encoding="utf-8")) == snapshot
+    assert not list(tmp_path.glob(".portal_snapshot_*"))
 
 
 def test_snapshot_uses_current_year_assessment_and_labels_future_revaluation(db, monkeypatch):

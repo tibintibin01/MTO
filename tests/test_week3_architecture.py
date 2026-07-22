@@ -90,34 +90,38 @@ def test_tax_policy_custom_rates_and_fallbacks(db):
     assert res_custom["total_amount"] == 2040.00
 
 
-def test_import_caching_utilities():
+def test_import_caching_utilities(tmp_path):
     """Test save_import_cache, load_import_cache, and prune_old_import_cache utilities."""
     sample_data = [{"td_number": "TD-TEST-1", "owner_name": "Alice"}, {"td_number": "TD-TEST-2", "owner_name": "Bob"}]
     
     # 1. Save data to cache
-    token = save_import_cache(sample_data)
+    token = save_import_cache(sample_data, cache_dir=tmp_path)
     assert token is not None
     assert len(token) > 0
     
     # 2. Check if cache file exists
-    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "import_cache")
-    file_path = os.path.join(cache_dir, f"import_{token}.json")
+    file_path = tmp_path / f"import_{token}.json"
     assert os.path.exists(file_path)
     
     # 3. Load from cache (should delete immediately after load)
-    loaded_data = load_import_cache(token)
+    loaded_data = load_import_cache(token, cache_dir=tmp_path)
     assert loaded_data == sample_data
     assert not os.path.exists(file_path)
     
     # 4. Pruning test
-    token2 = save_import_cache(sample_data)
-    file_path2 = os.path.join(cache_dir, f"import_{token2}.json")
+    token2 = save_import_cache(sample_data, cache_dir=tmp_path)
+    file_path2 = tmp_path / f"import_{token2}.json"
     assert os.path.exists(file_path2)
     # Force older timestamp
     old_time = time.time() - 4000 # older than 1 hour
     os.utime(file_path2, (old_time, old_time))
-    prune_old_import_cache(max_age_seconds=3600)
+    prune_old_import_cache(max_age_seconds=3600, cache_dir=tmp_path)
     assert not os.path.exists(file_path2)
+
+
+def test_import_cache_rejects_non_uuid_tokens(tmp_path):
+    assert load_import_cache("../../etc/passwd", cache_dir=tmp_path) is None
+    assert load_import_cache("abc123", cache_dir=tmp_path) is None
 
 
 def test_job_worker_wake_signal(db):

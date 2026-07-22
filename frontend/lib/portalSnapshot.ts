@@ -2,9 +2,12 @@ import "server-only";
 
 import { get, put } from "@vercel/blob";
 import { createHmac } from "crypto";
-import { readFile } from "fs/promises";
+import { readFile, stat } from "fs/promises";
 
 export const PORTAL_SNAPSHOT_BLOB_PATH = "portal/portal_snapshot_latest.json";
+export const PORTAL_SNAPSHOT_SCHEMA_VERSION = 2;
+const DEFAULT_MAX_SNAPSHOT_AGE_HOURS = 36;
+const BLOB_CACHE_TTL_MS = 30_000;
 
 type SnapshotRecord = Record<string, any>;
 type PortalSnapshot = {
@@ -22,6 +25,25 @@ export class PortalSnapshotConfigError extends Error {
     this.name = "PortalSnapshotConfigError";
   }
 }
+
+export class PortalSnapshotDataError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PortalSnapshotDataError";
+  }
+}
+
+let localSnapshotCache: {
+  signature: string;
+  snapshot: PortalSnapshot;
+} | null = null;
+
+let blobSnapshotCache: {
+  expiresAt: number;
+  snapshot: PortalSnapshot;
+} | null = null;
+
+const propertyIndexCache = new WeakMap<object, Map<string, SnapshotRecord>>();
 
 function requireLookupSecret(): string {
   const secret = process.env.MTO_PORTAL_LOOKUP_SECRET?.trim();
@@ -49,49 +71,141 @@ async function streamToText(stream: ReadableStream<Uint8Array>): Promise<string>
   return new Response(stream).text();
 }
 
-function validateSnapshot(snapshot: PortalSnapshot): PortalSnapshot {
+function validateSnapshot(snapshot: PortalSnapshot, lookupSecret: string): PortalSnapshot {
   if (!snapshot || !Array.isArray(snapshot.properties)) {
-    throw new Error("Portal snapshot is missing a properties array.");
+    throw new PortalSnapshotDataError("Portal snapshot is missing a properties array.");
+  }
+  if (snapshot.schema_version !== PORTAL_SNAPSHOT_SCHEMA_VERSION) {
+    throw new PortalSnapshotDataError(
+      `Portal snapshot schema ${snapshot.schema_version ?? "unknown"} is not supported.`,
+    );
   }
   if (typeof snapshot.record_count === "number" && snapshot.record_count !== snapshot.properties.length) {
-    throw new Error("Portal snapshot record_count does not match properties length.");
+    throw new PortalSnapshotDataError("Portal snapshot record_count does not match properties length.");
+  }
+  if (!snapshot.owner_lookup_index || typeof snapshot.owner_lookup_index !== "object") {
+    throw new PortalSnapshotDataError("Portal snapshot is missing the owner lookup index.");
+  }
+
+  // Detect a backend/frontend secret mismatch during loading instead of making
+  // every valid TDN silently return 404. A single complete record is enough to
+  // prove that the snapshot was generated with the configured lookup secret.
+  const sample = snapshot.properties.find((record) => record?.td_number && record?.td_lookup_hash);
+  if (sample) {
+    const expectedHash = createHmac("sha256", lookupSecret)
+      .update(normalizeLookup(sample.td_number))
+      .digest("hex");
+    if (expectedHash !== sample.td_lookup_hash) {
+      throw new PortalSnapshotDataError("Portal snapshot lookup configuration does not match the published data.");
+    }
+  } else if (snapshot.properties.length > 0) {
+    throw new PortalSnapshotDataError("Portal snapshot has no usable property lookup records.");
   }
   return snapshot;
 }
 
+function parseSnapshot(raw: string, lookupSecret: string): PortalSnapshot {
+  try {
+    return validateSnapshot(JSON.parse(raw), lookupSecret);
+  } catch (error) {
+    if (error instanceof PortalSnapshotDataError) throw error;
+    throw new PortalSnapshotDataError("Portal snapshot contains invalid JSON.");
+  }
+}
+
 export async function loadPortalSnapshot(): Promise<PortalSnapshot | null> {
+  const lookupSecret = requireLookupSecret();
   const localPath = process.env.MTO_PORTAL_SNAPSHOT_PATH?.trim();
-  let raw: string | null = null;
 
   if (localPath) {
-    raw = await readFile(localPath, "utf8");
-  } else {
-    const blob = await get(PORTAL_SNAPSHOT_BLOB_PATH, { access: "private", useCache: false });
-    if (!blob || blob.statusCode !== 200 || !blob.stream) {
-      return null;
+    let file;
+    try {
+      file = await stat(localPath);
+    } catch (error: any) {
+      if (error?.code === "ENOENT") {
+        throw new PortalSnapshotDataError("Portal snapshot has not been generated yet.");
+      }
+      throw error;
     }
-    raw = await streamToText(blob.stream);
+    const signature = `${localPath}:${file.size}:${file.mtimeMs}`;
+    if (localSnapshotCache?.signature === signature) {
+      return localSnapshotCache.snapshot;
+    }
+
+    const raw = await readFile(localPath, "utf8");
+    const snapshot = parseSnapshot(raw, lookupSecret);
+    localSnapshotCache = { signature, snapshot };
+    return snapshot;
   }
 
-  return validateSnapshot(JSON.parse(raw));
+  if (blobSnapshotCache && blobSnapshotCache.expiresAt > Date.now()) {
+    return blobSnapshotCache.snapshot;
+  }
+
+  const blob = await get(PORTAL_SNAPSHOT_BLOB_PATH, { access: "private", useCache: false });
+  if (!blob || blob.statusCode !== 200 || !blob.stream) {
+    return null;
+  }
+
+  const raw = await streamToText(blob.stream);
+  const snapshot = parseSnapshot(raw, lookupSecret);
+  blobSnapshotCache = { expiresAt: Date.now() + BLOB_CACHE_TTL_MS, snapshot };
+  return snapshot;
 }
 
 export async function storePortalSnapshot(snapshot: PortalSnapshot) {
-  validateSnapshot(snapshot);
+  validateSnapshot(snapshot, requireLookupSecret());
   const body = JSON.stringify(snapshot);
-  return put(PORTAL_SNAPSHOT_BLOB_PATH, body, {
+  const result = await put(PORTAL_SNAPSHOT_BLOB_PATH, body, {
     access: "private",
     allowOverwrite: true,
     contentType: "application/json; charset=utf-8",
     cacheControlMaxAge: 60,
   });
+  blobSnapshotCache = null;
+  return result;
 }
 
 export function findSnapshotProperty(snapshot: PortalSnapshot, query: string): SnapshotRecord | null {
   const hash = lookupHash(query);
-  return (snapshot.properties || []).find((record) =>
-    record?.td_lookup_hash === hash || record?.pin_lookup_hash === hash
-  ) || null;
+  let index = propertyIndexCache.get(snapshot);
+  if (!index) {
+    index = new Map<string, SnapshotRecord>();
+    for (const record of snapshot.properties || []) {
+      if (record?.td_lookup_hash) index.set(record.td_lookup_hash, record);
+      if (record?.pin_lookup_hash) index.set(record.pin_lookup_hash, record);
+    }
+    propertyIndexCache.set(snapshot, index);
+  }
+  return index.get(hash) || null;
+}
+
+export async function portalSnapshotHealth() {
+  const snapshot = await loadPortalSnapshot();
+  if (!snapshot) {
+    return { ok: false, status: "missing", detail: "Portal data has not been published yet." };
+  }
+
+  const publishedAt = snapshot.published_at ? new Date(snapshot.published_at) : null;
+  const publishedAtMs = publishedAt?.getTime() ?? Number.NaN;
+  const ageHours = Number.isFinite(publishedAtMs)
+    ? Math.max(0, (Date.now() - publishedAtMs) / 3_600_000)
+    : null;
+  const configuredMaxAge = Number(process.env.MTO_PORTAL_MAX_SNAPSHOT_AGE_HOURS);
+  const maxAgeHours = Number.isFinite(configuredMaxAge) && configuredMaxAge > 0
+    ? configuredMaxAge
+    : DEFAULT_MAX_SNAPSHOT_AGE_HOURS;
+  const fresh = ageHours !== null && ageHours <= maxAgeHours;
+
+  return {
+    ok: fresh,
+    status: fresh ? "ready" : "stale",
+    schema_version: snapshot.schema_version,
+    published_at: snapshot.published_at || null,
+    age_hours: ageHours === null ? null : Number(ageHours.toFixed(1)),
+    max_age_hours: maxAgeHours,
+    record_count: snapshot.properties?.length || 0,
+  };
 }
 
 export function publicProperty(record: SnapshotRecord, snapshot: PortalSnapshot) {

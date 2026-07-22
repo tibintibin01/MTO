@@ -690,7 +690,19 @@ def _sync_financial_records(prop_id, data, db_session: Session):
     pen_shares = billing.split_amount_across_years(pen, len(tax_years))
     disc_shares = billing.split_amount_across_years(disc, len(tax_years))
     
-    should_pay = bool(data.get("OR Number"))
+    or_no = str(data.get("OR Number") or "").strip()
+    should_pay = bool(or_no)
+    paid = clean_currency(data.get("Amount Paid")) if should_pay else 0.0
+    or_dt_raw = data.get("OR Date")
+    normalized_or_date = billing.normalize_date_input(or_dt_raw) if should_pay else None
+    if should_pay:
+        if not billing.looks_like_valid_or_number(or_no):
+            raise HTTPException(status_code=422, detail="Enter a valid Official Receipt number.")
+        if paid <= 0:
+            raise HTTPException(status_code=422, detail="A posted payment must be greater than zero.")
+        if not normalized_or_date:
+            raise HTTPException(status_code=422, detail="A valid Official Receipt date is required.")
+
     billing_rows = []
     
     for year, p_s, d_s in zip(tax_years, pen_shares, disc_shares):
@@ -701,11 +713,13 @@ def _sync_financial_records(prop_id, data, db_session: Session):
             db_session=db_session,
         )
         billing_rows.append(
-            billing.sync_property_billing(prop_id, year, a_s, p_s, d_s, has_payment=should_pay, db_session=db_session)
+            # Payment allocations are the only source that may mark a billing
+            # row paid. Pre-filling every selected year as fully paid causes a
+            # partial multi-year receipt to settle years that received nothing.
+            billing.sync_property_billing(prop_id, year, a_s, p_s, d_s, has_payment=False, db_session=db_session)
         )
         
     if should_pay:
-        paid = clean_currency(data.get("Amount Paid"))
         allocated = billing.allocate_payment_amount(billing_rows, paid)
         
         # Every legitimate installment is immutable and receives its own
@@ -713,20 +727,7 @@ def _sync_financial_records(prop_id, data, db_session: Session):
         # date, so posting another tax year with the same receipt/date replaced
         # the old tax year and deleted its PaymentBilling allocation.
         from backend.models import Payment
-        or_no = str(data.get("OR Number") or "").strip()
-        or_dt_raw = data.get("OR Date")
-        
-        # Parse or_date if it's a string
-        or_dt = None
-        if or_dt_raw:
-            if isinstance(or_dt_raw, str):
-                try:
-                    or_dt = datetime.strptime(or_dt_raw, "%Y-%m-%d")
-                except ValueError:
-                    # or_date string is not in expected format; leave or_dt as None
-                    pass
-            elif isinstance(or_dt_raw, datetime):
-                or_dt = or_dt_raw
+        or_dt = datetime.strptime(normalized_or_date, "%Y-%m-%d")
 
         payor_name = data.get("Payor") or data.get("Owner Name")
         tax_year_str = billing.format_tax_years(data.get("Tax Year"))
@@ -947,20 +948,6 @@ def purge_property(property_id, user=None, db_session: Session = None):
         db_session.rollback()
         raise
 
-    if user:
-        from backend.services.history_service import log_data_change
-        log_data_change(
-            user_id=user.get("id") if isinstance(user, dict) else 0,
-            username=get_username(user),
-            table_name="properties",
-            record_id=property_id,
-            action="PURGE",
-            before=full_data,
-            after=None,
-            db_session=db_session
-        )
-    return 1
-
 
 def get_unspecified_properties(db_session: Session = None):
     """Fetches all properties where barangay is NULL, empty, or 'UNSPECIFIED'."""
@@ -980,23 +967,26 @@ def bulk_update_barangay(property_ids, new_barangay, user=None, db_session: Sess
     """Updates the barangay for multiple properties at once."""
     if not property_ids or not new_barangay:
         return 0
-    count = db_session.query(Property).filter(Property.id.in_(property_ids)).update(
-        {Property.barangay: new_barangay}, synchronize_session=False
-    )
-    db_session.commit()
-
-    if count and user:
-        from backend.services.history_service import log_data_change
-        log_data_change(
-            user_id=user.get("id") if isinstance(user, dict) else 0,
-            username=get_username(user),
-            table_name="properties",
-            record_id=0,
-            action="BULK_UPDATE_BARANGAY",
-            before={"ids": property_ids},
-            after={"barangay": new_barangay},
-            db_session=db_session
+    try:
+        count = db_session.query(Property).filter(Property.id.in_(property_ids)).update(
+            {Property.barangay: new_barangay}, synchronize_session=False
         )
+        if count and user:
+            from backend.services.history_service import log_data_change
+            log_data_change(
+                user_id=user.get("id") if isinstance(user, dict) else 0,
+                username=get_username(user),
+                table_name="properties",
+                record_id=0,
+                action="BULK_UPDATE_BARANGAY",
+                before={"ids": property_ids},
+                after={"barangay": new_barangay},
+                db_session=db_session
+            )
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        raise
     return count
 
 

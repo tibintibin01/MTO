@@ -13,6 +13,7 @@ import hmac
 import json
 import os
 import re
+import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
@@ -125,6 +126,30 @@ def _snapshot_checksum(snapshot_without_checksum: dict) -> str:
         ensure_ascii=False,
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def portal_snapshot_directory() -> str:
+    """Returns the configured portal-only data directory."""
+    configured = str(getattr(mto_config, "PORTAL_SNAPSHOT_DIR", "") or "").strip()
+    if configured:
+        return os.path.realpath(os.path.expanduser(configured))
+    return os.path.realpath(os.path.join(mto_config.BACKUP_DIR, "portal_snapshots"))
+
+
+def _atomic_write(path: str, payload: bytes) -> None:
+    """Replaces a snapshot without exposing a partially written latest file."""
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    descriptor, temp_path = tempfile.mkstemp(prefix=".portal_snapshot_", dir=directory)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 def generate_portal_snapshot(db_session: Session) -> dict:
@@ -361,7 +386,7 @@ def generate_portal_snapshot(db_session: Session) -> dict:
 
 def save_portal_snapshot(snapshot: dict) -> dict:
     """Saves timestamped and latest snapshot files on the office server."""
-    base_dir = os.path.join(mto_config.BACKUP_DIR, "portal_snapshots")
+    base_dir = portal_snapshot_directory()
     os.makedirs(base_dir, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     timestamped_path = os.path.join(base_dir, f"portal_snapshot_{stamp}.json")
@@ -373,14 +398,10 @@ def save_portal_snapshot(snapshot: dict) -> dict:
     timestamped_gzip_path = timestamped_path + ".gz"
     latest_gzip_path = latest_path + ".gz"
 
-    with open(timestamped_path, "w", encoding="utf-8") as f:
-        f.write(payload)
-    with open(latest_path, "w", encoding="utf-8") as f:
-        f.write(payload)
-    with open(timestamped_gzip_path, "wb") as f:
-        f.write(gzip_payload)
-    with open(latest_gzip_path, "wb") as f:
-        f.write(gzip_payload)
+    _atomic_write(timestamped_path, payload_bytes)
+    _atomic_write(latest_path, payload_bytes)
+    _atomic_write(timestamped_gzip_path, gzip_payload)
+    _atomic_write(latest_gzip_path, gzip_payload)
 
     return {
         "snapshot_path": timestamped_path,

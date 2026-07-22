@@ -13,6 +13,7 @@ from backend.services.assessment_value_service import (
 
 MAX_PENALTY_MONTHS = 36
 MONEY = Decimal("0.01")
+BILLING_DATA_START_YEAR = 2023
 
 
 def annual_penalty_months(tax_year: int, as_of_date=None) -> int:
@@ -2006,6 +2007,198 @@ def get_compliant_accounts(
         "count": len(items),
         "as_of_year": selected_year,
     }
+
+
+def _compliance_v2_per_property(as_of_year: int, db_session: Session, assigned_barangays_only: bool = False):
+    """Build per-property totals while preserving each tax year's balance."""
+    selected_year = int(as_of_year)
+    rate_expr = func.coalesce(
+        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
+        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .correlate(PropertyBilling)
+        .scalar_subquery(),
+        0.02,
+    )
+    due_expr = (
+        PropertyBilling.assessed_value * rate_expr
+        + PropertyBilling.penalty
+        - PropertyBilling.discount
+    )
+    paid_expr = _billing_effective_amount_exprs(db_session)["paid"]
+    open_year_expr = case(
+        (
+            and_(
+                due_expr > 0.005,
+                paid_expr + 0.005 < due_expr,
+            ),
+            1,
+        ),
+        else_=0,
+    )
+    positive_due_expr = case((due_expr > 0.005, 1), else_=0)
+
+    query = (
+        db_session.query(
+            Property.id.label("property_id"),
+            func.trim(Property.barangay).label("barangay"),
+            func.sum(due_expr).label("total_due"),
+            func.sum(paid_expr).label("total_paid"),
+            func.count(PropertyBilling.id).label("years_covered"),
+            func.sum(open_year_expr).label("open_years"),
+            func.sum(positive_due_expr).label("positive_due_years"),
+        )
+        .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+        .filter(Property.deleted_at == None)
+        .filter(PropertyBilling.tax_year >= BILLING_DATA_START_YEAR)
+        .filter(PropertyBilling.tax_year <= selected_year)
+        .filter(PropertyBilling.is_archived == False)
+        .filter(*_compliance_property_scope(selected_year, db_session))
+    )
+    if assigned_barangays_only:
+        query = query.filter(*_assigned_barangay_filters())
+    return query.group_by(Property.id, Property.barangay).subquery()
+
+
+def get_compliant_accounts_v2(
+    barangay: str = None,
+    search: str = None,
+    limit: int = 50,
+    cursor: int = None,
+    as_of_year: int = None,
+    db_session: Session = None,
+):
+    """Return accounts where every supported, active tax year has zero balance."""
+    safe_limit = min(max(1, int(limit)), 200)
+    selected_year = int(as_of_year or datetime.now(timezone.utc).year)
+    per_property = _compliance_v2_per_property(selected_year, db_session)
+
+    last_paid = (
+        db_session.query(func.max(Payment.date_paid))
+        .join(PaymentBilling, PaymentBilling.payment_id == Payment.id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .filter(Payment.property_id == Property.id)
+        .filter(PropertyBilling.tax_year >= BILLING_DATA_START_YEAR)
+        .filter(PropertyBilling.tax_year <= selected_year)
+        .filter(PropertyBilling.is_archived == False)
+        .correlate(Property)
+        .scalar_subquery()
+    )
+    last_or = (
+        db_session.query(Payment.or_number)
+        .join(PaymentBilling, PaymentBilling.payment_id == Payment.id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+        .filter(Payment.property_id == Property.id)
+        .filter(PropertyBilling.tax_year >= BILLING_DATA_START_YEAR)
+        .filter(PropertyBilling.tax_year <= selected_year)
+        .filter(PropertyBilling.is_archived == False)
+        .order_by(Payment.date_paid.desc(), Payment.id.desc())
+        .limit(1)
+        .correlate(Property)
+        .scalar_subquery()
+    )
+
+    query = (
+        db_session.query(
+            Property.id,
+            Property.td_number,
+            Property.owner_name,
+            Property.location,
+            func.coalesce(Property.barangay, "UNSPECIFIED"),
+            Property.kind_of_property,
+            per_property.c.total_due,
+            per_property.c.total_paid,
+            last_paid.label("last_paid"),
+            last_or.label("last_or"),
+            per_property.c.years_covered,
+        )
+        .join(per_property, per_property.c.property_id == Property.id)
+        .filter(per_property.c.total_due > 0.005)
+        .filter(per_property.c.total_paid > 0.005)
+        .filter(per_property.c.positive_due_years > 0)
+        .filter(per_property.c.open_years == 0)
+    )
+    if barangay and barangay.upper() != "ALL":
+        query = query.filter(func.coalesce(Property.barangay, "UNSPECIFIED") == barangay)
+    if search and str(search).strip():
+        like_term = f"%{str(search).strip()}%"
+        query = query.filter(or_(
+            Property.td_number.like(like_term),
+            Property.prev_td_number.like(like_term),
+            Property.pin.like(like_term),
+            Property.owner_name.like(like_term),
+            Property.payor_name.like(like_term),
+            Property.location.like(like_term),
+            Property.barangay.like(like_term),
+        ))
+    if cursor:
+        query = query.filter(Property.id > int(cursor))
+
+    rows = query.order_by(Property.id.asc()).limit(safe_limit + 1).all()
+    has_more = len(rows) > safe_limit
+    items = rows[:safe_limit]
+    return {
+        "items": [
+            {
+                "id": row[0],
+                "td_number": row[1],
+                "owner_name": row[2],
+                "location": row[3],
+                "barangay": row[4],
+                "kind_of_property": row[5] or "—",
+                "total_due": float(row[6] or 0),
+                "total_paid": float(row[7] or 0),
+                "last_paid": row[8].strftime("%Y-%m-%d") if row[8] else None,
+                "last_or": row[9],
+                "years_covered": int(row[10] or 0),
+            }
+            for row in items
+        ],
+        "next_cursor": items[-1][0] if has_more and items else None,
+        "has_more": has_more,
+        "count": len(items),
+        "as_of_year": selected_year,
+        "classification_version": "v2_per_year",
+    }
+
+
+def get_compliant_summary_by_barangay_v2(as_of_year: int = None, db_session: Session = None):
+    selected_year = int(as_of_year or datetime.now(timezone.utc).year)
+    per_property = _compliance_v2_per_property(
+        selected_year,
+        db_session,
+        assigned_barangays_only=True,
+    )
+    compliant_condition = and_(
+        per_property.c.total_due > 0.005,
+        per_property.c.total_paid > 0.005,
+        per_property.c.positive_due_years > 0,
+        per_property.c.open_years == 0,
+    )
+    rows = (
+        db_session.query(
+            per_property.c.barangay,
+            func.count(per_property.c.property_id),
+            func.sum(case((compliant_condition, 1), else_=0)),
+            func.sum(case((compliant_condition, 0), else_=1)),
+            func.sum(case((compliant_condition, per_property.c.total_paid), else_=0)),
+        )
+        .group_by(per_property.c.barangay)
+        .order_by(per_property.c.barangay.asc())
+        .all()
+    )
+    result = []
+    for row in rows:
+        total = int(row[1] or 0)
+        compliant = int(row[2] or 0)
+        result.append({
+            "barangay": row[0],
+            "total_properties": total,
+            "compliant_count": compliant,
+            "delinquent_count": int(row[3] or 0),
+            "compliance_rate": round(compliant / total * 100, 1) if total else 0.0,
+            "total_collected": float(row[4] or 0),
+        })
+    return result
 
 
 def get_compliant_summary_by_barangay(

@@ -12,7 +12,9 @@ from backend.services.billing_service import (
     calculate_current_billing_amounts,
     calculate_penalty,
     get_compliant_accounts,
+    get_compliant_accounts_v2,
     get_compliant_summary_by_barangay,
+    get_compliant_summary_by_barangay_v2,
     get_reconciliation_diagnostics,
     get_reconciliation_metrics,
     get_rpt_receivables_summary,
@@ -386,6 +388,116 @@ def test_compliance_uses_linked_payment_allocation_when_cached_paid_is_stale(db)
     assert summary[0]["collected_from_compliant"] == 2_000.0
 
 
+def test_compliance_v2_does_not_use_one_year_credit_to_settle_another(db):
+    prop = Property(
+        td_number="TD-V2-CROSS-YEAR",
+        owner_name="V2 Cross Year",
+        barangay="BUENAVISTA",
+        assessed_value=100_000.0,
+    )
+    db.add(prop)
+    db.flush()
+    db.add_all([
+        PropertyBilling(
+            property_id=prop.id,
+            tax_year=2024,
+            assessed_value=100_000.0,
+            amount_paid=4_000.0,
+        ),
+        PropertyBilling(
+            property_id=prop.id,
+            tax_year=2025,
+            assessed_value=100_000.0,
+            amount_paid=0.0,
+        ),
+    ])
+    db.commit()
+
+    legacy = get_compliant_accounts(as_of_year=2025, db_session=db)
+    v2 = get_compliant_accounts_v2(as_of_year=2025, db_session=db)
+    summary = get_compliant_summary_by_barangay_v2(as_of_year=2025, db_session=db)
+
+    assert [row["td_number"] for row in legacy["items"]] == ["TD-V2-CROSS-YEAR"]
+    assert v2["items"] == []
+    assert summary[0]["compliant_count"] == 0
+    assert summary[0]["delinquent_count"] == 1
+
+
+def test_compliance_v2_uses_linked_payment_and_matching_latest_or(db):
+    prop = Property(
+        td_number="TD-V2-LINKED",
+        owner_name="V2 Linked",
+        barangay="BUENAVISTA",
+        assessed_value=100_000.0,
+    )
+    db.add(prop)
+    db.flush()
+    billing = PropertyBilling(
+        property_id=prop.id,
+        tax_year=2025,
+        assessed_value=100_000.0,
+        amount_paid=0.0,
+    )
+    db.add(billing)
+    db.flush()
+    early = Payment(
+        property_id=prop.id,
+        amount=1_000.0,
+        or_number="ZZZ-EARLY",
+        date_paid=datetime(2025, 1, 1),
+        tax_year="2025",
+    )
+    latest = Payment(
+        property_id=prop.id,
+        amount=1_000.0,
+        or_number="AAA-LATEST",
+        date_paid=datetime(2025, 2, 1),
+        tax_year="2025",
+    )
+    db.add_all([early, latest])
+    db.flush()
+    db.add_all([
+        PaymentBilling(payment_id=early.id, billing_id=billing.id, tax_year=2025, amount_paid=1_000.0),
+        PaymentBilling(payment_id=latest.id, billing_id=billing.id, tax_year=2025, amount_paid=1_000.0),
+    ])
+    db.commit()
+
+    result = get_compliant_accounts_v2(as_of_year=2025, db_session=db)
+
+    assert [row["td_number"] for row in result["items"]] == ["TD-V2-LINKED"]
+    assert result["items"][0]["total_paid"] == pytest.approx(2_000.0)
+    assert result["items"][0]["last_paid"] == "2025-02-01"
+    assert result["items"][0]["last_or"] == "AAA-LATEST"
+
+
+def test_compliance_v2_uses_supported_active_billing_window(db):
+    prop = Property(
+        td_number="TD-V2-WINDOW",
+        owner_name="V2 Window",
+        barangay="BUENAVISTA",
+        assessed_value=100_000.0,
+    )
+    db.add(prop)
+    db.flush()
+    db.add_all([
+        PropertyBilling(property_id=prop.id, tax_year=2022, assessed_value=100_000.0, amount_paid=0.0),
+        PropertyBilling(property_id=prop.id, tax_year=2024, assessed_value=100_000.0, amount_paid=2_000.0),
+        PropertyBilling(
+            property_id=prop.id,
+            tax_year=2025,
+            assessed_value=100_000.0,
+            amount_paid=0.0,
+            is_archived=True,
+        ),
+    ])
+    db.commit()
+
+    result = get_compliant_accounts_v2(as_of_year=2025, db_session=db)
+
+    assert [row["td_number"] for row in result["items"]] == ["TD-V2-WINDOW"]
+    assert result["items"][0]["years_covered"] == 1
+
+
 def test_compliance_through_year_switches_to_effective_replacement(db):
     old_prop = Property(
         td_number="TD-OLD",
@@ -682,6 +794,70 @@ def test_partial_installments_remain_separate_when_later_year_is_posted(db):
     db.rollback()
     assert duplicate_error.value.status_code == 409
     assert db.query(Payment).filter(Payment.property_id == prop.id).count() == 3
+
+
+def test_partial_multi_year_payment_does_not_mark_unallocated_year_paid(db):
+    prop = Property(
+        td_number="TD-PARTIAL-MULTI-YEAR",
+        owner_name="Partial Multi Year",
+        barangay="BUENAVISTA",
+        assessed_value=100_000.0,
+    )
+    db.add(prop)
+    db.commit()
+
+    _sync_financial_records(prop.id, {
+        "TD Number": prop.td_number,
+        "Owner Name": prop.owner_name,
+        "Assessed Value": "100000",
+        "Tax Year": "2024, 2025",
+        "OR Number": "OR-ONE-YEAR",
+        "OR Date": "2025-01-10",
+        "Penalty": "0",
+        "Discount": "0",
+        "Amount Paid": "2000",
+    }, db)
+    db.commit()
+
+    rows = db.query(PropertyBilling).filter(
+        PropertyBilling.property_id == prop.id,
+    ).order_by(PropertyBilling.tax_year).all()
+    assert [(row.tax_year, float(row.amount_paid)) for row in rows] == [
+        (2024, 2_000.0),
+        (2025, 0.0),
+    ]
+    assert db.query(PaymentBilling).filter_by(billing_id=rows[0].id).count() == 1
+    assert db.query(PaymentBilling).filter_by(billing_id=rows[1].id).count() == 0
+
+
+@pytest.mark.parametrize("amount", ["", "0", "-1"])
+def test_posted_payment_must_be_positive(db, amount):
+    prop = Property(
+        td_number=f"TD-NONPOSITIVE-{amount or 'BLANK'}",
+        owner_name="Nonpositive Payment",
+        barangay="BUENAVISTA",
+        assessed_value=100_000.0,
+    )
+    db.add(prop)
+    db.commit()
+
+    with pytest.raises(HTTPException) as error:
+        _sync_financial_records(prop.id, {
+            "TD Number": prop.td_number,
+            "Owner Name": prop.owner_name,
+            "Assessed Value": "100000",
+            "Tax Year": "2025",
+            "OR Number": "OR-NONPOSITIVE",
+            "OR Date": "2025-01-10",
+            "Penalty": "0",
+            "Discount": "0",
+            "Amount Paid": amount,
+        }, db)
+
+    assert error.value.status_code == 422
+    assert "greater than zero" in error.value.detail
+    assert db.query(Payment).filter_by(property_id=prop.id).count() == 0
+    assert db.query(PropertyBilling).filter_by(property_id=prop.id).count() == 0
 
 
 def test_reconciliation_is_time_aware_for_prepayments_and_future_postings(db):

@@ -4,7 +4,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
-from backend.deps import get_current_user, write_access, read_only, get_db, Session
+from backend.deps import get_current_user, write_access, read_only, admin_only, get_db, Session
 import backend.services.billing_service as bill_svc
 import backend.services.property_service as prop_svc
 import backend.services.system_service as sys_svc
@@ -13,6 +13,8 @@ import backend.services.analytics_service as analytics
 from backend.generators import soa_gen, computation_gen, notice_gen, report_gen
 from utils.logger import mto_logger
 from backend.services.storage_service import storage_service
+from backend.services.compliance_impact_service import build_compliance_impact_report
+from utils.config import config as mto_config
 
 router = APIRouter(tags=["Billing"])
 
@@ -157,7 +159,12 @@ def get_compliant_list(
     Returns properties with zero outstanding balance (fully paid across all years).
     Optionally filtered by barangay. Cursor-paginated.
     """
-    return bill_svc.get_compliant_accounts(
+    service = (
+        bill_svc.get_compliant_accounts_v2
+        if mto_config.ENABLE_COMPLIANCE_V2
+        else bill_svc.get_compliant_accounts
+    )
+    result = service(
         barangay=barangay,
         search=search,
         limit=limit,
@@ -165,6 +172,8 @@ def get_compliant_list(
         as_of_year=as_of_year,
         db_session=db_session,
     )
+    result.setdefault("classification_version", "legacy_aggregate")
+    return result
 
 
 @router.get("/billing/compliant/summary")
@@ -178,8 +187,28 @@ def get_compliant_summary(
     total properties, compliant count, delinquent count, compliance rate %.
     Used for the summary cards at the top of the Compliant Properties dashboard.
     """
-    return bill_svc.get_compliant_summary_by_barangay(
+    service = (
+        bill_svc.get_compliant_summary_by_barangay_v2
+        if mto_config.ENABLE_COMPLIANCE_V2
+        else bill_svc.get_compliant_summary_by_barangay
+    )
+    return service(
         as_of_year=as_of_year,
+        db_session=db_session,
+    )
+
+
+@router.get("/billing/compliant/impact-preview", dependencies=[Depends(admin_only)])
+def get_compliant_impact_preview(
+    as_of_year: Optional[int] = None,
+    detail_limit: int = 500,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """Read-only comparison of legacy and V2 classifications for approval."""
+    return build_compliance_impact_report(
+        as_of_year=as_of_year,
+        detail_limit=detail_limit,
         db_session=db_session,
     )
 

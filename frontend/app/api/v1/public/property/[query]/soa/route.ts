@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { findSnapshotProperty, loadPortalSnapshot, publicProperty, PortalSnapshotConfigError } from "../../../../../../../lib/portalSnapshot";
+import { findSnapshotProperty, loadPortalSnapshot, publicProperty, PortalSnapshotConfigError, PortalSnapshotDataError } from "../../../../../../../lib/portalSnapshot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -235,8 +235,8 @@ export async function GET(_request: NextRequest, { params }: { params: { query: 
       },
     });
   } catch (error) {
-    if (error instanceof PortalSnapshotConfigError) {
-      return new Response(error.message, { status: 503, headers: { "Cache-Control": "no-store" } });
+    if (error instanceof PortalSnapshotConfigError || error instanceof PortalSnapshotDataError) {
+      return new Response("Portal data is temporarily unavailable. Please contact the Municipal Treasury Office.", { status: 503, headers: { "Cache-Control": "no-store" } });
     }
     console.error("Portal SOA generation failed", error);
     return new Response("Unable to generate statement.", { status: 500, headers: { "Cache-Control": "no-store" } });
