@@ -22,6 +22,9 @@ if __name__ == "__main__":
     wait_for_db(max_attempts=10, base_delay=2.0)
 
     port = int(os.getenv("PORT", "8001"))
+    # The office server intentionally accepts LAN clients by default. Deployments
+    # may set MTO_API_HOST=127.0.0.1 when a local reverse proxy is used.
+    bind_host = os.getenv("MTO_API_HOST", "0.0.0.0")  # nosec B104
     base_dir = os.path.dirname(os.path.abspath(__file__))
     cert_path = os.path.join(base_dir, "certs", "cert.pem")
     key_path = os.path.join(base_dir, "certs", "key.pem")
@@ -30,11 +33,11 @@ if __name__ == "__main__":
         print(f"Starting Secure API (HTTPS) on port {port}...")
         uvicorn.run(
             app,
-            host="0.0.0.0",
+            host=bind_host,
             port=port,
             ssl_keyfile=key_path,
             ssl_certfile=cert_path,
         )
     else:
         print(f"Starting Standard API (HTTP) on port {port} - SSL Certs not found.")
-        uvicorn.run(app, host="0.0.0.0", port=port)
+        uvicorn.run(app, host=bind_host, port=port)

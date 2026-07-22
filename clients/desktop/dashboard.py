@@ -25,6 +25,7 @@ from api_clients.offline_manager import manager
 
 
 from ui.navigation import NavigationSidebar
+from ui.command_palette import CommandPalette
 from ui.status_bar import ConnectivityStatusBar
 from ui.dashboard_home import DashboardHomePage
 from ui.help_page import SystemHelpPage

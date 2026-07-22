@@ -153,7 +153,7 @@ class PropertyPage:
                 self.next_cursor = res.get("next_cursor")
                 has_more = res.get("has_more", False)
                 self.container.after(0, lambda: self._update_table(items, has_more))
-            except Exception as e: self.container.after(0, lambda: messagebox.showerror("Error", str(e)))
+            except Exception as e: self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
             finally: self.container.after(0, lambda: overlay.hide())
         threading.Thread(target=worker, daemon=True).start()
 
@@ -198,7 +198,7 @@ class PropertyPage:
             try:
                 data = api.api_request("GET", f"/properties/dossier/{td}")
                 self.container.after(0, lambda: [overlay.hide(), PropertyDossierModal(self.parent, data)])
-            except Exception as e: self.container.after(0, lambda: [overlay.hide(), messagebox.showerror("Error", str(e))])
+            except Exception as e: self.container.after(0, lambda err=e: [overlay.hide(), messagebox.showerror("Error", str(err))])
         threading.Thread(target=worker, daemon=True).start()
 
     def confirm_delete(self):

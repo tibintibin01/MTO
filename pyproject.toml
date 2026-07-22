@@ -26,6 +26,7 @@ dependencies = [
     "openpyxl==3.1.2",
     "reportlab==4.0.7",
     "pillow==11.2.1",
+    "matplotlib==3.10.9",
     "customtkinter==5.2.2",
     "websocket-client>=1.8.0",
     "websockets>=12.0",
@@ -49,5 +50,13 @@ env = [
     "MTO_ENVIRONMENT=test",
     "ENVIRONMENT=test",
 ]
+
+[tool.black]
+# These legacy modules predate Black and would produce a very large
+# formatting-only diff if touched. Keep the exemption narrow while their real
+# runtime/static-analysis defects are repaired independently.
+force-exclude = '''
+(^|/)(clients/desktop/dashboard|ui/(analytics_dashboard|assessments|audit_trail|property|reports|system_admin)|backend/services/(job_service|verification_service))\.py$
+'''
 [tool.vercel]
 entrypoint = "backend.main:app"

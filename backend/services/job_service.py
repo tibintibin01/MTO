@@ -177,15 +177,19 @@ def _try_claim_job(worker_id: str, job_types: frozenset) -> Job | None:
 
     Returns the claimed Job object, or None if nothing was available.
     """
-    type_list = ", ".join(f"'{t}'" for t in job_types)
+    if not job_types:
+        return None
 
     with SessionLocal() as db:
-        # Step 1: find a candidate
-        row = db.execute(text(
-            f"SELECT id FROM jobs "
-            f"WHERE status = 'PENDING' AND job_type IN ({type_list}) "
-            f"ORDER BY created_at ASC LIMIT 1"
-        )).fetchone()
+        # Step 1: find a candidate. SQLAlchemy expands and binds the job type
+        # collection, so a malformed or future externally supplied type cannot
+        # alter the SQL statement.
+        row = (
+            db.query(Job.id)
+            .filter(Job.status == "PENDING", Job.job_type.in_(tuple(job_types)))
+            .order_by(Job.created_at.asc())
+            .first()
+        )
 
         if not row:
             return None

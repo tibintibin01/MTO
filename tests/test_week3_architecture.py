@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
 from backend.models import TaxPolicy, Job, Property, PropertyBilling, PaymentBilling
+from backend.services import job_service
 from backend.services.billing_service import (
     sync_property_billing,
     get_property_billing_history,
@@ -160,3 +161,28 @@ def test_job_worker_wake_signal(db):
 
     # Verify the event got set immediately
     assert _job_submitted_event.is_set()
+
+
+def test_job_claim_binds_job_types_instead_of_interpolating_sql(
+    engine, db, monkeypatch
+):
+    submit_job(
+        job_type="backup",
+        submitted_by="test_user",
+        payload={"source": "security-regression"},
+        db_session=db,
+    )
+    session_factory = sessionmaker(
+        bind=engine,
+        autocommit=False,
+        autoflush=False,
+    )
+    monkeypatch.setattr(job_service, "SessionLocal", session_factory)
+
+    claimed = _try_claim_job(
+        "worker-security-test",
+        frozenset({"backup", "malformed') OR 1=1 --"}),
+    )
+
+    assert claimed is not None
+    assert claimed.job_type == "backup"

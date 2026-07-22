@@ -5,6 +5,7 @@ import threading
 from theme_manager import ModernTheme
 from utils import tr
 import api_clients.property_service as prop
+from ui_components import ErrorDialog
 
 
 class AssessmentsPage:

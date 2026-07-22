@@ -354,7 +354,7 @@ class AnalyticsDashboardPage:
                 )
                 self.container.after(0, lambda: self._update_ui(data))
             except Exception as exc:
-                self.container.after(0, lambda: self._handle_error(exc))
+                self.container.after(0, lambda err=exc: self._handle_error(err))
 
         threading.Thread(target=worker, daemon=True).start()
 

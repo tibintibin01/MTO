@@ -1,4 +1,4 @@
-"""Read-only comparison of deployed and proposed compliance classifications."""
+"""Read-only, SQL-exact comparison of deployed and proposed compliance rules."""
 
 from __future__ import annotations
 
@@ -6,53 +6,80 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
-from backend.models import PaymentBilling, Property, PropertyBilling, TaxPolicy
+from backend.models import Property, PropertyBilling, TaxPolicy
 from backend.services.billing_service import (
-    BILLING_DATA_START_YEAR,
+    COMPLIANCE_MONEY_TOLERANCE,
+    _billing_effective_amount_exprs,
     _compliance_property_scope,
+    _compliance_v2_per_property,
+    compliance_v2_data_start_year,
+    compliance_v2_excludes_archived_billings,
+    _legacy_compliance_per_property,
+    _legacy_compliant_condition,
+    _v2_compliant_condition,
 )
-
-
-MONEY_TOLERANCE = 0.005
 
 
 def _money(value: Any) -> float:
     return round(float(value or 0), 2)
 
 
-def _legacy_compliant(rows: list[dict[str, Any]]) -> tuple[bool, float, float]:
-    total_due = _money(sum(row["due"] for row in rows))
-    total_paid = _money(sum(row["stored_paid"] for row in rows))
-    compliant = (
-        total_due > 0 and total_paid > 0 and total_paid + MONEY_TOLERANCE >= total_due
+def _classification_map(per_property, compliant_condition, db_session: Session):
+    rows = (
+        db_session.query(
+            per_property.c.property_id,
+            per_property.c.total_due,
+            per_property.c.total_paid,
+            per_property.c.years_covered,
+        )
+        .select_from(per_property)
+        .all()
     )
-    return compliant, total_due, total_paid
+    compliant_ids = {
+        int(row[0])
+        for row in (
+            db_session.query(per_property.c.property_id)
+            .select_from(per_property)
+            .filter(compliant_condition)
+            .all()
+        )
+    }
+    return {
+        int(row[0]): {
+            "compliant": int(row[0]) in compliant_ids,
+            "total_due": _money(row[1]),
+            "total_paid": _money(row[2]),
+            "years_covered": int(row[3] or 0),
+        }
+        for row in rows
+    }, compliant_ids
 
 
-def _proposed_compliant(
-    rows: list[dict[str, Any]]
-) -> tuple[bool, float, float, list[dict[str, Any]]]:
+def _proposed_year_balances(rows: list[dict[str, Any]]):
+    start_year = compliance_v2_data_start_year()
+    exclude_archived = compliance_v2_excludes_archived_billings()
     active_rows = [
         row
         for row in rows
-        if row["tax_year"] >= BILLING_DATA_START_YEAR and not row["is_archived"]
+        if (start_year is None or row["tax_year"] >= start_year)
+        and (not exclude_archived or not row["is_archived"])
     ]
     by_year: dict[int, dict[str, float]] = defaultdict(
         lambda: {"due": 0.0, "paid": 0.0}
     )
     for row in active_rows:
         year = int(row["tax_year"])
-        by_year[year]["due"] += row["due"]
+        by_year[year]["due"] += row["proposed_due"]
         by_year[year]["paid"] += row["effective_paid"]
 
-    year_balances = []
+    result = []
     for year in sorted(by_year):
         due = _money(by_year[year]["due"])
         paid = _money(by_year[year]["paid"])
-        year_balances.append(
+        result.append(
             {
                 "tax_year": year,
                 "due": due,
@@ -61,19 +88,7 @@ def _proposed_compliant(
                 "credit": _money(max(paid - due, 0)),
             }
         )
-
-    total_due = _money(sum(year["due"] for year in year_balances))
-    total_paid = _money(sum(year["paid"] for year in year_balances))
-    positive_obligations = [
-        year for year in year_balances if year["due"] > MONEY_TOLERANCE
-    ]
-    compliant = (
-        total_due > MONEY_TOLERANCE
-        and total_paid > MONEY_TOLERANCE
-        and bool(positive_obligations)
-        and all(year["balance"] <= MONEY_TOLERANCE for year in positive_obligations)
-    )
-    return compliant, total_due, total_paid, year_balances
+    return result
 
 
 def _change_reasons(
@@ -83,28 +98,24 @@ def _change_reasons(
     year_balances: list[dict[str, Any]],
 ) -> list[str]:
     reasons: list[str] = []
+    tolerance = float(COMPLIANCE_MONEY_TOLERANCE)
+    start_year = compliance_v2_data_start_year()
+    exclude_archived = compliance_v2_excludes_archived_billings()
     if proposed_compliant and not legacy_compliant:
-        if any(
-            row["tax_year"] < BILLING_DATA_START_YEAR
-            and row["due"] > row["stored_paid"] + MONEY_TOLERANCE
+        if start_year is not None and any(
+            row["tax_year"] < start_year
+            and row["legacy_due"] > row["effective_paid"] + tolerance
             for row in rows
         ):
-            reasons.append("legacy_pre_2023_balance_excluded")
-        if any(
-            row["is_archived"] and row["due"] > row["stored_paid"] + MONEY_TOLERANCE
+            reasons.append("pre_policy_start_year_balance_excluded")
+        if exclude_archived and any(
+            row["is_archived"] and row["legacy_due"] > row["effective_paid"] + tolerance
             for row in rows
         ):
             reasons.append("archived_balance_excluded")
-        if any(
-            abs(row["effective_paid"] - row["stored_paid"]) > MONEY_TOLERANCE
-            for row in rows
-        ):
-            reasons.append("linked_payments_reconcile_stale_billing_cache")
     elif legacy_compliant and not proposed_compliant:
-        has_open_year = any(year["balance"] > MONEY_TOLERANCE for year in year_balances)
-        has_credit_year = any(
-            year["credit"] > MONEY_TOLERANCE for year in year_balances
-        )
+        has_open_year = any(year["balance"] > tolerance for year in year_balances)
+        has_credit_year = any(year["credit"] > tolerance for year in year_balances)
         if has_open_year and has_credit_year:
             reasons.append("cross_year_credit_masks_unpaid_year")
         elif has_open_year:
@@ -118,14 +129,38 @@ def build_compliance_impact_report(
     detail_limit: int = 500,
     db_session: Session,
 ) -> dict[str, Any]:
-    """Compare classifications without committing or updating any database row.
-
-    The deployed baseline uses aggregate stored billing totals. The proposed
-    rule uses the supported 2023+ active billing scope, reconciles linked
-    allocations, and requires every positive-due tax year to have zero balance.
-    """
+    """Compare the exact service classifiers without changing database rows."""
     selected_year = int(as_of_year or datetime.now(timezone.utc).year)
     safe_limit = min(max(int(detail_limit), 1), 5_000)
+
+    legacy_per_property = _legacy_compliance_per_property(selected_year, db_session)
+    legacy_condition = _legacy_compliant_condition(legacy_per_property)
+    legacy, legacy_compliant_ids = _classification_map(
+        legacy_per_property, legacy_condition, db_session
+    )
+    strict_legacy_ids = {
+        int(row[0])
+        for row in (
+            db_session.query(legacy_per_property.c.property_id)
+            .select_from(legacy_per_property)
+            .filter(
+                and_(
+                    legacy_per_property.c.total_due > 0,
+                    legacy_per_property.c.total_paid > 0,
+                    legacy_per_property.c.total_paid >= legacy_per_property.c.total_due,
+                )
+            )
+            .all()
+        )
+    }
+
+    proposed_per_property = _compliance_v2_per_property(selected_year, db_session)
+    proposed, _ = _classification_map(
+        proposed_per_property,
+        _v2_compliant_condition(proposed_per_property),
+        db_session,
+    )
+
     rates = {
         int(year): float(basic or 0.01) + float(sef or 0.01)
         for year, basic, sef in db_session.query(
@@ -134,7 +169,7 @@ def build_compliance_impact_report(
             TaxPolicy.sef_rate,
         ).all()
     }
-
+    effective = _billing_effective_amount_exprs(db_session)
     billing_rows = (
         db_session.query(
             Property.id,
@@ -147,48 +182,32 @@ def build_compliance_impact_report(
             PropertyBilling.discount,
             PropertyBilling.amount_paid,
             PropertyBilling.is_archived,
+            effective["paid"],
+            effective["penalty"],
+            effective["discount"],
         )
         .join(PropertyBilling, PropertyBilling.property_id == Property.id)
         .filter(Property.deleted_at == None)
         .filter(PropertyBilling.tax_year <= selected_year)
         .filter(*_compliance_property_scope(selected_year, db_session))
         .order_by(
-            Property.id.asc(), PropertyBilling.tax_year.asc(), PropertyBilling.id.asc()
+            Property.id.asc(),
+            PropertyBilling.tax_year.asc(),
+            PropertyBilling.id.asc(),
         )
         .all()
     )
-
-    linked_rows = (
-        db_session.query(
-            PaymentBilling.billing_id,
-            func.count(PaymentBilling.id),
-            func.coalesce(func.sum(PaymentBilling.amount_paid), 0),
-        )
-        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
-        .join(Property, Property.id == PropertyBilling.property_id)
-        .filter(Property.deleted_at == None)
-        .filter(PropertyBilling.tax_year <= selected_year)
-        .filter(*_compliance_property_scope(selected_year, db_session))
-        .group_by(PaymentBilling.billing_id)
-        .all()
-    )
-    linked_by_billing = {
-        int(billing_id): (int(link_count or 0), float(linked_paid or 0))
-        for billing_id, link_count, linked_paid in linked_rows
-    }
 
     properties: dict[int, dict[str, Any]] = {}
     for row in billing_rows:
         property_id = int(row[0])
-        billing_id = int(row[3])
         tax_year = int(row[4])
         rate = rates.get(tax_year, 0.02)
-        stored_paid = _money(row[8])
-        link_count, linked_paid = linked_by_billing.get(billing_id, (0, 0.0))
-        effective_paid = _money(linked_paid if link_count > 0 else stored_paid)
-        due = _money(
-            float(row[5] or 0) * rate + float(row[6] or 0) - float(row[7] or 0)
-        )
+        assessed = float(row[5] or 0)
+        stored_penalty = float(row[6] or 0)
+        stored_discount = float(row[7] or 0)
+        effective_penalty = float(row[11] or 0)
+        effective_discount = float(row[12] or 0)
         account = properties.setdefault(
             property_id,
             {
@@ -200,11 +219,12 @@ def build_compliance_impact_report(
         )
         account["rows"].append(
             {
-                "billing_id": billing_id,
+                "billing_id": int(row[3]),
                 "tax_year": tax_year,
-                "due": due,
-                "stored_paid": stored_paid,
-                "effective_paid": effective_paid,
+                "legacy_due": assessed * rate + effective_penalty - effective_discount,
+                "proposed_due": assessed * rate + stored_penalty - stored_discount,
+                "stored_paid": float(row[8] or 0),
+                "effective_paid": float(row[10] or 0),
                 "is_archived": bool(row[9]),
             }
         )
@@ -216,12 +236,20 @@ def build_compliance_impact_report(
         "unchanged_noncompliant": 0,
     }
     affected: list[dict[str, Any]] = []
-    for account in properties.values():
-        rows = account.pop("rows")
-        legacy_ok, legacy_due, legacy_paid = _legacy_compliant(rows)
-        proposed_ok, proposed_due, proposed_paid, year_balances = _proposed_compliant(
-            rows
-        )
+    property_ids = sorted(set(legacy) | set(proposed))
+    empty = {
+        "compliant": False,
+        "total_due": 0.0,
+        "total_paid": 0.0,
+        "years_covered": 0,
+    }
+    for property_id in property_ids:
+        account = properties[property_id]
+        rows = account["rows"]
+        legacy_result = legacy.get(property_id, empty)
+        proposed_result = proposed.get(property_id, empty)
+        legacy_ok = bool(legacy_result["compliant"])
+        proposed_ok = bool(proposed_result["compliant"])
         if legacy_ok and proposed_ok:
             category = "unchanged_compliant"
         elif not legacy_ok and proposed_ok:
@@ -233,38 +261,62 @@ def build_compliance_impact_report(
         counts[category] += 1
 
         if legacy_ok != proposed_ok and len(affected) < safe_limit:
+            year_balances = _proposed_year_balances(rows)
             affected.append(
                 {
-                    **account,
+                    "property_id": account["property_id"],
+                    "td_number": account["td_number"],
+                    "barangay": account["barangay"],
                     "change": category,
                     "reasons": _change_reasons(
-                        rows, legacy_ok, proposed_ok, year_balances
+                        rows,
+                        legacy_ok,
+                        proposed_ok,
+                        year_balances,
                     ),
-                    "legacy": {
-                        "compliant": legacy_ok,
-                        "total_due": legacy_due,
-                        "total_paid": legacy_paid,
-                    },
+                    "legacy": dict(legacy_result),
                     "proposed": {
-                        "compliant": proposed_ok,
-                        "total_due": proposed_due,
-                        "total_paid": proposed_paid,
+                        **proposed_result,
                         "year_balances": year_balances,
                     },
                 }
             )
 
+    precision_ids = sorted(legacy_compliant_ids - strict_legacy_ids)
+    precision_details = []
+    for property_id in precision_ids[:safe_limit]:
+        account = properties[property_id]
+        totals = legacy[property_id]
+        precision_details.append(
+            {
+                "property_id": property_id,
+                "td_number": account["td_number"],
+                "barangay": account["barangay"],
+                "total_due": totals["total_due"],
+                "total_paid": totals["total_paid"],
+            }
+        )
+
     changed_total = counts["newly_compliant"] + counts["removed_from_compliant"]
     return {
         "mode": "read_only_preview",
+        "baseline_classification_version": "legacy_currency_safe",
+        "proposed_classification_version": "v2_per_year",
         "classification_date_semantics": "obligations_through_selected_year_using_all_linked_payments",
         "as_of_year": selected_year,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "billing_data_start_year": BILLING_DATA_START_YEAR,
-        "properties_evaluated": len(properties),
+        "billing_data_start_year": compliance_v2_data_start_year(),
+        "exclude_archived_billings": compliance_v2_excludes_archived_billings(),
+        "money_tolerance": float(COMPLIANCE_MONEY_TOLERANCE),
+        "properties_evaluated": len(property_ids),
         "changed_total": changed_total,
         "detail_limit": safe_limit,
         "details_truncated": changed_total > len(affected),
         "counts": counts,
         "affected_accounts": affected,
+        "currency_precision_corrections": {
+            "count": len(precision_ids),
+            "details_truncated": len(precision_ids) > len(precision_details),
+            "accounts": precision_details,
+        },
     }
