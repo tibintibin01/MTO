@@ -2,6 +2,7 @@
 from datetime import datetime
 import threading
 import webbrowser
+from urllib.parse import quote
 
 import customtkinter as ctk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -56,7 +57,9 @@ class AnalyticsDashboardPage:
         if not token:
             messagebox.showerror("Session Expired", "Please sign in again to continue.")
             return
-        webbrowser.open(f"{BASE_URL}/analytics?t={token}")
+        # Keep the bearer token out of HTTP request logs and referrer headers.
+        # The page immediately removes this fragment from the address bar.
+        webbrowser.open(f"{BASE_URL}/analytics#t={quote(token, safe='')}")
 
     def setup_ui(self):
         header = ctk.CTkFrame(self.content, fg_color="transparent")

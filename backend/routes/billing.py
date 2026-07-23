@@ -719,7 +719,16 @@ async def serve_analytics_dashboard():
         raise HTTPException(
             status_code=404, detail="Analytics dashboard file not found."
         )
-    return FileResponse(html_path, media_type="text/html")
+    return FileResponse(
+        html_path,
+        media_type="text/html",
+        headers={
+            # Prevent cached releases from showing the retired dashboard.
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+            "X-Robots-Tag": "noindex, nofollow",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
