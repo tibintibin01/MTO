@@ -3,377 +3,160 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MTO Treasury Insights</title>
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap"
-    rel="stylesheet"
-  />
+  <meta name="color-scheme" content="dark" />
+  <title>MTO Municipal Analytics Hub</title>
   <style>
     :root {
-      --bg-color: #f8fafc;
-      --card-bg: #ffffff;
-      --text-primary: #1e293b;
-      --text-secondary: #64748b;
-      --accent: #38bdf8;
-      --emerald: #10b981;
-      --border: #e2e8f0;
+      --page: #0b1220; --surface: #111c31; --panel: #0d1729; --surface-raised: #17243a;
+      --border: #263b5a; --border-soft: rgba(77, 111, 151, .28); --text: #f8fafc;
+      --muted: #9fb2cc; --blue: #38bdf8; --blue-deep: #0284c7; --green: #10b981;
+      --amber: #f59e0b; --purple: #a78bfa; --red: #ef4444; --shadow: 0 18px 45px rgba(0,0,0,.22);
     }
-
-    [data-theme="dark"] {
-      --bg-color: #0f172a;
-      --card-bg: #1e293b;
-      --text-primary: #f1f5f9;
-      --text-secondary: #94a3b8;
-      --accent: #38bdf8;
-      --border: #334155;
-    }
-
-    body {
-      margin: 0;
-      padding: 20px;
-      background: var(--bg-color);
-      color: var(--text-primary);
-      font-family: "Inter", sans-serif;
-      transition: background 0.3s, color 0.3s;
-    }
-
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 30px;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-      gap: 20px;
-    }
-
-    .card {
-      background: var(--card-bg);
-      border-radius: 12px;
-      padding: 24px;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-      border: 1px solid var(--border);
-      transition: transform 0.2s;
-      animation: fadeInUp 0.6s ease-out forwards;
-      opacity: 0;
-    }
-
-    .card:hover {
-      transform: translateY(-4px);
-    }
-
-    @keyframes fadeInUp {
-      from {
-        opacity: 0;
-        transform: translateY(20px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    .stat-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 15px;
-      margin-bottom: 30px;
-    }
-
-    .stat-card {
-      background: var(--card-bg);
-      padding: 20px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      border-left: 4px solid var(--accent);
-    }
-
-    .stat-val {
-      font-size: 1.8rem;
-      font-weight: 600;
-      color: var(--accent);
-      margin-top: 5px;
-    }
-
-    .stat-label {
-      font-size: 0.85rem;
-      color: var(--text-secondary);
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .chart-container {
-      height: 350px;
-      width: 100%;
-      margin-top: 10px;
-    }
-
-    h2 {
-      margin: 0;
-      font-weight: 600;
-      font-size: 1.1rem;
-      color: var(--text-primary);
-    }
-
-    #error-state {
-      display: none;
-      height: 100vh;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-      gap: 12px;
-      text-align: center;
-      padding: 20px;
-    }
-
-    #error-state h1 {
-      font-size: 1.2rem;
-      color: var(--text-primary);
-    }
-
-    #error-state p {
-      color: var(--text-secondary);
-      font-size: 0.9rem;
-    }
+    * { box-sizing: border-box; }
+    html { background: var(--page); }
+    body { min-width: 320px; min-height: 100vh; margin: 0; color: var(--text); background: radial-gradient(circle at 12% -5%,rgba(56,189,248,.13),transparent 28rem),radial-gradient(circle at 95% 0%,rgba(167,139,250,.08),transparent 25rem),var(--page); font-family: Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; line-height: 1.5; }
+    button,select { font: inherit; }
+    button:focus-visible,select:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .shell { width: min(1600px,100%); margin: 0 auto; padding: 28px clamp(16px,3vw,42px) 42px; }
+    .topbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 18px; }
+    .eyebrow { margin: 0 0 3px; color: var(--blue); font-size: .72rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(1.55rem,3vw,2.25rem); line-height: 1.15; letter-spacing: -.035em; text-transform: uppercase; }
+    .subtitle { margin: 7px 0 0; color: var(--muted); font-size: .86rem; }
+    .pulse { display: flex; align-items: center; justify-content: flex-end; gap: 9px; color: var(--muted); font-size: .75rem; white-space: nowrap; }
+    .pulse-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--green); box-shadow: 0 0 0 5px rgba(16,185,129,.1); }
+    .filter-bar,.card { border: 1px solid var(--border-soft); background: linear-gradient(145deg,rgba(17,28,49,.98),rgba(13,23,41,.98)); box-shadow: var(--shadow); }
+    .filter-bar { display: flex; align-items: end; gap: 12px; padding: 14px; border-radius: 14px; margin-bottom: 16px; }
+    .field { display: grid; gap: 5px; min-width: 150px; }
+    .field.wide { min-width: min(300px,32vw); }
+    label { color: var(--muted); font-size: .65rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    select { height: 39px; padding: 0 34px 0 12px; color: var(--text); border: 1px solid var(--border); border-radius: 9px; background: var(--panel); cursor: pointer; }
+    .button { display: inline-flex; min-height: 39px; align-items: center; justify-content: center; gap: 8px; padding: 0 17px; border: 0; border-radius: 9px; color: white; background: linear-gradient(135deg,var(--blue-deep),#2563eb); box-shadow: 0 8px 22px rgba(2,132,199,.22); font-size: .73rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; cursor: pointer; }
+    .button:hover { filter: brightness(1.1); }
+    .button:disabled { cursor: wait; opacity: .58; }
+    .button svg { width: 15px; height: 15px; }
+    .button.loading svg { animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .period { margin-left: auto; padding: 7px 10px; color: var(--muted); font-size: .72rem; text-align: right; }
+    .period strong { display: block; color: var(--text); }
+    .notice { display: none; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 15px; margin-bottom: 16px; border: 1px solid rgba(239,68,68,.4); border-radius: 12px; color: #fecaca; background: rgba(127,29,29,.22); font-size: .82rem; }
+    .notice.visible { display: flex; }
+    .notice button { min-height: 32px; background: #b91c1c; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 12px; }
+    .card { border-radius: 14px; }
+    .kpi { position: relative; min-height: 132px; padding: 18px; overflow: hidden; }
+    .kpi::after { position: absolute; width: 100px; height: 100px; right: -40px; bottom: -50px; border-radius: 999px; background: var(--accent); filter: blur(18px); opacity: .09; content: ""; }
+    .kpi-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+    .kpi-icon { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--border); border-radius: 9px; color: var(--accent); background: var(--panel); font-size: 1rem; font-weight: 900; }
+    .kpi-title { color: var(--muted); font-size: .66rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .kpi-value { color: var(--accent); font-size: clamp(1.25rem,2.2vw,1.78rem); font-weight: 850; letter-spacing: -.035em; white-space: nowrap; }
+    .kpi-context { min-height: 18px; margin-top: 3px; color: var(--muted); font-size: .7rem; }
+    .dashboard-grid { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(320px,.8fr); gap: 12px; margin-bottom: 12px; }
+    .chart-card { min-height: 385px; padding: 18px; }
+    .card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; margin-bottom: 14px; }
+    .card-heading h2 { margin: 0; font-size: .88rem; letter-spacing: .035em; text-transform: uppercase; }
+    .card-heading p { margin: 3px 0 0; color: var(--muted); font-size: .68rem; }
+    .badge { padding: 4px 8px; border: 1px solid rgba(56,189,248,.2); border-radius: 999px; color: var(--blue); background: rgba(56,189,248,.08); font-size: .62rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+    .trend-wrap { position: relative; height: 295px; padding: 4px 0 0; border-radius: 10px; background: linear-gradient(180deg,rgba(56,189,248,.025),transparent); }
+    #trend-chart { display: block; width: 100%; height: 100%; overflow: visible; }
+    .chart-grid-line { stroke: rgba(159,178,204,.12); stroke-width: 1; }
+    .chart-axis-label { fill: var(--muted); font-size: 10px; }
+    .chart-line { fill: none; stroke: var(--blue); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    .chart-area { fill: url(#area-gradient); }
+    .chart-point { fill: var(--panel); stroke: var(--blue); stroke-width: 2; }
+    .bars { display: grid; gap: 11px; min-height: 295px; align-content: center; }
+    .bar-row { display: grid; gap: 5px; }
+    .bar-meta { display: flex; justify-content: space-between; gap: 10px; font-size: .7rem; }
+    .bar-name { max-width: 58%; overflow: hidden; color: var(--text); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-value { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .bar-track { height: 8px; overflow: hidden; border-radius: 999px; background: #1c2b42; }
+    .bar-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg,#059669,#34d399); box-shadow: 0 0 16px rgba(16,185,129,.18); }
+    .operational-grid { display: grid; grid-template-columns: minmax(0,3fr) minmax(260px,1fr); gap: 12px; }
+    .recent-card,.status-card { min-height: 280px; padding: 18px; }
+    .table-wrap { overflow: auto; max-width: 100%; }
+    table { width: 100%; border-collapse: collapse; font-size: .73rem; }
+    th { padding: 9px 10px; color: var(--muted); background: var(--surface-raised); font-size: .61rem; letter-spacing: .075em; text-align: left; text-transform: uppercase; white-space: nowrap; }
+    th:first-child { border-radius: 7px 0 0 7px; }
+    th:last-child { border-radius: 0 7px 7px 0; }
+    td { max-width: 260px; padding: 9px 10px; border-bottom: 1px solid rgba(77,111,151,.18); color: #dce7f5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    td.amount,th.amount { text-align: right; font-variant-numeric: tabular-nums; }
+    td.amount { color: #86efac; font-weight: 750; }
+    tr:last-child td { border-bottom: 0; }
+    .status-list { display: grid; gap: 9px; }
+    .status-item { display: grid; grid-template-columns: 9px 1fr; gap: 10px; align-items: center; padding: 11px; border: 1px solid rgba(77,111,151,.2); border-radius: 9px; background: var(--panel); }
+    .status-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--green); }
+    .status-item.warning .status-dot { background: var(--amber); }
+    .status-name { color: var(--muted); font-size: .6rem; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+    .status-value { margin-top: 1px; color: var(--text); font-size: .72rem; font-weight: 750; }
+    .empty { display: grid; min-height: 180px; place-items: center; color: var(--muted); font-size: .78rem; text-align: center; }
+    .skeleton { color: transparent!important; border-radius: 5px; background: linear-gradient(90deg,#18263c 25%,#22344e 50%,#18263c 75%); background-size: 200% 100%; animation: shimmer 1.3s infinite; }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+    footer { display: flex; justify-content: space-between; gap: 20px; padding: 16px 2px 0; color: #6f85a2; font-size: .63rem; }
+    @media (max-width:1080px) { .kpi-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .dashboard-grid,.operational-grid { grid-template-columns: 1fr; } .status-card { min-height: unset; } .status-list { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+    @media (max-width:680px) { .shell { padding: 20px 12px 30px; } .topbar { align-items: flex-start; flex-direction: column; gap: 10px; } .pulse { justify-content: flex-start; } .filter-bar { align-items: stretch; flex-direction: column; } .field,.field.wide { min-width: 0; width: 100%; } .period { margin-left: 0; text-align: left; } .kpi-grid { grid-template-columns: 1fr; } .kpi { min-height: 120px; } .status-list { grid-template-columns: 1fr; } footer { flex-direction: column; } }
   </style>
 </head>
 <body>
-  <!-- Unauthorised / error fallback -->
-  <div id="error-state">
-    <h1>🚫 Access Denied</h1>
-    <p id="error-message">Please launch this dashboard from the Treasury Desktop App.</p>
-  </div>
-
-  <!-- Main dashboard (hidden until data loads) -->
-  <div id="dashboard" style="display: none">
-    <div class="header">
-      <h1>🏛️ Treasury Insights Portal</h1>
-      <div id="last-update" style="opacity: 0.5; font-size: 0.9rem"></div>
-    </div>
-
-    <div class="stat-grid">
-      <div class="stat-card">
-        <div class="stat-label">Today's Collection</div>
-        <div id="stat-today" class="stat-val">₱0.00</div>
-      </div>
-      <div class="stat-card" style="border-left-color: var(--emerald)">
-        <div class="stat-label">Transactions Today</div>
-        <div id="stat-count" class="stat-val">0</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Monthly Velocity</div>
-        <div id="stat-month" class="stat-val">₱0.00</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-label">Annual Revenue</div>
-        <div id="stat-year" class="stat-val">₱0.00</div>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <h2>Revenue Velocity (Last 12 Months)</h2>
-        <div id="trend-chart" class="chart-container"></div>
-      </div>
-      <div class="card">
-        <h2>Top Barangay Collections</h2>
-        <div id="barangay-chart" class="chart-container"></div>
-      </div>
-      <div class="card">
-        <h2>Tax Year Distribution</h2>
-        <div id="year-chart" class="chart-container"></div>
-      </div>
-    </div>
-  </div>
-
+  <main class="shell">
+    <header class="topbar">
+      <div><p class="eyebrow">Municipal Treasury Office · Dipaculao</p><h1>Municipal Analytics Hub</h1><p class="subtitle">Verified collection performance from linked payment allocations.</p></div>
+      <div class="pulse" aria-live="polite"><span class="pulse-dot" id="pulse-dot"></span><span id="last-refresh">Connecting to the treasury API…</span></div>
+    </header>
+    <section class="filter-bar" aria-label="Analytics filters">
+      <div class="field"><label for="year-filter">Collection year</label><select id="year-filter" disabled><option>Loading…</option></select></div>
+      <div class="field wide"><label for="barangay-filter">Barangay</label><select id="barangay-filter" disabled><option>Loading…</option></select></div>
+      <button class="button" id="refresh-button" type="button" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg><span>Refresh data</span></button>
+      <div class="period">Verified period<strong id="period-end">—</strong></div>
+    </section>
+    <div class="notice" id="error-notice" role="alert"><span id="error-message">Unable to load analytics data.</span><button class="button" id="retry-button" type="button">Retry</button></div>
+    <section class="kpi-grid" aria-label="Collection key performance indicators">
+      <article class="card kpi" style="--accent:var(--blue)"><div class="kpi-head"><span class="kpi-title">Total collected</span><span class="kpi-icon">₱</span></div><div class="kpi-value skeleton" id="kpi-total">Loading</div><div class="kpi-context" id="kpi-total-context">Current selected period</div></article>
+      <article class="card kpi" style="--accent:var(--purple)"><div class="kpi-head"><span class="kpi-title">Payment transactions</span><span class="kpi-icon">#</span></div><div class="kpi-value skeleton" id="kpi-transactions">Loading</div><div class="kpi-context" id="kpi-transactions-context">Current selected period</div></article>
+      <article class="card kpi" style="--accent:var(--green)"><div class="kpi-head"><span class="kpi-title">Properties paid</span><span class="kpi-icon">✓</span></div><div class="kpi-value skeleton" id="kpi-properties">Loading</div><div class="kpi-context">Unique properties with allocated payments</div></article>
+      <article class="card kpi" style="--accent:var(--amber)"><div class="kpi-head"><span class="kpi-title">Average receipt</span><span class="kpi-icon">Ø</span></div><div class="kpi-value skeleton" id="kpi-average">Loading</div><div class="kpi-context">Per payment transaction</div></article>
+    </section>
+    <section class="dashboard-grid">
+      <article class="card chart-card"><div class="card-heading"><div><h2>Monthly collection trend</h2><p>Cash posted during the selected collection year</p></div><span class="badge">12 months</span></div><div class="trend-wrap"><svg id="trend-chart" role="img" aria-label="Monthly collection trend chart" viewBox="0 0 900 280" preserveAspectRatio="none"></svg></div></article>
+      <article class="card chart-card"><div class="card-heading"><div><h2>Top barangays by collection</h2><p>Linked collections ranked by property location</p></div><span class="badge">Top 10</span></div><div class="bars" id="barangay-bars"><div class="empty">Loading barangay performance…</div></div></article>
+    </section>
+    <section class="operational-grid">
+      <article class="card recent-card"><div class="card-heading"><div><h2>Recent receipts in selected period</h2><p>Latest verified payment allocations</p></div><span class="badge">Latest 6</span></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>OR number</th><th>TD number</th><th>Owner</th><th>Tax year</th><th class="amount">Amount</th></tr></thead><tbody id="recent-body"><tr><td colspan="6"><div class="empty">Loading recent receipts…</div></td></tr></tbody></table></div></article>
+      <article class="card status-card"><div class="card-heading"><div><h2>Data quality</h2><p>Operational confidence checks</p></div></div><div class="status-list"><div class="status-item" id="future-status"><span class="status-dot"></span><div><div class="status-name">Date quality</div><div class="status-value" id="future-value">Checking…</div></div></div><div class="status-item"><span class="status-dot"></span><div><div class="status-name">Data source</div><div class="status-value">Linked payment allocations</div></div></div><div class="status-item"><span class="status-dot"></span><div><div class="status-name">Refresh mode</div><div class="status-value">Live API · 60-second pulse</div></div></div></div></article>
+    </section>
+    <footer><span>Internal authenticated dashboard · Figures are read-only</span><span id="scope-note">Loading reporting scope…</span></footer>
+  </main>
   <script>
-    // ---------------------------------------------------------------------------
-    // Auth: The desktop WebView injects window.__MTO_TOKEN__ before page load.
-    // When opened via webbrowser.open(), the token is passed as ?t= in the URL.
-    // Both methods are supported — see fetchData() below.
-    // ---------------------------------------------------------------------------
-
-    function showError(message) {
-      document.getElementById("error-message").textContent = message;
-      document.getElementById("error-state").style.display = "flex";
-      document.getElementById("dashboard").style.display = "none";
+    "use strict";
+    const API_PATH="/analytics/operational",TOKEN_KEY="mto.analytics.session",SVG_NS="http://www.w3.org/2000/svg";
+    let authToken=null,activeRequest=null,firstLoad=true;
+    const elements={year:document.getElementById("year-filter"),barangay:document.getElementById("barangay-filter"),refresh:document.getElementById("refresh-button"),retry:document.getElementById("retry-button"),error:document.getElementById("error-notice"),errorMessage:document.getElementById("error-message"),lastRefresh:document.getElementById("last-refresh"),pulse:document.getElementById("pulse-dot"),periodEnd:document.getElementById("period-end"),total:document.getElementById("kpi-total"),totalContext:document.getElementById("kpi-total-context"),transactions:document.getElementById("kpi-transactions"),transactionsContext:document.getElementById("kpi-transactions-context"),properties:document.getElementById("kpi-properties"),average:document.getElementById("kpi-average"),trend:document.getElementById("trend-chart"),bars:document.getElementById("barangay-bars"),recent:document.getElementById("recent-body"),futureStatus:document.getElementById("future-status"),futureValue:document.getElementById("future-value"),scope:document.getElementById("scope-note")};
+    function resolveToken(){const query=new URLSearchParams(location.search),hash=new URLSearchParams(location.hash.replace(/^#/,"")),supplied=window.__MTO_TOKEN__||hash.get("t")||query.get("t");if(supplied)try{sessionStorage.setItem(TOKEN_KEY,supplied)}catch(_){}try{authToken=supplied||sessionStorage.getItem(TOKEN_KEY)}catch(_){authToken=supplied}if(hash.has("t")||query.has("t")){query.delete("t");hash.delete("t");const q=query.toString(),h=hash.toString();history.replaceState({},document.title,location.pathname+(q?"?"+q:"")+(h?"#"+h:""))}}
+    function clearToken(){authToken=null;try{sessionStorage.removeItem(TOKEN_KEY)}catch(_){}}
+    function money(v){return new Intl.NumberFormat("en-PH",{style:"currency",currency:"PHP",minimumFractionDigits:2}).format(Number(v||0))}
+    function compactMoney(v){const n=Number(v||0);return Math.abs(n)>=1e6?"₱"+(n/1e6).toFixed(1)+"M":Math.abs(n)>=1e3?"₱"+(n/1e3).toFixed(0)+"K":"₱"+n.toFixed(0)}
+    function number(v){return new Intl.NumberFormat("en-PH").format(Number(v||0))}
+    function comparison(v,year){if(v===null||v===undefined)return"No "+year+" baseline available";const n=Number(v);return Math.abs(n).toFixed(1)+"% "+(n>=0?"up":"down")+" vs "+year}
+    function formatDate(v){if(!v)return"—";const p=String(v).slice(0,10).split("-");return p.length!==3?String(v):new Intl.DateTimeFormat("en-PH",{month:"short",day:"2-digit",year:"numeric"}).format(new Date(Number(p[0]),Number(p[1])-1,Number(p[2])))}
+    function setLoading(v){elements.refresh.disabled=v;elements.refresh.classList.toggle("loading",v);elements.refresh.querySelector("span").textContent=v?"Refreshing…":"Refresh data";if(v)elements.lastRefresh.textContent="Refreshing verified data…"}
+    function showError(message,expired){elements.errorMessage.textContent=message;elements.error.classList.add("visible");elements.pulse.style.background="var(--red)";elements.lastRefresh.textContent=expired?"Session expired":"Last refresh failed";if(expired)elements.retry.style.display="none"}
+    function hideError(){elements.error.classList.remove("visible");elements.retry.style.display="inline-flex";elements.pulse.style.background="var(--green)"}
+    function populateSelect(select,values,selected){select.replaceChildren();values.forEach(value=>{const option=document.createElement("option");option.value=String(value);option.textContent=String(value);option.selected=String(value)===String(selected);select.append(option)});select.disabled=false}
+    function svg(name,attrs={}){const node=document.createElementNS(SVG_NS,name);Object.entries(attrs).forEach(([key,value])=>node.setAttribute(key,String(value)));return node}
+    function drawTrend(rows){
+      elements.trend.replaceChildren();const width=900,height=280,margin={top:18,right:18,bottom:34,left:68},plotWidth=width-margin.left-margin.right,plotHeight=height-margin.top-margin.bottom,totals=rows.map(row=>Math.max(0,Number(row.total||0))),max=Math.max(...totals,1);
+      const defs=svg("defs"),gradient=svg("linearGradient",{id:"area-gradient",x1:0,y1:0,x2:0,y2:1});gradient.append(svg("stop",{offset:"0%","stop-color":"#38bdf8","stop-opacity":.35}),svg("stop",{offset:"100%","stop-color":"#38bdf8","stop-opacity":0}));defs.append(gradient);elements.trend.append(defs);
+      for(let step=0;step<=4;step++){const y=margin.top+plotHeight*step/4;elements.trend.append(svg("line",{x1:margin.left,y1:y,x2:width-margin.right,y2:y,class:"chart-grid-line"}));const label=svg("text",{x:margin.left-10,y:y+4,"text-anchor":"end",class:"chart-axis-label"});label.textContent=compactMoney(max*(1-step/4));elements.trend.append(label)}
+      const points=rows.map((row,index)=>({x:margin.left+(rows.length===1?plotWidth/2:plotWidth*index/(rows.length-1)),y:margin.top+plotHeight-Number(row.total||0)/max*plotHeight,row}));points.forEach((point,index)=>{const label=svg("text",{x:point.x,y:height-9,"text-anchor":"middle",class:"chart-axis-label"});label.textContent=point.row.label||point.row.month||String(index+1);elements.trend.append(label)});if(!points.length)return;
+      const line=points.map((point,index)=>(index?"L":"M")+point.x+","+point.y).join(" "),area=line+" L"+points[points.length-1].x+","+(margin.top+plotHeight)+" L"+points[0].x+","+(margin.top+plotHeight)+" Z";elements.trend.append(svg("path",{d:area,class:"chart-area"}),svg("path",{d:line,class:"chart-line"}));points.forEach(point=>{const circle=svg("circle",{cx:point.x,cy:point.y,r:4,class:"chart-point"}),title=svg("title");title.textContent=(point.row.label||point.row.month)+": "+money(point.row.total);circle.append(title);elements.trend.append(circle)})
     }
-
-    function showDashboard() {
-      document.getElementById("error-state").style.display = "none";
-      document.getElementById("dashboard").style.display = "block";
+    function renderBarangays(rows){elements.bars.replaceChildren();if(!rows.length){const empty=document.createElement("div");empty.className="empty";empty.textContent="No allocated collections in this period.";elements.bars.append(empty);return}const max=Math.max(...rows.map(row=>Number(row.total||0)),1);rows.forEach(row=>{const wrapper=document.createElement("div"),meta=document.createElement("div"),name=document.createElement("span"),value=document.createElement("span"),track=document.createElement("div"),fill=document.createElement("div");wrapper.className="bar-row";meta.className="bar-meta";name.className="bar-name";name.textContent=row.barangay||"UNSPECIFIED";name.title=name.textContent;value.className="bar-value";value.textContent=money(row.total);track.className="bar-track";fill.className="bar-fill";fill.style.width=Math.max(2,Number(row.total||0)/max*100)+"%";meta.append(name,value);track.append(fill);wrapper.append(meta,track);elements.bars.append(wrapper)})}
+    function renderRecent(rows){elements.recent.replaceChildren();if(!rows.length){const row=document.createElement("tr"),cell=document.createElement("td"),empty=document.createElement("div");cell.colSpan=6;empty.className="empty";empty.textContent="No receipts found for the selected period.";cell.append(empty);row.append(cell);elements.recent.append(row);return}rows.forEach(receipt=>{const row=document.createElement("tr"),values=[formatDate(receipt.date),receipt.or_number||"—",receipt.td_number||"—",receipt.owner||"—",receipt.tax_year||"—"];values.forEach(value=>{const cell=document.createElement("td");cell.textContent=value;cell.title=value;row.append(cell)});const amount=document.createElement("td");amount.className="amount";amount.textContent=money(receipt.amount);row.append(amount);elements.recent.append(row)})}
+    function render(data){const filters=data.filters||{},kpis=data.kpis||{},year=Number(filters.year||new Date().getFullYear());populateSelect(elements.year,filters.years||[year],year);populateSelect(elements.barangay,filters.barangays||["ALL"],filters.barangay||"ALL");elements.periodEnd.textContent=formatDate(filters.period_end);elements.total.textContent=money(kpis.total_collected);elements.transactions.textContent=number(kpis.transactions);elements.properties.textContent=number(kpis.properties_paid);elements.average.textContent=money(kpis.average_receipt);[elements.total,elements.transactions,elements.properties,elements.average].forEach(item=>item.classList.remove("skeleton"));elements.totalContext.textContent=comparison(kpis.total_change_pct,year-1);elements.transactionsContext.textContent=comparison(kpis.transaction_change_pct,year-1);drawTrend(data.trend||[]);renderBarangays(data.barangays||[]);renderRecent(data.recent||[]);const future=Number((data.quality||{}).future_dated_payments||0);elements.futureStatus.classList.toggle("warning",future>0);elements.futureValue.textContent=future?number(future)+" future-dated payment(s) excluded":"No future-dated payments detected";elements.scope.textContent=(filters.barangay||"ALL")+" · Collection year "+year;elements.lastRefresh.textContent="Last refreshed "+new Intl.DateTimeFormat("en-PH",{hour:"numeric",minute:"2-digit",second:"2-digit"}).format(new Date());firstLoad=false}
+    async function fetchData(){
+      if(!authToken){showError("Session missing. Close this page and open Detailed Analytics again from the Treasury desktop app.",true);setLoading(false);return}
+      if(activeRequest)activeRequest.abort();const controller=new AbortController();activeRequest=controller;setLoading(true);hideError();const params=new URLSearchParams();if(!firstLoad&&elements.year.value)params.set("year",elements.year.value);if(!firstLoad&&elements.barangay.value&&elements.barangay.value!=="ALL")params.set("barangay",elements.barangay.value);
+      try{const response=await fetch(API_PATH+(params.toString()?"?"+params:""),{method:"GET",credentials:"same-origin",cache:"no-store",headers:{Authorization:"Bearer "+authToken,"X-Requested-With":"XMLHttpRequest",Accept:"application/json"},signal:controller.signal});if(response.status===401){clearToken();showError("Your session has expired. Close this page and open Detailed Analytics again from the Treasury desktop app.",true);return}if(!response.ok)throw new Error("The treasury API returned HTTP "+response.status+".");render(await response.json())}catch(error){if(error.name!=="AbortError")showError("Unable to load verified analytics data. "+(error.message||"Please try again."),false)}finally{if(activeRequest===controller){activeRequest=null;setLoading(false)}}
     }
-
-    async function fetchData() {
-      // Token resolution order:
-      // 1. window.__MTO_TOKEN__ — injected by the desktop WebView before page load
-      // 2. ?t= URL query parameter — used when opened via webbrowser.open()
-      const token =
-        window.__MTO_TOKEN__ ||
-        new URLSearchParams(window.location.search).get("t") ||
-        null;
-      const theme =
-        new URLSearchParams(window.location.search).get("theme") || "dark";
-
-      document.documentElement.setAttribute("data-theme", theme);
-
-      const headers = { "X-Requested-With": "XMLHttpRequest" };
-      if (token) {
-        headers["Authorization"] = "Bearer " + token;
-      }
-
-      let res;
-      try {
-        res = await fetch("/api/analytics/dashboard", { headers });
-      } catch {
-        showError("Network error. Please check your connection.");
-        return;
-      }
-
-      if (res.status === 401) {
-        showError("Session expired or not authenticated. Please log in again.");
-        return;
-      }
-
-      if (!res.ok) {
-        showError("Failed to load analytics data (HTTP " + res.status + ").");
-        return;
-      }
-
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        showError("Received an invalid response from the server.");
-        return;
-      }
-
-      showDashboard();
-
-      document.getElementById("last-update").textContent =
-        "System Pulse: " + new Date().toLocaleTimeString();
-      document.getElementById("stat-today").textContent =
-        "₱" + (data.summary.today || 0).toLocaleString();
-      document.getElementById("stat-count").textContent =
-        data.summary.count || 0;
-      document.getElementById("stat-month").textContent =
-        "₱" + (data.summary.month || 0).toLocaleString();
-      document.getElementById("stat-year").textContent =
-        "₱" + (data.summary.year || 0).toLocaleString();
-
-      renderTrendChart(data.trend || []);
-      renderBarangayChart(data.barangays || []);
-      renderYearChart(data.years || []);
-    }
-
-    function renderTrendChart(trend) {
-      const theme = document.documentElement.getAttribute("data-theme");
-      const chart = echarts.init(
-        document.getElementById("trend-chart"),
-        theme === "dark" ? "dark" : null
-      );
-      chart.setOption({
-        backgroundColor: "transparent",
-        tooltip: { trigger: "axis" },
-        xAxis: {
-          type: "category",
-          data: trend.map((d) => d.month),
-          axisLine: { show: false },
-        },
-        yAxis: {
-          type: "value",
-          splitLine: { lineStyle: { color: "rgba(255,255,255,0.05)" } },
-        },
-        series: [
-          {
-            data: trend.map((d) => d.total),
-            type: "line",
-            smooth: true,
-            lineStyle: { width: 4, color: "#38bdf8" },
-            areaStyle: {
-              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: "rgba(56, 189, 248, 0.4)" },
-                { offset: 1, color: "rgba(56, 189, 248, 0)" },
-              ]),
-            },
-            symbol: "none",
-          },
-        ],
-      });
-    }
-
-    function renderBarangayChart(data) {
-      const theme = document.documentElement.getAttribute("data-theme");
-      const chart = echarts.init(
-        document.getElementById("barangay-chart"),
-        theme === "dark" ? "dark" : null
-      );
-      chart.setOption({
-        backgroundColor: "transparent",
-        tooltip: { trigger: "item" },
-        series: [
-          {
-            type: "pie",
-            radius: ["40%", "70%"],
-            avoidLabelOverlap: false,
-            itemStyle: {
-              borderRadius: 10,
-              borderColor: "#1e293b",
-              borderWidth: 2,
-            },
-            label: { show: false },
-            emphasis: {
-              label: { show: true, fontSize: 14, fontWeight: "bold" },
-            },
-            data: data,
-          },
-        ],
-      });
-    }
-
-    function renderYearChart(data) {
-      const theme = document.documentElement.getAttribute("data-theme");
-      const chart = echarts.init(
-        document.getElementById("year-chart"),
-        theme === "dark" ? "dark" : null
-      );
-      chart.setOption({
-        backgroundColor: "transparent",
-        tooltip: { trigger: "axis" },
-        xAxis: { type: "value", splitLine: { show: false } },
-        yAxis: { type: "category", data: data.map((d) => d.year) },
-        series: [
-          {
-            type: "bar",
-            data: data.map((d) => d.total),
-            itemStyle: {
-              color: new echarts.graphic.LinearGradient(1, 0, 0, 0, [
-                { offset: 0, color: "#10b981" },
-                { offset: 1, color: "#38bdf8" },
-              ]),
-              borderRadius: [0, 5, 5, 0],
-            },
-          },
-        ],
-      });
-    }
-
-    // Initial load then refresh every 60 seconds
-    fetchData();
-    setInterval(fetchData, 60000);
-
-    // Resize charts when the window resizes (e.g. desktop app panel resize)
-    window.addEventListener("resize", () => {
-      ["trend-chart", "barangay-chart", "year-chart"].forEach((id) => {
-        const instance = echarts.getInstanceByDom(document.getElementById(id));
-        if (instance) instance.resize();
-      });
-    });
+    resolveToken();elements.refresh.addEventListener("click",fetchData);elements.retry.addEventListener("click",fetchData);elements.year.addEventListener("change",fetchData);elements.barangay.addEventListener("change",fetchData);document.addEventListener("visibilitychange",()=>{if(!document.hidden&&!firstLoad)fetchData()});setInterval(()=>{if(!document.hidden&&!activeRequest)fetchData()},60000);fetchData();
   </script>
 </body>
 </html>
