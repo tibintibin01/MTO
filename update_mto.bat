@@ -7,7 +7,7 @@ echo   Bayan ng Dipaculao, Aurora
 echo ================================================
 echo.
 
-echo [1/5] Pulling latest code from GitHub...
+echo [1/4] Pulling latest code from GitHub...
 cd /d C:\MTO
 
 REM Frontend installs/builds can rewrite tracked generated artifacts and block
@@ -32,7 +32,7 @@ if %errorlevel% neq 0 (
 echo Done.
 echo.
 
-echo [2/5] Stopping old services safely...
+echo [2/4] Stopping old services safely...
 set "MTO_API_TASK_INSTALLED="
 schtasks /Query /TN "MTO Treasury API" >nul 2>&1
 if %errorlevel% equ 0 (
@@ -48,7 +48,7 @@ if %errorlevel% neq 0 (
 echo Done.
 echo.
 
-echo [3/5] Installing/updating Python dependencies...
+echo [3/4] Installing/updating Python dependencies...
 call venv\Scripts\activate
 pip install -r requirements.txt -q
 if %errorlevel% neq 0 (
@@ -59,18 +59,10 @@ if %errorlevel% neq 0 (
 echo Done.
 echo.
 
-echo [4/5] Rebuilding frontend...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\update_frontend.ps1" -ProjectRoot "C:\MTO"
-if %errorlevel% neq 0 (
-    echo ERROR: Frontend update failed. The last verified build was preserved.
-    echo Review C:\MTO\logs\frontend_build.out.log and frontend_build.err.log.
-    pause
-    exit /b 1
-)
-echo Done.
-echo.
-
-echo [5/5] Starting updated services...
+REM The public portal is hosted on Vercel. The optional LAN portal can still be
+REM started deliberately with run_system.bat, but this updater no longer builds
+REM or starts a redundant local Next.js process on port 3000.
+echo [4/4] Starting updated services...
 cd C:\MTO
 call venv\Scripts\activate
 if defined MTO_API_TASK_INSTALLED (
@@ -91,15 +83,14 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
-cd C:\MTO\frontend
-start "MTO Frontend" cmd /k "npm start"
 echo Done.
 echo.
 
 echo ================================================
 echo   UPDATE COMPLETE! System is now running.
 echo   Backend:  http://localhost:8001
-echo   Frontend: http://localhost:3000
+echo   Public portal: hosted on Vercel
+echo   Local port 3000: not started by this updater
 echo ================================================
 echo.
 pause
