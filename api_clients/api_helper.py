@@ -4,7 +4,7 @@ from api_clients.offline_manager import manager
 import threading
 from utils.logger import mto_logger
 
-CONNECTION_STATUS = "ONLINE" # ONLINE, DEGRADED, OFFLINE, SYNCING
+CONNECTION_STATUS = "ONLINE"  # ONLINE, DEGRADED, OFFLINE, SYNCING
 _CONNECTION_STATUS_LOCK = threading.Lock()
 DEFAULT_CONNECT_TIMEOUT = 4
 CONNECTION_FAILURE_THRESHOLD = 3
@@ -57,6 +57,7 @@ def _requests_timeout(timeout):
         return timeout
     return (DEFAULT_CONNECT_TIMEOUT, timeout)
 
+
 import os
 import json
 import re
@@ -71,6 +72,7 @@ BASE_URL = DEFAULT_SERVER_URL
 
 # Look for an external config file (useful for .exe deployment)
 import sys
+
 if getattr(sys, "frozen", False):
     # Packaged environment — resolve relative to the folder containing the executable
     CONFIG_PATH = Path(sys.executable).resolve().parent / "server_config.json"
@@ -81,7 +83,10 @@ else:
         CONFIG_PATH = Path(__file__).resolve().parent.parent / "server_config.json"
 
 if not CONFIG_PATH.exists() and getattr(sys, "frozen", False):
-    bundled_config = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent)) / "server_config.json"
+    bundled_config = (
+        Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+        / "server_config.json"
+    )
     if bundled_config.exists():
         CONFIG_PATH = bundled_config
 
@@ -92,7 +97,9 @@ if CONFIG_PATH.exists():
             BASE_URL = config_data.get("server_url", DEFAULT_SERVER_URL)
             print(f"INFO: Connected to Production Server: {BASE_URL}")
     except Exception as e:
-        print(f"WARNING: Could not read server_config.json, falling back to {DEFAULT_SERVER_URL}: {e}")
+        print(
+            f"WARNING: Could not read server_config.json, falling back to {DEFAULT_SERVER_URL}: {e}"
+        )
 
 API_BASE_URL = BASE_URL
 
@@ -183,6 +190,7 @@ def _try_refresh() -> bool:
     try:
         import requests as _requests
         import json as _json
+
         resp = _requests.post(
             f"{BASE_URL}/api/auth/refresh",
             json={"refresh_token": _REFRESH_TOKEN},
@@ -230,7 +238,7 @@ def api_request(
                 raise Exception("Your session has expired. Please log in again.")
 
         headers["Authorization"] = f"Bearer {_SESSION_TOKEN}"
-    
+
     # CSRF Protection: Include custom header for all state-changing requests
     headers["X-Requested-With"] = "XMLHttpRequest"
 
@@ -251,11 +259,11 @@ def api_request(
         from utils.metrics import MetricsManager
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        
+
         # 1. Telemetry: Generate Request ID and start timer
-        set_request_id() 
+        set_request_id()
         start_time = time.perf_counter()
-        
+
         # 4. Final Security Check: Use pinned certificate instead of verify=False
         # If cert file is missing, we fallback to False only if explicitly configured (for emergency debug)
         verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
@@ -278,11 +286,12 @@ def api_request(
         # even when the endpoint subsequently returns a validation error.
         record_connection_success()
 
-
-        mto_logger.info(f"API Response: {response.status_code}", status=response.status_code)
+        mto_logger.info(
+            f"API Response: {response.status_code}", status=response.status_code
+        )
 
         # 2. Telemetry: Measure Latency
-        latency = (time.perf_counter() - start_time)
+        latency = time.perf_counter() - start_time
         MetricsManager.record_request(
             method=method,
             endpoint=endpoint,
@@ -291,7 +300,11 @@ def api_request(
         )
 
         # 3. Log structured telemetry
-        mto_logger.info(f"API {method} {endpoint} completed", latency_ms=round(latency * 1000, 2), status=response.status_code)
+        mto_logger.info(
+            f"API {method} {endpoint} completed",
+            latency_ms=round(latency * 1000, 2),
+            status=response.status_code,
+        )
 
         if raw_response:
             return response
@@ -303,7 +316,17 @@ def api_request(
         return True
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
         record_connection_failure()
-        
+
+        # Multipart uploads cannot be replayed by the offline queue because it
+        # persists JSON payloads only, not the uploaded file bytes. Queuing one
+        # would create a permanent "pending sync" item with no file to send.
+        if files is not None:
+            raise Exception(
+                "Connection lost during file upload. File uploads cannot be "
+                "queued for offline sync. Reconnect to the server, reselect "
+                "the file, and try again."
+            ) from e
+
         if not queue_offline:
             raise Exception(
                 f"Cannot reach API server at {BASE_URL}. "
@@ -316,14 +339,18 @@ def api_request(
             if cached:
                 return cached
             raise Exception("Offline: No cached data available for this request.")
-        
+
         elif method in ["POST", "PUT", "DELETE"]:
             # Queue for later sync
             success = manager.queue_action(method, endpoint, data)
             if success:
-                return {"status": "queued", "message": "Connection lost. Action queued for sync.", "offline": True}
+                return {
+                    "status": "queued",
+                    "message": "Connection lost. Action queued for sync.",
+                    "offline": True,
+                }
             raise Exception("Offline: Failed to queue action.")
-        
+
         raise Exception(f"Connection lost and no offline handler for {method}")
 
     except requests.exceptions.RequestException as e:
@@ -336,7 +363,7 @@ def api_request(
         # offline event or retain credentials that can no longer be used.
         if status_code == 401:
             clear_tokens()
-        
+
         # If it's a 503 or 504, we might treat it as offline too
         if status_code in [502, 503, 504]:
             record_connection_failure()
@@ -350,10 +377,18 @@ def api_request(
                         messages = []
                         for item in detail[:5]:
                             loc = item.get("loc", []) if isinstance(item, dict) else []
-                            field = " > ".join(str(part) for part in loc if part != "body")
-                            msg = item.get("msg", str(item)) if isinstance(item, dict) else str(item)
+                            field = " > ".join(
+                                str(part) for part in loc if part != "body"
+                            )
+                            msg = (
+                                item.get("msg", str(item))
+                                if isinstance(item, dict)
+                                else str(item)
+                            )
                             messages.append(f"{field}: {msg}" if field else msg)
-                        error_msg = "Error: Request validation failed.\n" + "\n".join(messages)
+                        error_msg = "Error: Request validation failed.\n" + "\n".join(
+                            messages
+                        )
                     else:
                         error_msg = f"Error: {detail}"
             except:
@@ -375,15 +410,16 @@ def api_download_file(method, endpoint, params=None, timeout=120):
             if not _try_refresh():
                 raise Exception("Your session has expired. Please log in again.")
         headers["Authorization"] = f"Bearer {_SESSION_TOKEN}"
-    
+
     headers["X-Requested-With"] = "XMLHttpRequest"
-    
+
     try:
         import urllib3
+
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        
+
         verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
-        
+
         response = requests.request(
             method,
             url,
@@ -391,15 +427,15 @@ def api_download_file(method, endpoint, params=None, timeout=120):
             headers=headers,
             timeout=_requests_timeout(timeout),
             verify=verify_param,
-            stream=True
+            stream=True,
         )
 
         record_connection_success()
-        
+
         response.raise_for_status()
-        
+
         return save_stream_response_to_temp_file(response, default_suffix=".pdf")
-        
+
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
         record_connection_failure()
         raise Exception(
@@ -414,7 +450,9 @@ def api_download_file(method, endpoint, params=None, timeout=120):
 def response_filename(response, default_name="download"):
     """Returns a safe filename from Content-Disposition, falling back to default_name."""
     cd = response.headers.get("content-disposition", "")
-    match = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', cd, flags=re.IGNORECASE)
+    match = re.search(
+        r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', cd, flags=re.IGNORECASE
+    )
     raw_name = match.group(1).strip() if match else default_name
     safe_name = os.path.basename(raw_name).strip()
     safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", safe_name)

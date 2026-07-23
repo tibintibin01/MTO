@@ -1,4 +1,5 @@
 import requests
+from io import BytesIO
 
 import api_clients.api_helper as api
 from api_clients.offline_manager import OfflineManager
@@ -21,7 +22,9 @@ class _Response:
             raise requests.exceptions.HTTPError(response=self)
 
 
-def test_successful_request_recovers_online_state_and_uses_short_connect_timeout(monkeypatch):
+def test_successful_request_recovers_online_state_and_uses_short_connect_timeout(
+    monkeypatch,
+):
     captured = {}
 
     def fake_request(*args, **kwargs):
@@ -59,9 +62,7 @@ def test_repeated_connection_failures_transition_through_degraded(monkeypatch):
             raise AssertionError("Expected an API connection failure")
 
         expected = (
-            "OFFLINE"
-            if attempt == api.CONNECTION_FAILURE_THRESHOLD
-            else "DEGRADED"
+            "OFFLINE" if attempt == api.CONNECTION_FAILURE_THRESHOLD else "DEGRADED"
         )
         assert api.get_connection_status() == expected
 
@@ -135,3 +136,49 @@ def test_offline_queue_count_is_updated_without_requerying(tmp_path):
     action = manager.get_pending_actions()[0]
     manager.mark_as_synced(action["id"])
     assert manager.get_queue_count() == 0
+
+
+def test_failed_file_upload_is_not_added_to_offline_queue(monkeypatch):
+    def fail_request(*args, **kwargs):
+        raise requests.exceptions.ConnectionError("server unavailable")
+
+    queued_actions = []
+    monkeypatch.setattr(api.requests, "request", fail_request)
+    monkeypatch.setattr(
+        api.manager,
+        "queue_action",
+        lambda *args, **kwargs: queued_actions.append((args, kwargs)),
+    )
+
+    try:
+        api.api_request(
+            "POST",
+            "/system/import/validate?mode=payments",
+            files={"file": ("payments.xlsx", BytesIO(b"test"))},
+        )
+    except Exception as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("Expected an API connection failure")
+
+    assert queued_actions == []
+    assert "File uploads cannot be queued" in message
+    assert "reselect the file" in message
+
+
+def test_failed_json_write_remains_eligible_for_offline_queue(monkeypatch):
+    def fail_request(*args, **kwargs):
+        raise requests.exceptions.ConnectionError("server unavailable")
+
+    queued_actions = []
+    monkeypatch.setattr(api.requests, "request", fail_request)
+    monkeypatch.setattr(
+        api.manager,
+        "queue_action",
+        lambda *args: queued_actions.append(args) or True,
+    )
+
+    result = api.api_request("POST", "/payments", data={"amount": 100})
+
+    assert result["status"] == "queued"
+    assert queued_actions == [("POST", "/payments", {"amount": 100})]
