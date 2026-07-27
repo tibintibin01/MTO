@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
-from backend.models import Property
+from backend.models import Property, PropertyAssessmentHistory
 from backend.services.property_service import search_properties
 
 
@@ -94,8 +94,12 @@ def test_search_properties_as_of_year_excludes_replaced_previous_td(db):
     _property(db, "06-0001-00099", "2024", prev_td_number="06-0001-00001")
     db.commit()
 
-    rows_2023 = search_properties("", barangay="BAYABAS", as_of_year=2023, db_session=db)
-    rows_2025 = search_properties("", barangay="BAYABAS", as_of_year=2025, db_session=db)
+    rows_2023 = search_properties(
+        "", barangay="BAYABAS", as_of_year=2023, db_session=db
+    )
+    rows_2025 = search_properties(
+        "", barangay="BAYABAS", as_of_year=2025, db_session=db
+    )
 
     assert {row[1] for row in rows_2023} == {"06-0001-00001"}
     assert {row[1] for row in rows_2025} == {"06-0001-00099"}
@@ -106,11 +110,91 @@ def test_search_properties_as_of_year_keeps_old_td_until_replacement_effective(d
     _property(db, "06-0001-00099", "2026", prev_td_number="06-0001-00001")
     db.commit()
 
-    rows_2025 = search_properties("", barangay="BAYABAS", as_of_year=2025, db_session=db)
-    rows_2026 = search_properties("", barangay="BAYABAS", as_of_year=2026, db_session=db)
+    rows_2025 = search_properties(
+        "", barangay="BAYABAS", as_of_year=2025, db_session=db
+    )
+    rows_2026 = search_properties(
+        "", barangay="BAYABAS", as_of_year=2026, db_session=db
+    )
 
     assert {row[1] for row in rows_2025} == {"06-0001-00001"}
     assert {row[1] for row in rows_2026} == {"06-0001-00099"}
+
+
+def test_as_of_year_uses_historical_snapshot_before_future_revaluation(db):
+    prop = _property(db, "TD-REVALUED", "2027", tax_year="2027")
+    prop.assessed_value = 200_000
+    prop.kind_of_property = "COMMERCIAL"
+    db.add(
+        PropertyAssessmentHistory(
+            property_id=prop.id,
+            td_number=prop.td_number,
+            assessed_value=100_000,
+            tax_year="2024",
+            kind_of_property="RESIDENTIAL",
+        )
+    )
+    db.commit()
+
+    rows_2026 = search_properties(
+        "", barangay="BAYABAS", as_of_year=2026, db_session=db
+    )
+    rows_2027 = search_properties(
+        "", barangay="BAYABAS", as_of_year=2027, db_session=db
+    )
+
+    assert len(rows_2026) == 1
+    assert rows_2026[0][1] == "TD-REVALUED"
+    assert rows_2026[0][7] == "RESIDENTIAL"
+    assert rows_2026[0][9] == 100_000
+    assert rows_2026[0][21] == 2024
+
+    assert len(rows_2027) == 1
+    assert rows_2027[0][7] == "COMMERCIAL"
+    assert rows_2027[0][9] == 200_000
+    assert rows_2027[0][21] == 2027
+
+
+def test_replacement_td_uses_historical_start_year_and_snapshot(db):
+    old = _property(db, "TD-OLD", "2023")
+    replacement = _property(
+        db,
+        "TD-NEW",
+        "2027",
+        tax_year="2027",
+        prev_td_number=old.td_number,
+    )
+    replacement.assessed_value = 200_000
+    replacement.kind_of_property = "COMMERCIAL"
+    db.add(
+        PropertyAssessmentHistory(
+            property_id=replacement.id,
+            td_number=replacement.td_number,
+            assessed_value=150_000,
+            tax_year="2026",
+            kind_of_property="RESIDENTIAL",
+        )
+    )
+    db.commit()
+
+    rows_2025 = search_properties(
+        "", barangay="BAYABAS", as_of_year=2025, db_session=db
+    )
+    rows_2026 = search_properties(
+        "", barangay="BAYABAS", as_of_year=2026, db_session=db
+    )
+    rows_2027 = search_properties(
+        "", barangay="BAYABAS", as_of_year=2027, db_session=db
+    )
+
+    assert {row[1] for row in rows_2025} == {"TD-OLD"}
+    assert {row[1] for row in rows_2026} == {"TD-NEW"}
+    assert rows_2026[0][7] == "RESIDENTIAL"
+    assert rows_2026[0][9] == 150_000
+    assert rows_2026[0][21] == 2026
+    assert {row[1] for row in rows_2027} == {"TD-NEW"}
+    assert rows_2027[0][7] == "COMMERCIAL"
+    assert rows_2027[0][9] == 200_000
 
 
 def test_search_properties_keeps_exact_owner_substring_inside_long_name(db):

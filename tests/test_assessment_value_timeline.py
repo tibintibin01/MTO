@@ -101,6 +101,53 @@ def test_prior_assessment_correction_updates_only_pre_effectivity_billings():
     assert history.change_reason == "Historical assessment correction"
 
 
+def test_later_assessment_preserves_superseded_classification():
+    db = _session()
+    prop = Property(
+        td_number="06-0012-09999",
+        owner_name="CLASSIFICATION HISTORY TEST",
+        barangay="DINADIAWAN",
+        location="DINADIAWAN",
+        kind_of_property="RESIDENTIAL",
+        assessed_value=100_000,
+        effectivity_date="2024-01-01",
+        version=1,
+    )
+    db.add(prop)
+    db.commit()
+
+    save_property(
+        {
+            "TD Number": prop.td_number,
+            "Owner Name": prop.owner_name,
+            "Barangay": prop.barangay,
+            "Location": prop.location,
+            "Kind of Property": "COMMERCIAL",
+            "Assessed Value": "200000",
+            "Effectivity Date": "2027",
+            "version": 1,
+        },
+        editing_id=prop.id,
+        user={"id": 1, "username": "tester"},
+        db_session=db,
+    )
+
+    history = (
+        db.query(PropertyAssessmentHistory)
+        .filter(
+            PropertyAssessmentHistory.property_id == prop.id,
+            PropertyAssessmentHistory.tax_year == "2024",
+        )
+        .one()
+    )
+    db.refresh(prop)
+
+    assert history.kind_of_property == "RESIDENTIAL"
+    assert float(history.assessed_value) == 100_000
+    assert prop.kind_of_property == "COMMERCIAL"
+    assert float(prop.assessed_value) == 200_000
+
+
 def test_repair_does_not_guess_future_assessment_for_prior_years():
     db = _session()
     prop = Property(

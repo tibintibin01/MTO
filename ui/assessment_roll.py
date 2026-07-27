@@ -14,6 +14,18 @@ from ui.import_wizard import ImportWizardModal
 import threading
 
 
+def parse_assessment_roll_as_of_year(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if not raw.isdigit() or len(raw) != 4:
+        raise ValueError("As of Year must be a four-digit year, such as 2026.")
+    year = int(raw)
+    if year < 1900 or year > 2200:
+        raise ValueError("As of Year must be between 1900 and 2200.")
+    return year
+
+
 class AssessmentRollPage:
     def __init__(self, parent, user):
         self.parent = parent
@@ -23,6 +35,7 @@ class AssessmentRollPage:
         self.page_size = 50
         self.is_loading = False
         self.all_loaded = False
+        self._refresh_generation = 0
         self.barangays = [
             "NORTH POBLACION",
             "SOUTH POBLACION",
@@ -64,7 +77,9 @@ class AssessmentRollPage:
         title_fr = ctk.CTkFrame(header, fg_color="transparent")
         title_fr.pack(side="left", fill="x", expand=True)
         ctk.CTkLabel(
-            title_fr, text="ASSESSMENT ROLL", font=ModernTheme.H2,
+            title_fr,
+            text="ASSESSMENT ROLL",
+            font=ModernTheme.H2,
             text_color=(ModernTheme.TEXT_MAIN_LIGHT, ModernTheme.TEXT_MAIN_DARK),
         ).pack(anchor="w")
         ctk.CTkLabel(
@@ -84,20 +99,26 @@ class AssessmentRollPage:
         filters_fr.pack(fill="x", pady=(0, 10))
 
         ctk.CTkLabel(
-            filters_fr, text="FIND PROPERTY", font=ModernTheme.BUTTON_SMALL,
+            filters_fr,
+            text="FIND PROPERTY",
+            font=ModernTheme.BUTTON_SMALL,
             text_color=ModernTheme.TEXT_GRAY,
         ).pack(side="left", padx=(14, 7), pady=10)
         self.search_ent = ctk.CTkEntry(
             filters_fr,
             placeholder_text="Search PIN, TD, Former TD, or Owner...",
-            width=330, height=34, font=ModernTheme.BODY_SMALL,
+            width=330,
+            height=34,
+            font=ModernTheme.BODY_SMALL,
         )
         self.search_ent.pack(side="left", pady=10)
         self.search_ent.bind("<Return>", lambda e: self.refresh_table())
         self.search_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         ctk.CTkLabel(
-            filters_fr, text="BARANGAY", font=ModernTheme.BUTTON_SMALL,
+            filters_fr,
+            text="BARANGAY",
+            font=ModernTheme.BUTTON_SMALL,
             text_color=ModernTheme.TEXT_GRAY,
         ).pack(side="left", padx=(16, 7), pady=10)
         self.brgy_var = tk.StringVar(value="ALL")
@@ -105,7 +126,9 @@ class AssessmentRollPage:
             filters_fr,
             values=["ALL"] + sorted(self.barangays),
             variable=self.brgy_var,
-            width=190, height=34, font=ModernTheme.BODY_SMALL,
+            width=190,
+            height=34,
+            font=ModernTheme.BODY_SMALL,
         )
         self.brgy_cb.pack(side="left", pady=10)
         self.brgy_cb.configure(command=lambda e: self.refresh_table())
@@ -119,7 +142,10 @@ class AssessmentRollPage:
             text_color=ModernTheme.TEXT_GRAY,
         ).pack(side="left", padx=(16, 7), pady=10)
         self.as_of_year_ent = ctk.CTkEntry(
-            filters_fr, width=90, height=34, placeholder_text="YYYY",
+            filters_fr,
+            width=90,
+            height=34,
+            placeholder_text="YYYY",
             font=ModernTheme.BODY_SMALL,
         )
         self.as_of_year_ent.pack(side="left", pady=10)
@@ -130,7 +156,8 @@ class AssessmentRollPage:
             filters_fr,
             text="REFRESH",
             command=self.refresh_table,
-            width=105, height=34,
+            width=105,
+            height=34,
             font=ModernTheme.BUTTON_SMALL,
             fg_color=ModernTheme.PRIMARY,
             hover_color=ModernTheme.PRIMARY_HOVER,
@@ -142,7 +169,8 @@ class AssessmentRollPage:
             command=self.open_import_wizard,
             fg_color=ModernTheme.SECONDARY,
             hover_color=ModernTheme.SECONDARY_HOVER,
-            width=125, height=34,
+            width=125,
+            height=34,
             font=ModernTheme.BUTTON_SMALL,
         ).pack(side="right", padx=12, pady=10)
 
@@ -151,7 +179,8 @@ class AssessmentRollPage:
             text="EXPORT PDF",
             command=self._export_roll_pdf,
             fg_color=ModernTheme.DANGER,
-            width=125, height=34,
+            width=125,
+            height=34,
             font=ModernTheme.BUTTON_SMALL,
         )
         self._pdf_btn.pack(side="right", padx=(8, 0))
@@ -161,7 +190,8 @@ class AssessmentRollPage:
             text="EXPORT EXCEL",
             command=self._export_roll_excel,
             fg_color=ModernTheme.SUCCESS,
-            width=135, height=34,
+            width=135,
+            height=34,
             font=ModernTheme.BUTTON_SMALL,
         )
         self._excel_btn.pack(side="right")
@@ -206,7 +236,10 @@ class AssessmentRollPage:
             foreground=[("selected", "#ffffff")],
         )
         style.map("Roll.Treeview.Heading", background=[("active", "#475569")])
-        for scrollbar_style in ("Roll.Vertical.TScrollbar", "Roll.Horizontal.TScrollbar"):
+        for scrollbar_style in (
+            "Roll.Vertical.TScrollbar",
+            "Roll.Horizontal.TScrollbar",
+        ):
             style.configure(
                 scrollbar_style,
                 gripcount=0,
@@ -259,13 +292,16 @@ class AssessmentRollPage:
         self.tree.column("PROPERTY OWNER", anchor="w")
         self.tree.column("LOCATION", anchor="center")
 
-
         scrolly = ttk.Scrollbar(
-            tree_host, orient="vertical", command=self.tree.yview,
+            tree_host,
+            orient="vertical",
+            command=self.tree.yview,
             style="Roll.Vertical.TScrollbar",
         )
         scrollx = ttk.Scrollbar(
-            tree_host, orient="horizontal", command=self.tree.xview,
+            tree_host,
+            orient="horizontal",
+            command=self.tree.xview,
             style="Roll.Horizontal.TScrollbar",
         )
         self.tree.configure(yscrollcommand=scrolly.set, xscrollcommand=scrollx.set)
@@ -292,7 +328,8 @@ class AssessmentRollPage:
             self.pag_fr,
             text="PREVIOUS",
             command=self.prev_page,
-            width=110, height=32,
+            width=110,
+            height=32,
             font=ModernTheme.BUTTON_SMALL,
             fg_color=ModernTheme.SECONDARY,
             hover_color=ModernTheme.SECONDARY_HOVER,
@@ -300,7 +337,9 @@ class AssessmentRollPage:
         self.prev_btn.pack(side="left", padx=10, pady=8)
 
         self.page_lbl = ctk.CTkLabel(
-            self.pag_fr, text="Page 1", font=("Inter", 11, "bold"),
+            self.pag_fr,
+            text="Page 1",
+            font=("Inter", 11, "bold"),
             text_color=ModernTheme.TEXT_GRAY,
         )
         self.page_lbl.pack(side="left", expand=True)
@@ -309,65 +348,84 @@ class AssessmentRollPage:
             self.pag_fr,
             text="NEXT",
             command=self.next_page,
-            width=110, height=32,
+            width=110,
+            height=32,
             font=ModernTheme.BUTTON_SMALL,
             fg_color=ModernTheme.SECONDARY,
             hover_color=ModernTheme.SECONDARY_HOVER,
         )
         self.next_btn.pack(side="right", padx=10, pady=8)
-        
-        table_fr.pack(fill="both", expand=True) # Pack expanding table LAST
+
+        table_fr.pack(fill="both", expand=True)  # Pack expanding table LAST
 
         self.tree.bind("<Double-1>", lambda e: self.open_dossier())
 
-    def next_page(self):
-        if not self.all_loaded:
-            self.current_page += 1
-            self.refresh_table(reset_page=False)
+    def _is_current_refresh(self, generation):
+        return generation == self._refresh_generation
 
     def refresh_table(self, reset_page=True):
+        try:
+            as_of_year = parse_assessment_roll_as_of_year(self.as_of_year_ent.get())
+        except ValueError as exc:
+            messagebox.showerror("Invalid As of Year", str(exc))
+            return
+
+        term = self.search_ent.get().strip()
+        brgy = self.brgy_var.get()
+
         if reset_page:
             self.page_cursors = [None]
             self.current_page = 0
             self.all_loaded = False
-            
+
+        page_index = self.current_page
+        cursor_to_use = self.page_cursors[page_index]
+        self._refresh_generation += 1
+        request_generation = self._refresh_generation
         self.is_loading = True
         overlay = LoadingOverlay(self.container, "Loading Assessment Roll...")
 
+        def apply_response(response):
+            if not self._is_current_refresh(request_generation):
+                return
+
+            results = response.get("items", [])
+            next_cursor = response.get("next_cursor")
+            has_more = bool(response.get("has_more"))
+
+            if len(self.page_cursors) <= page_index + 1:
+                self.page_cursors.append(next_cursor)
+            else:
+                self.page_cursors[page_index + 1] = next_cursor
+
+            self.all_loaded = not has_more
+            self._update_table(results, has_more=has_more)
+
+        def show_error(error):
+            if self._is_current_refresh(request_generation):
+                messagebox.showerror("Error", str(error))
+
+        def finish_request():
+            overlay.hide()
+            if self._is_current_refresh(request_generation):
+                self.is_loading = False
+
         def worker():
             try:
-                term = self.search_ent.get().strip()
-                brgy = self.brgy_var.get()
-                as_of_year = self.as_of_year_ent.get().strip()
-                
-                cursor_to_use = self.page_cursors[self.current_page]
-                
                 response = prop_svc.search_properties(
                     term,
                     limit=self.page_size,
                     cursor=cursor_to_use,
                     barangay=brgy if brgy != "ALL" else None,
-                    as_of_year=as_of_year if as_of_year else None,
+                    as_of_year=as_of_year,
                 )
-                
-                results = response.get("items", [])
-                next_cur = response.get("next_cursor")
-                
-                # Store the next cursor for the next page
-                if len(self.page_cursors) <= self.current_page + 1:
-                    self.page_cursors.append(next_cur)
-                else:
-                    self.page_cursors[self.current_page + 1] = next_cur
-                
-                if not response.get("has_more"):
-                    self.all_loaded = True
-
-                self.container.after(0, lambda: self._update_table(results))
-            except Exception as e:
-                self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
+                self.container.after(
+                    0, lambda response=response: apply_response(response)
+                )
+            except Exception as exc:
+                self.container.after(0, lambda error=exc: show_error(error))
             finally:
-                self.is_loading = False
-                self.container.after(0, lambda: overlay.hide())
+                self.container.after(0, finish_request)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -382,25 +440,24 @@ class AssessmentRollPage:
             self.all_loaded = False
             self.refresh_table(reset_page=False)
 
-    def _update_table(self, results):
+    def _update_table(self, results, has_more=None):
         self.page_lbl.configure(text=f"PAGE {self.current_page + 1}")
         self.prev_btn.configure(state="normal" if self.current_page > 0 else "disabled")
-        
+
+        if has_more is None:
+            has_more = len(results) >= self.page_size
+        self.all_loaded = not has_more
+        self.next_btn.configure(state="normal" if has_more else "disabled")
+
         if not results and self.current_page == 0:
             for item in self.tree.get_children():
                 self.tree.delete(item)
             return
 
-        if len(results) < self.page_size:
-            self.all_loaded = True
-            self.next_btn.configure(state="disabled")
-        else:
-            self.next_btn.configure(state="normal")
-
         # Always clear table for true page-by-page pagination
         for item in self.tree.get_children():
             self.tree.delete(item)
-        
+
         # Get current row count for zebra tagging
         current_count = len(self.tree.get_children())
 
@@ -443,6 +500,7 @@ class AssessmentRollPage:
 
         messagebox.showinfo("Import Summary", msg)
         self.refresh_table()
+
     def open_dossier(self):
         sel = self.tree.selection()
         if not sel:
@@ -451,7 +509,9 @@ class AssessmentRollPage:
         td_number = str(vals[1]).strip() if len(vals) > 1 else ""
 
         if not td_number:
-            messagebox.showwarning("Dossier Error", "This property record is missing a TD Number.")
+            messagebox.showwarning(
+                "Dossier Error", "This property record is missing a TD Number."
+            )
             return
 
         # 1. Create a subtle loading overlay
@@ -499,6 +559,7 @@ class AssessmentRollPage:
         """Open a file with the default OS application after saving."""
         try:
             import subprocess, sys
+
             if sys.platform.startswith("win"):
                 os.startfile(path)
             elif sys.platform == "darwin":
@@ -516,6 +577,7 @@ class AssessmentRollPage:
         def _run():
             try:
                 path = worker_fn()
+
                 # Ask where to save
                 def _save():
                     dest = filedialog.asksaveasfilename(
@@ -530,42 +592,54 @@ class AssessmentRollPage:
                     )
                     if dest:
                         shutil.copy2(path, dest)
-                        if messagebox.askyesno("Export Successful",
-                                               f"Assessment roll saved to:\n{dest}\n\nOpen it now?"):
+                        if messagebox.askyesno(
+                            "Export Successful",
+                            f"Assessment roll saved to:\n{dest}\n\nOpen it now?",
+                        ):
                             self._open_file(dest)
                     btn.configure(text=original_text, state="normal")
 
                 self.container.after(0, _save)
             except Exception as exc:
                 self.container.after(
-                    0, lambda e=exc: (
+                    0,
+                    lambda e=exc: (
                         messagebox.showerror("Export Failed", str(e)),
                         btn.configure(text=original_text, state="normal"),
-                    )
+                    ),
                 )
 
         threading.Thread(target=_run, daemon=True).start()
 
     def _export_roll_pdf(self):
         brgy = self.brgy_var.get()
-        as_of_year = self.as_of_year_ent.get().strip()
-        
+        try:
+            as_of_year = parse_assessment_roll_as_of_year(self.as_of_year_ent.get())
+        except ValueError as exc:
+            messagebox.showerror("Invalid As of Year", str(exc))
+            return
+
         self._export_with_feedback(
             self._pdf_btn,
             lambda: billing.download_assessment_roll_pdf(
                 barangay=brgy if brgy != "ALL" else None,
-                as_of_year=as_of_year if as_of_year else None,
-            )
+                as_of_year=as_of_year,
+            ),
         )
 
     def _export_roll_excel(self):
         brgy = self.brgy_var.get()
-        as_of_year = self.as_of_year_ent.get().strip()
+        try:
+            as_of_year = parse_assessment_roll_as_of_year(self.as_of_year_ent.get())
+        except ValueError as exc:
+            messagebox.showerror("Invalid As of Year", str(exc))
+            return
+
         self._export_with_feedback(
             self._excel_btn,
             lambda: billing.export_report_excel(
                 "assessment_roll",
                 barangay=brgy if brgy != "ALL" else None,
-                as_of_year=as_of_year if as_of_year else None,
-            )
+                as_of_year=as_of_year,
+            ),
         )

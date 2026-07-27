@@ -450,11 +450,18 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                 if prop:
                     old_assessed_value = float(prop.assessed_value or 0)
                     value_changed = abs(old_assessed_value - new_assessed_value) > 0.009
+                    old_kind = str(prop.kind_of_property or "").strip().upper()
+                    incoming_kind = (
+                        str(row.get("kind_of_property") or "").strip().upper()
+                    )
+                    kind_changed = bool(incoming_kind and incoming_kind != old_kind)
+                    assessment_changed = value_changed or kind_changed
+                    old_effective_year = assessment_year(
+                        prop.effectivity_date or prop.tax_year
+                    )
+                    incoming_effective_year = assessment_year(row.get("tax_year"))
 
-                    if value_changed and old_assessed_value > 0:
-                        old_effective_year = assessment_year(
-                            prop.effectivity_date or prop.tax_year
-                        )
+                    if assessment_changed and old_assessed_value > 0:
                         if old_effective_year:
                             upsert_history_version(
                                 prop,
@@ -463,6 +470,7 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                                 user.get("username", "system"),
                                 "Superseded by assessment import",
                                 db_session,
+                                kind_of_property=old_kind or None,
                             )
 
                     # Blank optional cells must not erase existing data.
@@ -479,6 +487,16 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                         incoming = row.get(key)
                         if incoming not in (None, ""):
                             setattr(prop, attr, incoming)
+
+                    if (
+                        assessment_changed
+                        and incoming_effective_year
+                        and (
+                            old_effective_year is None
+                            or incoming_effective_year > old_effective_year
+                        )
+                    ):
+                        prop.effectivity_date = f"{incoming_effective_year}-01-01"
 
                     if value_changed:
                         prop.assessed_value = new_assessed_value

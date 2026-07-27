@@ -21,6 +21,10 @@ customtkinter.set_default_color_theme = MagicMock()
 from ui.navigation import NavigationSidebar
 from ui.status_bar import ConnectivityStatusBar
 from ui.dashboard_home import DashboardHomePage
+from ui.assessment_roll import (
+    AssessmentRollPage,
+    parse_assessment_roll_as_of_year,
+)
 
 
 class TestNavigationSidebar(unittest.TestCase):
@@ -70,6 +74,25 @@ class TestStatusBar(unittest.TestCase):
         )
         bar.queue_lbl.configure.assert_called_once_with(text="PENDING SYNC: 2 ITEMS")
         bar.after.assert_not_called()
+
+
+class TestAssessmentRollFilters(unittest.TestCase):
+    def test_as_of_year_parser_accepts_blank_or_valid_year(self):
+        self.assertIsNone(parse_assessment_roll_as_of_year(""))
+        self.assertEqual(parse_assessment_roll_as_of_year(" 2026 "), 2026)
+
+    def test_as_of_year_parser_rejects_invalid_values(self):
+        for value in ("26", "202A", "1899", "2201"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    parse_assessment_roll_as_of_year(value)
+
+    def test_refresh_generation_rejects_stale_responses(self):
+        page = object.__new__(AssessmentRollPage)
+        page._refresh_generation = 4
+
+        self.assertTrue(page._is_current_refresh(4))
+        self.assertFalse(page._is_current_refresh(3))
 
 
 class TestDashboardHome(unittest.TestCase):
