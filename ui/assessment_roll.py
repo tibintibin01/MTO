@@ -26,6 +26,29 @@ def parse_assessment_roll_as_of_year(value):
     return year
 
 
+def assessment_roll_export_dialog_options(path, export_format):
+    """Build a save dialog that matches the export button the user selected."""
+    formats = {
+        "pdf": (".pdf", "PDF document (*.pdf)", "*.pdf"),
+        "excel": (".xlsx", "Excel workbook (*.xlsx)", "*.xlsx"),
+    }
+    try:
+        extension, label, pattern = formats[str(export_format).strip().lower()]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported Assessment Roll export: {export_format}"
+        ) from exc
+
+    source_name = os.path.basename(path)
+    stem = os.path.splitext(source_name)[0] or "Assessment_Roll"
+    return {
+        "title": f"Save Assessment Roll as {label.split(' (', 1)[0]}",
+        "initialfile": f"{stem}{extension}",
+        "defaultextension": extension,
+        "filetypes": [(label, pattern)],
+    }
+
+
 class AssessmentRollPage:
     def __init__(self, parent, user):
         self.parent = parent
@@ -569,7 +592,7 @@ class AssessmentRollPage:
         except Exception:
             pass
 
-    def _export_with_feedback(self, btn, worker_fn):
+    def _export_with_feedback(self, btn, worker_fn, export_format):
         """Run worker_fn in a thread; show progress on btn, then open the result."""
         original_text = btn.cget("text")
         btn.configure(text="⏳ Generating...", state="disabled")
@@ -580,16 +603,10 @@ class AssessmentRollPage:
 
                 # Ask where to save
                 def _save():
-                    dest = filedialog.asksaveasfilename(
-                        title="Save Assessment Roll",
-                        initialfile=os.path.basename(path),
-                        defaultextension=os.path.splitext(path)[1],
-                        filetypes=[
-                            ("PDF files", "*.pdf"),
-                            ("Excel files", "*.xlsx"),
-                            ("All files", "*.*"),
-                        ],
+                    dialog_options = assessment_roll_export_dialog_options(
+                        path, export_format
                     )
+                    dest = filedialog.asksaveasfilename(**dialog_options)
                     if dest:
                         shutil.copy2(path, dest)
                         if messagebox.askyesno(
@@ -625,6 +642,7 @@ class AssessmentRollPage:
                 barangay=brgy if brgy != "ALL" else None,
                 as_of_year=as_of_year,
             ),
+            "pdf",
         )
 
     def _export_roll_excel(self):
@@ -642,4 +660,5 @@ class AssessmentRollPage:
                 barangay=brgy if brgy != "ALL" else None,
                 as_of_year=as_of_year,
             ),
+            "excel",
         )

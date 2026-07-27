@@ -23,6 +23,7 @@ from ui.status_bar import ConnectivityStatusBar
 from ui.dashboard_home import DashboardHomePage
 from ui.assessment_roll import (
     AssessmentRollPage,
+    assessment_roll_export_dialog_options,
     parse_assessment_roll_as_of_year,
 )
 
@@ -93,6 +94,26 @@ class TestAssessmentRollFilters(unittest.TestCase):
 
         self.assertTrue(page._is_current_refresh(4))
         self.assertFalse(page._is_current_refresh(3))
+
+    def test_excel_export_dialog_only_offers_xlsx(self):
+        options = assessment_roll_export_dialog_options(
+            "download.pdf",
+            "excel",
+        )
+
+        self.assertEqual(options["defaultextension"], ".xlsx")
+        self.assertEqual(options["initialfile"], "download.xlsx")
+        self.assertEqual(options["filetypes"], [("Excel workbook (*.xlsx)", "*.xlsx")])
+
+    def test_pdf_export_dialog_only_offers_pdf(self):
+        options = assessment_roll_export_dialog_options(
+            "download.xlsx",
+            "pdf",
+        )
+
+        self.assertEqual(options["defaultextension"], ".pdf")
+        self.assertEqual(options["initialfile"], "download.pdf")
+        self.assertEqual(options["filetypes"], [("PDF document (*.pdf)", "*.pdf")])
 
 
 class TestDashboardHome(unittest.TestCase):
