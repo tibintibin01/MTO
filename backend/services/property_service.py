@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 from datetime import datetime, timezone
-from sqlalchemy import text, func, cast, Integer
+from sqlalchemy import text, func, cast, Integer, exists, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 from backend.models import (
@@ -16,6 +16,8 @@ from backend.services.auth_service import get_username, require_permission
 import backend.services.billing_service as billing
 import backend.services.payment_service as payment
 from backend.services.assessment_value_service import (
+    assessment_snapshot_for_year,
+    assessment_snapshots,
     money as assessment_money,
     upsert_history_version,
     year_from_value as assessment_year,
@@ -134,6 +136,26 @@ def _effectivity_year_expr(model):
     return cast(func.substr(year_source, 1, 4), Integer)
 
 
+def _history_year_expr():
+    return cast(
+        func.substr(func.trim(PropertyAssessmentHistory.tax_year), 1, 4),
+        Integer,
+    )
+
+
+def _assessment_effective_by_year(model, as_of_year):
+    history_is_effective = (
+        exists()
+        .where(PropertyAssessmentHistory.property_id == model.id)
+        .where(PropertyAssessmentHistory.assessed_value > 0)
+        .where(_history_year_expr() <= int(as_of_year))
+    )
+    return or_(
+        _effectivity_year_expr(model) <= int(as_of_year),
+        history_is_effective,
+    )
+
+
 def search_properties(
     term,
     limit=100,
@@ -209,20 +231,18 @@ def search_properties(
 
     if as_of_year:
         as_of = int(as_of_year)
-        effectivity_year = _effectivity_year_expr(Property)
         replacement = aliased(Property)
-        replacement_effectivity_year = _effectivity_year_expr(replacement)
         replaced_td_numbers = (
             db_session.query(func.trim(replacement.prev_td_number))
             .filter(
                 replacement.deleted_at == None,
                 replacement.prev_td_number != None,
                 func.trim(replacement.prev_td_number) != "",
-                replacement_effectivity_year <= as_of,
+                _assessment_effective_by_year(replacement, as_of),
             )
             .scalar_subquery()
         )
-        query = query.filter(effectivity_year <= as_of)
+        query = query.filter(_assessment_effective_by_year(Property, as_of))
         query = query.filter(~func.trim(Property.td_number).in_(replaced_td_numbers))
     elif year_start or year_end:
         # effectivity_date is legacy text and may contain either "2024" or
@@ -280,36 +300,80 @@ def search_properties(
     else:
         results = results[:limit]
 
-    return [
-        (
-            p.id,
-            p.td_number,
-            p.owner_name,
-            p.payor_name,
-            p.lot_number,
-            p.area,
-            p.location,
-            p.kind_of_property,
-            p.accountable_officer,
-            float(p.assessed_value or 0),
-            float(p.assessed_value or 0) * _get_basic_rate(p, db_session),
-            float(p.assessed_value or 0) * _get_sef_rate(p, db_session),
-            float(p.penalty or 0),
-            float(p.discount or 0),
-            float(p.assessed_value or 0) * _get_total_rate(p, db_session)
-            + float(p.penalty or 0)
-            - float(p.discount or 0),
-            p.or_number,
-            p.or_date,
-            p.tax_year,
-            p.pin,
-            p.block_number,
-            p.prev_td_number,
-            p.effectivity_date,
-            p.barangay,
+    history_by_property = {}
+    if as_of_year and results:
+        property_ids = [prop.id for prop in results]
+        history_rows = (
+            db_session.query(PropertyAssessmentHistory)
+            .filter(PropertyAssessmentHistory.property_id.in_(property_ids))
+            .order_by(
+                PropertyAssessmentHistory.property_id.asc(),
+                PropertyAssessmentHistory.id.asc(),
+            )
+            .all()
         )
-        for p in results
-    ]
+        for history_row in history_rows:
+            history_by_property.setdefault(history_row.property_id, []).append(
+                history_row
+            )
+
+    rows = []
+    for prop in results:
+        selected_value = float(prop.assessed_value or 0)
+        selected_kind = prop.kind_of_property
+        selected_effectivity = prop.effectivity_date
+        rate_year = prop.tax_year
+
+        if as_of_year:
+            snapshots = assessment_snapshots(
+                prop,
+                db_session,
+                history_rows=history_by_property.get(prop.id, []),
+            )
+            snapshot = assessment_snapshot_for_year(
+                prop,
+                int(as_of_year),
+                db_session,
+                snapshots=snapshots,
+            )
+            if snapshot:
+                selected_value = float(snapshot["assessed_value"])
+                selected_kind = snapshot["kind_of_property"]
+                selected_effectivity = snapshot["effective_year"]
+            rate_year = int(as_of_year)
+
+        basic_rate, sef_rate = _get_policy_rates(rate_year, db_session)
+        rows.append(
+            (
+                prop.id,
+                prop.td_number,
+                prop.owner_name,
+                prop.payor_name,
+                prop.lot_number,
+                prop.area,
+                prop.location,
+                selected_kind,
+                prop.accountable_officer,
+                selected_value,
+                selected_value * basic_rate,
+                selected_value * sef_rate,
+                float(prop.penalty or 0),
+                float(prop.discount or 0),
+                selected_value * (basic_rate + sef_rate)
+                + float(prop.penalty or 0)
+                - float(prop.discount or 0),
+                prop.or_number,
+                prop.or_date,
+                prop.tax_year,
+                prop.pin,
+                prop.block_number,
+                prop.prev_td_number,
+                selected_effectivity,
+                prop.barangay,
+            )
+        )
+
+    return rows
 
 
 def get_barangays(db_session: Session):
@@ -711,15 +775,21 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             clean_currency(before_data.get("assessed_value")) if before_data else None
         )
         new_assessed = clean_currency(prop.assessed_value)
+        old_kind = (
+            str(before_data.get("kind_of_property") or "").strip().upper()
+            if before_data
+            else ""
+        )
+        new_kind = str(prop.kind_of_property or "").strip().upper()
+        assessment_changed = old_assessed is not None and (
+            abs(old_assessed - new_assessed) > 0.009 or old_kind != new_kind
+        )
         username = get_username(user) if user else "unknown"
         new_effective_year = assessment_year(prop.effectivity_date or prop.tax_year)
 
-        # Preserve the superseded assessment before applying a later valuation.
-        if (
-            before_data
-            and old_assessed is not None
-            and abs(old_assessed - new_assessed) > 0.009
-        ):
+        # Preserve the superseded assessment before applying a later valuation
+        # or classification.
+        if before_data and assessment_changed:
             old_effective_year = assessment_year(
                 before_data.get("effectivity_date") or before_data.get("tax_year")
             )
@@ -733,6 +803,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                     username,
                     "Superseded by later assessment",
                     db_session,
+                    kind_of_property=before_data.get("kind_of_property"),
                 )
 
         # Optional correction for records whose prior AV was never captured.

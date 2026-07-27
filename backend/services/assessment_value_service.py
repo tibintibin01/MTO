@@ -27,27 +27,89 @@ def money(value):
     return Decimal(str(value or 0)).quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
-def assessment_versions(prop: Property, db_session: Session, history_rows=None):
-    """Return known ``(effective_year, value, source)`` versions in order."""
-    versions = []
+def assessment_snapshots(prop: Property, db_session: Session, history_rows=None):
+    """Return year-aware assessment snapshots in deterministic order."""
+    snapshots = []
     rows = history_rows
     if rows is None:
-        rows = db_session.query(PropertyAssessmentHistory).filter(
-            PropertyAssessmentHistory.property_id == prop.id,
-        ).all()
+        rows = (
+            db_session.query(PropertyAssessmentHistory)
+            .filter(PropertyAssessmentHistory.property_id == prop.id)
+            .order_by(PropertyAssessmentHistory.id.asc())
+            .all()
+        )
     for row in rows:
         year = year_from_value(row.tax_year)
         value = money(row.assessed_value)
         if year and value > 0:
-            versions.append((year, value, "history"))
+            snapshots.append(
+                {
+                    "effective_year": year,
+                    "assessed_value": value,
+                    "kind_of_property": row.kind_of_property or prop.kind_of_property,
+                    "source": "history",
+                    "source_id": int(row.id or 0),
+                }
+            )
 
     current_year = year_from_value(prop.effectivity_date or prop.tax_year)
     current_value = money(prop.assessed_value)
     if current_year and current_value > 0:
         # Current wins when an old duplicate history row has the same year.
-        versions.append((current_year, current_value, "current"))
+        snapshots.append(
+            {
+                "effective_year": current_year,
+                "assessed_value": current_value,
+                "kind_of_property": prop.kind_of_property,
+                "source": "current",
+                "source_id": 0,
+            }
+        )
 
-    return sorted(versions, key=lambda item: (item[0], item[2] == "current"))
+    return sorted(
+        snapshots,
+        key=lambda item: (
+            item["effective_year"],
+            item["source"] == "current",
+            item["source_id"],
+        ),
+    )
+
+
+def assessment_versions(prop: Property, db_session: Session, history_rows=None):
+    """Return known ``(effective_year, value, source)`` versions in order."""
+    return [
+        (item["effective_year"], item["assessed_value"], item["source"])
+        for item in assessment_snapshots(prop, db_session, history_rows=history_rows)
+    ]
+
+
+def assessment_snapshot_for_year(
+    prop: Property,
+    tax_year: int,
+    db_session: Session,
+    snapshots=None,
+):
+    """Resolve the complete assessment snapshot effective for ``tax_year``."""
+    target = int(tax_year)
+    known = (
+        snapshots if snapshots is not None else assessment_snapshots(prop, db_session)
+    )
+    candidates = [item for item in known if item["effective_year"] <= target]
+    if candidates:
+        return candidates[-1]
+
+    current_year = year_from_value(prop.effectivity_date or prop.tax_year)
+    current_value = money(prop.assessed_value)
+    if current_value > 0 and current_year is None:
+        return {
+            "effective_year": None,
+            "assessed_value": current_value,
+            "kind_of_property": prop.kind_of_property,
+            "source": "current",
+            "source_id": 0,
+        }
+    return None
 
 
 def assessed_value_for_year(
@@ -63,7 +125,9 @@ def assessed_value_for_year(
     silently rewrite historical tax obligations.
     """
     target = int(tax_year)
-    versions = versions if versions is not None else assessment_versions(prop, db_session)
+    versions = (
+        versions if versions is not None else assessment_versions(prop, db_session)
+    )
     candidates = [item for item in versions if item[0] <= target]
     if candidates:
         return candidates[-1][1]
@@ -76,7 +140,9 @@ def assessed_value_for_year(
 
 
 def earliest_assessment_year(prop: Property, db_session: Session, versions=None):
-    known_versions = versions if versions is not None else assessment_versions(prop, db_session)
+    known_versions = (
+        versions if versions is not None else assessment_versions(prop, db_session)
+    )
     years = [item[0] for item in known_versions]
     return min(years) if years else None
 
@@ -88,6 +154,7 @@ def upsert_history_version(
     changed_by: str,
     reason: str,
     db_session: Session,
+    kind_of_property=None,
 ):
     """Store one historical assessment version per property/effective year."""
     year = int(effective_year)
@@ -96,17 +163,22 @@ def upsert_history_version(
         return None
 
     year_text = str(year)
-    row = db_session.query(PropertyAssessmentHistory).filter(
-        PropertyAssessmentHistory.property_id == prop.id,
-        PropertyAssessmentHistory.tax_year == year_text,
-    ).order_by(PropertyAssessmentHistory.id.desc()).first()
+    row = (
+        db_session.query(PropertyAssessmentHistory)
+        .filter(
+            PropertyAssessmentHistory.property_id == prop.id,
+            PropertyAssessmentHistory.tax_year == year_text,
+        )
+        .order_by(PropertyAssessmentHistory.id.desc())
+        .first()
+    )
     if row is None:
         row = PropertyAssessmentHistory(property_id=prop.id, tax_year=year_text)
         db_session.add(row)
 
     row.td_number = prop.td_number
     row.assessed_value = value
-    row.kind_of_property = prop.kind_of_property
+    row.kind_of_property = kind_of_property or prop.kind_of_property
     row.changed_by = changed_by or "system"
     row.change_reason = reason
     return row
