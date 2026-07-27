@@ -444,8 +444,47 @@ def resolve_property_for_tax_year(td_number, tax_year, db_session: Session):
     return eligible[-1] if eligible else None
 
 
+def resolve_payment_property_for_tax_year(td_number, tax_year, db_session: Session):
+    """Resolve the property that owns the concrete billing obligation.
+
+    A non-archived PropertyBilling row on the exact TD selected by the user is
+    authoritative for payment posting. Assessment-chain effectivity is used
+    only when that TD has no billing row for the requested year. This prevents
+    a malformed Previous TD link or duplicate old/new assessment chain from
+    silently moving a payment to a different parcel.
+    """
+    td = _td_text(td_number)
+    try:
+        year = int(str(tax_year).strip()[:4])
+    except (TypeError, ValueError):
+        return None
+
+    requested_property = (
+        db_session.query(Property)
+        .filter(
+            Property.deleted_at == None,
+            func.upper(func.trim(Property.td_number)) == td,
+        )
+        .first()
+    )
+    if requested_property:
+        direct_billing = (
+            db_session.query(PropertyBilling.id)
+            .filter(
+                PropertyBilling.property_id == requested_property.id,
+                PropertyBilling.tax_year == year,
+                PropertyBilling.is_archived == False,
+            )
+            .first()
+        )
+        if direct_billing:
+            return requested_property
+
+    return resolve_property_for_tax_year(td, year, db_session)
+
+
 def resolve_payment_target(td_number, tax_year, db_session: Session):
-    target = resolve_property_for_tax_year(td_number, tax_year, db_session)
+    target = resolve_payment_property_for_tax_year(td_number, tax_year, db_session)
     if not target:
         return None
     chain = _td_chain_for_property(target, db_session)
@@ -520,7 +559,9 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                 target_prop = prop
                 if tax_years:
                     target_props = [
-                        resolve_property_for_tax_year(prop.td_number, year, db_session)
+                        resolve_payment_property_for_tax_year(
+                            prop.td_number, year, db_session
+                        )
                         for year in tax_years
                     ]
                     missing_years = [
