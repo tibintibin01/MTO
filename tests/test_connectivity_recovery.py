@@ -1,7 +1,11 @@
-import requests
+import base64
+import json
+import time
 from io import BytesIO
+import requests
 
 import api_clients.api_helper as api
+import api_clients.billing_service as client_billing
 from api_clients.offline_manager import OfflineManager
 from api_clients.sync_monitor import SyncMonitor
 
@@ -20,6 +24,12 @@ class _Response:
     def raise_for_status(self):
         if self.status_code >= 400:
             raise requests.exceptions.HTTPError(response=self)
+
+
+def _jwt_with_exp(exp):
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).decode()
+    payload = payload.rstrip("=")
+    return f"header.{payload}.signature"
 
 
 def test_successful_request_recovers_online_state_and_uses_short_connect_timeout(
@@ -182,3 +192,139 @@ def test_failed_json_write_remains_eligible_for_offline_queue(monkeypatch):
 
     assert result["status"] == "queued"
     assert queued_actions == [("POST", "/payments", {"amount": 100})]
+
+
+def test_token_expiration_check_honors_refresh_leeway():
+    token = _jwt_with_exp(time.time() + 120)
+
+    assert api.is_token_expired(token) is False
+    assert api.is_token_expired(token, leeway_seconds=300) is True
+
+
+def test_request_refreshes_before_access_token_boundary(monkeypatch):
+    old_token = _jwt_with_exp(time.time() + 120)
+    new_token = _jwt_with_exp(time.time() + 3600)
+    refresh_calls = []
+    request_headers = []
+    monkeypatch.setattr(api, "_SESSION_TOKEN", old_token)
+    monkeypatch.setattr(api, "_REFRESH_TOKEN", "valid-refresh")
+
+    def fake_refresh(*args, **kwargs):
+        refresh_calls.append((args, kwargs))
+        return _Response(payload={"access_token": new_token})
+
+    def fake_request(*args, **kwargs):
+        request_headers.append(dict(kwargs["headers"]))
+        return _Response()
+
+    monkeypatch.setattr(api.requests, "post", fake_refresh)
+    monkeypatch.setattr(api.requests, "request", fake_request)
+
+    result = api.api_request("GET", "/system/stats", queue_offline=False)
+
+    assert result == {"ok": True}
+    assert len(refresh_calls) == 1
+    assert request_headers[0]["Authorization"] == f"Bearer {new_token}"
+    assert api.get_refresh_token() == "valid-refresh"
+
+
+def test_401_refreshes_and_retries_once_without_losing_refresh_token(monkeypatch):
+    old_token = _jwt_with_exp(time.time() + 3600)
+    new_token = _jwt_with_exp(time.time() + 7200)
+    responses = [_Response(status_code=401), _Response(payload={"saved": True})]
+    request_headers = []
+    monkeypatch.setattr(api, "_SESSION_TOKEN", old_token)
+    monkeypatch.setattr(api, "_REFRESH_TOKEN", "valid-refresh")
+    monkeypatch.setattr(
+        api.requests,
+        "post",
+        lambda *args, **kwargs: _Response(payload={"access_token": new_token}),
+    )
+
+    def fake_request(*args, **kwargs):
+        request_headers.append(dict(kwargs["headers"]))
+        return responses.pop(0)
+
+    monkeypatch.setattr(api.requests, "request", fake_request)
+
+    result = api.api_request(
+        "PUT", "/payments/16669", data={"amount": 100}, queue_offline=False
+    )
+
+    assert result == {"saved": True}
+    assert len(request_headers) == 2
+    assert request_headers[0]["Authorization"] == f"Bearer {old_token}"
+    assert request_headers[1]["Authorization"] == f"Bearer {new_token}"
+    assert api.get_refresh_token() == "valid-refresh"
+
+
+def test_file_upload_is_rewound_before_authenticated_retry(monkeypatch):
+    old_token = _jwt_with_exp(time.time() + 3600)
+    new_token = _jwt_with_exp(time.time() + 7200)
+    upload = BytesIO(b"spreadsheet-content")
+    uploaded_bodies = []
+    monkeypatch.setattr(api, "_SESSION_TOKEN", old_token)
+    monkeypatch.setattr(api, "_REFRESH_TOKEN", "valid-refresh")
+    monkeypatch.setattr(
+        api.requests,
+        "post",
+        lambda *args, **kwargs: _Response(payload={"access_token": new_token}),
+    )
+
+    def fake_request(*args, **kwargs):
+        uploaded_bodies.append(kwargs["files"]["file"][1].read())
+        if len(uploaded_bodies) == 1:
+            return _Response(status_code=401)
+        return _Response(payload={"validated": True})
+
+    monkeypatch.setattr(api.requests, "request", fake_request)
+
+    result = api.api_request(
+        "POST",
+        "/system/import/validate?mode=payments",
+        files={"file": ("payments.xlsx", upload)},
+        queue_offline=False,
+    )
+
+    assert result == {"validated": True}
+    assert uploaded_bodies == [b"spreadsheet-content", b"spreadsheet-content"]
+
+
+def test_excel_export_uses_shared_authenticated_request(monkeypatch):
+    captured = {}
+    response = object()
+
+    def fake_api_request(method, endpoint, **kwargs):
+        captured.update({"method": method, "endpoint": endpoint, **kwargs})
+        return response
+
+    monkeypatch.setattr(client_billing, "api_request", fake_api_request)
+    monkeypatch.setattr(
+        api,
+        "save_stream_response_to_temp_file",
+        lambda received, default_suffix: (received, default_suffix),
+    )
+
+    result = client_billing.export_report_excel(
+        "collections",
+        month="July",
+        year=2026,
+        barangay="LIPIT",
+        as_of_year=2026,
+    )
+
+    assert result == (response, ".xlsx")
+    assert captured == {
+        "method": "POST",
+        "endpoint": "/billing/export/excel",
+        "data": {
+            "report_type": "collections",
+            "month": "July",
+            "year": 2026,
+            "barangay": "LIPIT",
+            "as_of_year": 2026,
+        },
+        "raw_response": True,
+        "queue_offline": False,
+        "timeout": 180,
+    }
