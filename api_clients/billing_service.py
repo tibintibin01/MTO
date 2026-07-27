@@ -17,7 +17,12 @@ def normalize_tax_years(value):
             range_parts = [p.strip() for p in part.split("-") if p.strip()]
             if len(range_parts) == 2:
                 start, end = range_parts
-                if start.isdigit() and end.isdigit() and len(start) == 4 and len(end) == 4:
+                if (
+                    start.isdigit()
+                    and end.isdigit()
+                    and len(start) == 4
+                    and len(end) == 4
+                ):
                     start_year = int(start)
                     end_year = int(end)
                     if end_year >= start_year and (end_year - start_year) <= 15:
@@ -90,14 +95,16 @@ def get_report_details(month="All", year="All", limit=100, cursor=None):
     params = {"month": month, "year": year, "limit": limit}
     if cursor is not None:
         params["cursor"] = cursor
-    result = api_request(
-        "GET", "/billing/report-details", params=params
-    )
+    result = api_request("GET", "/billing/report-details", params=params)
     # Return the full paginated dict so the UI can read next_cursor / has_more.
     # Fallback to a wrapped list for any legacy response shape.
     if isinstance(result, dict) and "items" in result:
         return result
-    return {"items": result if isinstance(result, list) else [], "has_more": False, "next_cursor": None}
+    return {
+        "items": result if isinstance(result, list) else [],
+        "has_more": False,
+        "next_cursor": None,
+    }
 
 
 def get_rpt_receivables_summary(year):
@@ -109,14 +116,16 @@ def get_reconciliation_metrics(year):
 
 
 def get_reconciliation_diagnostics(year, limit=50):
-    return api_request("GET", "/billing/reconciliation-diagnostics", params={"year": year, "limit": limit})
+    return api_request(
+        "GET",
+        "/billing/reconciliation-diagnostics",
+        params={"year": year, "limit": limit},
+    )
 
 
 def get_delinquent_accounts(limit=100, offset=0):
     """Returns the items list from the cursor-paginated delinquent accounts endpoint."""
-    result = api_request(
-        "GET", "/billing/delinquents", params={"limit": limit}
-    )
+    result = api_request("GET", "/billing/delinquents", params={"limit": limit})
     # Backend returns {"items": [...], "next_cursor": ..., "has_more": ..., "count": ...}
     # The UI expects a flat list of tuples: (id, td, owner, loc, total_due, total_paid, balance)
     if isinstance(result, dict) and "items" in result:
@@ -138,8 +147,13 @@ def get_delinquent_accounts(limit=100, offset=0):
 
 
 def get_collections_worklist(
-    barangay=None, search=None, payment_status=None, min_balance=None,
-    min_age_days=0, limit=50, offset=0
+    barangay=None,
+    search=None,
+    payment_status=None,
+    min_balance=None,
+    min_age_days=0,
+    limit=50,
+    offset=0,
 ):
     """Returns the richer collections worklist with summary and aging metadata."""
     params = {
@@ -195,12 +209,15 @@ def download_receivables_by_barangay_pdf(year=None, barangay=None):
     if barangay and barangay != "ALL":
         params["barangay"] = barangay
     return api_download_file(
-        "GET", "/reports/receivables-by-barangay-pdf",
+        "GET",
+        "/reports/receivables-by-barangay-pdf",
         params=params if params else None,
     )
 
 
-def download_assessment_roll_pdf(barangay=None, year_start=None, year_end=None, as_of_year=None):
+def download_assessment_roll_pdf(
+    barangay=None, year_start=None, year_end=None, as_of_year=None
+):
     """Downloads the Assessment Roll PDF report and returns the local file path."""
     params = {}
     if barangay and barangay != "ALL":
@@ -212,14 +229,20 @@ def download_assessment_roll_pdf(barangay=None, year_start=None, year_end=None, 
     if as_of_year:
         params["as_of_year"] = as_of_year
     return api_download_file(
-        "GET", "/reports/assessment-roll-pdf",
+        "GET",
+        "/reports/assessment-roll-pdf",
         params=params if params else None,
     )
 
 
 def export_report_excel(
-    report_type, month="All", year="All", barangay=None,
-    year_start=None, year_end=None, as_of_year=None
+    report_type,
+    month="All",
+    year="All",
+    barangay=None,
+    year_start=None,
+    year_end=None,
+    as_of_year=None,
 ):
     """Downloads an Excel (.xlsx) export and returns the local file path.
 
@@ -227,20 +250,7 @@ def export_report_excel(
     api_request helper (raw_response=True) and then stream-save like
     api_download_file does internally.
     """
-    from api_clients.api_helper import (
-        BASE_URL, _SESSION_TOKEN, is_token_expired, _try_refresh,
-        CERT_PATH, save_stream_response_to_temp_file
-    )
-    import requests as _req, urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-    if _SESSION_TOKEN and is_token_expired(_SESSION_TOKEN):
-        if not _try_refresh():
-            raise Exception("Session expired. Please log in again.")
-
-    headers = {"X-Requested-With": "XMLHttpRequest"}
-    if _SESSION_TOKEN:
-        headers["Authorization"] = f"Bearer {_SESSION_TOKEN}"
+    from api_clients.api_helper import save_stream_response_to_temp_file
 
     body = {"report_type": report_type, "month": month, "year": year}
     if barangay and barangay != "ALL":
@@ -251,12 +261,15 @@ def export_report_excel(
         body["year_end"] = year_end
     if as_of_year:
         body["as_of_year"] = as_of_year
-    verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
-    resp = _req.post(
-        f"{BASE_URL}/billing/export/excel",
-        json=body, headers=headers, timeout=180, verify=verify_param, stream=True,
+
+    resp = api_request(
+        "POST",
+        "/billing/export/excel",
+        data=body,
+        raw_response=True,
+        queue_offline=False,
+        timeout=180,
     )
-    resp.raise_for_status()
 
     return save_stream_response_to_temp_file(resp, default_suffix=".xlsx")
 
@@ -335,9 +348,7 @@ def get_compliant_accounts_page(
     }
 
 
-def get_compliant_accounts(
-    barangay=None, search=None, limit=200, as_of_year=None
-):
+def get_compliant_accounts(barangay=None, search=None, limit=200, as_of_year=None):
     """
     Returns all compliant properties, following the backend cursor pages.
     The UI expects tuples:
@@ -392,4 +403,3 @@ def get_compliant_summary(as_of_year=None):
     params = {"as_of_year": as_of_year} if as_of_year else None
     result = api_request("GET", "/billing/compliant/summary", params=params)
     return result if isinstance(result, list) else []
-

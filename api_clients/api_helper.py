@@ -8,6 +8,7 @@ CONNECTION_STATUS = "ONLINE"  # ONLINE, DEGRADED, OFFLINE, SYNCING
 _CONNECTION_STATUS_LOCK = threading.Lock()
 DEFAULT_CONNECT_TIMEOUT = 4
 CONNECTION_FAILURE_THRESHOLD = 3
+TOKEN_REFRESH_LEEWAY_SECONDS = 300
 _CONSECUTIVE_CONNECTION_FAILURES = 0
 
 
@@ -110,9 +111,10 @@ _CURRENT_DIR = Path(__file__).resolve().parent
 CERT_PATH = _CURRENT_DIR.parent / "backend" / "certs" / "cert.pem"
 
 _SESSION_TOKEN = None
+_TOKEN_REFRESH_LOCK = threading.Lock()
 
 
-def is_token_expired(token):
+def is_token_expired(token, leeway_seconds=0):
     """
     Decodes the JWT payload (no signature verification) to check the 'exp' field.
     This allows the client to know if the session is over without a roundtrip.
@@ -133,14 +135,15 @@ def is_token_expired(token):
         if missing_padding:
             payload_b64 += "=" * (4 - missing_padding)
 
-        payload_json = base64.b64decode(payload_b64).decode("utf-8")
+        payload_json = base64.urlsafe_b64decode(payload_b64).decode("utf-8")
         payload = json.loads(payload_json)
 
         exp = payload.get("exp")
         if not exp:
             return False
 
-        return time.time() > exp
+        refresh_at = float(exp) - max(0, float(leeway_seconds))
+        return time.time() >= refresh_at
     except Exception:
         return True  # Default to expired if malformed
 
@@ -178,37 +181,82 @@ def clear_tokens():
     _REFRESH_TOKEN = None
 
 
-def _try_refresh() -> bool:
+def _try_refresh(rejected_token=None) -> bool:
     """
     Attempts to get a new access token using the stored refresh token.
     Returns True if successful, False if the refresh token is also expired/missing.
     Called automatically when the access token expires.
     """
     global _SESSION_TOKEN, _REFRESH_TOKEN
-    if not _REFRESH_TOKEN:
+    with _TOKEN_REFRESH_LOCK:
+        if not _REFRESH_TOKEN:
+            return False
+
+        # A concurrent request may already have refreshed the token while this
+        # request was waiting for the lock. Reuse it instead of refreshing twice.
+        if rejected_token is not None and _SESSION_TOKEN != rejected_token:
+            return bool(_SESSION_TOKEN)
+        if (
+            rejected_token is None
+            and _SESSION_TOKEN
+            and not is_token_expired(
+                _SESSION_TOKEN, leeway_seconds=TOKEN_REFRESH_LEEWAY_SECONDS
+            )
+        ):
+            return True
+
+        try:
+            resp = requests.post(
+                f"{BASE_URL}/api/auth/refresh",
+                json={"refresh_token": _REFRESH_TOKEN},
+                headers={"X-Requested-With": "XMLHttpRequest"},
+                timeout=10,
+                verify=str(CERT_PATH) if CERT_PATH.exists() else False,
+            )
+            if resp.status_code == 200:
+                new_token = resp.json().get("access_token")
+                if new_token:
+                    _SESSION_TOKEN = new_token
+                    return True
+            elif resp.status_code in (400, 401):
+                clear_tokens()
+        except requests.exceptions.RequestException:
+            # A temporary refresh failure should not erase a still-valid refresh
+            # token. The original request will surface the connection/auth error.
+            return False
+        return False
+
+
+def _capture_file_positions(files):
+    """Capture seekable upload positions so an authenticated retry is safe."""
+    if not files:
+        return []
+
+    positions = []
+    values = files.values() if hasattr(files, "values") else files
+    for value in values:
+        stream = value[1] if isinstance(value, tuple) and len(value) > 1 else value
+        if not hasattr(stream, "read"):
+            continue
+        if not hasattr(stream, "tell") or not hasattr(stream, "seek"):
+            return None
+        try:
+            positions.append((stream, stream.tell()))
+        except (OSError, ValueError):
+            return None
+    return positions
+
+
+def _rewind_file_uploads(positions):
+    """Restore captured upload positions before retrying a request."""
+    if positions is None:
         return False
     try:
-        import requests as _requests
-        import json as _json
-
-        resp = _requests.post(
-            f"{BASE_URL}/api/auth/refresh",
-            json={"refresh_token": _REFRESH_TOKEN},
-            headers={"X-Requested-With": "XMLHttpRequest"},
-            timeout=10,
-            verify=str(CERT_PATH) if CERT_PATH.exists() else False,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            new_token = data.get("access_token")
-            if new_token:
-                _SESSION_TOKEN = new_token
-                return True
-        elif resp.status_code in (400, 401):
-            clear_tokens()
-    except Exception:
-        pass
-    return False
+        for stream, position in positions:
+            stream.seek(position)
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def api_request(
@@ -231,7 +279,9 @@ def api_request(
     headers = {}
     if _SESSION_TOKEN:
         # Verify expiration locally before sending
-        if is_token_expired(_SESSION_TOKEN):
+        if is_token_expired(
+            _SESSION_TOKEN, leeway_seconds=TOKEN_REFRESH_LEEWAY_SECONDS
+        ):
             # Try silent refresh first — if the refresh token is still valid,
             # the user never sees an error and the request continues normally.
             if not _try_refresh():
@@ -262,7 +312,6 @@ def api_request(
 
         # 1. Telemetry: Generate Request ID and start timer
         set_request_id()
-        start_time = time.perf_counter()
 
         # 4. Final Security Check: Use pinned certificate instead of verify=False
         # If cert file is missing, we fallback to False only if explicitly configured (for emergency debug)
@@ -270,41 +319,61 @@ def api_request(
         if not verify_param:
             print("WARNING: SSL Certificate NOT FOUND. Falling back to insecure mode.")
 
-        response = requests.request(
-            method,
-            url,
-            json=data if not files else None,
-            data=data if files else None,
-            params=params,
-            headers=headers,
-            files=files,
-            timeout=_requests_timeout(timeout),
-            verify=verify_param,
-        )
+        file_positions = _capture_file_positions(files)
+        for attempt in range(2):
+            request_token = _SESSION_TOKEN
+            if request_token:
+                headers["Authorization"] = f"Bearer {request_token}"
+            else:
+                headers.pop("Authorization", None)
 
-        # Reaching the API is enough to recover the connectivity indicator,
-        # even when the endpoint subsequently returns a validation error.
-        record_connection_success()
+            attempt_started = time.perf_counter()
+            response = requests.request(
+                method,
+                url,
+                json=data if not files else None,
+                data=data if files else None,
+                params=params,
+                headers=headers,
+                files=files,
+                timeout=_requests_timeout(timeout),
+                verify=verify_param,
+            )
 
-        mto_logger.info(
-            f"API Response: {response.status_code}", status=response.status_code
-        )
+            # Reaching the API is enough to recover the connectivity indicator,
+            # even when the endpoint subsequently returns a validation error.
+            record_connection_success()
 
-        # 2. Telemetry: Measure Latency
-        latency = time.perf_counter() - start_time
-        MetricsManager.record_request(
-            method=method,
-            endpoint=endpoint,
-            status=response.status_code,
-            duration=latency,
-        )
+            mto_logger.info(
+                f"API Response: {response.status_code}", status=response.status_code
+            )
 
-        # 3. Log structured telemetry
-        mto_logger.info(
-            f"API {method} {endpoint} completed",
-            latency_ms=round(latency * 1000, 2),
-            status=response.status_code,
-        )
+            latency = time.perf_counter() - attempt_started
+            MetricsManager.record_request(
+                method=method,
+                endpoint=endpoint,
+                status=response.status_code,
+                duration=latency,
+            )
+            mto_logger.info(
+                f"API {method} {endpoint} completed",
+                latency_ms=round(latency * 1000, 2),
+                status=response.status_code,
+            )
+
+            if (
+                response.status_code == 401
+                and attempt == 0
+                and request_token
+                and _try_refresh(rejected_token=request_token)
+            ):
+                if files is not None and not _rewind_file_uploads(file_positions):
+                    raise Exception(
+                        "Your session was renewed, but the selected file could not "
+                        "be retried safely. Please reselect the file and try again."
+                    )
+                continue
+            break
 
         if raw_response:
             return response
@@ -406,7 +475,9 @@ def api_download_file(method, endpoint, params=None, timeout=120):
     url = f"{BASE_URL}{endpoint}"
     headers = {}
     if _SESSION_TOKEN:
-        if is_token_expired(_SESSION_TOKEN):
+        if is_token_expired(
+            _SESSION_TOKEN, leeway_seconds=TOKEN_REFRESH_LEEWAY_SECONDS
+        ):
             if not _try_refresh():
                 raise Exception("Your session has expired. Please log in again.")
         headers["Authorization"] = f"Bearer {_SESSION_TOKEN}"
@@ -420,18 +491,35 @@ def api_download_file(method, endpoint, params=None, timeout=120):
 
         verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
 
-        response = requests.request(
-            method,
-            url,
-            params=params,
-            headers=headers,
-            timeout=_requests_timeout(timeout),
-            verify=verify_param,
-            stream=True,
-        )
+        for attempt in range(2):
+            request_token = _SESSION_TOKEN
+            if request_token:
+                headers["Authorization"] = f"Bearer {request_token}"
+            else:
+                headers.pop("Authorization", None)
 
-        record_connection_success()
+            response = requests.request(
+                method,
+                url,
+                params=params,
+                headers=headers,
+                timeout=_requests_timeout(timeout),
+                verify=verify_param,
+                stream=True,
+            )
+            record_connection_success()
 
+            if (
+                response.status_code == 401
+                and attempt == 0
+                and request_token
+                and _try_refresh(rejected_token=request_token)
+            ):
+                continue
+            break
+
+        if response.status_code == 401:
+            clear_tokens()
         response.raise_for_status()
 
         return save_stream_response_to_temp_file(response, default_suffix=".pdf")
