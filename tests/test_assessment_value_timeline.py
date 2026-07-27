@@ -5,13 +5,25 @@ from backend.database import Base
 import pytest
 from fastapi import HTTPException
 
-from backend.models import Payment, PaymentBilling, Property, PropertyAssessmentHistory, PropertyBilling
+from backend.models import (
+    Payment,
+    PaymentBilling,
+    Property,
+    PropertyAssessmentHistory,
+    PropertyBilling,
+)
 from backend.services.billing_service import repair_billing_assessed_value_snapshots
-from backend.services.property_service import resolve_property_for_tax_year, save_property
+from backend.services.property_service import (
+    resolve_payment_target,
+    resolve_property_for_tax_year,
+    save_property,
+)
 
 
 def _session():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
 
     @event.listens_for(engine, "connect")
     def _foreign_keys(connection, _):
@@ -33,16 +45,18 @@ def test_prior_assessment_correction_updates_only_pre_effectivity_billings():
     )
     db.add(prop)
     db.flush()
-    db.add_all([
-        PropertyBilling(
-            property_id=prop.id,
-            tax_year=year,
-            assessed_value=7_098_520,
-            amount_paid=0,
-            is_archived=False,
-        )
-        for year in (2023, 2024, 2025, 2026, 2027)
-    ])
+    db.add_all(
+        [
+            PropertyBilling(
+                property_id=prop.id,
+                tax_year=year,
+                assessed_value=7_098_520,
+                amount_paid=0,
+                is_archived=False,
+            )
+            for year in (2023, 2024, 2025, 2026, 2027)
+        ]
+    )
     db.commit()
 
     result = save_property(
@@ -64,12 +78,18 @@ def test_prior_assessment_correction_updates_only_pre_effectivity_billings():
 
     values = {
         row.tax_year: float(row.assessed_value)
-        for row in db.query(PropertyBilling).filter(PropertyBilling.property_id == prop.id).all()
+        for row in db.query(PropertyBilling)
+        .filter(PropertyBilling.property_id == prop.id)
+        .all()
     }
-    history = db.query(PropertyAssessmentHistory).filter(
-        PropertyAssessmentHistory.property_id == prop.id,
-        PropertyAssessmentHistory.tax_year == "2023",
-    ).one()
+    history = (
+        db.query(PropertyAssessmentHistory)
+        .filter(
+            PropertyAssessmentHistory.property_id == prop.id,
+            PropertyAssessmentHistory.tax_year == "2023",
+        )
+        .one()
+    )
 
     assert result["prior_assessment_sync"] == {
         "updated": 4,
@@ -173,14 +193,129 @@ def test_payment_target_resolves_td_chain_by_tax_year():
     db = _session()
     old, replacement_2026, replacement_2027 = _add_td_chain(db)
 
-    assert resolve_property_for_tax_year(old.td_number, 2023, db).td_number == old.td_number
-    assert resolve_property_for_tax_year(old.td_number, 2025, db).td_number == old.td_number
-    assert resolve_property_for_tax_year(old.td_number, 2026, db).td_number == replacement_2026.td_number
-    assert resolve_property_for_tax_year(old.td_number, 2027, db).td_number == replacement_2027.td_number
+    assert (
+        resolve_property_for_tax_year(old.td_number, 2023, db).td_number
+        == old.td_number
+    )
+    assert (
+        resolve_property_for_tax_year(old.td_number, 2025, db).td_number
+        == old.td_number
+    )
+    assert (
+        resolve_property_for_tax_year(old.td_number, 2026, db).td_number
+        == replacement_2026.td_number
+    )
+    assert (
+        resolve_property_for_tax_year(old.td_number, 2027, db).td_number
+        == replacement_2027.td_number
+    )
 
     # Searching a newer TD for an old tax year still resolves back to the
     # historical TD that was active for that year.
-    assert resolve_property_for_tax_year(replacement_2026.td_number, 2023, db).td_number == old.td_number
+    assert (
+        resolve_property_for_tax_year(replacement_2026.td_number, 2023, db).td_number
+        == old.td_number
+    )
+
+
+def test_requested_td_billing_prevents_silent_chain_redirect():
+    db = _session()
+    old, _replacement_2026, replacement_2027 = _add_td_chain(db)
+    old.owner_name = "SAME OWNER"
+    old.pin = "073-06-012-03-073"
+    old.kind_of_property = "RESIDENTIAL LOT"
+    replacement_2027.owner_name = "SAME OWNER"
+    replacement_2027.pin = "073-06-012-03-069"
+    replacement_2027.kind_of_property = "AGRICULTURAL - FORESTLAND"
+    db.add_all(
+        [
+            PropertyBilling(
+                property_id=old.id,
+                tax_year=2027,
+                assessed_value=15_000,
+                amount_paid=0,
+                is_archived=False,
+            ),
+            PropertyBilling(
+                property_id=replacement_2027.id,
+                tax_year=2027,
+                assessed_value=9_110,
+                amount_paid=145.76,
+                is_archived=False,
+            ),
+        ]
+    )
+    db.commit()
+
+    result = resolve_payment_target(old.td_number, 2027, db)
+
+    assert result["id"] == old.id
+    assert result["td_number"] == old.td_number
+    assert [item["td_number"] for item in result["chain"]] == [
+        old.td_number,
+        "06-0009-01254",
+        replacement_2027.td_number,
+    ]
+
+
+def test_payment_posts_to_requested_td_when_it_has_its_own_billing():
+    db = _session()
+    old, _replacement_2026, replacement_2027 = _add_td_chain(db)
+    old_billing = PropertyBilling(
+        property_id=old.id,
+        tax_year=2027,
+        assessed_value=100_000,
+        amount_paid=0,
+        is_archived=False,
+    )
+    replacement_billing = PropertyBilling(
+        property_id=replacement_2027.id,
+        tax_year=2027,
+        assessed_value=200_000,
+        amount_paid=4_000,
+        is_archived=False,
+    )
+    db.add_all([old_billing, replacement_billing])
+    db.commit()
+
+    result = save_property(
+        _payment_payload(old, tax_year="2027"),
+        editing_id=old.id,
+        user={"id": 1, "username": "tester"},
+        db_session=db,
+    )
+
+    payment = db.query(Payment).one()
+    link = db.query(PaymentBilling).one()
+    db.refresh(old_billing)
+    db.refresh(replacement_billing)
+
+    assert result["target_changed"] is False
+    assert result["td_number"] == old.td_number
+    assert payment.property_id == old.id
+    assert link.billing_id == old_billing.id
+    assert float(old_billing.amount_paid) == 2_000
+    assert float(replacement_billing.amount_paid) == 4_000
+
+
+def test_archived_requested_td_billing_does_not_override_effectivity():
+    db = _session()
+    old, _replacement_2026, replacement_2027 = _add_td_chain(db)
+    db.add(
+        PropertyBilling(
+            property_id=old.id,
+            tax_year=2027,
+            assessed_value=100_000,
+            amount_paid=0,
+            is_archived=True,
+        )
+    )
+    db.commit()
+
+    result = resolve_payment_target(old.td_number, 2027, db)
+
+    assert result["id"] == replacement_2027.id
+    assert result["td_number"] == replacement_2027.td_number
 
 
 def test_payment_save_redirects_to_historical_td_for_old_tax_year():
