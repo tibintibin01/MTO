@@ -47,16 +47,28 @@ def db():
 
 
 def _prop(db, td, owner="OWNER", barangay="POBLACION"):
-    p = Property(td_number=td, owner_name=owner, barangay=barangay,
-                 assessed_value=100_000.0, penalty=0, discount=0)
+    p = Property(
+        td_number=td,
+        owner_name=owner,
+        barangay=barangay,
+        assessed_value=100_000.0,
+        penalty=0,
+        discount=0,
+    )
     db.add(p)
     db.flush()
     return p
 
 
 def _billing(db, pid, year, assessed=100_000.0, paid=0.0, penalty=0.0, discount=0.0):
-    b = PropertyBilling(property_id=pid, tax_year=year, assessed_value=assessed,
-                        penalty=penalty, discount=discount, amount_paid=paid)
+    b = PropertyBilling(
+        property_id=pid,
+        tax_year=year,
+        assessed_value=assessed,
+        penalty=penalty,
+        discount=discount,
+        amount_paid=paid,
+    )
     db.add(b)
     db.flush()
     return b
@@ -64,9 +76,9 @@ def _billing(db, pid, year, assessed=100_000.0, paid=0.0, penalty=0.0, discount=
 
 def test_only_delinquent_appear(db):
     paid = _prop(db, "TD-PAID")
-    _billing(db, paid.id, 2024, paid=2_000.0)   # fully paid → excluded
+    _billing(db, paid.id, 2023, paid=2_000.0)  # fully paid → excluded
     owed = _prop(db, "TD-OWED")
-    _billing(db, owed.id, 2024, paid=0.0)        # unpaid → included
+    _billing(db, owed.id, 2023, paid=0.0)  # unpaid → included
     db.commit()
 
     result = get_collections_worklist(as_of_date=TEST_AS_OF, db_session=db)
@@ -78,9 +90,9 @@ def test_only_delinquent_appear(db):
 
 def test_ordered_by_balance_desc(db):
     small = _prop(db, "TD-SMALL")
-    _billing(db, small.id, 2024, assessed=50_000.0, paid=0.0)   # due 1,000
+    _billing(db, small.id, 2023, assessed=50_000.0, paid=0.0)  # due 1,000
     big = _prop(db, "TD-BIG")
-    _billing(db, big.id, 2024, assessed=500_000.0, paid=0.0)    # due 10,000
+    _billing(db, big.id, 2023, assessed=500_000.0, paid=0.0)  # due 10,000
     db.commit()
 
     result = get_collections_worklist(as_of_date=TEST_AS_OF, db_session=db)
@@ -116,7 +128,7 @@ def test_min_age_filter_excludes_recent(db):
     # Requiring 120+ days should drop it if today is < ~Jun 1
     result = get_collections_worklist(
         min_age_days=age + 1,
-        as_of_date=TEST_AS_OF,
+        as_of_date=date.today(),
         db_session=db,
     )
     assert all(i["td_number"] != "TD-RECENT" for i in result["items"])
@@ -124,9 +136,9 @@ def test_min_age_filter_excludes_recent(db):
 
 def test_summary_aging_totals_sum_to_balance(db):
     a = _prop(db, "TD-A")
-    _billing(db, a.id, 2023, assessed=100_000.0, paid=0.0)   # due 2,000
+    _billing(db, a.id, 2023, assessed=100_000.0, paid=0.0)  # due 2,000
     b = _prop(db, "TD-B")
-    _billing(db, b.id, 2023, assessed=200_000.0, paid=0.0)   # due 4,000
+    _billing(db, b.id, 2023, assessed=200_000.0, paid=0.0)  # due 4,000
     db.commit()
 
     result = get_collections_worklist(as_of_date=TEST_AS_OF, db_session=db)
@@ -140,7 +152,7 @@ def test_worklist_materializes_account_aggregates_once(db):
     first = _prop(db, "TD-ONE-PASS-A")
     _billing(db, first.id, 2023, assessed=100_000.0)
     second = _prop(db, "TD-ONE-PASS-B")
-    _billing(db, second.id, 2024, assessed=200_000.0)
+    _billing(db, second.id, 2023, assessed=200_000.0)
     db.commit()
 
     select_count = 0
@@ -165,9 +177,9 @@ def test_worklist_materializes_account_aggregates_once(db):
 
 def test_barangay_filter(db):
     a = _prop(db, "TD-POB", barangay="POBLACION")
-    _billing(db, a.id, 2024, paid=0.0)
+    _billing(db, a.id, 2023, paid=0.0)
     b = _prop(db, "TD-SJ", barangay="SAN JOSE")
-    _billing(db, b.id, 2024, paid=0.0)
+    _billing(db, b.id, 2023, paid=0.0)
     db.commit()
 
     result = get_collections_worklist(
@@ -246,7 +258,9 @@ def test_replaced_td_keeps_only_pre_replacement_delinquency(db):
         as_of_date=date(2026, 7, 1),
         db_session=db,
     )
-    old_row = next(item for item in result["items"] if item["td_number"] == old.td_number)
+    old_row = next(
+        item for item in result["items"] if item["td_number"] == old.td_number
+    )
 
     assert old_row["earliest_year"] == 2023
     assert old_row["years_billed"] == 2  # 2023 and 2024 only; stale 2025 is excluded.

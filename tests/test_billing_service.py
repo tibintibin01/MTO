@@ -263,6 +263,7 @@ def test_get_total_due_logic(mock_db_session):
                 1000.0,
                 1000.0,
                 0.0,
+                0.0,
                 2000.0,
                 0.0,
                 2000.0,

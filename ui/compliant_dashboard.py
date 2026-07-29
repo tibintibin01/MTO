@@ -29,6 +29,7 @@ _HDR_FG = "#64748b"  # slate-500 — muted heading text
 _BTN_REFRESH = ("#2563eb", "#1d4ed8")  # blue
 _BTN_EXPORT = ("#059669", "#047857")  # green
 _BTN_SEARCH = ("#475569", "#334155")  # slate
+_BTN_TAX_BILL = ("#d97706", "#b45309")  # amber
 
 # ── Card colours ─────────────────────────────────────────────────────────────
 _CARD_BG = ("#e2e8f0", "#1e293b")
@@ -41,8 +42,14 @@ def compliance_scope_text(selected_year: int) -> str:
     return (
         f"Fully paid for every billed obligation through {selected_year}.  "
         f"The payment total covers all included billing years, not {selected_year} alone.  "
-        "Later billing years are excluded. Click a barangay row to filter the list."
+        "Later billing years are excluded. Click a barangay row to filter the list.  "
+        "Select a property to create its next-year Tax Bill."
     )
+
+
+def suggested_tax_bill_year(compliance_year: int) -> int:
+    """The Tax Bill follows the year through which the account is compliant."""
+    return int(compliance_year) + 1
 
 
 class CompliantDashboardPage:
@@ -96,6 +103,21 @@ class CompliantDashboardPage:
             height=40,
             corner_radius=8,
         ).pack(side="right", padx=(8, 0))
+
+        self._tax_bill_btn = ctk.CTkButton(
+            btn_fr,
+            text=f"TAX BILL {suggested_tax_bill_year(self._selected_year)}",
+            command=self._generate_tax_bill,
+            width=120,
+            font=ModernTheme.BUTTON,
+            fg_color=_BTN_TAX_BILL[0],
+            hover_color=_BTN_TAX_BILL[1],
+            text_color="white",
+            height=40,
+            corner_radius=8,
+            state="disabled",
+        )
+        self._tax_bill_btn.pack(side="right", padx=(8, 0))
 
         ctk.CTkButton(
             btn_fr,
@@ -387,6 +409,7 @@ class CompliantDashboardPage:
         self._prop_tree.configure(style="Compliant.Treeview")
         self._prop_tree.bind("<Configure>", self._on_prop_tree_resize)
 
+        self._prop_tree.bind("<<TreeviewSelect>>", self._on_property_select)
         pager = ctk.CTkFrame(parent, fg_color="transparent")
         pager.pack(fill="x", pady=(8, 0))
 
@@ -444,6 +467,9 @@ class CompliantDashboardPage:
         if selected_year == self._selected_year:
             return
         self._selected_year = selected_year
+        self._tax_bill_btn.configure(
+            text=f"TAX BILL {suggested_tax_bill_year(selected_year)}"
+        )
         self._load_all(reset_page=True)
 
     def _load_all(self, reset_page=False):
@@ -547,6 +573,7 @@ class CompliantDashboardPage:
         for item in self._prop_tree.get_children():
             self._prop_tree.delete(item)
 
+        self._tax_bill_btn.configure(state="disabled")
         for i, r in enumerate(rows):
             tag = "evenrow" if i % 2 == 0 else "oddrow"
             display = list(r)
@@ -650,6 +677,73 @@ class CompliantDashboardPage:
         self._sum_tree.see(iid)
 
     # ── CSV export ────────────────────────────────────────────────────────────
+
+    def _selected_property_id(self):
+        selection = self._prop_tree.selection()
+        if not selection:
+            return None
+        item_id = selection[0]
+        if str(item_id).startswith("__filler_"):
+            return None
+        values = self._prop_tree.item(item_id, "values")
+        if not values:
+            return None
+        try:
+            return int(values[0])
+        except (TypeError, ValueError):
+            return None
+
+    def _on_property_select(self, _event=None):
+        state = "normal" if self._selected_property_id() is not None else "disabled"
+        self._tax_bill_btn.configure(state=state)
+
+    def _generate_tax_bill(self):
+        property_id = self._selected_property_id()
+        if property_id is None:
+            messagebox.showinfo(
+                "Tax Bill",
+                "Select a property from the compliant list first.",
+            )
+            return
+
+        target_year = suggested_tax_bill_year(self._selected_year)
+        selected = self._prop_tree.selection()[0]
+        values = self._prop_tree.item(selected, "values")
+        td_number = values[1] if len(values) > 1 else str(property_id)
+        overlay = LoadingOverlay(
+            self.container,
+            f"GENERATING TAX BILL FOR {target_year}...",
+        )
+
+        def show_success(path):
+            overlay.hide()
+            messagebox.showinfo(
+                "Tax Bill Ready",
+                f"Tax Bill {target_year} generated for TD {td_number}.",
+            )
+            try:
+                os.startfile(path)
+            except OSError as exc:
+                messagebox.showerror(
+                    "Tax Bill",
+                    f"The PDF was generated but could not be opened:\n{exc}",
+                )
+
+        def show_error(error):
+            overlay.hide()
+            messagebox.showerror(
+                "Tax Bill",
+                str(error),
+            )
+
+        def worker():
+            try:
+                path = billing.download_tax_bill_pdf(property_id, target_year)
+                self.container.after(0, lambda: show_success(path))
+            except Exception as exc:
+                self.container.after(0, lambda err=exc: show_error(err))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _export_csv(self):
         barangay = None if self._selected_barangay == "ALL" else self._selected_barangay

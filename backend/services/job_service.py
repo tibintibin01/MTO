@@ -496,7 +496,10 @@ def _handle_pdf(job: Job, payload: dict):
     _update_job(job.id, progress=20, progress_message="Generating PDF...")
 
     with SessionLocal() as db:
-        from backend.services.billing_service import get_property_statement_data
+        from backend.services.billing_service import (
+            get_property_delinquency_statement_data,
+            get_property_statement_data,
+        )
         from backend.services.payment_service import get_payment_receipt_details
 
         if job.job_type == "pdf_receipt":
@@ -512,13 +515,13 @@ def _handle_pdf(job: Job, payload: dict):
             pdf_path = soa_gen.generate_statement_of_account(details, base_dir)
 
         elif job.job_type == "pdf_computation":
-            details = get_property_statement_data(payload["property_id"], db_session=db)
+            details = get_property_delinquency_statement_data(payload["property_id"], db_session=db)
             if not details:
                 raise Exception(f"Property {payload['property_id']} not found.")
             pdf_path = computation_gen.generate_delinquency_computation(details, base_dir)
 
         elif job.job_type == "pdf_notice":
-            details = get_property_statement_data(payload["property_id"], db_session=db)
+            details = get_property_delinquency_statement_data(payload["property_id"], db_session=db)
             if not details:
                 raise Exception(f"Property {payload['property_id']} not found.")
             pdf_path = notice_gen.generate_delinquency_notice(details, base_dir)

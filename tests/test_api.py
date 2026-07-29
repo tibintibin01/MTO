@@ -65,3 +65,8 @@ def test_backup_status_access_denied():
 def test_compliance_impact_preview_requires_admin_authentication():
     response = client.get("/billing/compliant/impact-preview?as_of_year=2026")
     assert response.status_code == 401
+
+
+def test_tax_bill_pdf_requires_authentication():
+    response = client.get("/properties/1/tax-bill-pdf?tax_year=2027")
+    assert response.status_code == 401
