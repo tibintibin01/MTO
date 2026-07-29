@@ -328,3 +328,27 @@ def test_excel_export_uses_shared_authenticated_request(monkeypatch):
         "queue_offline": False,
         "timeout": 180,
     }
+
+
+def test_download_error_includes_server_detail(monkeypatch):
+    detail = (
+        "Configure and approve the 2027 Tax Policy before generating "
+        "an advance Tax Bill."
+    )
+    response = _Response(status_code=409, payload={"detail": detail})
+    response.text = detail
+    monkeypatch.setattr(api, "_SESSION_TOKEN", None)
+    monkeypatch.setattr(api, "_REFRESH_TOKEN", None)
+    monkeypatch.setattr(
+        api.requests,
+        "request",
+        lambda *args, **kwargs: response,
+    )
+
+    try:
+        api.api_download_file("GET", "/properties/4/tax-bill-pdf")
+    except Exception as exc:
+        assert "Status 409" in str(exc)
+        assert detail in str(exc)
+    else:
+        raise AssertionError("Expected the Tax Bill download to fail")

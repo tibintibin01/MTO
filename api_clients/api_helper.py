@@ -530,6 +530,19 @@ def api_download_file(method, endpoint, params=None, timeout=120):
             f"Cannot reach API server at {BASE_URL}. "
             "Start the API server and verify server_config.json."
         ) from e
+    except requests.exceptions.RequestException as e:
+        response = getattr(e, "response", None)
+        status_code = getattr(response, "status_code", "N/A")
+        detail = None
+        if response is not None:
+            try:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    detail = payload.get("detail") or payload.get("message")
+            except (TypeError, ValueError):
+                detail = None
+        message = str(detail or e)
+        raise Exception(f"File Download Error (Status {status_code}): {message}") from e
     except Exception as e:
         status_code = getattr(getattr(e, "response", None), "status_code", "N/A")
         raise Exception(f"File Download Error (Status {status_code}): {str(e)}")
