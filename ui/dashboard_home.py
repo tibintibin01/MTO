@@ -5,22 +5,26 @@ from theme_manager import ModernTheme
 import api_clients.auth_service as auth
 import api_clients.payment_service as payment
 import api_clients.system_service as system
+import api_clients.readiness_service as readiness_service
 from ui_components import ModernChartWidget, show_toast, ErrorDialog
 from utils import tr
 from ui.animation_helper import WidgetAnimator
+
 
 class DashboardHomePage:
     def __init__(self, parent, user, callbacks):
         self.parent = parent
         self.user = user
-        self.callbacks = callbacks # Dict: trigger_backup, get_summary, get_trend
+        self.callbacks = callbacks  # Dict: trigger_backup, get_summary, get_trend
         self._backup_status_loaded = False
         self.setup_ui()
         self.start_data_refresh()
 
     def setup_ui(self):
         # Progress bar at the very top (outside scrollable frame)
-        self.loading_bar = ctk.CTkProgressBar(self.parent, height=2, corner_radius=0, progress_color=ModernTheme.PRIMARY)
+        self.loading_bar = ctk.CTkProgressBar(
+            self.parent, height=2, corner_radius=0, progress_color=ModernTheme.PRIMARY
+        )
         self.loading_bar.pack(fill="x")
         self.loading_bar.set(0)
         self.loading_bar.pack_forget()
@@ -29,26 +33,51 @@ class DashboardHomePage:
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
 
         # Header Section - Gradient-like effect using primary colors
-        header = ctk.CTkFrame(self.container, fg_color=ModernTheme.PRIMARY, corner_radius=15)
+        header = ctk.CTkFrame(
+            self.container, fg_color=ModernTheme.PRIMARY, corner_radius=15
+        )
         header.pack(fill="x", pady=(0, 20))
 
-        ctk.CTkLabel(header, text=tr("dashboard.title"), font=ModernTheme.H1, text_color="white").pack(anchor="w", padx=30, pady=(25, 5))
-        ctk.CTkLabel(header, text=tr("dashboard.subtitle"), font=ModernTheme.BODY, text_color="#f0f9ff").pack(anchor="w", padx=30, pady=(0, 25))
+        ctk.CTkLabel(
+            header, text=tr("dashboard.title"), font=ModernTheme.H1, text_color="white"
+        ).pack(anchor="w", padx=30, pady=(25, 5))
+        ctk.CTkLabel(
+            header,
+            text=tr("dashboard.subtitle"),
+            font=ModernTheme.BODY,
+            text_color="#f0f9ff",
+        ).pack(anchor="w", padx=30, pady=(0, 25))
+
+        self._setup_tax_year_readiness_banner()
 
         # Stats Cards (Grid)
-        stats_frame = ctk.CTkFrame(self.container, fg_color="transparent")
-        stats_frame.pack(fill="x", pady=(0, 20))
-        stats_frame.grid_columnconfigure((0, 1, 2), weight=1)
+        self.stats_frame = ctk.CTkFrame(self.container, fg_color="transparent")
+        self.stats_frame.pack(fill="x", pady=(0, 20))
+        self.stats_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
         self.stat_cards = {
-            "total_properties": self._make_stat_card(stats_frame, 0, tr("dashboard.stats.total_properties"), "0", ModernTheme.INFO),
-            "collections_today": self._make_stat_card(stats_frame, 1, tr("dashboard.stats.collections_today"), "P 0.00", ModernTheme.SUCCESS),
-            "collections_month": self._make_stat_card(stats_frame, 2, tr("dashboard.stats.collections_month"), "P 0.00", ModernTheme.WARNING),
+            "total_properties": self._make_stat_card(
+                self.stats_frame,
+                0,
+                tr("dashboard.stats.total_properties"),
+                "0",
+                ModernTheme.INFO,
+            ),
+            "collections_today": self._make_stat_card(
+                self.stats_frame,
+                1,
+                tr("dashboard.stats.collections_today"),
+                "P 0.00",
+                ModernTheme.SUCCESS,
+            ),
+            "collections_month": self._make_stat_card(
+                self.stats_frame,
+                2,
+                tr("dashboard.stats.collections_month"),
+                "P 0.00",
+                ModernTheme.WARNING,
+            ),
         }
-
-
-        
-
 
         # Charts Section
 
@@ -56,13 +85,15 @@ class DashboardHomePage:
         charts_frame.pack(fill="both", expand=True)
         charts_frame.grid_columnconfigure((0, 1), weight=1)
 
-        self.bar_chart = ModernChartWidget(charts_frame, tr("dashboard.charts.revenue_month"))
+        self.bar_chart = ModernChartWidget(
+            charts_frame, tr("dashboard.charts.revenue_month")
+        )
         self.bar_chart.pack(row=0, column=0, padx=(0, 10), sticky="nsew")
 
-        self.trend_chart = ModernChartWidget(charts_frame, tr("dashboard.charts.collection_trend"))
+        self.trend_chart = ModernChartWidget(
+            charts_frame, tr("dashboard.charts.collection_trend")
+        )
         self.trend_chart.pack(row=0, column=1, padx=(10, 0), sticky="nsew")
-
-
 
         # Backup Status Section
         backup_frame = ctk.CTkFrame(self.container, fg_color="transparent")
@@ -71,20 +102,35 @@ class DashboardHomePage:
         self.backup_card = ctk.CTkFrame(backup_frame)
         self.backup_card.pack(fill="x")
 
-        ctk.CTkLabel(self.backup_card, text=tr("dashboard.backup.title"), font=("Segoe UI", 12, "bold"), text_color="gray").pack(pady=(15, 10), padx=20, anchor="w")
+        ctk.CTkLabel(
+            self.backup_card,
+            text=tr("dashboard.backup.title"),
+            font=("Segoe UI", 12, "bold"),
+            text_color="gray",
+        ).pack(pady=(15, 10), padx=20, anchor="w")
 
         inner_backup = ctk.CTkFrame(self.backup_card, fg_color="transparent")
         inner_backup.pack(fill="x", padx=20, pady=(0, 15))
         inner_backup.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         self.backup_labels = {
-            "local": self._make_backup_item(inner_backup, 0, tr("dashboard.backup.local"), "Loading..."),
-            "usb": self._make_backup_item(inner_backup, 1, tr("dashboard.backup.usb"), "Loading..."),
-            "cloud": self._make_backup_item(inner_backup, 2, tr("dashboard.backup.cloud"), "Loading..."),
-            "verify": self._make_backup_item(inner_backup, 3, tr("dashboard.backup.verify"), "Loading..."),
+            "local": self._make_backup_item(
+                inner_backup, 0, tr("dashboard.backup.local"), "Loading..."
+            ),
+            "usb": self._make_backup_item(
+                inner_backup, 1, tr("dashboard.backup.usb"), "Loading..."
+            ),
+            "cloud": self._make_backup_item(
+                inner_backup, 2, tr("dashboard.backup.cloud"), "Loading..."
+            ),
+            "verify": self._make_backup_item(
+                inner_backup, 3, tr("dashboard.backup.verify"), "Loading..."
+            ),
         }
 
-        self.backup_summary = ctk.CTkFrame(self.backup_card, fg_color=("#eef6ff", "#162235"), corner_radius=8)
+        self.backup_summary = ctk.CTkFrame(
+            self.backup_card, fg_color=("#eef6ff", "#162235"), corner_radius=8
+        )
         self.backup_summary.pack(fill="x", padx=20, pady=(0, 12))
         self.backup_summary_lbl = ctk.CTkLabel(
             self.backup_summary,
@@ -123,6 +169,119 @@ class DashboardHomePage:
                 text_color="gray",
             ).pack(side="left")
 
+    def _setup_tax_year_readiness_banner(self):
+        self._tax_year_recommended_tab = "Database & Backup"
+        self.tax_year_banner = ctk.CTkFrame(
+            self.container,
+            fg_color=("#fff7ed", "#3b2413"),
+            border_width=1,
+            border_color="#f59e0b",
+            corner_radius=10,
+        )
+
+        ctk.CTkLabel(
+            self.tax_year_banner,
+            text="NEW YEAR",
+            width=90,
+            font=("Segoe UI", 10, "bold"),
+            text_color="#f59e0b",
+        ).pack(side="left", padx=(16, 10), pady=14)
+
+        text_frame = ctk.CTkFrame(self.tax_year_banner, fg_color="transparent")
+        text_frame.pack(side="left", fill="x", expand=True, pady=10)
+        self.tax_year_title = ctk.CTkLabel(
+            text_frame,
+            text="New Tax Year Readiness",
+            font=("Segoe UI", 13, "bold"),
+            anchor="w",
+        )
+        self.tax_year_title.pack(fill="x")
+        self.tax_year_message = ctk.CTkLabel(
+            text_frame,
+            text="",
+            font=("Segoe UI", 10),
+            text_color=("#7c2d12", "#fed7aa"),
+            anchor="w",
+            justify="left",
+            wraplength=760,
+        )
+        self.tax_year_message.pack(fill="x", pady=(3, 0))
+
+        self.tax_year_action = ctk.CTkButton(
+            self.tax_year_banner,
+            text="OPEN SYSTEM SETTINGS",
+            command=self._open_tax_year_settings,
+            width=185,
+            height=36,
+            fg_color="#d97706",
+            hover_color="#b45309",
+            font=("Segoe UI", 10, "bold"),
+        )
+        self.tax_year_action.pack(side="right", padx=16, pady=14)
+        self.tax_year_banner.pack_forget()
+
+    def refresh_tax_year_readiness(self):
+        """Load the admin-only, read-only December/January readiness state."""
+        if auth.get_user_role(self.user) != "admin":
+            return
+        try:
+            readiness = readiness_service.get_tax_year_readiness() or {}
+            self.parent.after(
+                0,
+                lambda data=readiness: self._update_tax_year_readiness(data),
+            )
+        except Exception:
+            # Connectivity failures are already shown by the global status bar.
+            # Never turn a network problem into a false billing warning.
+            return
+
+    def _update_tax_year_readiness(self, readiness):
+        if not self.tax_year_banner.winfo_exists():
+            return
+        if not readiness.get("season_active") or not readiness.get("action_required"):
+            self.tax_year_banner.pack_forget()
+            return
+
+        severity = readiness.get("severity", "warning")
+        is_error = severity == "error"
+        accent = "#dc2626" if is_error else "#d97706"
+        panel = ("#fef2f2", "#3b1515") if is_error else ("#fff7ed", "#3b2413")
+        self._tax_year_recommended_tab = readiness.get(
+            "recommended_tab", "Database & Backup"
+        )
+        self.tax_year_banner.configure(fg_color=panel, border_color=accent)
+        self.tax_year_title.configure(
+            text=readiness.get("title", "New Tax Year Readiness"),
+            text_color=accent,
+        )
+        self.tax_year_message.configure(text=readiness.get("message", ""))
+        self.tax_year_action.configure(
+            text=(
+                "OPEN TAX POLICY"
+                if self._tax_year_recommended_tab == "Tax Policy"
+                else "OPEN BILLING TOOLS"
+            ),
+            fg_color=accent,
+            hover_color="#991b1b" if is_error else "#b45309",
+        )
+        self.tax_year_banner.pack(
+            fill="x",
+            pady=(0, 20),
+            before=self.stats_frame,
+        )
+
+    def _open_tax_year_settings(self):
+        top = self.parent.winfo_toplevel()
+        from ui.system_admin import SystemAdminPage
+
+        top.sidebar._set_active("settings")
+        top.load_page(SystemAdminPage)
+        tab_name = (
+            "Tax Policy"
+            if self._tax_year_recommended_tab == "Tax Policy"
+            else tr("admin.tabs.db")
+        )
+        top.current_page.tabview.set(tab_name)
 
     def _show_loading(self):
         try:
@@ -138,24 +297,50 @@ class DashboardHomePage:
         except Exception:
             pass
 
-
     def _make_stat_card(self, parent, col, title, value, color):
-        card = ctk.CTkFrame(parent, height=120, border_width=1, border_color=ModernTheme.BORDER_DARK if ctk.get_appearance_mode().lower() == "dark" else ModernTheme.BORDER_LIGHT)
+        card = ctk.CTkFrame(
+            parent,
+            height=120,
+            border_width=1,
+            border_color=(
+                ModernTheme.BORDER_DARK
+                if ctk.get_appearance_mode().lower() == "dark"
+                else ModernTheme.BORDER_LIGHT
+            ),
+        )
         card.grid(row=0, column=col, padx=10, sticky="nsew")
-        
-        ctk.CTkLabel(card, text=title, font=ModernTheme.BODY_BOLD, text_color=ModernTheme.TEXT_SUB_DARK if ctk.get_appearance_mode().lower() == "dark" else ModernTheme.TEXT_SUB_LIGHT).pack(pady=(20, 5))
-        val_label = ctk.CTkLabel(card, text=value, font=ModernTheme.H2, text_color=color)
+
+        ctk.CTkLabel(
+            card,
+            text=title,
+            font=ModernTheme.BODY_BOLD,
+            text_color=(
+                ModernTheme.TEXT_SUB_DARK
+                if ctk.get_appearance_mode().lower() == "dark"
+                else ModernTheme.TEXT_SUB_LIGHT
+            ),
+        ).pack(pady=(20, 5))
+        val_label = ctk.CTkLabel(
+            card, text=value, font=ModernTheme.H2, text_color=color
+        )
         val_label.pack(pady=(0, 20))
-        
+
         # Entrance Animation
-        card.after(100 + (col * 100), lambda: WidgetAnimator.pulse(card, card.cget("fg_color"), ModernTheme.PRIMARY_HOVER, 200))
-        
+        card.after(
+            100 + (col * 100),
+            lambda: WidgetAnimator.pulse(
+                card, card.cget("fg_color"), ModernTheme.PRIMARY_HOVER, 200
+            ),
+        )
+
         return val_label
 
     def _make_backup_item(self, parent, col, title, value):
         f = ctk.CTkFrame(parent, fg_color="transparent")
         f.grid(row=0, column=col, sticky="nsew")
-        ctk.CTkLabel(f, text=title, font=("Segoe UI", 10, "bold"), text_color="gray").pack()
+        ctk.CTkLabel(
+            f, text=title, font=("Segoe UI", 10, "bold"), text_color="gray"
+        ).pack()
         lbl = ctk.CTkLabel(f, text=value, font=ModernTheme.BODY)
         lbl.pack()
         return lbl
@@ -165,20 +350,22 @@ class DashboardHomePage:
         self._backup_status_loaded = False
         threading.Thread(target=self.refresh_data, daemon=True).start()
         threading.Thread(target=self.refresh_backup_status, daemon=True).start()
+        threading.Thread(target=self.refresh_tax_year_readiness, daemon=True).start()
         self.parent.after(16000, self._expire_backup_loading)
 
     def refresh_data(self):
         try:
             summary = self.callbacks["get_summary"]() or {}
-            
+
             # Inject Infrastructure Stats
             try:
                 summary["infra_stats"] = system.get_system_stats()
             except Exception as e:
                 from utils import log_error_to_file
+
                 log_error_to_file("Dashboard infra_stats fetch failed", e)
                 summary["infra_stats"] = None
-            
+
             trend_rows = self.callbacks["get_trend"](6) or []
             self.parent.after(0, lambda: self._update_ui(summary, trend_rows))
         except Exception as e:
@@ -187,11 +374,18 @@ class DashboardHomePage:
 
     def _update_ui(self, summary, trend_rows):
         self._hide_loading()
-        if not self.stat_cards["total_properties"].winfo_exists(): return
+        if not self.stat_cards["total_properties"].winfo_exists():
+            return
 
-        self.stat_cards["total_properties"].configure(text=str(summary.get("total_properties", 0)))
-        self.stat_cards["collections_today"].configure(text=f"P {float(summary.get('collections_today', 0) or 0):,.2f}")
-        self.stat_cards["collections_month"].configure(text=f"P {float(summary.get('collections_month', 0) or 0):,.2f}")
+        self.stat_cards["total_properties"].configure(
+            text=str(summary.get("total_properties", 0))
+        )
+        self.stat_cards["collections_today"].configure(
+            text=f"P {float(summary.get('collections_today', 0) or 0):,.2f}"
+        )
+        self.stat_cards["collections_month"].configure(
+            text=f"P {float(summary.get('collections_month', 0) or 0):,.2f}"
+        )
 
         months = [row["month"][5:] for row in trend_rows]
         totals = [row["total"] for row in trend_rows]
@@ -202,19 +396,21 @@ class DashboardHomePage:
         if b:
             self._update_backup_ui(b)
 
-
         # Update Infrastructure Health (New Phase 4 Hardening)
         stats = summary.get("infra_stats")
         if stats:
             self._update_infra_ui(stats)
 
-        show_toast(self.parent.winfo_toplevel(), "Dashboard data refreshed", type="info")
+        show_toast(
+            self.parent.winfo_toplevel(), "Dashboard data refreshed", type="info"
+        )
 
     def _expire_backup_loading(self):
         """Guarantees the backup card never remains in an endless loading state."""
         if not self._backup_status_loaded:
-            self._show_backup_status_error("The server did not answer the backup health check within 15 seconds.")
-
+            self._show_backup_status_error(
+                "The server did not answer the backup health check within 15 seconds."
+            )
 
     def refresh_backup_status(self):
         """Loads backup health independently so a slow check cannot block the dashboard."""
@@ -222,15 +418,22 @@ class DashboardHomePage:
             status = system.get_backup_verification_status() or {}
             self.parent.after(0, lambda b=status: self._update_backup_ui(b))
         except Exception as exc:
-            self.parent.after(0, lambda message=str(exc): self._show_backup_status_error(message))
+            self.parent.after(
+                0, lambda message=str(exc): self._show_backup_status_error(message)
+            )
 
     def _backup_color(self, value, is_running=False):
         upper_val = str(value or "").upper()
         if is_running:
             return "#f59e0b"
-        if any(word in upper_val for word in ("FAILED", "ERROR", "ISSUE", "UNAVAILABLE", "MISSING")):
+        if any(
+            word in upper_val
+            for word in ("FAILED", "ERROR", "ISSUE", "UNAVAILABLE", "MISSING")
+        ):
             return "#e74c3c"
-        if any(word in upper_val for word in ("SUCCESS", "OK", "PROTECTED")) or (":" in upper_val and "READY:" not in upper_val):
+        if any(word in upper_val for word in ("SUCCESS", "OK", "PROTECTED")) or (
+            ":" in upper_val and "READY:" not in upper_val
+        ):
             return ModernTheme.SUCCESS
         return "gray"
 
@@ -239,20 +442,33 @@ class DashboardHomePage:
             return
         self._backup_status_loaded = True
         is_running = bool(backup.get("is_running"))
-        for key, fallback in (("local", "Status unavailable"), ("usb", "Status unavailable"), ("cloud", "Status unavailable"), ("verify", "Status unavailable")):
+        for key, fallback in (
+            ("local", "Status unavailable"),
+            ("usb", "Status unavailable"),
+            ("cloud", "Status unavailable"),
+            ("verify", "Status unavailable"),
+        ):
             field = "last_verify" if key == "verify" else f"last_{key}"
             value = backup.get(field, fallback)
-            self.backup_labels[key].configure(text=value, text_color=self._backup_color(value, is_running))
+            self.backup_labels[key].configure(
+                text=value, text_color=self._backup_color(value, is_running)
+            )
 
         summary_text = backup.get("storage_status") or "Backup health unavailable"
         checked_at = backup.get("checked_at") or "unknown time"
         last_backup = backup.get("last_backup") or "No recorded backup"
         checksum = backup.get("last_checksum_short") or "None"
-        self.backup_summary_lbl.configure(text=summary_text, text_color=self._backup_color(summary_text, is_running))
-        self.backup_detail_lbl.configure(text=f"Latest: {last_backup}   |   Checksum: {checksum}   |   Checked: {checked_at}")
+        self.backup_summary_lbl.configure(
+            text=summary_text, text_color=self._backup_color(summary_text, is_running)
+        )
+        self.backup_detail_lbl.configure(
+            text=f"Latest: {last_backup}   |   Checksum: {checksum}   |   Checked: {checked_at}"
+        )
         if self.backup_btn:
             if is_running:
-                self.backup_btn.configure(state="disabled", text="BACKUP IN PROGRESS...")
+                self.backup_btn.configure(
+                    state="disabled", text="BACKUP IN PROGRESS..."
+                )
             else:
                 self.backup_btn.configure(state="normal", text="RUN HYBRID BACKUP NOW")
 
@@ -262,46 +478,70 @@ class DashboardHomePage:
         self._backup_status_loaded = True
         for label in self.backup_labels.values():
             label.configure(text="Unavailable", text_color="#e74c3c")
-        self.backup_summary_lbl.configure(text="Backup status unavailable", text_color="#e74c3c")
-        detail = "The server did not answer the backup health check within 15 seconds." if "timed out" in message.lower() else message
+        self.backup_summary_lbl.configure(
+            text="Backup status unavailable", text_color="#e74c3c"
+        )
+        detail = (
+            "The server did not answer the backup health check within 15 seconds."
+            if "timed out" in message.lower()
+            else message
+        )
         self.backup_detail_lbl.configure(text=detail)
         if self.backup_btn:
             self.backup_btn.configure(state="normal", text="RUN HYBRID BACKUP NOW")
-
 
     def _update_infra_ui(self, stats):
         """Updates the new infrastructure health indicators."""
         if not hasattr(self, "infra_section"):
             self._setup_infra_section()
-        
+
         p = stats.get("pool", {})
         c = stats.get("cache", {})
-        
-        self.pool_lbl.configure(text=f"POOL: {p.get('active', 0)} ACTIVE | {p.get('idle', 0)} IDLE | {p.get('overflow', 0)} OVERFLOW")
-        self.cache_lbl.configure(text=f"CACHE: {c.get('items', 0)} ITEMS | NAMESPACES: {', '.join(c.get('namespaces', []))}")
-        
+
+        self.pool_lbl.configure(
+            text=f"POOL: {p.get('active', 0)} ACTIVE | {p.get('idle', 0)} IDLE | {p.get('overflow', 0)} OVERFLOW"
+        )
+        self.cache_lbl.configure(
+            text=f"CACHE: {c.get('items', 0)} ITEMS | NAMESPACES: {', '.join(c.get('namespaces', []))}"
+        )
+
         # Color coding for pool health
-        if p.get('overflow', 0) > 0: self.pool_lbl.configure(text_color="#e67e22")
-        elif p.get('active', 0) > 40: self.pool_lbl.configure(text_color="#e74c3c")
-        else: self.pool_lbl.configure(text_color="#2ecc71")
+        if p.get("overflow", 0) > 0:
+            self.pool_lbl.configure(text_color="#e67e22")
+        elif p.get("active", 0) > 40:
+            self.pool_lbl.configure(text_color="#e74c3c")
+        else:
+            self.pool_lbl.configure(text_color="#2ecc71")
 
     def _setup_infra_section(self):
         """Creates the layout for infra diagnostics."""
         self.infra_section = ctk.CTkFrame(self.container, fg_color="transparent")
         self.infra_section.pack(fill="x", pady=(0, 20))
-        
+
         f = ctk.CTkFrame(self.infra_section, border_width=1, border_color="#34495e")
         f.pack(fill="x")
-        
-        ctk.CTkLabel(f, text="🏛️ INFRASTRUCTURE HEALTH (REAL-TIME)", font=("Segoe UI", 10, "bold"), text_color="gray").pack(pady=(10, 5), padx=20, anchor="w")
-        
+
+        ctk.CTkLabel(
+            f,
+            text="🏛️ INFRASTRUCTURE HEALTH (REAL-TIME)",
+            font=("Segoe UI", 10, "bold"),
+            text_color="gray",
+        ).pack(pady=(10, 5), padx=20, anchor="w")
+
         inner = ctk.CTkFrame(f, fg_color="transparent")
         inner.pack(fill="x", padx=20, pady=(0, 10))
-        
-        self.pool_lbl = ctk.CTkLabel(inner, text="POOL: LOADING...", font=("Segoe UI", 11, "bold"), text_color="#2ecc71")
+
+        self.pool_lbl = ctk.CTkLabel(
+            inner,
+            text="POOL: LOADING...",
+            font=("Segoe UI", 11, "bold"),
+            text_color="#2ecc71",
+        )
         self.pool_lbl.pack(side="left")
-        
-        self.cache_lbl = ctk.CTkLabel(inner, text="CACHE: LOADING...", font=("Segoe UI", 11), text_color="gray")
+
+        self.cache_lbl = ctk.CTkLabel(
+            inner, text="CACHE: LOADING...", font=("Segoe UI", 11), text_color="gray"
+        )
         self.cache_lbl.pack(side="right")
 
     def trigger_manual_backup(self):
@@ -329,26 +569,42 @@ class DashboardHomePage:
                         self.parent.after(
                             0,
                             lambda p=progress: self.backup_btn.configure(
-                                state="disabled",
-                                text=f"BACKUP {p}%..."
-                            )
+                                state="disabled", text=f"BACKUP {p}%..."
+                            ),
                         )
 
                     if status == "COMPLETED":
                         self.parent.after(0, self.start_data_refresh)
                         return
                     if status == "FAILED":
-                        msg = job.get("error") or job.get("progress_message") or "Backup failed."
-                        self.parent.after(0, lambda m=msg: ErrorDialog(self.parent.winfo_toplevel(), "Backup Failed", m))
+                        msg = (
+                            job.get("error")
+                            or job.get("progress_message")
+                            or "Backup failed."
+                        )
+                        self.parent.after(
+                            0,
+                            lambda m=msg: ErrorDialog(
+                                self.parent.winfo_toplevel(), "Backup Failed", m
+                            ),
+                        )
                         self.parent.after(0, self.start_data_refresh)
                         return
 
                     time.sleep(1.5)
 
-                self.parent.after(0, lambda: ErrorDialog(self.parent.winfo_toplevel(), "Backup Timeout", "Backup did not finish within 15 minutes."))
+                self.parent.after(
+                    0,
+                    lambda: ErrorDialog(
+                        self.parent.winfo_toplevel(),
+                        "Backup Timeout",
+                        "Backup did not finish within 15 minutes.",
+                    ),
+                )
                 self.parent.after(0, self.start_data_refresh)
             except Exception as e:
                 from tkinter import messagebox
+
                 err = str(e)
                 self.parent.after(0, lambda: messagebox.showerror("Backup Error", err))
                 self.parent.after(0, self.start_data_refresh)

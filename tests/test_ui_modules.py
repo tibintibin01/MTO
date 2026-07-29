@@ -136,6 +136,38 @@ class TestCompliantDashboardLabels(unittest.TestCase):
 
 
 class TestDashboardHome(unittest.TestCase):
+    def test_readiness_check_is_admin_only(self):
+        home = object.__new__(DashboardHomePage)
+        home.user = {"role": "cashier"}
+
+        with patch(
+            "ui.dashboard_home.readiness_service.get_tax_year_readiness"
+        ) as get_readiness:
+            home.refresh_tax_year_readiness()
+
+        get_readiness.assert_not_called()
+
+    def test_action_required_readiness_is_scheduled_for_render(self):
+        home = object.__new__(DashboardHomePage)
+        home.user = {"role": "admin"}
+        home.parent = MagicMock()
+        home._update_tax_year_readiness = MagicMock()
+        readiness = {
+            "season_active": True,
+            "action_required": True,
+            "target_year": 2027,
+        }
+
+        with patch(
+            "ui.dashboard_home.readiness_service.get_tax_year_readiness",
+            return_value=readiness,
+        ):
+            home.refresh_tax_year_readiness()
+
+        scheduled_render = home.parent.after.call_args.args[1]
+        scheduled_render()
+        home._update_tax_year_readiness.assert_called_once_with(readiness)
+
     def test_dashboard_refresh_schedules_render_with_service_data(self):
         home = object.__new__(DashboardHomePage)
         home.parent = MagicMock()
