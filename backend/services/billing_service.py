@@ -19,6 +19,10 @@ COMPLIANCE_MONEY_TOLERANCE = Decimal("0.005")
 BILLING_DATA_START_YEAR = 2023
 
 
+class TaxBillUnavailableError(ValueError):
+    """Raised when an advance Tax Bill cannot be calculated safely."""
+
+
 def annual_penalty_months(tax_year: int, as_of_date=None) -> int:
     """Return calendar-inclusive annual penalty months, capped at 36 months."""
     as_of = as_of_date or date.today()
@@ -1293,6 +1297,7 @@ def get_property_tax_bill_data(
     """Return a single-year, non-delinquency Tax Bill payload."""
     office_date = as_of_date or philippine_today()
     target_year = int(tax_year)
+    is_advance = target_year > office_date.year
     statement = get_property_statement_data(
         property_id,
         as_of_date=office_date,
@@ -1306,14 +1311,74 @@ def get_property_tax_bill_data(
         for row in statement.get("billing_rows", [])
         if int(row.get("tax_year") or 0) == target_year
     ]
+    calculation_source = "POSTED_BILLING"
+    billing_record_exists = True
     if not target_rows:
-        return None
+        if not is_advance:
+            return None
+
+        prop = (
+            db_session.query(Property)
+            .filter(Property.id == property_id, Property.deleted_at == None)
+            .first()
+        )
+        if not prop:
+            return None
+
+        policy = (
+            db_session.query(TaxPolicy)
+            .filter(TaxPolicy.tax_year == target_year)
+            .first()
+        )
+        if not policy:
+            raise TaxBillUnavailableError(
+                f"Configure and approve the {target_year} Tax Policy before "
+                "generating an advance Tax Bill."
+            )
+
+        versions = assessment_versions(prop, db_session)
+        assessed = assessed_value_for_year(
+            prop,
+            target_year,
+            db_session,
+            versions=versions,
+        )
+        if assessed is None:
+            raise TaxBillUnavailableError(
+                f"No assessment is effective for tax year {target_year}. "
+                "Add or confirm the property's assessment effectivity first."
+            )
+
+        assessed_amount = Decimal(str(assessed)).quantize(MONEY, rounding=ROUND_HALF_UP)
+        basic_amount = (assessed_amount * Decimal(str(policy.basic_rate))).quantize(
+            MONEY, rounding=ROUND_HALF_UP
+        )
+        sef_amount = (assessed_amount * Decimal(str(policy.sef_rate))).quantize(
+            MONEY, rounding=ROUND_HALF_UP
+        )
+        total_amount = basic_amount + sef_amount
+        target_rows = [
+            {
+                "tax_year": target_year,
+                "assessed_value": float(assessed_amount),
+                "basic_amount": float(basic_amount),
+                "sef_amount": float(sef_amount),
+                "penalty": 0.0,
+                "discount": 0.0,
+                "total_amount": float(total_amount),
+                "amount_paid": 0.0,
+                "balance_amount": float(total_amount),
+                "billing_status": "Advance",
+                "updated_at": None,
+            }
+        ]
+        calculation_source = "VIRTUAL_ADVANCE"
+        billing_record_exists = False
 
     basic_amount = sum(float(row.get("basic_amount", 0) or 0) for row in target_rows)
     sef_amount = sum(float(row.get("sef_amount", 0) or 0) for row in target_rows)
     discount = sum(float(row.get("discount", 0) or 0) for row in target_rows)
     amount_paid = sum(float(row.get("amount_paid", 0) or 0) for row in target_rows)
-    is_advance = target_year > office_date.year
     penalty = (
         0.0
         if is_advance
@@ -1336,6 +1401,8 @@ def get_property_tax_bill_data(
         {
             "document_type": "ADVANCE" if is_advance else "CURRENT",
             "report_as_of_date": office_date.isoformat(),
+            "calculation_source": calculation_source,
+            "billing_record_exists": billing_record_exists,
             "tax_year": target_year,
             "billing_rows": [dict(row) for row in target_rows],
             "assessed_value": sum(

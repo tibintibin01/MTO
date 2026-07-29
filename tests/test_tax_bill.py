@@ -8,8 +8,9 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
 from backend.generators.tax_bill_gen import generate_tax_bill, split_installments
-from backend.models import Property, PropertyBilling
+from backend.models import Property, PropertyBilling, TaxPolicy
 from backend.services.billing_service import (
+    TaxBillUnavailableError,
     get_collections_worklist,
     get_compliant_accounts,
     get_delinquent_accounts,
@@ -144,20 +145,55 @@ def test_tax_bill_uses_exact_target_year_and_marks_advance(db):
     assert tax_bill["compliant_through_year"] == 2026
 
 
-def test_tax_bill_returns_none_when_target_year_has_not_been_synced(db):
+def test_tax_bill_calculates_virtual_advance_without_posting_receivable(db):
     prop = _property(db, "TD-NO-ADVANCE-BILL")
+    _billing(db, prop.id, 2026, paid=2_000)
+    db.add(
+        TaxPolicy(
+            tax_year=2027,
+            basic_rate=Decimal("0.0100"),
+            sef_rate=Decimal("0.0100"),
+            penalty_rate=Decimal("0.0200"),
+        )
+    )
+    db.commit()
+
+    billing_count_before = db.query(PropertyBilling).count()
+    tax_bill = get_property_tax_bill_data(
+        prop.id,
+        2027,
+        as_of_date=AS_OF_2026,
+        db_session=db,
+    )
+    billing_count_after = db.query(PropertyBilling).count()
+
+    assert tax_bill["document_type"] == "ADVANCE"
+    assert tax_bill["calculation_source"] == "VIRTUAL_ADVANCE"
+    assert tax_bill["billing_record_exists"] is False
+    assert tax_bill["tax_year"] == 2027
+    assert tax_bill["assessed_value"] == pytest.approx(100_000.0)
+    assert tax_bill["basic_amount"] == pytest.approx(1_000.0)
+    assert tax_bill["sef_amount"] == pytest.approx(1_000.0)
+    assert tax_bill["amount_payable"] == pytest.approx(2_000.0)
+    assert tax_bill["billing_rows"][0]["billing_status"] == "Advance"
+    assert billing_count_before == billing_count_after == 1
+
+
+def test_virtual_advance_requires_configured_target_year_policy(db):
+    prop = _property(db, "TD-NO-TAX-POLICY")
     _billing(db, prop.id, 2026, paid=2_000)
     db.commit()
 
-    assert (
+    with pytest.raises(
+        TaxBillUnavailableError,
+        match="Configure and approve the 2027 Tax Policy",
+    ):
         get_property_tax_bill_data(
             prop.id,
             2027,
             as_of_date=AS_OF_2026,
             db_session=db,
         )
-        is None
-    )
 
 
 def test_installment_split_is_cent_exact():

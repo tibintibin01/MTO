@@ -260,6 +260,10 @@ def generate_tax_bill(tax_bill_data, base_dir):
     ]
     if is_advance:
         note_lines.insert(1, f"Tax year {tax_year} begins on January 1, {tax_year}.")
+    if not tax_bill_data.get("billing_record_exists", True):
+        note_lines.insert(
+            2, f"No {tax_year} receivable was posted; this is an advance calculation."
+        )
     prior_balance = float(tax_bill_data.get("prior_balance", 0) or 0)
     if prior_balance > 0:
         note_lines.append(

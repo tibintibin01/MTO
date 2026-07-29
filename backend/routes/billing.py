@@ -498,10 +498,7 @@ async def generate_tax_bill_pdf(
         if not details:
             raise HTTPException(
                 status_code=404,
-                detail=(
-                    f"No billing record exists for tax year {tax_year}. "
-                    "Run the billing-year sync after confirming the tax policy."
-                ),
+                detail="Property or tax-year assessment data was not found.",
             )
 
         details["prepared_by"] = (
@@ -545,6 +542,8 @@ async def generate_tax_bill_pdf(
             media_type="application/pdf",
             filename=file_name,
         )
+    except bill_svc.TaxBillUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:
