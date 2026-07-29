@@ -29,6 +29,7 @@ from ui.assessment_roll import (
 from ui.compliant_dashboard import (
     _COMPLIANT_PAYMENTS_LABEL,
     compliance_scope_text,
+    suggested_tax_bill_year,
 )
 
 
@@ -133,6 +134,10 @@ class TestCompliantDashboardLabels(unittest.TestCase):
         self.assertIn("through 2026", text)
         self.assertIn("all included billing years, not 2026 alone", text)
         self.assertIn("Later billing years are excluded", text)
+        self.assertIn("next-year Tax Bill", text)
+
+    def test_tax_bill_defaults_to_the_year_after_the_compliance_scope(self):
+        self.assertEqual(suggested_tax_bill_year(2026), 2027)
 
 
 class TestDashboardHome(unittest.TestCase):

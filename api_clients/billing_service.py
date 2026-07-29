@@ -186,6 +186,15 @@ def download_computation_pdf(property_id):
     return api_download_file("GET", f"/properties/{property_id}/computation-pdf")
 
 
+def download_tax_bill_pdf(property_id, tax_year):
+    """Download the single-year current or advance Tax Bill PDF."""
+    return api_download_file(
+        "GET",
+        f"/properties/{property_id}/tax-bill-pdf",
+        params={"tax_year": int(tax_year)},
+    )
+
+
 def download_statement_pdf(property_id):
     """Triggers the download of a statement PDF and returns the local path."""
     return api_download_file("GET", f"/properties/{property_id}/statement-pdf")

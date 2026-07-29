@@ -10,6 +10,7 @@ from backend.services.assessment_value_service import (
     assessed_value_for_year,
     assessment_versions,
 )
+from backend.services.tax_year_readiness_service import philippine_today
 
 
 MAX_PENALTY_MONTHS = 36
@@ -1124,6 +1125,7 @@ def get_property_billing_history(
             (PropertyBilling.assessed_value * basic_rate_expr).label("basic_amount"),
             (PropertyBilling.assessed_value * sef_rate_expr).label("sef_amount"),
             current["total_penalty"].label("penalty"),
+            current["discount"].label("discount"),
             current["total_due"].label("total_amount"),
             current["paid"].label("amount_paid"),
             current["balance"].label("balance_amount"),
@@ -1195,11 +1197,12 @@ def get_property_statement_data(
             "basic_amount": float(b[2] or 0),
             "sef_amount": float(b[3] or 0),
             "penalty": float(b[4] or 0),
-            "total_amount": float(b[5] or 0),
-            "amount_paid": float(b[6] or 0),
-            "balance_amount": float(b[7] or 0),
-            "billing_status": b[8],
-            "updated_at": b[9],
+            "discount": float(b[5] or 0),
+            "total_amount": float(b[6] or 0),
+            "amount_paid": float(b[7] or 0),
+            "balance_amount": float(b[8] or 0),
+            "billing_status": b[9],
+            "updated_at": b[10],
         }
         billing_rows.append(item)
         total_balance += item["balance_amount"]
@@ -1233,6 +1236,126 @@ def get_property_statement_data(
         "grand_total": grand_total,
         "billing_rows": billing_rows,
     }
+
+
+def _statement_for_rows(statement: dict, billing_rows: list[dict]) -> dict:
+    """Return a statement copy whose totals match only the supplied rows."""
+    scoped = dict(statement)
+    scoped_rows = [dict(row) for row in billing_rows]
+    scoped["billing_rows"] = scoped_rows
+    scoped["total_balance"] = sum(
+        float(row.get("balance_amount", 0) or 0) for row in scoped_rows
+    )
+    scoped["total_paid"] = sum(
+        float(row.get("amount_paid", 0) or 0) for row in scoped_rows
+    )
+    scoped["grand_total"] = sum(
+        float(row.get("total_amount", 0) or 0) for row in scoped_rows
+    )
+    return scoped
+
+
+def get_property_delinquency_statement_data(
+    property_id,
+    as_of_date=None,
+    db_session: Session = None,
+):
+    """Return open rows without treating a future tax bill as delinquent."""
+    office_date = as_of_date or philippine_today()
+    statement = get_property_statement_data(
+        property_id,
+        as_of_date=office_date,
+        db_session=db_session,
+    )
+    if not statement:
+        return None
+
+    delinquent_rows = [
+        row
+        for row in statement.get("billing_rows", [])
+        if int(row.get("tax_year") or 0) <= office_date.year
+        and float(row.get("balance_amount", 0) or 0) > float(COMPLIANCE_MONEY_TOLERANCE)
+    ]
+    if not delinquent_rows:
+        return None
+
+    scoped = _statement_for_rows(statement, delinquent_rows)
+    scoped["as_of_date"] = office_date.isoformat()
+    return scoped
+
+
+def get_property_tax_bill_data(
+    property_id,
+    tax_year,
+    as_of_date=None,
+    db_session: Session = None,
+):
+    """Return a single-year, non-delinquency Tax Bill payload."""
+    office_date = as_of_date or philippine_today()
+    target_year = int(tax_year)
+    statement = get_property_statement_data(
+        property_id,
+        as_of_date=office_date,
+        db_session=db_session,
+    )
+    if not statement:
+        return None
+
+    target_rows = [
+        row
+        for row in statement.get("billing_rows", [])
+        if int(row.get("tax_year") or 0) == target_year
+    ]
+    if not target_rows:
+        return None
+
+    basic_amount = sum(float(row.get("basic_amount", 0) or 0) for row in target_rows)
+    sef_amount = sum(float(row.get("sef_amount", 0) or 0) for row in target_rows)
+    discount = sum(float(row.get("discount", 0) or 0) for row in target_rows)
+    amount_paid = sum(float(row.get("amount_paid", 0) or 0) for row in target_rows)
+    is_advance = target_year > office_date.year
+    penalty = (
+        0.0
+        if is_advance
+        else sum(float(row.get("penalty", 0) or 0) for row in target_rows)
+    )
+    annual_tax_after_discount = max(basic_amount + sef_amount - discount, 0.0)
+    amount_payable = max(
+        annual_tax_after_discount + penalty - amount_paid,
+        0.0,
+    )
+    prior_rows = [
+        row
+        for row in statement.get("billing_rows", [])
+        if int(row.get("tax_year") or 0) < target_year
+        and float(row.get("balance_amount", 0) or 0) > float(COMPLIANCE_MONEY_TOLERANCE)
+    ]
+
+    result = dict(statement)
+    result.update(
+        {
+            "document_type": "ADVANCE" if is_advance else "CURRENT",
+            "report_as_of_date": office_date.isoformat(),
+            "tax_year": target_year,
+            "billing_rows": [dict(row) for row in target_rows],
+            "assessed_value": sum(
+                float(row.get("assessed_value", 0) or 0) for row in target_rows
+            ),
+            "basic_amount": round(basic_amount, 2),
+            "sef_amount": round(sef_amount, 2),
+            "penalty": round(penalty, 2),
+            "discount": round(discount, 2),
+            "amount_paid": round(amount_paid, 2),
+            "annual_tax_after_discount": round(annual_tax_after_discount, 2),
+            "amount_payable": round(amount_payable, 2),
+            "prior_balance": round(
+                sum(float(row.get("balance_amount", 0) or 0) for row in prior_rows),
+                2,
+            ),
+            "compliant_through_year": target_year - 1 if not prior_rows else None,
+        }
+    )
+    return result
 
 
 def get_report_details(
@@ -2697,7 +2820,8 @@ def get_delinquent_accounts(
     """
     safe_limit = min(max(1, int(limit)), 200)  # hard cap at 200
 
-    current = _billing_current_amount_exprs(db_session, as_of_date)
+    office_date = as_of_date or philippine_today()
+    current = _billing_current_amount_exprs(db_session, office_date)
     balance_expr = func.sum(current["balance"])
 
     query = (
@@ -2713,6 +2837,7 @@ def get_delinquent_accounts(
         .join(PropertyBilling, PropertyBilling.property_id == Property.id)
         .filter(
             Property.deleted_at == None,
+            PropertyBilling.tax_year <= office_date.year,
             *_valid_property_billing_scope(db_session),
         )
         .group_by(Property.id)
@@ -2762,7 +2887,7 @@ def get_collections_worklist(
     """Return a paginated collections worklist with full-set aging totals."""
     safe_limit = min(max(1, int(limit)), 200)
     safe_offset = max(0, int(offset))
-    today = as_of_date or date.today()
+    today = as_of_date or philippine_today()
 
     # Aggregate payment links once. Four correlated subqueries per billing row
     # made this endpoint progressively slower as the ledger grew.
@@ -2852,6 +2977,7 @@ def get_collections_worklist(
         .filter(
             Property.deleted_at == None,
             PropertyBilling.is_archived == False,
+            PropertyBilling.tax_year <= today.year,
             or_(
                 _property_effectivity_year_expr(Property) == None,
                 _property_effectivity_year_expr(Property) <= PropertyBilling.tax_year,

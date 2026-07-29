@@ -1,7 +1,7 @@
 import os
 import asyncio
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from backend.deps import (
@@ -17,7 +17,13 @@ import backend.services.property_service as prop_svc
 import backend.services.system_service as sys_svc
 import backend.services.payment_service as pay_svc
 import backend.services.analytics_service as analytics
-from backend.generators import soa_gen, computation_gen, notice_gen, report_gen
+from backend.generators import (
+    soa_gen,
+    computation_gen,
+    notice_gen,
+    report_gen,
+    tax_bill_gen,
+)
 from utils.logger import mto_logger
 from backend.services.storage_service import storage_service
 from backend.services.compliance_impact_service import build_compliance_impact_report
@@ -431,7 +437,7 @@ async def generate_computation_pdf(
     db_session: Session = Depends(get_db),
 ):
     try:
-        details = bill_svc.get_property_statement_data(
+        details = bill_svc.get_property_delinquency_statement_data(
             property_id, db_session=db_session
         )
         if not details:
@@ -473,6 +479,85 @@ async def generate_computation_pdf(
             f"Failed to generate computation PDF for property {property_id} | Error: {str(e)}\n{traceback.format_exc()}"
         )
         raise HTTPException(status_code=500, detail=f"PDF Generation Failed: {str(e)}")
+
+
+@router.get("/properties/{property_id}/tax-bill-pdf", tags=["Financial"])
+async def generate_tax_bill_pdf(
+    property_id: int,
+    tax_year: int = Query(..., ge=1900, le=2200),
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """Generate a single-year Tax Bill without delinquency language."""
+    try:
+        details = bill_svc.get_property_tax_bill_data(
+            property_id,
+            tax_year,
+            db_session=db_session,
+        )
+        if not details:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No billing record exists for tax year {tax_year}. "
+                    "Run the billing-year sync after confirming the tax policy."
+                ),
+            )
+
+        details["prepared_by"] = (
+            current_user.get("full_name")
+            or current_user.get("name")
+            or current_user.get("username")
+            or ""
+        )
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        pdf_path = await asyncio.to_thread(
+            tax_bill_gen.generate_tax_bill,
+            details,
+            base_dir,
+        )
+        file_name = os.path.basename(pdf_path)
+
+        if storage_service.enabled:
+            s3_key = f"tax-bills/{file_name}"
+            uploaded_key = await asyncio.to_thread(
+                storage_service.upload_file,
+                pdf_path,
+                s3_key,
+            )
+            if uploaded_key:
+                presigned_url = await asyncio.to_thread(
+                    storage_service.generate_presigned_url,
+                    s3_key,
+                )
+                if presigned_url:
+                    try:
+                        os.remove(pdf_path)
+                    except Exception as cleanup_err:
+                        mto_logger.warning(
+                            f"Failed to remove local temp PDF '{pdf_path}': "
+                            f"{cleanup_err}"
+                        )
+                    return RedirectResponse(presigned_url, status_code=307)
+
+        return FileResponse(
+            pdf_path,
+            media_type="application/pdf",
+            filename=file_name,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        import traceback
+
+        mto_logger.error(
+            f"Failed to generate Tax Bill for property {property_id}, "
+            f"tax year {tax_year} | Error: {exc}\n{traceback.format_exc()}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Tax Bill Generation Failed: {exc}",
+        )
 
 
 @router.get("/properties/{property_id}/statement-pdf", tags=["Financial"])
@@ -614,7 +699,7 @@ async def generate_notice_pdf(
     db_session: Session = Depends(get_db),
 ):
     try:
-        details = bill_svc.get_property_statement_data(
+        details = bill_svc.get_property_delinquency_statement_data(
             property_id, db_session=db_session
         )
         if not details:
@@ -665,7 +750,7 @@ async def generate_notice_preview(
     db_session: Session = Depends(get_db),
 ):
     try:
-        details = bill_svc.get_property_statement_data(
+        details = bill_svc.get_property_delinquency_statement_data(
             property_id, db_session=db_session
         )
         if not details:
