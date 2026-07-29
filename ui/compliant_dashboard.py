@@ -2,6 +2,7 @@
 Compliant Properties Dashboard
 Shows all properties with zero outstanding balance, grouped by barangay.
 """
+
 import csv
 import os
 import threading
@@ -17,21 +18,31 @@ from utils import format_curr
 from ui_components import LoadingOverlay
 
 # ── Row colours — softer than pure white on dark bg ──────────────────────────
-_ROW_ODD   = "#1e293b"
-_ROW_EVEN  = "#162032"
-_ROW_FG    = "#cbd5e1"   # slate-300 — readable but not glaring white
-_ROW_SEL   = "#1d4ed8"
-_HDR_BG    = "#0f172a"
-_HDR_FG    = "#64748b"   # slate-500 — muted heading text
+_ROW_ODD = "#1e293b"
+_ROW_EVEN = "#162032"
+_ROW_FG = "#cbd5e1"  # slate-300 — readable but not glaring white
+_ROW_SEL = "#1d4ed8"
+_HDR_BG = "#0f172a"
+_HDR_FG = "#64748b"  # slate-500 — muted heading text
 
 # ── Button colours ────────────────────────────────────────────────────────────
-_BTN_REFRESH = ("#2563eb", "#1d4ed8")   # blue
-_BTN_EXPORT  = ("#059669", "#047857")   # green
-_BTN_SEARCH  = ("#475569", "#334155")   # slate
+_BTN_REFRESH = ("#2563eb", "#1d4ed8")  # blue
+_BTN_EXPORT = ("#059669", "#047857")  # green
+_BTN_SEARCH = ("#475569", "#334155")  # slate
 
 # ── Card colours ─────────────────────────────────────────────────────────────
-_CARD_BG  = ("#e2e8f0", "#1e293b")
+_CARD_BG = ("#e2e8f0", "#1e293b")
 _CARD_BDR = ("#cbd5e1", "#334155")
+_COMPLIANT_PAYMENTS_LABEL = "PAID BY COMPLIANT PROPERTIES"
+
+
+def compliance_scope_text(selected_year: int) -> str:
+    """Explain the selected-year scope without implying a single-year total."""
+    return (
+        f"Fully paid for every billed obligation through {selected_year}.  "
+        f"The payment total covers all included billing years, not {selected_year} alone.  "
+        "Later billing years are excluded. Click a barangay row to filter the list."
+    )
 
 
 class CompliantDashboardPage:
@@ -131,10 +142,7 @@ class CompliantDashboardPage:
         info_fr.pack(fill="x", pady=(0, 12))
         self._info_label = ctk.CTkLabel(
             info_fr,
-            text=(
-                f"Properties fully paid for every billed obligation through {self._selected_year}.  "
-                "Later billing years are excluded. Click a barangay row to filter the list."
-            ),
+            text=compliance_scope_text(self._selected_year),
             font=ModernTheme.BODY,
             text_color=ModernTheme.TEXT_GRAY,
         )
@@ -145,9 +153,9 @@ class CompliantDashboardPage:
         kpi_fr.pack(fill="x", pady=(0, 12))
 
         self._kpi_compliant = self._kpi_card(kpi_fr, "COMPLIANT THROUGH YEAR", "—")
-        self._kpi_rate      = self._kpi_card(kpi_fr, "COMPLIANCE RATE", "—")
-        self._kpi_collected = self._kpi_card(kpi_fr, "TOTAL COLLECTED", "—")
-        self._kpi_barangays = self._kpi_card(kpi_fr, "BARANGAYS",       "—")
+        self._kpi_rate = self._kpi_card(kpi_fr, "COMPLIANCE RATE", "—")
+        self._kpi_collected = self._kpi_card(kpi_fr, _COMPLIANT_PAYMENTS_LABEL, "—")
+        self._kpi_barangays = self._kpi_card(kpi_fr, "BARANGAYS", "—")
 
         # ── Split pane ────────────────────────────────────────────────────────
         pane = ctk.CTkFrame(self.container, fg_color="transparent")
@@ -233,17 +241,21 @@ class CompliantDashboardPage:
         for col in cols:
             self._sum_tree.heading(col, text=col)
         self._sum_tree.column("BARANGAY", width=140, anchor="w")
-        self._sum_tree.column("TOTAL",    width=55,  anchor="center")
-        self._sum_tree.column("✅",       width=55,  anchor="center")
-        self._sum_tree.column("RATE",     width=65,  anchor="center")
+        self._sum_tree.column("TOTAL", width=55, anchor="center")
+        self._sum_tree.column("✅", width=55, anchor="center")
+        self._sum_tree.column("RATE", width=65, anchor="center")
 
-        scrolly = ttk.Scrollbar(sum_container, orient="vertical", command=self._sum_tree.yview)
+        scrolly = ttk.Scrollbar(
+            sum_container, orient="vertical", command=self._sum_tree.yview
+        )
         self._sum_tree.configure(yscrollcommand=scrolly.set)
         self._sum_tree.pack(side="left", fill="both", expand=True)
         scrolly.pack(side="right", fill="y")
 
-        self._sum_tree.tag_configure("oddrow",  background=_ROW_ODD,  foreground=_ROW_FG)
-        self._sum_tree.tag_configure("evenrow", background=_ROW_EVEN, foreground=_ROW_FG)
+        self._sum_tree.tag_configure("oddrow", background=_ROW_ODD, foreground=_ROW_FG)
+        self._sum_tree.tag_configure(
+            "evenrow", background=_ROW_EVEN, foreground=_ROW_FG
+        )
         self._sum_tree.tag_configure(
             "all_row",
             background=_ROW_ODD,
@@ -323,33 +335,50 @@ class CompliantDashboardPage:
         )
         style.map("Compliant.Treeview", background=[("selected", _ROW_SEL)])
 
-        cols = ("ID", "TD NUMBER", "OWNER NAME", "BARANGAY", "KIND",
-                "TOTAL PAID", "YEARS", "LAST OR", "LAST PAID")
+        cols = (
+            "ID",
+            "TD NUMBER",
+            "OWNER NAME",
+            "BARANGAY",
+            "KIND",
+            "TOTAL PAID",
+            "YEARS",
+            "LAST OR",
+            "LAST PAID",
+        )
         self._prop_tree = ttk.Treeview(
             tree_container, columns=cols, show="headings", style="Compliant.Treeview"
         )
         for col in cols:
             self._prop_tree.heading(col, text=col)
 
-        self._prop_tree.column("ID",         width=0,   stretch=tk.NO)
-        self._prop_tree.column("TD NUMBER",  width=130, anchor="w")
+        self._prop_tree.column("ID", width=0, stretch=tk.NO)
+        self._prop_tree.column("TD NUMBER", width=130, anchor="w")
         self._prop_tree.column("OWNER NAME", width=200, anchor="w")
-        self._prop_tree.column("BARANGAY",   width=110, anchor="w")
-        self._prop_tree.column("KIND",       width=90,  anchor="center")
+        self._prop_tree.column("BARANGAY", width=110, anchor="w")
+        self._prop_tree.column("KIND", width=90, anchor="center")
         self._prop_tree.column("TOTAL PAID", width=110, anchor="e")
-        self._prop_tree.column("YEARS",      width=55,  anchor="center")
-        self._prop_tree.column("LAST OR",    width=110, anchor="w")
-        self._prop_tree.column("LAST PAID",  width=95,  anchor="center")
+        self._prop_tree.column("YEARS", width=55, anchor="center")
+        self._prop_tree.column("LAST OR", width=110, anchor="w")
+        self._prop_tree.column("LAST PAID", width=95, anchor="center")
 
-        scrolly = ttk.Scrollbar(tree_container, orient="vertical", command=self._prop_tree.yview)
+        scrolly = ttk.Scrollbar(
+            tree_container, orient="vertical", command=self._prop_tree.yview
+        )
         self._prop_tree.configure(yscrollcommand=scrolly.set)
         self._prop_tree.pack(side="left", fill="both", expand=True)
         scrolly.pack(side="right", fill="y")
 
-        self._prop_tree.tag_configure("oddrow",  background=_ROW_ODD,  foreground=_ROW_FG)
-        self._prop_tree.tag_configure("evenrow", background=_ROW_EVEN, foreground=_ROW_FG)
-        self._prop_tree.tag_configure("filler_odd",  background=_ROW_ODD, foreground=_ROW_ODD)
-        self._prop_tree.tag_configure("filler_even", background=_ROW_EVEN, foreground=_ROW_EVEN)
+        self._prop_tree.tag_configure("oddrow", background=_ROW_ODD, foreground=_ROW_FG)
+        self._prop_tree.tag_configure(
+            "evenrow", background=_ROW_EVEN, foreground=_ROW_FG
+        )
+        self._prop_tree.tag_configure(
+            "filler_odd", background=_ROW_ODD, foreground=_ROW_ODD
+        )
+        self._prop_tree.tag_configure(
+            "filler_even", background=_ROW_EVEN, foreground=_ROW_EVEN
+        )
 
         # Fill the empty space below data rows with the same dark background
         # so the white gap doesn't appear when there are fewer rows than the
@@ -431,8 +460,16 @@ class CompliantDashboardPage:
 
         def worker():
             try:
-                barangay = None if self._selected_barangay == "ALL" else self._selected_barangay
-                cursor = self._page_cursors[self._page_index] if self._page_index < len(self._page_cursors) else None
+                barangay = (
+                    None
+                    if self._selected_barangay == "ALL"
+                    else self._selected_barangay
+                )
+                cursor = (
+                    self._page_cursors[self._page_index]
+                    if self._page_index < len(self._page_cursors)
+                    else None
+                )
                 summary = billing.get_compliant_summary(as_of_year=selected_year)
                 page = billing.get_compliant_accounts_page(
                     barangay=barangay,
@@ -457,19 +494,14 @@ class CompliantDashboardPage:
     def _render(self, summary: list, page: dict, selected_year: int):
         if selected_year != self._selected_year:
             return
-        self._info_label.configure(
-            text=(
-                f"Properties fully paid for every billed obligation through {selected_year}.  "
-                "Later billing years are excluded. Click a barangay row to filter the list."
-            )
-        )
+        self._info_label.configure(text=compliance_scope_text(selected_year))
         self._summary = summary
         self._rows = page.get("items", []) if isinstance(page, dict) else []
         self._next_cursor = page.get("next_cursor") if isinstance(page, dict) else None
         self._has_more = bool(page.get("has_more")) if isinstance(page, dict) else False
 
-        total_props     = sum(r.get("total_properties", 0) for r in summary)
-        total_compliant = sum(r.get("compliant_count", 0)  for r in summary)
+        total_props = sum(r.get("total_properties", 0) for r in summary)
+        total_compliant = sum(r.get("compliant_count", 0) for r in summary)
         total_collected = sum(r.get("collected_from_compliant", 0) for r in summary)
         rate = (total_compliant / total_props * 100) if total_props else 0.0
 
@@ -483,7 +515,8 @@ class CompliantDashboardPage:
             self._sum_tree.delete(item)
 
         self._sum_tree.insert(
-            "", "end",
+            "",
+            "end",
             values=("ALL BARANGAYS", total_props, total_compliant, f"{rate:.1f}%"),
             tags=("all_row",),
             iid="__ALL__",
@@ -491,7 +524,8 @@ class CompliantDashboardPage:
         for i, row in enumerate(sorted(summary, key=lambda r: r.get("barangay", ""))):
             tag = "evenrow" if i % 2 == 0 else "oddrow"
             self._sum_tree.insert(
-                "", "end",
+                "",
+                "end",
                 values=(
                     row.get("barangay", "—"),
                     row.get("total_properties", 0),
@@ -529,7 +563,9 @@ class CompliantDashboardPage:
             else f"COMPLIANT THROUGH {self._selected_year} - {self._selected_barangay}"
         )
         search_note = " MATCHES" if self._search_var.get().strip() else ""
-        self._list_label.configure(text=f"{brgy}{search_note}  ({len(rows)} on this page)")
+        self._list_label.configure(
+            text=f"{brgy}{search_note}  ({len(rows)} on this page)"
+        )
         self._update_pager()
 
     # ── Barangay filter ───────────────────────────────────────────────────────
@@ -574,7 +610,9 @@ class CompliantDashboardPage:
     def _fill_prop_tree_background(self, real_row_count):
         rowheight = 34
         header_allowance = 28
-        visible_rows = max(0, (self._prop_tree.winfo_height() - header_allowance) // rowheight)
+        visible_rows = max(
+            0, (self._prop_tree.winfo_height() - header_allowance) // rowheight
+        )
         if visible_rows <= 1:
             visible_rows = 18
 
@@ -647,10 +685,19 @@ class CompliantDashboardPage:
                 writer = csv.writer(f)
                 writer.writerow(["Compliance Through Year", self._selected_year])
                 writer.writerow([])
-                writer.writerow([
-                    "ID", "TD Number", "Owner Name", "Barangay", "Kind",
-                    "Total Paid", "Years Covered", "Last OR", "Last Paid",
-                ])
+                writer.writerow(
+                    [
+                        "ID",
+                        "TD Number",
+                        "Owner Name",
+                        "Barangay",
+                        "Kind",
+                        "Total Paid",
+                        "Years Covered",
+                        "Last OR",
+                        "Last Paid",
+                    ]
+                )
                 for r in export_rows:
                     writer.writerow(r)
             messagebox.showinfo("Export Complete", f"Saved to:\n{path}")
