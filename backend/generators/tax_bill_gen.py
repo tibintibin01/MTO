@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from datetime import date, datetime, timezone
-from decimal import Decimal, ROUND_HALF_UP
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -19,20 +18,6 @@ from backend.generators.computation_gen import (
     _section_title,
     _table_header,
 )
-
-
-MONEY = Decimal("0.01")
-
-
-def split_installments(amount) -> list[Decimal]:
-    """Split an annual amount into four cent-exact installment amounts."""
-    total = Decimal(str(amount or 0)).quantize(MONEY, rounding=ROUND_HALF_UP)
-    total_cents = int(total * 100)
-    base_cents, remainder = divmod(total_cents, 4)
-    return [
-        (Decimal(base_cents + (1 if index < remainder else 0)) / 100).quantize(MONEY)
-        for index in range(4)
-    ]
 
 
 def _wrapped_lines(c, text, font_name, font_size, max_width):
@@ -76,14 +61,51 @@ def _draw_numbered_note(c, number, text, x, y, width, text_color):
     return line_y - 0.8 * mm
 
 
+def _display_date(value):
+    text = safe_text(value) or date.today().isoformat()
+    try:
+        return date.fromisoformat(text).strftime("%B %d, %Y")
+    except ValueError:
+        return text
+
+
+def tax_bill_letter_text(tax_bill_data):
+    """Return the formal taxpayer-facing introduction for the Tax Bill."""
+    tax_year = int(tax_bill_data["tax_year"])
+    report_date = _display_date(tax_bill_data.get("report_as_of_date"))
+    gross_tax = float(tax_bill_data.get("basic_amount", 0) or 0) + float(
+        tax_bill_data.get("sef_amount", 0) or 0
+    )
+    amount_payable = fmt_currency(tax_bill_data.get("amount_payable"))
+    discount = float(tax_bill_data.get("discount", 0) or 0)
+
+    if discount > 0:
+        discount_label = (
+            safe_text(tax_bill_data.get("discount_label"))
+            or "eligible payment discount"
+        )
+        payable_clause = (
+            f"the amount payable after the {discount_label} is PHP {amount_payable}"
+        )
+    else:
+        payable_clause = f"the amount payable is PHP {amount_payable}"
+
+    return (
+        "This is to respectfully inform you that, based on the records of this "
+        "Office, the real property tax for the property described below for Tax "
+        f"Year {tax_year} has been computed at PHP {fmt_currency(gross_tax)}. As of "
+        f"{report_date}, {payable_clause}, subject to verification when payment is "
+        "posted."
+    )
+
+
 def tax_bill_notes(tax_bill_data):
     """Return concise, legally conditional notes for a non-delinquency Tax Bill."""
-    deadline_text = safe_text(tax_bill_data.get("discount_valid_until"))
-    if deadline_text:
-        try:
-            deadline_text = date.fromisoformat(deadline_text).strftime("%B %d, %Y")
-        except ValueError:
-            pass
+    deadline_text = (
+        _display_date(tax_bill_data.get("discount_valid_until"))
+        if tax_bill_data.get("discount_valid_until")
+        else ""
+    )
 
     if float(tax_bill_data.get("discount", 0) or 0) > 0 and deadline_text:
         payment_note = (
@@ -159,6 +181,27 @@ def generate_tax_bill(tax_bill_data, base_dir):
     _draw_header(c, title, width, height, margin_x)
 
     current_y = height - 64 * mm
+    c.setFillColor(colors.black)
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawString(margin_x, current_y, "Dear Sir/Madam:")
+    current_y -= 7 * mm
+
+    letter_font = "Helvetica"
+    letter_size = 9
+    letter_leading = 5 * mm
+    letter_lines = _wrapped_lines(
+        c,
+        tax_bill_letter_text(tax_bill_data),
+        letter_font,
+        letter_size,
+        content_w,
+    )
+    c.setFont(letter_font, letter_size)
+    for line in letter_lines:
+        c.drawString(margin_x, current_y, line)
+        current_y -= letter_leading
+    current_y -= 4 * mm
+
     _section_title(
         c, "Property and Taxpayer Information", margin_x, current_y, content_w
     )
@@ -229,38 +272,7 @@ def generate_tax_bill(tax_bill_data, base_dir):
         accent,
     )
 
-    current_y -= 15 * mm
-    _section_title(c, "Quarterly Payment Guide", margin_x, current_y, content_w)
-    current_y -= 10 * mm
-    schedule_columns = [
-        ("Installment", 42 * mm),
-        ("Due Date", 52 * mm),
-        ("Scheduled Amount", 48 * mm),
-        ("Classification", 38 * mm),
-    ]
-    current_y = _table_header(c, margin_x, current_y, schedule_columns)
-    scheduled_amounts = split_installments(
-        tax_bill_data.get("annual_tax_after_discount")
-    )
-    due_dates = [
-        date(tax_year, 3, 31),
-        date(tax_year, 6, 30),
-        date(tax_year, 9, 30),
-        date(tax_year, 12, 31),
-    ]
-    for index, (amount, due_date) in enumerate(
-        zip(scheduled_amounts, due_dates), start=1
-    ):
-        values = [
-            f"Quarter {index}",
-            due_date.strftime("%B %d, %Y"),
-            fmt_currency(amount),
-            "UPCOMING" if is_advance else "SCHEDULED",
-        ]
-        _draw_tax_row(c, margin_x, current_y, schedule_columns, values, accent)
-        current_y -= 8 * mm
-
-    current_y -= 8 * mm
+    current_y -= 18 * mm
     summary_w = 77 * mm
     summary_x = width - margin_x - summary_w
     summary_h = 33 * mm
@@ -320,7 +332,7 @@ def generate_tax_bill(tax_bill_data, base_dir):
         )
 
     signature_x = summary_x
-    signature_y = current_y - summary_h - 15 * mm
+    signature_y = 24 * mm
     c.setStrokeColor(colors.black)
     c.setFillColor(secondary)
     c.setFont("Helvetica", 8)

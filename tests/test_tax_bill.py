@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.database import Base
 from backend.generators.tax_bill_gen import (
     generate_tax_bill,
-    split_installments,
+    tax_bill_letter_text,
     tax_bill_notes,
 )
 from backend.models import Property, PropertyBilling, TaxPolicy
@@ -222,16 +222,25 @@ def test_virtual_advance_requires_configured_target_year_policy(db):
         )
 
 
-def test_installment_split_is_cent_exact():
-    installments = split_installments(Decimal("201.01"))
+def test_tax_bill_letter_is_formal_and_date_specific():
+    letter = tax_bill_letter_text(
+        {
+            "tax_year": 2027,
+            "report_as_of_date": "2026-07-30",
+            "basic_amount": 595.10,
+            "sef_amount": 595.10,
+            "discount": 238.04,
+            "discount_label": "20% advance payment discount",
+            "amount_payable": 952.16,
+        }
+    )
 
-    assert installments == [
-        Decimal("50.26"),
-        Decimal("50.25"),
-        Decimal("50.25"),
-        Decimal("50.25"),
-    ]
-    assert sum(installments) == Decimal("201.01")
+    assert "Tax Year 2027" in letter
+    assert "July 30, 2026" in letter
+    assert "PHP 1,190.20" in letter
+    assert "PHP 952.16" in letter
+    assert "20% advance payment discount" in letter
+    assert "subject to verification" in letter
 
 
 def test_advance_tax_bill_pdf_is_generated(tmp_path):
@@ -239,6 +248,7 @@ def test_advance_tax_bill_pdf_is_generated(tmp_path):
         "document_type": "ADVANCE",
         "tax_year": 2027,
         "td_number": "06-0012-02563",
+        "report_as_of_date": "2026-07-30",
         "pin": "010-02-1002",
         "owner_name": "AGRI COMPONENT CORPORATION",
         "location": "DINADIAWAN",
