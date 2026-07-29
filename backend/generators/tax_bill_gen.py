@@ -164,7 +164,7 @@ def generate_tax_bill(tax_bill_data, base_dir):
     )
     current_y -= 10 * mm
 
-    box_h = 48 * mm
+    box_h = 50 * mm
     c.setFillColor(colors.HexColor("#f8fafc"))
     c.setStrokeColor(accent)
     c.roundRect(margin_x, current_y - box_h, content_w, box_h, 2 * mm, fill=1, stroke=1)
@@ -176,7 +176,7 @@ def generate_tax_bill(tax_bill_data, base_dir):
     row_y = current_y - 8 * mm
     _kv(c, "TD Number", tax_bill_data.get("td_number"), left_x, row_y, cell_w)
     _kv(c, "PIN", tax_bill_data.get("pin"), right_x, row_y, cell_w)
-    row_y -= 12 * mm
+    row_y -= 11 * mm
     _kv(
         c,
         "Owner Name",
@@ -186,9 +186,9 @@ def generate_tax_bill(tax_bill_data, base_dir):
         full_w,
         value_size=8.8,
     )
-    row_y -= 12 * mm
+    row_y -= 11 * mm
     _kv(c, "Location", tax_bill_data.get("location"), left_x, row_y, full_w)
-    row_y -= 12 * mm
+    row_y -= 11 * mm
     _kv(
         c,
         "Kind of Property",
@@ -199,7 +199,7 @@ def generate_tax_bill(tax_bill_data, base_dir):
     )
     _kv(c, "Assessment for Tax Year", tax_year, right_x, row_y, cell_w)
 
-    current_y -= box_h + 11 * mm
+    current_y -= box_h + 9 * mm
     _section_title(c, "Tax Computation", margin_x, current_y, content_w)
     current_y -= 11 * mm
     columns = [
@@ -320,7 +320,7 @@ def generate_tax_bill(tax_bill_data, base_dir):
         )
 
     signature_x = summary_x
-    signature_y = current_y - summary_h - 11 * mm
+    signature_y = current_y - summary_h - 15 * mm
     c.setStrokeColor(colors.black)
     c.setFillColor(secondary)
     c.setFont("Helvetica", 8)
