@@ -32,6 +32,16 @@ _BTN_SEARCH  = ("#475569", "#334155")   # slate
 # ── Card colours ─────────────────────────────────────────────────────────────
 _CARD_BG  = ("#e2e8f0", "#1e293b")
 _CARD_BDR = ("#cbd5e1", "#334155")
+_COMPLIANT_PAYMENTS_LABEL = "PAID BY COMPLIANT PROPERTIES"
+
+
+def compliance_scope_text(selected_year: int) -> str:
+    """Explain the selected-year scope without implying a single-year total."""
+    return (
+        f"Fully paid for every billed obligation through {selected_year}.  "
+        f"The payment total covers all included billing years, not {selected_year} alone.  "
+        "Later billing years are excluded. Click a barangay row to filter the list."
+    )
 
 
 class CompliantDashboardPage:
@@ -131,10 +141,7 @@ class CompliantDashboardPage:
         info_fr.pack(fill="x", pady=(0, 12))
         self._info_label = ctk.CTkLabel(
             info_fr,
-            text=(
-                f"Properties fully paid for every billed obligation through {self._selected_year}.  "
-                "Later billing years are excluded. Click a barangay row to filter the list."
-            ),
+            text=compliance_scope_text(self._selected_year),
             font=ModernTheme.BODY,
             text_color=ModernTheme.TEXT_GRAY,
         )
@@ -146,7 +153,7 @@ class CompliantDashboardPage:
 
         self._kpi_compliant = self._kpi_card(kpi_fr, "COMPLIANT THROUGH YEAR", "—")
         self._kpi_rate      = self._kpi_card(kpi_fr, "COMPLIANCE RATE", "—")
-        self._kpi_collected = self._kpi_card(kpi_fr, "TOTAL COLLECTED", "—")
+        self._kpi_collected = self._kpi_card(kpi_fr, _COMPLIANT_PAYMENTS_LABEL, "—")
         self._kpi_barangays = self._kpi_card(kpi_fr, "BARANGAYS",       "—")
 
         # ── Split pane ────────────────────────────────────────────────────────
@@ -458,10 +465,7 @@ class CompliantDashboardPage:
         if selected_year != self._selected_year:
             return
         self._info_label.configure(
-            text=(
-                f"Properties fully paid for every billed obligation through {selected_year}.  "
-                "Later billing years are excluded. Click a barangay row to filter the list."
-            )
+            text=compliance_scope_text(selected_year)
         )
         self._summary = summary
         self._rows = page.get("items", []) if isinstance(page, dict) else []

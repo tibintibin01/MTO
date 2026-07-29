@@ -26,6 +26,10 @@ from ui.assessment_roll import (
     assessment_roll_export_dialog_options,
     parse_assessment_roll_as_of_year,
 )
+from ui.compliant_dashboard import (
+    _COMPLIANT_PAYMENTS_LABEL,
+    compliance_scope_text,
+)
 
 
 class TestNavigationSidebar(unittest.TestCase):
@@ -114,6 +118,21 @@ class TestAssessmentRollFilters(unittest.TestCase):
         self.assertEqual(options["defaultextension"], ".pdf")
         self.assertEqual(options["initialfile"], "download.pdf")
         self.assertEqual(options["filetypes"], [("PDF document (*.pdf)", "*.pdf")])
+
+
+class TestCompliantDashboardLabels(unittest.TestCase):
+    def test_payment_kpi_identifies_the_accounts_included(self):
+        self.assertEqual(
+            _COMPLIANT_PAYMENTS_LABEL,
+            "PAID BY COMPLIANT PROPERTIES",
+        )
+
+    def test_scope_text_distinguishes_through_year_from_single_year(self):
+        text = compliance_scope_text(2026)
+
+        self.assertIn("through 2026", text)
+        self.assertIn("all included billing years, not 2026 alone", text)
+        self.assertIn("Later billing years are excluded", text)
 
 
 class TestDashboardHome(unittest.TestCase):
