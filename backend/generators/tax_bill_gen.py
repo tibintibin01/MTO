@@ -35,6 +35,83 @@ def split_installments(amount) -> list[Decimal]:
     ]
 
 
+def _wrapped_lines(c, text, font_name, font_size, max_width):
+    words = safe_text(text).split()
+    if not words:
+        return [""]
+
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = f"{current} {word}"
+        if c.stringWidth(candidate, font_name, font_size) <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def _draw_numbered_note(c, number, text, x, y, width, text_color):
+    font_name = "Helvetica"
+    font_size = 7.2
+    number_width = 7 * mm
+    leading = 3.6 * mm
+    lines = _wrapped_lines(
+        c,
+        text,
+        font_name,
+        font_size,
+        width - number_width,
+    )
+
+    c.setFillColor(text_color)
+    c.setFont(font_name, font_size)
+    c.drawString(x, y, f"{number}.")
+    line_y = y
+    for line in lines:
+        c.drawString(x + number_width, line_y, line)
+        line_y -= leading
+    return line_y - 0.8 * mm
+
+
+def tax_bill_notes(tax_bill_data):
+    """Return concise, legally conditional notes for a non-delinquency Tax Bill."""
+    deadline_text = safe_text(tax_bill_data.get("discount_valid_until"))
+    if deadline_text:
+        try:
+            deadline_text = date.fromisoformat(deadline_text).strftime("%B %d, %Y")
+        except ValueError:
+            pass
+
+    if float(tax_bill_data.get("discount", 0) or 0) > 0 and deadline_text:
+        payment_note = (
+            f"The discounted amount shown is valid for payment through {deadline_text}; "
+            "eligibility will be rechecked when payment is posted."
+        )
+    else:
+        payment_note = (
+            "The amount shown remains subject to payment-date verification, including "
+            "any applicable discount or interest."
+        )
+
+    return [
+        "Please report any error or omission in this Bill to the Municipal "
+        "Treasurer's Office.",
+        "Please present this Bill to the Municipal Treasurer's Office when making "
+        "payment.",
+        payment_note,
+        "If these taxes remain unpaid after they become due and delinquent, the "
+        "Municipality may use the collection remedies under Section 256 of "
+        "Republic Act No. 7160.",
+        "Please disregard this Bill if the taxes shown were already paid, subject "
+        "to verification of the Official Receipt.",
+        "Prior payment / Official Receipt details (if applicable): "
+        "____________________.",
+    ]
+
+
 def _draw_tax_row(c, x, y, columns, values, accent):
     c.setFillColor(colors.HexColor("#f8fafc"))
     c.rect(
@@ -76,28 +153,12 @@ def generate_tax_bill(tax_bill_data, base_dir):
     content_w = width - 2 * margin_x
     accent = colors.HexColor(BRANDING["branding_colors"]["accent"])
     primary = colors.HexColor(BRANDING["branding_colors"]["primary"])
-    success = colors.HexColor(BRANDING["branding_colors"].get("success", "#059669"))
     secondary = colors.HexColor(BRANDING["branding_colors"]["secondary"])
 
     title = "REAL PROPERTY TAX BILL"
     _draw_header(c, title, width, height, margin_x)
 
     current_y = height - 64 * mm
-    status_text = (
-        f"TAX YEAR {tax_year} - ADVANCE COMPUTATION - NOT DELINQUENT"
-        if is_advance
-        else f"TAX YEAR {tax_year} - CURRENT TAX BILL"
-    )
-    c.setFillColor(colors.HexColor("#ecfdf5"))
-    c.setStrokeColor(success)
-    c.roundRect(
-        margin_x, current_y - 11 * mm, content_w, 11 * mm, 2 * mm, fill=1, stroke=1
-    )
-    c.setFillColor(success)
-    c.setFont("Helvetica-Bold", 10)
-    c.drawCentredString(width / 2, current_y - 7 * mm, status_text)
-
-    current_y -= 20 * mm
     _section_title(
         c, "Property and Taxpayer Information", margin_x, current_y, content_w
     )
@@ -229,7 +290,7 @@ def generate_tax_bill(tax_bill_data, base_dir):
     sy -= 6 * mm
     _draw_summary_line(
         c,
-        "Less Discount",
+        "Less Eligible Discount",
         tax_bill_data.get("discount"),
         summary_x + 5 * mm,
         sy,
@@ -250,56 +311,39 @@ def generate_tax_bill(tax_bill_data, base_dir):
 
     c.setFillColor(primary)
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(margin_x, current_y - 3 * mm, "IMPORTANT")
-    c.setFillColor(secondary)
-    c.setFont("Helvetica", 8)
-    note_lines = [
-        "This document is a Tax Bill, not a notice of delinquency.",
-        f"The computation uses the assessment and tax policy recorded for {tax_year}.",
-        "Amounts remain subject to verification when payment is posted.",
-    ]
-    if is_advance:
-        note_lines.insert(1, f"Tax year {tax_year} begins on January 1, {tax_year}.")
-    if not tax_bill_data.get("billing_record_exists", True):
-        note_lines.insert(
-            2, f"No {tax_year} receivable was posted; this is an advance calculation."
+    c.drawString(margin_x, current_y - 3 * mm, "NOTES")
+    notes_width = content_w - summary_w - 8 * mm
+    note_y = current_y - 9 * mm
+    for number, note in enumerate(tax_bill_notes(tax_bill_data), start=1):
+        note_y = _draw_numbered_note(
+            c, number, note, margin_x, note_y, notes_width, secondary
         )
-    prior_balance = float(tax_bill_data.get("prior_balance", 0) or 0)
-    if prior_balance > 0:
-        note_lines.append(
-            f"Prior-year outstanding balance detected: PHP {prior_balance:,.2f}."
-        )
-    line_y = current_y - 9 * mm
-    for line in note_lines:
-        c.drawString(margin_x, line_y, line)
-        line_y -= 5 * mm
 
-    signature_y = current_y - max(summary_h, 33 * mm) - 17 * mm
-    prepared_x = margin_x
-    approved_x = width / 2 + 12 * mm
+    signature_x = summary_x
+    signature_y = current_y - summary_h - 11 * mm
     c.setStrokeColor(colors.black)
-    c.line(prepared_x, signature_y, prepared_x + 65 * mm, signature_y)
-    c.line(approved_x, signature_y, approved_x + 65 * mm, signature_y)
-    c.setFillColor(colors.black)
-    c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(
-        prepared_x + 32.5 * mm,
-        signature_y + 2 * mm,
-        safe_text(tax_bill_data.get("prepared_by")),
-    )
-    c.setFont("Helvetica", 8)
     c.setFillColor(secondary)
-    c.drawCentredString(prepared_x + 32.5 * mm, signature_y - 5 * mm, "Prepared by")
+    c.setFont("Helvetica", 8)
+    c.drawString(signature_x, signature_y + 8 * mm, "Very truly yours,")
+    c.line(signature_x, signature_y, signature_x + summary_w, signature_y)
+    c.setFillColor(colors.black)
+    c.setFont("Helvetica", 8)
     c.drawCentredString(
-        approved_x + 32.5 * mm, signature_y - 5 * mm, "Municipal Treasurer"
+        signature_x + summary_w / 2,
+        signature_y - 5 * mm,
+        "Municipal Treasurer",
     )
 
-    footer_y = 15 * mm
+    footer_y = 9 * mm
     c.setStrokeColor(accent)
     c.line(margin_x, footer_y + 5 * mm, width - margin_x, footer_y + 5 * mm)
     c.setFont("Helvetica", 7)
     c.setFillColor(secondary)
-    c.drawCentredString(width / 2, footer_y, BRANDING["footer_text"])
+    c.drawCentredString(
+        width / 2,
+        footer_y,
+        "This is a system-generated Tax Bill. Please present it when making payment.",
+    )
 
     c.save()
     return output_path

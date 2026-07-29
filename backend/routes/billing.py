@@ -501,12 +501,6 @@ async def generate_tax_bill_pdf(
                 detail="Property or tax-year assessment data was not found.",
             )
 
-        details["prepared_by"] = (
-            current_user.get("full_name")
-            or current_user.get("name")
-            or current_user.get("username")
-            or ""
-        )
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         pdf_path = await asyncio.to_thread(
             tax_bill_gen.generate_tax_bill,
