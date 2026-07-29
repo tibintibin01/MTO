@@ -7,7 +7,11 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
-from backend.generators.tax_bill_gen import generate_tax_bill, split_installments
+from backend.generators.tax_bill_gen import (
+    generate_tax_bill,
+    split_installments,
+    tax_bill_notes,
+)
 from backend.models import Property, PropertyBilling, TaxPolicy
 from backend.services.billing_service import (
     TaxBillUnavailableError,
@@ -16,6 +20,7 @@ from backend.services.billing_service import (
     get_delinquent_accounts,
     get_property_delinquency_statement_data,
     get_property_tax_bill_data,
+    payment_discount_terms,
 )
 
 
@@ -140,7 +145,10 @@ def test_tax_bill_uses_exact_target_year_and_marks_advance(db):
     assert tax_bill["basic_amount"] == pytest.approx(1_000.0)
     assert tax_bill["sef_amount"] == pytest.approx(1_000.0)
     assert tax_bill["penalty"] == 0
-    assert tax_bill["amount_payable"] == pytest.approx(2_000.0)
+    assert tax_bill["discount"] == pytest.approx(400.0)
+    assert tax_bill["discount_rate"] == pytest.approx(0.20)
+    assert tax_bill["discount_valid_until"] == "2026-12-31"
+    assert tax_bill["amount_payable"] == pytest.approx(1_600.0)
     assert tax_bill["prior_balance"] == 0
     assert tax_bill["compliant_through_year"] == 2026
 
@@ -174,9 +182,27 @@ def test_tax_bill_calculates_virtual_advance_without_posting_receivable(db):
     assert tax_bill["assessed_value"] == pytest.approx(100_000.0)
     assert tax_bill["basic_amount"] == pytest.approx(1_000.0)
     assert tax_bill["sef_amount"] == pytest.approx(1_000.0)
-    assert tax_bill["amount_payable"] == pytest.approx(2_000.0)
+    assert tax_bill["discount"] == pytest.approx(400.0)
+    assert tax_bill["discount_is_estimate"] is True
+    assert tax_bill["amount_payable"] == pytest.approx(1_600.0)
     assert tax_bill["billing_rows"][0]["billing_status"] == "Advance"
     assert billing_count_before == billing_count_after == 1
+
+
+def test_payment_discount_terms_match_advance_and_prompt_deadlines():
+    rate, label, deadline = payment_discount_terms(2027, date(2026, 12, 31))
+    assert rate == Decimal("0.20")
+    assert "advance" in label
+    assert deadline == date(2026, 12, 31)
+
+    rate, label, deadline = payment_discount_terms(2027, date(2027, 3, 31))
+    assert rate == Decimal("0.10")
+    assert "prompt" in label
+    assert deadline == date(2027, 3, 31)
+
+    rate, _, deadline = payment_discount_terms(2027, date(2027, 4, 1))
+    assert rate == Decimal("0.00")
+    assert deadline is None
 
 
 def test_virtual_advance_requires_configured_target_year_policy(db):
@@ -220,13 +246,23 @@ def test_advance_tax_bill_pdf_is_generated(tmp_path):
         "assessed_value": 11_606_340,
         "basic_amount": 116_063.40,
         "sef_amount": 116_063.40,
-        "discount": 0,
+        "discount": 46_425.36,
+        "discount_rate": 0.20,
+        "discount_label": "20% advance payment discount",
+        "discount_valid_until": "2026-12-31",
+        "discount_is_estimate": True,
         "amount_paid": 0,
-        "annual_tax_after_discount": 232_126.80,
-        "amount_payable": 232_126.80,
+        "annual_tax_after_discount": 185_701.44,
+        "amount_payable": 185_701.44,
         "prior_balance": 0,
         "prepared_by": "MTO TEST USER",
     }
+
+    notes = tax_bill_notes(data)
+    assert len(notes) == 6
+    assert "December 31, 2026" in notes[2]
+    assert "Section 256" in notes[3]
+    assert all("MTO TEST USER" not in note for note in notes)
 
     output = Path(generate_tax_bill(data, str(tmp_path)))
 

@@ -17,10 +17,34 @@ MAX_PENALTY_MONTHS = 36
 MONEY = Decimal("0.01")
 COMPLIANCE_MONEY_TOLERANCE = Decimal("0.005")
 BILLING_DATA_START_YEAR = 2023
+ADVANCE_DISCOUNT_RATE = Decimal("0.20")
+PROMPT_DISCOUNT_RATE = Decimal("0.10")
 
 
 class TaxBillUnavailableError(ValueError):
     """Raised when an advance Tax Bill cannot be calculated safely."""
+
+
+def payment_discount_terms(tax_year: int, payment_date=None):
+    """Return the MTO discount rate, label, and last eligible payment date."""
+    paid_on = payment_date or philippine_today()
+    year = int(tax_year)
+    advance_deadline = date(year - 1, 12, 31)
+    prompt_deadline = date(year, 3, 31)
+
+    if paid_on <= advance_deadline:
+        return (
+            ADVANCE_DISCOUNT_RATE,
+            "20% advance payment discount",
+            advance_deadline,
+        )
+    if paid_on <= prompt_deadline:
+        return (
+            PROMPT_DISCOUNT_RATE,
+            "10% prompt payment discount (January-March)",
+            prompt_deadline,
+        )
+    return Decimal("0.00"), "No payment discount for this date", None
 
 
 def annual_penalty_months(tax_year: int, as_of_date=None) -> int:
@@ -1377,13 +1401,31 @@ def get_property_tax_bill_data(
 
     basic_amount = sum(float(row.get("basic_amount", 0) or 0) for row in target_rows)
     sef_amount = sum(float(row.get("sef_amount", 0) or 0) for row in target_rows)
-    discount = sum(float(row.get("discount", 0) or 0) for row in target_rows)
+    recorded_discount = sum(float(row.get("discount", 0) or 0) for row in target_rows)
     amount_paid = sum(float(row.get("amount_paid", 0) or 0) for row in target_rows)
     penalty = (
         0.0
         if is_advance
         else sum(float(row.get("penalty", 0) or 0) for row in target_rows)
     )
+    discount = recorded_discount
+    discount_rate = Decimal("0.00")
+    discount_label = "Recorded payment discount" if discount else "No payment discount"
+    discount_valid_until = None
+    discount_is_estimate = False
+    if amount_paid <= float(COMPLIANCE_MONEY_TOLERANCE) and recorded_discount <= float(
+        COMPLIANCE_MONEY_TOLERANCE
+    ):
+        discount_rate, discount_label, discount_valid_until = payment_discount_terms(
+            target_year,
+            office_date,
+        )
+        if discount_rate > 0:
+            principal = Decimal(str(basic_amount)) + Decimal(str(sef_amount))
+            discount = float(
+                (principal * discount_rate).quantize(MONEY, rounding=ROUND_HALF_UP)
+            )
+            discount_is_estimate = True
     annual_tax_after_discount = max(basic_amount + sef_amount - discount, 0.0)
     amount_payable = max(
         annual_tax_after_discount + penalty - amount_paid,
@@ -1412,6 +1454,12 @@ def get_property_tax_bill_data(
             "sef_amount": round(sef_amount, 2),
             "penalty": round(penalty, 2),
             "discount": round(discount, 2),
+            "discount_rate": float(discount_rate),
+            "discount_label": discount_label,
+            "discount_valid_until": (
+                discount_valid_until.isoformat() if discount_valid_until else None
+            ),
+            "discount_is_estimate": discount_is_estimate,
             "amount_paid": round(amount_paid, 2),
             "annual_tax_after_discount": round(annual_tax_after_discount, 2),
             "amount_payable": round(amount_payable, 2),
