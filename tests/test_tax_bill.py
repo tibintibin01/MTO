@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.database import Base
 from backend.generators.tax_bill_gen import (
     generate_tax_bill,
+    tax_bill_computation_basis,
     tax_bill_lot_block_reference,
     tax_bill_letter_text,
     tax_bill_notes,
@@ -242,6 +243,21 @@ def test_tax_bill_lot_block_reference_uses_available_property_details():
     )
 
 
+def test_tax_bill_computation_basis_distinguishes_partial_advance_payment():
+    assert (
+        tax_bill_computation_basis({"amount_paid": 0, "amount_payable": 952.16})
+        == "FULL"
+    )
+    assert (
+        tax_bill_computation_basis({"amount_paid": 238.04, "amount_payable": 714.12})
+        == "PARTIAL"
+    )
+    assert (
+        tax_bill_computation_basis({"amount_paid": 952.16, "amount_payable": 0})
+        == "FULL"
+    )
+
+
 def test_tax_bill_letter_is_formal_and_date_specific():
     letter = tax_bill_letter_text(
         {
@@ -261,6 +277,21 @@ def test_tax_bill_letter_is_formal_and_date_specific():
     assert "PHP 952.16" in letter
     assert "20% advance payment discount" in letter
     assert "subject to verification" in letter
+
+    partial_letter = tax_bill_letter_text(
+        {
+            "tax_year": 2027,
+            "report_as_of_date": "2026-07-30",
+            "basic_amount": 595.10,
+            "sef_amount": 595.10,
+            "discount": 238.04,
+            "discount_label": "20% advance payment discount",
+            "amount_paid": 200.00,
+            "amount_payable": 752.16,
+        }
+    )
+    assert "deducting the posted payment of PHP 200.00" in partial_letter
+    assert "PHP 752.16" in partial_letter
 
 
 def test_advance_tax_bill_pdf_is_generated(tmp_path):
