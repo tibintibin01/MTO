@@ -69,6 +69,21 @@ def _display_date(value):
         return text
 
 
+def tax_bill_lot_block_reference(tax_bill_data):
+    """Return a concise taxpayer-facing Lot/Block property reference."""
+    missing_values = {"", "-", "N/A", "NA", "NONE", "NULL"}
+    lot_number = safe_text(tax_bill_data.get("lot_number")).strip()
+    block_number = safe_text(tax_bill_data.get("block_number")).strip()
+    references = []
+
+    if lot_number.upper() not in missing_values:
+        references.append(f"Lot {lot_number}")
+    if block_number.upper() not in missing_values:
+        references.append(f"Block {block_number}")
+
+    return " / ".join(references) or "N/A"
+
+
 def tax_bill_letter_text(tax_bill_data):
     """Return the formal taxpayer-facing introduction for the Tax Bill."""
     tax_year = int(tax_bill_data["tax_year"])
@@ -218,7 +233,14 @@ def generate_tax_bill(tax_bill_data, base_dir):
     full_w = content_w - 10 * mm
     row_y = current_y - 8 * mm
     _kv(c, "TD Number", tax_bill_data.get("td_number"), left_x, row_y, cell_w)
-    _kv(c, "PIN", tax_bill_data.get("pin"), right_x, row_y, cell_w)
+    _kv(
+        c,
+        "Lot / Block No.",
+        tax_bill_lot_block_reference(tax_bill_data),
+        right_x,
+        row_y,
+        cell_w,
+    )
     row_y -= 11 * mm
     _kv(
         c,
