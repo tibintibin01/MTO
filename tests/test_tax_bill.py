@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.database import Base
 from backend.generators.tax_bill_gen import (
     generate_tax_bill,
+    tax_bill_lot_block_reference,
     tax_bill_letter_text,
     tax_bill_notes,
 )
@@ -222,6 +223,25 @@ def test_virtual_advance_requires_configured_target_year_policy(db):
         )
 
 
+def test_tax_bill_lot_block_reference_uses_available_property_details():
+    assert (
+        tax_bill_lot_block_reference({"lot_number": "10203-F", "block_number": "4"})
+        == "Lot 10203-F / Block 4"
+    )
+    assert (
+        tax_bill_lot_block_reference({"lot_number": "10203-F", "block_number": None})
+        == "Lot 10203-F"
+    )
+    assert (
+        tax_bill_lot_block_reference({"lot_number": None, "block_number": "4"})
+        == "Block 4"
+    )
+    assert (
+        tax_bill_lot_block_reference({"lot_number": "N/A", "block_number": "-"})
+        == "N/A"
+    )
+
+
 def test_tax_bill_letter_is_formal_and_date_specific():
     letter = tax_bill_letter_text(
         {
@@ -250,6 +270,8 @@ def test_advance_tax_bill_pdf_is_generated(tmp_path):
         "td_number": "06-0012-02563",
         "report_as_of_date": "2026-07-30",
         "pin": "010-02-1002",
+        "lot_number": "10203-F",
+        "block_number": "4",
         "owner_name": "AGRI COMPONENT CORPORATION",
         "location": "DINADIAWAN",
         "kind_of_property": "COMMERCIAL - 2 STOREY HOTEL",
