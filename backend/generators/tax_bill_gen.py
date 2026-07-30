@@ -84,6 +84,13 @@ def tax_bill_lot_block_reference(tax_bill_data):
     return " / ".join(references) or "N/A"
 
 
+def tax_bill_computation_basis(tax_bill_data):
+    """Classify whether the bill computes a full or partially paid year."""
+    amount_paid = float(tax_bill_data.get("amount_paid", 0) or 0)
+    amount_payable = float(tax_bill_data.get("amount_payable", 0) or 0)
+    return "PARTIAL" if amount_paid > 0.005 and amount_payable > 0.005 else "FULL"
+
+
 def tax_bill_letter_text(tax_bill_data):
     """Return the formal taxpayer-facing introduction for the Tax Bill."""
     tax_year = int(tax_bill_data["tax_year"])
@@ -94,13 +101,27 @@ def tax_bill_letter_text(tax_bill_data):
     amount_payable = fmt_currency(tax_bill_data.get("amount_payable"))
     discount = float(tax_bill_data.get("discount", 0) or 0)
 
+    amount_paid = float(tax_bill_data.get("amount_paid", 0) or 0)
     if discount > 0:
         discount_label = (
             safe_text(tax_bill_data.get("discount_label"))
             or "eligible payment discount"
         )
+        if amount_paid > 0.005:
+            payable_clause = (
+                f"the amount payable after applying the {discount_label} and "
+                "deducting the posted payment of "
+                f"PHP {fmt_currency(amount_paid)} is PHP {amount_payable}"
+            )
+        else:
+            payable_clause = (
+                f"the amount payable after the {discount_label} is PHP "
+                f"{amount_payable}"
+            )
+    elif amount_paid > 0.005:
         payable_clause = (
-            f"the amount payable after the {discount_label} is PHP {amount_payable}"
+            "the amount payable after deducting the posted payment of "
+            f"PHP {fmt_currency(amount_paid)} is PHP {amount_payable}"
         )
     else:
         payable_clause = f"the amount payable is PHP {amount_payable}"
@@ -149,18 +170,21 @@ def tax_bill_notes(tax_bill_data):
     ]
 
 
-def _draw_tax_row(c, x, y, columns, values, accent):
+def _draw_tax_row(c, x, y, columns, values, accent, centered_columns=()):
     c.setFillColor(colors.HexColor("#f8fafc"))
     c.rect(
         x, y - 4.5 * mm, sum(width for _, width in columns), 8 * mm, fill=1, stroke=0
     )
     c.setFillColor(colors.black)
     c.setFont("Helvetica", 7.8)
+    centered_columns = set(centered_columns)
     cursor = x
     for index, value in enumerate(values):
         column_width = columns[index][1]
         if index == 0:
             c.drawString(cursor + 2 * mm, y, safe_text(value))
+        elif index in centered_columns:
+            c.drawCentredString(cursor + column_width / 2, y, safe_text(value))
         else:
             c.drawRightString(cursor + column_width - 2 * mm, y, safe_text(value))
         cursor += column_width
@@ -269,11 +293,11 @@ def generate_tax_bill(tax_bill_data, base_dir):
     current_y -= 11 * mm
     columns = [
         ("Year", 18 * mm),
-        ("Assessed", 31 * mm),
+        ("Assessed Value", 31 * mm),
         ("Basic", 27 * mm),
         ("SEF", 27 * mm),
         ("Discount", 25 * mm),
-        ("Paid", 25 * mm),
+        ("Computation", 25 * mm),
         ("Payable", 27 * mm),
     ]
     current_y = _table_header(c, margin_x, current_y, columns)
@@ -288,16 +312,18 @@ def generate_tax_bill(tax_bill_data, base_dir):
             fmt_currency(tax_bill_data.get("basic_amount")),
             fmt_currency(tax_bill_data.get("sef_amount")),
             fmt_currency(tax_bill_data.get("discount")),
-            fmt_currency(tax_bill_data.get("amount_paid")),
+            tax_bill_computation_basis(tax_bill_data),
             fmt_currency(tax_bill_data.get("amount_payable")),
         ],
         accent,
+        centered_columns={5},
     )
 
     current_y -= 18 * mm
     summary_w = 77 * mm
     summary_x = width - margin_x - summary_w
-    summary_h = 33 * mm
+    posted_payment = float(tax_bill_data.get("amount_paid", 0) or 0)
+    summary_h = (39 if posted_payment > 0.005 else 33) * mm
     c.setFillColor(colors.HexColor("#f8fafc"))
     c.setStrokeColor(accent)
     c.roundRect(
@@ -330,6 +356,16 @@ def generate_tax_bill(tax_bill_data, base_dir):
         sy,
         summary_w - 10 * mm,
     )
+    if posted_payment > 0.005:
+        sy -= 6 * mm
+        _draw_summary_line(
+            c,
+            "Less Posted Payment",
+            posted_payment,
+            summary_x + 5 * mm,
+            sy,
+            summary_w - 10 * mm,
+        )
     sy -= 8 * mm
     c.setStrokeColor(primary)
     c.line(summary_x + 5 * mm, sy + 3 * mm, summary_x + summary_w - 5 * mm, sy + 3 * mm)
