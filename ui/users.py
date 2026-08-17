@@ -9,6 +9,18 @@ import threading
 from ui_components import show_toast, ErrorDialog
 
 
+def _user_creation_confirmation_message(full_name, username, role):
+    """Build a password-free summary for the administrator to confirm."""
+    return (
+        "Please verify the new account before creating it.\n\n"
+        f"Full name: {full_name}\n"
+        f"Username: {username}\n"
+        f"Role: {str(role or '').upper()}\n\n"
+        "The password is intentionally not displayed."
+    )
+
+
+
 # ---------------------------------------------------------------------------
 # Premium confirmation dialog — replaces native messagebox.askyesno
 # ---------------------------------------------------------------------------
@@ -598,19 +610,26 @@ class UserAccessPage:
         self.sessions_btn.configure(state=state)
         # Note: Password reset is special, handled in its own func
 
-    def refresh_users(self):
+    def refresh_users(self, select_username=None):
         def worker():
             try:
                 users = auth.get_all_users()
-                self.container.after(0, lambda: self._update_user_table(users))
+                self.container.after(
+                    0,
+                    lambda rows=users, username=select_username: self._update_user_table(
+                        rows, username
+                    ),
+                )
             except Exception as e:
                 self.container.after(
                     0, lambda err=e: ErrorDialog(self.container, "Refresh Error", str(err))
                 )
         threading.Thread(target=worker, daemon=True).start()
 
-    def _update_user_table(self, users):
+    def _update_user_table(self, users, select_username=None):
         for row in self.tree.get_children(): self.tree.delete(row)
+        target_username = str(select_username or "").strip().lower()
+        selected_item = None
         for i, u in enumerate(users):
             status_text = tr("users.table.status_active") if u["is_active"] else tr("users.table.status_disabled")
             ts_raw = u.get("last_login")
@@ -622,7 +641,15 @@ class UserAccessPage:
                 login_time = "Never"
             
             tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-            self.tree.insert("", "end", values=(u["id"], status_text, u["full_name"], u["username"], u["role"].upper(), login_time), tags=(tag,))
+            item_id = self.tree.insert("", "end", values=(u["id"], status_text, u["full_name"], u["username"], u["role"].upper(), login_time), tags=(tag,))
+            if str(u.get("username") or "").strip().lower() == target_username:
+                selected_item = item_id
+
+        if selected_item:
+            self.tree.selection_set(selected_item)
+            self.tree.focus(selected_item)
+            self.tree.see(selected_item)
+            self.on_user_selected()
 
     def on_user_selected(self, event=None):
         if not self.can_manage_users: return
@@ -783,6 +810,7 @@ class RegisterUserModal(ctk.CTkToplevel):
         self.geometry("450x720")
         self.resizable(False, False)
         self.callback = callback
+        self._creating = False
 
         self.transient(parent.winfo_toplevel())
         self.grab_set()
@@ -793,6 +821,7 @@ class RegisterUserModal(ctk.CTkToplevel):
         self.geometry(f"+{(sw-450)//2}+{(sh-720)//2}")
 
         self.setup_ui()
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
 
     def setup_ui(self):
         import re
@@ -873,13 +902,26 @@ class RegisterUserModal(ctk.CTkToplevel):
         btn_fr = ctk.CTkFrame(self, fg_color="transparent")
         btn_fr.pack(fill="x", side="bottom", pady=20, padx=40)
 
-        ctk.CTkButton(btn_fr, text=tr("users.modal.btn_cancel"), command=self.destroy,
-                      fg_color=ModernTheme.SECONDARY, height=40, width=100,
-                      font=ModernTheme.BUTTON).pack(side="left")
-        self.create_btn = ctk.CTkButton(btn_fr, text=tr("users.modal.btn_create"),
-                                        command=self.save,
-                                        fg_color=ModernTheme.SUCCESS, height=40, width=250,
-                                        font=ModernTheme.BUTTON, state="disabled")
+        self.cancel_btn = ctk.CTkButton(
+            btn_fr,
+            text=tr("users.modal.btn_cancel"),
+            command=self._cancel,
+            fg_color=ModernTheme.SECONDARY,
+            height=40,
+            width=100,
+            font=ModernTheme.BUTTON,
+        )
+        self.cancel_btn.pack(side="left")
+        self.create_btn = ctk.CTkButton(
+            btn_fr,
+            text=tr("users.modal.btn_create"),
+            command=self.save,
+            fg_color=ModernTheme.SUCCESS,
+            height=40,
+            width=250,
+            font=ModernTheme.BUTTON,
+            state="disabled",
+        )
         self.create_btn.pack(side="right")
 
     def _check_requirements(self, pwd: str) -> dict:
@@ -910,34 +952,120 @@ class RegisterUserModal(ctk.CTkToplevel):
         user_ok = bool(self.user_ent.get().strip())
         self.create_btn.configure(state="normal" if (all_ok and name_ok and user_ok) else "disabled")
 
+    def _cancel(self):
+        if not self._creating:
+            self.destroy()
+
+    def _set_creation_state(self, creating):
+        self._creating = bool(creating)
+        field_state = "disabled" if self._creating else "normal"
+        for widget in (
+            self.name_ent,
+            self.user_ent,
+            self.role_cb,
+            self.pass_ent,
+        ):
+            widget.configure(state=field_state)
+
+        self.cancel_btn.configure(
+            state="disabled" if self._creating else "normal"
+        )
+        self.create_btn.configure(
+            text="CREATING..." if self._creating else tr("users.modal.btn_create"),
+            state="disabled",
+        )
+        if not self._creating:
+            self._on_key()
+
     def save(self):
+        if self._creating:
+            return
+
         name = self.name_ent.get().strip()
         user = self.user_ent.get().strip().lower()
         role = self.role_cb.get()
-        pwd  = self.pass_ent.get().strip()
+        pwd = self.pass_ent.get().strip()
 
         if not name or not user or not pwd:
-            ErrorDialog(self, tr("common.error"), tr("users.messages.error_fields"))
+            ErrorDialog(
+                self,
+                tr("common.error"),
+                tr("users.messages.error_fields"),
+            )
             return
 
         results = self._check_requirements(pwd)
         if not all(results.values()):
-            ErrorDialog(self, tr("common.error"),
-                        "Password does not meet all requirements.")
+            ErrorDialog(
+                self,
+                tr("common.error"),
+                "Password does not meet all requirements.",
+            )
             return
 
+        confirmation = ConfirmDialog(
+            self,
+            "Confirm New User",
+            _user_creation_confirmation_message(name, user, role),
+            confirm_text="CONFIRM & CREATE",
+            cancel_text="REVIEW DETAILS",
+        )
+        self.wait_window(confirmation)
+        if not confirmation.result:
+            return
+
+        self._set_creation_state(True)
+
+        def worker():
+            try:
+                result = auth.create_user(name, user, pwd, role)
+                self.after(
+                    0,
+                    lambda response=result: self._creation_succeeded(
+                        response,
+                        name,
+                        user,
+                        role,
+                    ),
+                )
+            except Exception as exc:
+                self.after(
+                    0,
+                    lambda error=exc: self._creation_failed(error),
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _creation_succeeded(self, response, full_name, username, role):
+        if not isinstance(response, dict) or response.get("status") != "created":
+            self._creation_failed(
+                RuntimeError(
+                    "The server did not confirm that the account was created."
+                )
+            )
+            return
+
+        parent = self.master.winfo_toplevel()
+        self.callback(username)
         try:
-            res = auth.create_user(name, user, pwd, role)
-            if res.get("status") == "created":
-                show_toast(self.master.winfo_toplevel(),
-                           tr("users.messages.success_register").replace("{user}", user),
-                           type="success")
-                self.callback()
-                self.destroy()
-            else:
-                ErrorDialog(self, tr("common.error"), "Failed to create account.")
-        except Exception as e:
-            ErrorDialog(self, tr("common.error"), str(e))
+            self.grab_release()
+        except tk.TclError:
+            pass
+        self.destroy()
+        messagebox.showinfo(
+            "User Created",
+            (
+                f"User account created successfully.\n\n"
+                f"Full name: {full_name}\n"
+                f"Username: {username}\n"
+                f"Role: {str(role or '').upper()}"
+            ),
+            parent=parent,
+        )
+
+    def _creation_failed(self, error):
+        self._set_creation_state(False)
+        ErrorDialog(self, "User Creation Failed", str(error))
 
 
 class ResetPasswordModal(ctk.CTkToplevel):

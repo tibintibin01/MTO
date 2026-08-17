@@ -184,7 +184,7 @@ def create_user(full_name, username, password, role):
         "password": password,
         "role": role,
     }
-    return api_request("POST", "/users", data=data)
+    return api_request("POST", "/users", data=data, queue_offline=False)
 
 
 def delete_user(user_id):
