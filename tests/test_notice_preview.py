@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 
 from backend.generators.notice_gen import (
@@ -17,9 +18,9 @@ def _statement_data():
         "lot_number": None,
         "block_number": None,
         "area": "0 sqm",
-        "pin": "06-0001-00577",
-        "last_payment_date": None,
-        "last_or_number": None,
+        "pin": "03-140-1001",
+        "last_payment_date": datetime(2026, 7, 29),
+        "last_or_number": "8169531Y",
         "prepared_by": "MTO Test User",
         "billing_rows": [
             {
@@ -71,8 +72,16 @@ def test_notice_preview_is_self_contained_folio_document(tmp_path):
     assert "Save PDF" in document
     assert "Print Document" in document
     assert "data:image/png;base64," in document
-    assert "MTO TEST USER" not in document
-    assert '<div class="signature-name"></div>' in document
+    assert "ABERO, MAURICIO MARRIED TO RIVERA, PATRICIA" in document
+    assert "BRGY. NORTH POBLACION, DIPACULAO, AURORA" in document
+    assert "<strong>TDN:</strong><span>06-0001-00577</span>" in document
+    assert "03-140-1001" not in document
+    assert "JUL 29, 2026 / OR NO. 8169531Y" in document
+    assert "<strong>Date:</strong><span>JUL 29, 2026</span>" in document
+    assert "<strong>OR No.:</strong><span>8169531Y</span>" in document
+    assert '<div class="signature-name">MTO TEST USER</div>' in document
+    assert '<div class="signature-name">MARIA ELENA P. CHAVEZ</div>' in document
+    assert "<td>FULL</td>" in document
 
 
 def test_notice_preview_escapes_taxpayer_text(tmp_path):
@@ -82,7 +91,7 @@ def test_notice_preview_escapes_taxpayer_text(tmp_path):
     document = output.read_text(encoding="utf-8")
 
     assert "<script>alert" not in document
-    assert "&lt;script&gt;" in document
+    assert "&lt;SCRIPT&gt;" in document
 
 
 def test_peso_words_includes_centavos():

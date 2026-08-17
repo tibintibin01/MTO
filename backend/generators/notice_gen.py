@@ -10,6 +10,8 @@ from reportlab.pdfgen import canvas
 
 from backend.generators.base import BRANDING, safe_text, safe_filename, fmt_currency
 
+MUNICIPAL_TREASURER_NAME = "MARIA ELENA P. CHAVEZ"
+
 
 def _asset_path(key):
     root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -270,10 +272,10 @@ def generate_delinquency_notice(statement_data, base_dir):
     c.setStrokeColor(colors.black)
     c.line(sig_x, current_y, width - margin_x, current_y)
     c.setFont("Helvetica-Bold", 9)
-    c.drawCentredString(sig_x + 35 * mm, current_y + 2 * mm, safe_text(statement_data.get("accountable_officer")) or "")
+    c.drawCentredString(sig_x + 35 * mm, current_y + 2 * mm, MUNICIPAL_TREASURER_NAME)
     c.setFont("Helvetica", 8)
     c.setFillColor(colors.HexColor(BRANDING["branding_colors"]["secondary"]))
-    c.drawCentredString(sig_x + 35 * mm, current_y - 5 * mm, "Municipal Treasurer / Authorized Representative")
+    c.drawCentredString(sig_x + 35 * mm, current_y - 5 * mm, "Municipal Treasurer")
 
     footer_y = 15 * mm
     c.setStrokeColor(accent)
@@ -336,6 +338,24 @@ def _html_text(value, fallback="N/A"):
     return html.escape(text if text else fallback)
 
 
+def _html_upper(value, fallback="N/A"):
+    text = safe_text(value).strip()
+    return html.escape((text if text else fallback).upper())
+
+
+def _municipal_address(value):
+    """Return a consistent full municipal address from a barangay value."""
+    barangay = " ".join(safe_text(value).strip().upper().split())
+    barangay = barangay.split(",", 1)[0].strip()
+    for prefix in ("BARANGAY ", "BRGY. ", "BRGY "):
+        if barangay.startswith(prefix):
+            barangay = barangay[len(prefix):].strip()
+            break
+    if not barangay or barangay in {"N/A", "NONE", "NULL"}:
+        return "DIPACULAO, AURORA"
+    return f"BRGY. {barangay}, DIPACULAO, AURORA"
+
+
 def _notice_date(value):
     if not value:
         return "N/A"
@@ -376,7 +396,7 @@ def generate_delinquency_notice_preview(statement_data, base_dir):
             "<tr>"
             f"<td>{fmt_currency(row.get('assessed_value'))}</td>"
             f"<td>{_html_text(row.get('tax_year'))}</td>"
-            "<td>Full</td>"
+            "<td>FULL</td>"
             f"<td>{fmt_currency(row.get('basic_amount'))}</td>"
             f"<td>{fmt_currency(row.get('sef_amount'))}</td>"
             f"<td class=\"penalty\">+ {fmt_currency(row.get('penalty'))}</td>"
@@ -386,20 +406,30 @@ def generate_delinquency_notice_preview(statement_data, base_dir):
     if not table_rows:
         table_rows.append('<tr><td colspan="7" class="empty">No outstanding billing rows found.</td></tr>')
 
-    prepared_by = ""
-    owner_name = _html_text(statement_data.get("owner_name"))
-    barangay = _html_text(statement_data.get("barangay") or statement_data.get("location"))
-    location = _html_text(statement_data.get("location") or statement_data.get("barangay"))
-    last_payment = _notice_date(statement_data.get("last_payment_date"))
-    last_or = _html_text(statement_data.get("last_or_number"))
-    accountable = _html_text(
+    prepared_by = _html_upper(
+        statement_data.get("prepared_by"),
+        "AUTHORIZED MTO PERSONNEL",
+    )
+    owner_name = _html_upper(statement_data.get("owner_name"))
+    property_address = _html_text(
+        _municipal_address(
+            statement_data.get("barangay") or statement_data.get("location")
+        )
+    )
+    last_payment = _html_upper(_notice_date(statement_data.get("last_payment_date")))
+    last_or = _html_upper(statement_data.get("last_or_number"))
+    if last_payment == "N/A" and last_or == "N/A":
+        last_payment_summary = "NO PAYMENT ON RECORD"
+    else:
+        last_payment_summary = f"{last_payment} / OR NO. {last_or}"
+    accountable = _html_upper(
         statement_data.get("accountable_officer"),
         "MUNICIPAL TREASURER",
     )
     current_assessed = float(statement_data.get("assessed_value", 0) or 0)
     logo_uri = _asset_data_uri("logo_path")
     seal_uri = _asset_data_uri("seal_path")
-    today = datetime.now().strftime("%b %d, %Y")
+    today = datetime.now().strftime("%b %d, %Y").upper()
 
     document = f"""<!doctype html>
 <html lang="en">
@@ -428,19 +458,19 @@ def generate_delinquency_notice_preview(statement_data, base_dir):
   .date-row {{ display:flex; justify-content:flex-end; align-items:flex-end; gap:10px; margin-bottom:10px; }}
   .date-line {{ width:1.55in; border-bottom:1px solid #111; padding:0 5px 3px; text-align:center; }}
   .identity {{ display:grid; grid-template-columns:.76in 1fr; gap:7px 10px; margin-bottom:11px; }}
-  .fill-line {{ border-bottom:1px solid #111; min-height:19px; padding:0 5px 3px; font-weight:700; }}
+  .fill-line {{ border-bottom:1px solid #111; min-height:19px; padding:0 5px 3px; font-weight:700; text-transform:uppercase; }}
   .fill-line.address {{ font-weight:400; }}
   .salutation {{ font-weight:700; margin:11px 0 7px; }}
   .legal {{ margin:0 0 11px; text-align:justify; }}
   .property-grid {{ display:grid; grid-template-columns:1fr 1fr; column-gap:30px; margin:7px 0 11px; }}
   .detail {{ display:grid; grid-template-columns:.96in 1fr; align-items:end; min-height:25px; }}
   .detail strong {{ font-size:9px; }}
-  .detail span {{ border-bottom:1px solid #111; padding:0 5px 3px; min-height:18px; }}
+  .detail span {{ border-bottom:1px solid #111; padding:0 5px 3px; min-height:18px; text-transform:uppercase; }}
   .summary-sentence {{ margin:11px 0 8px; }}
   .summary-sentence b {{ color:var(--red); }}
   table {{ width:100%; border-collapse:collapse; table-layout:fixed; font-size:8.8px; }}
   th, td {{ border:1px solid #111; padding:6px 4px; text-align:right; vertical-align:middle; }}
-  th {{ text-align:center; font-weight:700; background:#f8fafc; }}
+  th {{ text-align:center; font-weight:700; background:#f8fafc; text-transform:uppercase; }}
   th:nth-child(1), td:nth-child(1) {{ width:18%; }}
   th:nth-child(2), td:nth-child(2) {{ width:10%; text-align:center; }}
   th:nth-child(3), td:nth-child(3) {{ width:9%; text-align:center; }}
@@ -456,7 +486,7 @@ def generate_delinquency_notice_preview(statement_data, base_dir):
   .signature-space {{ flex:1 1 auto; min-height:1.7in; max-height:2.25in; display:flex; align-items:flex-end; }}
   .signatures {{ width:100%; display:grid; grid-template-columns:1fr 1fr; gap:.72in; text-align:center; }}
   .signature-label {{ text-align:left; margin-bottom:22px; }}
-  .signature-name {{ border-bottom:1px solid #111; font-weight:700; min-height:18px; }}
+  .signature-name {{ border-bottom:1px solid #111; font-weight:700; min-height:18px; text-transform:uppercase; }}
   .signature-title {{ font-size:7.8px; margin-top:3px; text-transform:uppercase; }}
   .service-rule {{ border-top:1px solid #9ca3af; margin-top:8px; }}
   .service {{ display:grid; grid-template-columns:1.35fr .9fr; gap:14px; padding-top:8px; }}
@@ -501,24 +531,24 @@ def generate_delinquency_notice_preview(statement_data, base_dir):
       <div class="date-row"><b>Date:</b><span class="date-line">{today}</span></div>
       <section class="identity">
         <b>Name:</b><span class="fill-line">{owner_name}</span>
-        <b>Address:</b><span class="fill-line address">Brgy. {barangay}, Dipaculao</span>
+        <b>Address:</b><span class="fill-line address">{property_address}</span>
       </section>
       <div class="salutation">Dear Sir / Madam:</div>
       <p class="legal">In compliance with the requirement of Sec. 254, R.A. 7160 (Local Government Code of 1991), you are hereby informed of the tax delinquency on your property described as follows:</p>
       <section class="property-grid">
         <div>
-          <div class="detail"><strong>Classification:</strong><span>{_html_text(statement_data.get('kind_of_property'))}</span></div>
-          <div class="detail"><strong>PIN/TDN:</strong><span>{_html_text(statement_data.get('pin') or td_number)}</span></div>
-          <div class="detail"><strong>Location:</strong><span>Brgy. {location}, Dipaculao, Aurora</span></div>
+          <div class="detail"><strong>Classification:</strong><span>{_html_upper(statement_data.get('kind_of_property'))}</span></div>
+          <div class="detail"><strong>TDN:</strong><span>{_html_upper(td_number)}</span></div>
+          <div class="detail"><strong>Location:</strong><span>{property_address}</span></div>
           <div class="detail"><strong>Assessed Value:</strong><span>PHP {fmt_currency(current_assessed)}</span></div>
-          <div class="detail"><strong>Last Payment:</strong><span>{last_payment}</span></div>
+          <div class="detail"><strong>Last Payment:</strong><span>{last_payment_summary}</span></div>
           <div class="detail"><strong>Collector:</strong><span>{accountable}</span></div>
         </div>
         <div>
-          <div class="detail"><strong>Lot No.:</strong><span>{_html_text(statement_data.get('lot_number'))}</span></div>
-          <div class="detail"><strong>Block No.:</strong><span>{_html_text(statement_data.get('block_number'))}</span></div>
+          <div class="detail"><strong>Lot No.:</strong><span>{_html_upper(statement_data.get('lot_number'))}</span></div>
+          <div class="detail"><strong>Block No.:</strong><span>{_html_upper(statement_data.get('block_number'))}</span></div>
           <div class="detail"><strong>TCT No.:</strong><span>N/A</span></div>
-          <div class="detail"><strong>Area:</strong><span>{_html_text(statement_data.get('area'), '0 sqm')}</span></div>
+          <div class="detail"><strong>Area:</strong><span>{_html_upper(statement_data.get('area'), '0 SQM')}</span></div>
           <div class="detail"><strong>Date:</strong><span>{last_payment}</span></div>
           <div class="detail"><strong>OR No.:</strong><span>{last_or}</span></div>
         </div>
@@ -537,7 +567,7 @@ def generate_delinquency_notice_preview(statement_data, base_dir):
       <div class="signature-space">
         <section class="signatures">
           <div><div class="signature-label">Prepared by:</div><div class="signature-name">{prepared_by}</div><div class="signature-title">Revenue Collection Clerk / Authorized Personnel</div></div>
-          <div><div class="signature-label">Very truly yours,</div><div class="signature-name">OFFICE OF THE MUNICIPAL TREASURER</div><div class="signature-title">Municipal Treasurer</div></div>
+          <div><div class="signature-label">Very truly yours,</div><div class="signature-name">{MUNICIPAL_TREASURER_NAME}</div><div class="signature-title">Municipal Treasurer</div></div>
         </section>
       </div>
       <div class="service-rule"></div>

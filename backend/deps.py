@@ -366,8 +366,8 @@ async def get_current_user(request: Request, token: Optional[str] = None, db_ses
 
     user = (
         db_session.query(User)
-        .options(load_only(User.id, User.is_active, User.deleted_at,
-                           User.password_changed_at))
+        .options(load_only(User.id, User.full_name, User.is_active,
+                           User.deleted_at, User.password_changed_at))
         .filter(User.id == user_id)
         .first()
     )
@@ -432,6 +432,7 @@ async def get_current_user(request: Request, token: Optional[str] = None, db_ses
     return {
         "id": user_id,
         "username": username,
+        "full_name": user.full_name,
         "role": role,
         "session_id": session_id,
     }
