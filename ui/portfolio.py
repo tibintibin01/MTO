@@ -63,6 +63,200 @@ def _property_candidate(row):
     }
 
 
+def _portfolio_name_error(value, original_name=""):
+    """Return a user-facing validation message, or an empty string if valid."""
+    name = str(value or "").strip()
+    if len(name) < 2:
+        return "Portfolio name must contain at least 2 characters."
+    if len(name) > 255:
+        return "Portfolio name cannot exceed 255 characters."
+    if original_name and name == str(original_name).strip():
+        return "Enter a different name to save changes."
+    return ""
+
+
+class PortfolioNameDialog(ctk.CTkToplevel):
+    """Modern, validated modal for creating or renaming a portfolio folder."""
+
+    def __init__(self, parent, *, mode="create", initial_value=""):
+        super().__init__(parent)
+        self.mode = "rename" if mode == "rename" else "create"
+        self.initial_value = str(initial_value or "").strip()
+        self.result = None
+        is_rename = self.mode == "rename"
+
+        self.title("Rename Portfolio" if is_rename else "Create Portfolio")
+        self.geometry("520x360")
+        self.resizable(False, False)
+        self.configure(fg_color=COLORS["panel_alt"])
+        self.transient(parent.winfo_toplevel())
+        self.grab_set()
+        self.attributes("-topmost", True)
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self.bind("<Escape>", lambda _event: self._cancel())
+        self.bind("<Return>", lambda _event: self._submit())
+
+        accent = COLORS["blue"] if is_rename else COLORS["green"]
+        accent_hover = COLORS["blue_hover"] if is_rename else COLORS["green_hover"]
+        action_text = "SAVE NEW NAME" if is_rename else "CREATE PORTFOLIO"
+
+        ctk.CTkFrame(self, fg_color=accent, height=5, corner_radius=0).pack(
+            fill="x"
+        )
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=28, pady=(20, 22))
+
+        ctk.CTkLabel(
+            body,
+            text="PROPERTY PORTFOLIOS",
+            font=("Inter", 10, "bold"),
+            text_color=accent,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            body,
+            text="Rename portfolio" if is_rename else "Create a portfolio folder",
+            font=("Inter", 22, "bold"),
+            text_color=COLORS["text"],
+        ).pack(anchor="w", pady=(3, 3))
+        ctk.CTkLabel(
+            body,
+            text=(
+                "Update the folder name without changing any linked properties."
+                if is_rename
+                else "Organize related properties in one folder. "
+                "No property records are changed."
+            ),
+            font=("Inter", 11),
+            text_color=COLORS["muted"],
+            wraplength=450,
+            justify="left",
+        ).pack(anchor="w", pady=(0, 16))
+
+        card = ctk.CTkFrame(
+            body,
+            fg_color=COLORS["panel"],
+            border_width=1,
+            border_color=COLORS["border"],
+            corner_radius=10,
+        )
+        card.pack(fill="x")
+
+        field_header = ctk.CTkFrame(card, fg_color="transparent")
+        field_header.pack(fill="x", padx=16, pady=(14, 6))
+        ctk.CTkLabel(
+            field_header,
+            text="PORTFOLIO NAME",
+            font=("Inter", 10, "bold"),
+            text_color=COLORS["muted"],
+        ).pack(side="left")
+        self.counter_label = ctk.CTkLabel(
+            field_header,
+            text="0 / 255",
+            font=("Inter", 9),
+            text_color=COLORS["muted"],
+        )
+        self.counter_label.pack(side="right")
+
+        self.name_entry = ctk.CTkEntry(
+            card,
+            height=42,
+            placeholder_text="e.g., ABC Corporation Properties",
+            fg_color=COLORS["panel_alt"],
+            border_color=COLORS["border"],
+            text_color=COLORS["text"],
+            font=("Inter", 12),
+        )
+        self.name_entry.pack(fill="x", padx=16)
+        if self.initial_value:
+            self.name_entry.insert(0, self.initial_value)
+        self.name_entry.bind("<KeyRelease>", self._validate)
+
+        self.feedback_label = ctk.CTkLabel(
+            card,
+            text="Use a clear name your staff will recognize.",
+            font=("Inter", 9),
+            text_color=COLORS["muted"],
+            anchor="w",
+        )
+        self.feedback_label.pack(fill="x", padx=16, pady=(7, 13))
+
+        actions = ctk.CTkFrame(body, fg_color="transparent")
+        actions.pack(fill="x", pady=(16, 0))
+        ctk.CTkButton(
+            actions,
+            text="CANCEL",
+            command=self._cancel,
+            width=130,
+            height=40,
+            fg_color=COLORS["slate"],
+            hover_color=COLORS["slate_hover"],
+            font=("Inter", 10, "bold"),
+        ).pack(side="left")
+        self.submit_button = ctk.CTkButton(
+            actions,
+            text=action_text,
+            command=self._submit,
+            width=205,
+            height=40,
+            fg_color=accent,
+            hover_color=accent_hover,
+            font=("Inter", 10, "bold"),
+            state="disabled",
+        )
+        self.submit_button.pack(side="right")
+
+        self._validate()
+        self._center_on_parent(parent.winfo_toplevel())
+        self.after(100, self._focus_entry)
+
+    def _center_on_parent(self, parent):
+        self.update_idletasks()
+        parent.update_idletasks()
+        x = parent.winfo_rootx() + max(
+            (parent.winfo_width() - self.winfo_width()) // 2, 0
+        )
+        y = parent.winfo_rooty() + max(
+            (parent.winfo_height() - self.winfo_height()) // 2, 0
+        )
+        self.geometry(f"+{x}+{y}")
+
+    def _focus_entry(self):
+        self.name_entry.focus_set()
+        if self.initial_value:
+            self.name_entry.select_range(0, "end")
+
+    def _validate(self, _event=None):
+        trimmed = self.name_entry.get().strip()
+        error = _portfolio_name_error(trimmed, self.initial_value)
+        self.counter_label.configure(
+            text=f"{len(trimmed)} / 255",
+            text_color=COLORS["red"] if len(trimmed) > 255 else COLORS["muted"],
+        )
+        if not trimmed:
+            message = "Use a clear name your staff will recognize."
+            color = COLORS["muted"]
+        elif error:
+            message = error
+            color = COLORS["red"]
+        else:
+            message = "Ready to save this portfolio folder."
+            color = COLORS["green"]
+        self.feedback_label.configure(text=message, text_color=color)
+        self.submit_button.configure(state="disabled" if error else "normal")
+
+    def _submit(self):
+        name = self.name_entry.get().strip()
+        if _portfolio_name_error(name, self.initial_value):
+            self._validate()
+            return
+        self.result = name
+        self.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.destroy()
+
+
 class PropertyLinkDialog(ctk.CTkToplevel):
     """Search and select one existing property to link."""
 
@@ -833,12 +1027,13 @@ class PortfolioPage:
         )
 
     def create_portfolio(self):
-        name = simpledialog.askstring(
-            "Create Portfolio",
-            "Portfolio name:",
-            parent=self.parent.winfo_toplevel(),
+        dialog = PortfolioNameDialog(
+            self.parent.winfo_toplevel(),
+            mode="create",
         )
-        if not name or not name.strip():
+        self.parent.wait_window(dialog)
+        name = dialog.result
+        if not name:
             return
         self._run_async(
             "Creating portfolio...",
@@ -852,13 +1047,14 @@ class PortfolioPage:
         if not self.selected_portfolio:
             return
         current_name = self.selected_portfolio.get("name", "")
-        name = simpledialog.askstring(
-            "Rename Portfolio",
-            "New portfolio name:",
-            initialvalue=current_name,
-            parent=self.parent.winfo_toplevel(),
+        dialog = PortfolioNameDialog(
+            self.parent.winfo_toplevel(),
+            mode="rename",
+            initial_value=current_name,
         )
-        if not name or not name.strip() or name.strip() == current_name:
+        self.parent.wait_window(dialog)
+        name = dialog.result
+        if not name:
             return
         portfolio_id = self.selected_portfolio["id"]
         self._run_async(

@@ -807,8 +807,10 @@ class RegisterUserModal(ctk.CTkToplevel):
     def __init__(self, parent, callback):
         super().__init__(parent)
         self.title(tr("users.modal.title"))
-        self.geometry("450x720")
-        self.resizable(False, False)
+        dialog_width = 500
+        dialog_height = min(690, max(600, self.winfo_screenheight() - 100))
+        self.geometry(f"{dialog_width}x{dialog_height}")
+        self.resizable(False, True)
         self.callback = callback
         self._creating = False
 
@@ -818,7 +820,10 @@ class RegisterUserModal(ctk.CTkToplevel):
 
         self.update_idletasks()
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"+{(sw-450)//2}+{(sh-720)//2}")
+        self.geometry(
+            f"+{max((sw-dialog_width)//2, 0)}+"
+            f"{max((sh-dialog_height)//2, 10)}"
+        )
 
         self.setup_ui()
         self.protocol("WM_DELETE_WINDOW", self._cancel)
@@ -829,13 +834,53 @@ class RegisterUserModal(ctk.CTkToplevel):
 
         self.configure(fg_color="white")
 
-        header_fr = ctk.CTkFrame(self, fg_color=ModernTheme.PRIMARY, height=100, corner_radius=0)
-        header_fr.pack(fill="x")
+        header_fr = ctk.CTkFrame(
+            self, fg_color=ModernTheme.PRIMARY, height=88, corner_radius=0
+        )
+        header_fr.pack(fill="x", side="top")
+        header_fr.pack_propagate(False)
         ctk.CTkLabel(header_fr, text=f"👤 {tr('users.modal.header')}",
-                     font=ModernTheme.H3, text_color="white").pack(pady=35)
+                     font=ModernTheme.H3, text_color="white").pack(expand=True)
 
-        form = ctk.CTkFrame(self, fg_color="transparent")
-        form.pack(fill="both", expand=True, padx=40, pady=20)
+        # Keep actions outside the scrolling form so they never fall below the
+        # screen on smaller displays or with increased Windows display scaling.
+        btn_fr = ctk.CTkFrame(
+            self, fg_color="#f1f5f9", height=72, corner_radius=0
+        )
+        btn_fr.pack(fill="x", side="bottom")
+        btn_fr.pack_propagate(False)
+        self.cancel_btn = ctk.CTkButton(
+            btn_fr,
+            text=tr("users.modal.btn_cancel"),
+            command=self._cancel,
+            fg_color=ModernTheme.SECONDARY,
+            height=40,
+            width=120,
+            font=ModernTheme.BUTTON,
+        )
+        self.cancel_btn.pack(side="left", padx=(28, 8), pady=16)
+        self.create_btn = ctk.CTkButton(
+            btn_fr,
+            text=tr("users.modal.btn_create"),
+            command=self.save,
+            fg_color=ModernTheme.SUCCESS,
+            height=40,
+            width=280,
+            font=ModernTheme.BUTTON,
+            state="disabled",
+        )
+        self.create_btn.pack(side="right", padx=(8, 28), pady=16)
+
+        form = ctk.CTkScrollableFrame(
+            self,
+            fg_color="white",
+            corner_radius=0,
+            scrollbar_button_color="#cbd5e1",
+            scrollbar_button_hover_color="#94a3b8",
+        )
+        form.pack(
+            fill="both", expand=True, side="top", padx=(34, 24), pady=14
+        )
 
         # Full Name
         ctk.CTkLabel(form, text=tr("users.modal.fields.name"),
@@ -843,6 +888,7 @@ class RegisterUserModal(ctk.CTkToplevel):
         self.name_ent = ctk.CTkEntry(form, placeholder_text="e.g. Juan Dela Cruz",
                                      height=40, font=ModernTheme.BODY)
         self.name_ent.pack(fill="x", pady=(5, 12))
+        self.name_ent.bind("<KeyRelease>", self._on_key)
 
         # Username
         ctk.CTkLabel(form, text=tr("users.modal.fields.username"),
@@ -850,6 +896,7 @@ class RegisterUserModal(ctk.CTkToplevel):
         self.user_ent = ctk.CTkEntry(form, placeholder_text="e.g. juandc",
                                      height=40, font=ModernTheme.BODY)
         self.user_ent.pack(fill="x", pady=(5, 12))
+        self.user_ent.bind("<KeyRelease>", self._on_key)
 
         # Role
         ctk.CTkLabel(form, text=tr("users.modal.fields.role"),
@@ -898,31 +945,9 @@ class RegisterUserModal(ctk.CTkToplevel):
 
         self.pass_ent.bind("<KeyRelease>", self._on_key)
 
-        # Buttons
-        btn_fr = ctk.CTkFrame(self, fg_color="transparent")
-        btn_fr.pack(fill="x", side="bottom", pady=20, padx=40)
-
-        self.cancel_btn = ctk.CTkButton(
-            btn_fr,
-            text=tr("users.modal.btn_cancel"),
-            command=self._cancel,
-            fg_color=ModernTheme.SECONDARY,
-            height=40,
-            width=100,
-            font=ModernTheme.BUTTON,
-        )
-        self.cancel_btn.pack(side="left")
-        self.create_btn = ctk.CTkButton(
-            btn_fr,
-            text=tr("users.modal.btn_create"),
-            command=self.save,
-            fg_color=ModernTheme.SUCCESS,
-            height=40,
-            width=250,
-            font=ModernTheme.BUTTON,
-            state="disabled",
-        )
-        self.create_btn.pack(side="right")
+        self.bind("<Escape>", lambda _event: self._cancel())
+        self.bind("<Return>", lambda _event: self.save())
+        self.after(100, self.name_ent.focus_set)
 
     def _check_requirements(self, pwd: str) -> dict:
         re = self._re
