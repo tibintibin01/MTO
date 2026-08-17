@@ -359,7 +359,15 @@ async def normalize_property_names(
     from backend.services.history_service import log_data_change
     from utils.sanitizer import sanitize_string
 
-    properties = db_session.query(Property).order_by(Property.id.asc()).all()
+    # Match the dashboard's definition of a property. Archived/soft-deleted
+    # records remain available for history, but they should not inflate this
+    # operator-facing scan count or be modified by a routine cleanup.
+    properties = (
+        db_session.query(Property)
+        .filter(Property.deleted_at.is_(None))
+        .order_by(Property.id.asc())
+        .all()
+    )
     affected = 0
     fields_changed = 0
     sample = []

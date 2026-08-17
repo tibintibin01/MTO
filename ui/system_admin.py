@@ -1292,7 +1292,7 @@ class SystemAdminPage:
                     def show_none():
                         messagebox.showinfo(
                             "Owner Name Cleanup",
-                            f"No encoded owner/payor names found.\n\nProperties scanned: {scanned:,}",
+                            f"No encoded owner/payor names found.\n\nActive properties scanned: {scanned:,}",
                             parent=self.container.winfo_toplevel(),
                         )
                         reset_button()
@@ -1305,7 +1305,7 @@ class SystemAdminPage:
                 )
                 message = (
                     "Decode stored owner/payor names?\n\n"
-                    f"Properties scanned: {scanned:,}\n"
+                    f"Active properties scanned: {scanned:,}\n"
                     f"Properties affected: {affected:,}\n"
                     f"Name fields to update: {fields:,}\n\n"
                     f"Examples:\n{examples}\n\n"

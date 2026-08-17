@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine, event
@@ -84,3 +85,39 @@ def test_admin_cleanup_previews_then_repairs_existing_names(db):
     db.refresh(prop)
     assert prop.owner_name == "MUNICIPAL GOV'T OF DIPACULAO"
     assert prop.payor_name == "SPS. DIONCO & ESTRELLA"
+
+
+def test_admin_cleanup_excludes_archived_properties(db):
+    active = Property(
+        td_number="06-0025-00002",
+        owner_name="ACTIVE &amp; OWNER",
+        assessed_value=1000,
+    )
+    archived = Property(
+        td_number="06-0025-00003",
+        owner_name="ARCHIVED &amp; OWNER",
+        assessed_value=1000,
+        deleted_at=datetime.now(timezone.utc),
+    )
+    db.add_all([active, archived])
+    db.commit()
+
+    preview = asyncio.run(normalize_property_names(
+        dry_run=True,
+        current_user={"id": 1, "username": "admin"},
+        db_session=db,
+    ))
+    assert preview["properties_scanned"] == 1
+    assert preview["properties_affected"] == 1
+
+    applied = asyncio.run(normalize_property_names(
+        dry_run=False,
+        current_user={"id": 1, "username": "admin"},
+        db_session=db,
+    ))
+    assert applied["properties_scanned"] == 1
+    assert applied["properties_affected"] == 1
+    db.refresh(active)
+    db.refresh(archived)
+    assert active.owner_name == "ACTIVE & OWNER"
+    assert archived.owner_name == "ARCHIVED &amp; OWNER"
