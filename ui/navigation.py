@@ -9,6 +9,7 @@ from utils import tr, LocalizationManager
 NAV_ICONS = {
     "dashboard": "🏠",
     "property": "🏢",
+    "portfolios": "\U0001f5c2",
     "ledger": "📋",
     "delinquencies": "⚠️",
     "compliant": "✅",
@@ -174,6 +175,7 @@ class NavigationSidebar(ctk.CTkFrame):
         from ui.help_page import SystemHelpPage
         from ui.delinquency_dashboard import DelinquencyDashboardPage
         from ui.compliant_dashboard import CompliantDashboardPage
+        from ui.portfolio import PortfolioPage
 
         self._add_nav(
             "dashboard",
@@ -187,6 +189,12 @@ class NavigationSidebar(ctk.CTkFrame):
                 tr("dashboard.nav.property"),
                 lambda: self._navigate("property", PropertyPage),
             )
+            self._add_nav(
+                "portfolios",
+                "Property Portfolios",
+                lambda: self._navigate("portfolios", PortfolioPage),
+            )
+
 
         if auth.has_permission(self.user_data, "ledger_view"):
             self._add_nav(

@@ -148,15 +148,65 @@ class DashboardApp(ctk.CTk):
                 widget.destroy()
             
             # Context-Aware Page Loading
+            from ui.portfolio import PortfolioPage
+
             if page_class == DashboardHomePage:
                 cb = {"trigger_backup": self.trigger_backup_action, "get_summary": system.get_dashboard_summary, "get_trend": payment.get_monthly_collection_trend}
                 self.current_page = page_class(self.main_area, self.user_data, cb)
+            elif page_class == PortfolioPage:
+                callbacks = {
+                    "open_property": lambda td: self.open_portfolio_workflow("property", td),
+                    "open_ledger": lambda td: self.open_portfolio_workflow("ledger", td),
+                    "open_delinquency": lambda td: self.open_portfolio_workflow("delinquencies", td),
+                }
+                self.current_page = page_class(
+                    self.main_area, self.user_data, callbacks
+                )
             else:
                 self.current_page = page_class(self.main_area, self.user_data)
             
             self.watchdog.reset()
         except Exception as e:
             ErrorDialog(self, tr("common.system_error"), f"Failed to load page: {str(e)}")
+
+    def open_portfolio_workflow(self, workflow, td_number):
+        """Open an existing per-property workflow with its TD already loaded."""
+        from ui.property import PropertyPage
+        from ui.ledger import LedgerPage
+        from ui.delinquency_dashboard import DelinquencyDashboardPage
+
+        targets = {
+            "property": ("property", PropertyPage, "refresh_table"),
+            "ledger": ("ledger", LedgerPage, "load_ledger"),
+            "delinquencies": (
+                "delinquencies",
+                DelinquencyDashboardPage,
+                "refresh_table",
+            ),
+        }
+        target = targets.get(workflow)
+        td_number = str(td_number or "").strip()
+        if not target or not td_number:
+            return
+
+        nav_key, page_class, action_name = target
+        self.sidebar._set_active(nav_key)
+        self.load_page(page_class)
+
+        page = getattr(self, "current_page", None)
+        entry = getattr(page, "search_ent", None)
+        if entry is None:
+            return
+        entry.delete(0, "end")
+        entry.insert(0, td_number)
+
+        action = getattr(page, action_name, None)
+        if action is None:
+            return
+        if workflow == "delinquencies":
+            action(reset=True)
+        else:
+            action()
 
     def _handle_sync_conflict(self, action_id, local_payload, server_snapshot):
         """Launches the arbitration UI on the main thread."""

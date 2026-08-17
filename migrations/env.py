@@ -10,6 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.database import SQLALCHEMY_DATABASE_URL, Base
 import backend.models  # noqa: F401 — ensures all models are registered on Base.metadata
+import backend.models_portfolio  # noqa: F401 - registers portfolio metadata
 
 # ---------------------------------------------------------------------------
 # Alembic config object

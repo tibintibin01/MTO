@@ -65,6 +65,18 @@ async def lifespan(app: FastAPI):
             "Authentication database schema is not ready"
         ) from e
     
+    # Portfolios are an optional organizational feature. Create its two
+    # association-only tables idempotently for installations whose updater does
+    # not run Alembic, but never prevent the core revenue system from starting
+    # if the configured DB account does not have DDL permission.
+    try:
+        from backend.services.portfolio_service import ensure_portfolio_schema
+        with SessionLocal() as db:
+            ensure_portfolio_schema(db)
+        mto_logger.info("Property portfolio schema verified on startup.")
+    except Exception as e:
+        mto_logger.warning(f"Could not verify property portfolio schema: {e}")
+
     # Refresh dashboard stats so the first page load shows real numbers.
     try:
         from backend.services.migration_service import ensure_payment_remarks_column
@@ -179,7 +191,7 @@ def create_app() -> FastAPI:
     app.middleware("http")(request_timeout_middleware)
 
     # Import and Include Routers
-    from backend.routes import auth, users, properties, payments, billing, system, public, jobs, reports
+    from backend.routes import auth, users, properties, payments, billing, system, public, jobs, reports, portfolios
     app.include_router(auth.router)
     app.include_router(users.router)
     app.include_router(properties.router)
@@ -189,6 +201,7 @@ def create_app() -> FastAPI:
     app.include_router(public.router)
     app.include_router(jobs.router)
     app.include_router(reports.router)
+    app.include_router(portfolios.router)
 
     # Serve static files (analytics dashboard HTML, etc.)
     # Must be mounted after all API routers so API paths take precedence.
