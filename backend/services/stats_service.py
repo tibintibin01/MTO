@@ -49,11 +49,15 @@ def refresh_system_stats(db_session: Session = None):
         # 3. Collections Today (Philippine calendar day, UTC-safe bounds)
         paid_at = _effective_payment_datetime()
         day_start, day_end = _ph_day_bounds(_today_ph())
-        today_coll = db_session.query(func.sum(Payment.amount)).filter(
+        today_coll, receipts_today = db_session.query(
+            func.sum(Payment.amount),
+            func.count(Payment.id),
+        ).filter(
             paid_at >= day_start,
             paid_at <= day_end,
-        ).scalar()
+        ).one()
         _update_stat(db_session, "collections_today", float(today_coll or 0))
+        _update_stat(db_session, "receipts_today", int(receipts_today or 0))
 
         # 4. Collections Month (from 1st of current PH month)
         month_start = datetime.combine(_month_start_ph(), time.min, tzinfo=_PH_TZ).astimezone(timezone.utc)

@@ -28,21 +28,22 @@
         "title": "Dashboard ng Koleksyon",
         "subtitle": "Real-time na pagsubaybay sa koleksyon at analytics",
         "stats": {
-            "total_properties": "Kabuuang Ari-arian",
+            "total_properties": "Mga Talaan ng Ari-arian",
             "collections_today": "Koleksyon Ngayon",
+            "receipts_today": "Mga Resibo Ngayon",
             "collections_month": "Buwanang Kabuuan"
         },
         "charts": {
             "revenue_month": "Kita bawat Buwan",
-            "collection_trend": "Trend ng Koleksyon"
+            "recent_collections": "Mga Kamakailang Koleksyon"
         },
         "backup": {
-            "title": "STATUS NG PROTEKSYON NG DATA",
+            "title": "PROTEKSYON NG SYSTEM",
             "local": "Local na Backup",
             "usb": "USB Mirror",
             "cloud": "Cloud Sync",
             "verify": "Test ng Restore",
-            "run_now": "MAG-BACKUP NGAYON",
+            "review_settings": "TINGNAN ANG BACKUP SETTINGS",
             "running": "KASALUKUYANG NAG-BABACKUP...",
             "success_toast": "Nagsimula na ang hybrid backup sa background",
             "refresh_toast": "Na-refresh na ang data sa dashboard"

@@ -61,6 +61,7 @@ def test_refresh_system_stats_counts_property_and_collections(db):
     assert stats["total_properties"] == 1
     assert stats["collections_today"] == 500.0
     assert stats["collections_month"] == 500.0
+    assert stats["receipts_today"] == 1
 
 
 def test_get_dashboard_summary_refreshes_stale_cache(db):
@@ -68,4 +69,5 @@ def test_get_dashboard_summary_refreshes_stale_cache(db):
     assert summary["total_properties"] == 1
     assert summary["collections_today"] == 500.0
     assert summary["collections_month"] == 500.0
+    assert summary["receipts_today"] == 1
     assert stats_are_stale(db) is False

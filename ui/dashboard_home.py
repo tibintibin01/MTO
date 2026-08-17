@@ -1,21 +1,72 @@
 import threading
-import time
 import customtkinter as ctk
 from theme_manager import ModernTheme
 import api_clients.auth_service as auth
 import api_clients.payment_service as payment
 import api_clients.system_service as system
 import api_clients.readiness_service as readiness_service
-from ui_components import ModernChartWidget, show_toast, ErrorDialog
+from ui_components import ModernChartWidget, show_toast
 from utils import tr
 from ui.animation_helper import WidgetAnimator
+
+
+def _recent_payment_display(row):
+    """Normalize the recent-payments API row for the dashboard table."""
+    if isinstance(row, dict):
+        date_value = row.get("date") or row.get("date_paid")
+        or_number = row.get("or_number")
+        td_number = row.get("td_number")
+        owner = row.get("owner") or row.get("owner_name")
+        tax_year = row.get("tax_year")
+        amount = row.get("amount")
+    else:
+        values = list(row or [])
+        value = lambda index, default=None: (
+            values[index] if len(values) > index else default
+        )
+        date_value = value(0)
+        or_number = value(1)
+        td_number = value(2)
+        owner = value(3)
+        tax_year = value(4)
+        amount = value(5)
+
+    date_text = str(date_value or "")[:10]
+    try:
+        amount_value = float(amount or 0)
+    except (TypeError, ValueError):
+        amount_value = 0.0
+    return {
+        "date": date_text or "-",
+        "or_number": str(or_number or "-"),
+        "td_number": str(td_number or "-"),
+        "owner_year": (
+            f"{str(owner or '-').strip()} / {str(tax_year or '-').strip()}"
+        ),
+        "amount": amount_value,
+    }
+
+
+def _dashboard_month_label(value):
+    text = str(value or "")
+    try:
+        year_text, month_text = text.split("-", 1)
+        names = (
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        )
+        return f"{names[int(month_text) - 1]} {year_text[-2:]}"
+    except (ValueError, IndexError):
+        return text
+
+
 
 
 class DashboardHomePage:
     def __init__(self, parent, user, callbacks):
         self.parent = parent
         self.user = user
-        self.callbacks = callbacks  # Dict: trigger_backup, get_summary, get_trend
+        self.callbacks = callbacks
         self._backup_status_loaded = False
         self.setup_ui()
         self.start_data_refresh()
@@ -53,7 +104,7 @@ class DashboardHomePage:
         # Stats Cards (Grid)
         self.stats_frame = ctk.CTkFrame(self.container, fg_color="transparent")
         self.stats_frame.pack(fill="x", pady=(0, 20))
-        self.stats_frame.grid_columnconfigure((0, 1, 2), weight=1)
+        self.stats_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         self.stat_cards = {
             "total_properties": self._make_stat_card(
@@ -70,9 +121,16 @@ class DashboardHomePage:
                 "P 0.00",
                 ModernTheme.SUCCESS,
             ),
-            "collections_month": self._make_stat_card(
+            "receipts_today": self._make_stat_card(
                 self.stats_frame,
                 2,
+                tr("dashboard.stats.receipts_today"),
+                "0",
+                ModernTheme.INFO,
+            ),
+            "collections_month": self._make_stat_card(
+                self.stats_frame,
+                3,
                 tr("dashboard.stats.collections_month"),
                 "P 0.00",
                 ModernTheme.WARNING,
@@ -83,36 +141,81 @@ class DashboardHomePage:
 
         charts_frame = ctk.CTkFrame(self.container, fg_color="transparent")
         charts_frame.pack(fill="both", expand=True)
-        charts_frame.grid_columnconfigure((0, 1), weight=1)
+        charts_frame.grid_columnconfigure(0, weight=3)
+        charts_frame.grid_columnconfigure(1, weight=2)
+        charts_frame.grid_rowconfigure(0, weight=1)
 
         self.bar_chart = ModernChartWidget(
             charts_frame, tr("dashboard.charts.revenue_month")
         )
         self.bar_chart.pack(row=0, column=0, padx=(0, 10), sticky="nsew")
 
-        self.trend_chart = ModernChartWidget(
-            charts_frame, tr("dashboard.charts.collection_trend")
-        )
-        self.trend_chart.pack(row=0, column=1, padx=(10, 0), sticky="nsew")
+        self._setup_recent_collections(charts_frame)
 
-        # Backup Status Section
+        # Compact monitoring strip. Backup execution remains in System Settings.
         backup_frame = ctk.CTkFrame(self.container, fg_color="transparent")
-        backup_frame.pack(fill="x", pady=20)
+        backup_frame.pack(fill="x", pady=18)
 
-        self.backup_card = ctk.CTkFrame(backup_frame)
+        self.backup_card = ctk.CTkFrame(
+            backup_frame,
+            border_width=1,
+            border_color=("#cbd5e1", "#334155"),
+            corner_radius=10,
+        )
         self.backup_card.pack(fill="x")
 
+        protection_header = ctk.CTkFrame(
+            self.backup_card, fg_color="transparent"
+        )
+        protection_header.pack(fill="x", padx=18, pady=(13, 8))
         ctk.CTkLabel(
-            self.backup_card,
+            protection_header,
+            text="\u2713",
+            width=34,
+            height=34,
+            corner_radius=17,
+            fg_color=("#dbeafe", "#1e3a5f"),
+            text_color=ModernTheme.INFO,
+            font=("Segoe UI", 16),
+        ).pack(side="left", padx=(0, 10))
+
+        protection_copy = ctk.CTkFrame(
+            protection_header, fg_color="transparent"
+        )
+        protection_copy.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(
+            protection_copy,
             text=tr("dashboard.backup.title"),
-            font=("Segoe UI", 12, "bold"),
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+        ).pack(fill="x")
+        self.backup_summary_lbl = ctk.CTkLabel(
+            protection_copy,
+            text="Loading live protection status...",
+            font=("Segoe UI", 10, "bold"),
             text_color="gray",
-        ).pack(pady=(15, 10), padx=20, anchor="w")
+            anchor="w",
+        )
+        self.backup_summary_lbl.pack(fill="x", pady=(2, 0))
 
-        inner_backup = ctk.CTkFrame(self.backup_card, fg_color="transparent")
-        inner_backup.pack(fill="x", padx=20, pady=(0, 15))
+        if auth.has_permission(self.user, "backup_restore"):
+            ctk.CTkButton(
+                protection_header,
+                text=tr("dashboard.backup.review_settings"),
+                command=self._open_backup_settings,
+                width=190,
+                height=34,
+                fg_color=ModernTheme.SECONDARY,
+                font=("Segoe UI", 9, "bold"),
+            ).pack(side="right", padx=(12, 0))
+
+        inner_backup = ctk.CTkFrame(
+            self.backup_card,
+            fg_color=("#f8fafc", "#111827"),
+            corner_radius=7,
+        )
+        inner_backup.pack(fill="x", padx=18, pady=(0, 8))
         inner_backup.grid_columnconfigure((0, 1, 2, 3), weight=1)
-
         self.backup_labels = {
             "local": self._make_backup_item(
                 inner_backup, 0, tr("dashboard.backup.local"), "Loading..."
@@ -128,46 +231,162 @@ class DashboardHomePage:
             ),
         }
 
-        self.backup_summary = ctk.CTkFrame(
-            self.backup_card, fg_color=("#eef6ff", "#162235"), corner_radius=8
-        )
-        self.backup_summary.pack(fill="x", padx=20, pady=(0, 12))
-        self.backup_summary_lbl = ctk.CTkLabel(
-            self.backup_summary,
-            text="Loading live backup health...",
-            font=("Segoe UI", 11, "bold"),
-            anchor="w",
-        )
-        self.backup_summary_lbl.pack(fill="x", padx=12, pady=(8, 2))
         self.backup_detail_lbl = ctk.CTkLabel(
-            self.backup_summary,
+            self.backup_card,
             text="Contacting the server.",
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 8),
             text_color="gray",
             anchor="w",
         )
-        self.backup_detail_lbl.pack(fill="x", padx=12, pady=(0, 8))
+        self.backup_detail_lbl.pack(fill="x", padx=20, pady=(0, 10))
 
-        backup_actions = ctk.CTkFrame(self.backup_card, fg_color="transparent")
-        backup_actions.pack(fill="x", padx=20, pady=(0, 20))
-        if auth.has_permission(self.user, "backup_restore"):
-            self.backup_btn = ctk.CTkButton(
-                backup_actions,
-                text=tr("dashboard.backup.run_now"),
-                command=self.trigger_manual_backup,
-                width=220,
-                height=38,
-                font=ModernTheme.BUTTON,
-            )
-            self.backup_btn.pack(side="left")
-        else:
-            self.backup_btn = None
+    def _setup_recent_collections(self, parent):
+        self.recent_card = ctk.CTkFrame(
+            parent,
+            corner_radius=10,
+            border_width=1,
+            border_color=("#cbd5e1", "#334155"),
+        )
+        self.recent_card.grid(
+            row=0, column=1, padx=(10, 0), sticky="nsew"
+        )
+
+        recent_header = ctk.CTkFrame(
+            self.recent_card, fg_color="transparent"
+        )
+        recent_header.pack(fill="x", padx=16, pady=(14, 2))
+        ctk.CTkLabel(
+            recent_header,
+            text=tr("dashboard.charts.recent_collections"),
+            font=ModernTheme.H2,
+            anchor="w",
+        ).pack(side="left")
+        if auth.has_permission(self.user, "ledger_view"):
+            ctk.CTkButton(
+                recent_header,
+                text="VIEW LEDGER",
+                command=self._open_payment_ledger,
+                width=100,
+                height=28,
+                fg_color="transparent",
+                border_width=1,
+                border_color=("#94a3b8", "#475569"),
+                text_color=("#334155", "#cbd5e1"),
+                hover_color=("#e2e8f0", "#334155"),
+                font=("Segoe UI", 8, "bold"),
+            ).pack(side="right")
+        ctk.CTkLabel(
+            self.recent_card,
+            text="Latest successfully posted payment records",
+            font=("Segoe UI", 9),
+            text_color="gray",
+            anchor="w",
+        ).pack(fill="x", padx=16, pady=(0, 9))
+
+        self.recent_rows = ctk.CTkFrame(
+            self.recent_card, fg_color="transparent"
+        )
+        self.recent_rows.pack(
+            fill="both", expand=True, padx=12, pady=(0, 12)
+        )
+        self._render_recent_collections([])
+
+    def _render_recent_collections(self, rows):
+        for child in self.recent_rows.winfo_children():
+            child.destroy()
+
+        columns = (
+            ("DATE", 72),
+            ("OR NO.", 88),
+            ("TD NO.", 105),
+            ("OWNER / TAX YEAR", 0),
+            ("AMOUNT", 92),
+        )
+        header = ctk.CTkFrame(
+            self.recent_rows,
+            fg_color=("#e2e8f0", "#1e293b"),
+            corner_radius=4,
+        )
+        header.pack(fill="x", pady=(0, 3))
+        for column, (title, width) in enumerate(columns):
+            header.grid_columnconfigure(column, weight=1 if width == 0 else 0)
             ctk.CTkLabel(
-                backup_actions,
-                text="Administrative credentials required to trigger manual backup.",
-                font=("Segoe UI", 10, "italic"),
+                header,
+                text=title,
+                width=width,
+                anchor="e" if column == 4 else "w",
+                font=("Segoe UI", 8, "bold"),
+                text_color=("#475569", "#94a3b8"),
+            ).grid(
+                row=0, column=column, sticky="ew", padx=6, pady=6
+            )
+
+        if not rows:
+            ctk.CTkLabel(
+                self.recent_rows,
+                text="No recent collections found.",
+                font=("Segoe UI", 10),
                 text_color="gray",
-            ).pack(side="left")
+            ).pack(expand=True, pady=52)
+            return
+
+        for index, raw_row in enumerate(rows[:6]):
+            row = _recent_payment_display(raw_row)
+            frame = ctk.CTkFrame(
+                self.recent_rows,
+                fg_color=(
+                    ("#f8fafc", "#111827")
+                    if index % 2 == 0
+                    else ("#f1f5f9", "#172033")
+                ),
+                corner_radius=0,
+            )
+            frame.pack(fill="x")
+            values = (
+                row["date"],
+                row["or_number"],
+                row["td_number"],
+                row["owner_year"][:30],
+                f"P {row['amount']:,.2f}",
+            )
+            for column, value in enumerate(values):
+                width = columns[column][1]
+                frame.grid_columnconfigure(
+                    column, weight=1 if width == 0 else 0
+                )
+                ctk.CTkLabel(
+                    frame,
+                    text=value,
+                    width=width,
+                    anchor="e" if column == 4 else "w",
+                    font=(
+                        ("Segoe UI", 8, "bold")
+                        if column == 4
+                        else ("Segoe UI", 8)
+                    ),
+                    text_color=(
+                        ModernTheme.SUCCESS
+                        if column == 4
+                        else ("#1e293b", "#e2e8f0")
+                    ),
+                ).grid(
+                    row=0, column=column, sticky="ew", padx=6, pady=7
+                )
+
+    def _open_payment_ledger(self):
+        top = self.parent.winfo_toplevel()
+        from ui.ledger import LedgerPage
+
+        top.sidebar._set_active("ledger")
+        top.load_page(LedgerPage)
+
+    def _open_backup_settings(self):
+        top = self.parent.winfo_toplevel()
+        from ui.system_admin import SystemAdminPage
+
+        top.sidebar._set_active("settings")
+        top.load_page(SystemAdminPage)
+        top.current_page.tabview.set(tr("admin.tabs.db"))
 
     def _setup_tax_year_readiness_banner(self):
         self._tax_year_recommended_tab = "Database & Backup"
@@ -367,12 +586,23 @@ class DashboardHomePage:
                 summary["infra_stats"] = None
 
             trend_rows = self.callbacks["get_trend"](6) or []
-            self.parent.after(0, lambda: self._update_ui(summary, trend_rows))
+            recent_rows = []
+            get_recent = self.callbacks.get("get_recent")
+            if callable(get_recent):
+                try:
+                    recent_rows = get_recent(6) or []
+                except Exception as exc:
+                    from utils import log_error_to_file
+
+                    log_error_to_file("Dashboard recent payments fetch failed", exc)
+            self.parent.after(
+                0, lambda: self._update_ui(summary, trend_rows, recent_rows)
+            )
         except Exception as e:
             print(f"Dashboard refresh error: {e}")
             self.parent.after(0, self._hide_loading)
 
-    def _update_ui(self, summary, trend_rows):
+    def _update_ui(self, summary, trend_rows, recent_rows):
         self._hide_loading()
         if not self.stat_cards["total_properties"].winfo_exists():
             return
@@ -383,14 +613,17 @@ class DashboardHomePage:
         self.stat_cards["collections_today"].configure(
             text=f"P {float(summary.get('collections_today', 0) or 0):,.2f}"
         )
+        self.stat_cards["receipts_today"].configure(
+            text=f"{int(summary.get('receipts_today', 0) or 0):,}"
+        )
         self.stat_cards["collections_month"].configure(
             text=f"P {float(summary.get('collections_month', 0) or 0):,.2f}"
         )
 
-        months = [row["month"][5:] for row in trend_rows]
+        months = [_dashboard_month_label(row.get("month")) for row in trend_rows]
         totals = [row["total"] for row in trend_rows]
         self.bar_chart.draw(months, totals, chart_type="bar")
-        self.trend_chart.draw(months, totals, chart_type="line")
+        self._render_recent_collections(recent_rows)
 
         b = summary.get("backup")
         if b:
@@ -464,13 +697,6 @@ class DashboardHomePage:
         self.backup_detail_lbl.configure(
             text=f"Latest: {last_backup}   |   Checksum: {checksum}   |   Checked: {checked_at}"
         )
-        if self.backup_btn:
-            if is_running:
-                self.backup_btn.configure(
-                    state="disabled", text="BACKUP IN PROGRESS..."
-                )
-            else:
-                self.backup_btn.configure(state="normal", text="RUN HYBRID BACKUP NOW")
 
     def _show_backup_status_error(self, message):
         if not self.backup_card.winfo_exists():
@@ -487,8 +713,6 @@ class DashboardHomePage:
             else message
         )
         self.backup_detail_lbl.configure(text=detail)
-        if self.backup_btn:
-            self.backup_btn.configure(state="normal", text="RUN HYBRID BACKUP NOW")
 
     def _update_infra_ui(self, stats):
         """Updates the new infrastructure health indicators."""
@@ -543,70 +767,3 @@ class DashboardHomePage:
             inner, text="CACHE: LOADING...", font=("Segoe UI", 11), text_color="gray"
         )
         self.cache_lbl.pack(side="right")
-
-    def trigger_manual_backup(self):
-        if self.backup_btn and self.backup_btn.cget("state") == "disabled":
-            return
-
-        if self.backup_btn:
-            self.backup_btn.configure(state="disabled", text="STARTING BACKUP...")
-
-        def run():
-            try:
-                res = self.callbacks["trigger_backup"]() or {}
-                job_id = res.get("job_id")
-                if not job_id:
-                    self.parent.after(0, self.start_data_refresh)
-                    return
-
-                deadline = time.time() + 900
-                while time.time() < deadline:
-                    job = system.get_job_status(job_id) or {}
-                    status = str(job.get("status", "")).upper()
-                    progress = int(job.get("progress") or 0)
-
-                    if self.backup_btn:
-                        self.parent.after(
-                            0,
-                            lambda p=progress: self.backup_btn.configure(
-                                state="disabled", text=f"BACKUP {p}%..."
-                            ),
-                        )
-
-                    if status == "COMPLETED":
-                        self.parent.after(0, self.start_data_refresh)
-                        return
-                    if status == "FAILED":
-                        msg = (
-                            job.get("error")
-                            or job.get("progress_message")
-                            or "Backup failed."
-                        )
-                        self.parent.after(
-                            0,
-                            lambda m=msg: ErrorDialog(
-                                self.parent.winfo_toplevel(), "Backup Failed", m
-                            ),
-                        )
-                        self.parent.after(0, self.start_data_refresh)
-                        return
-
-                    time.sleep(1.5)
-
-                self.parent.after(
-                    0,
-                    lambda: ErrorDialog(
-                        self.parent.winfo_toplevel(),
-                        "Backup Timeout",
-                        "Backup did not finish within 15 minutes.",
-                    ),
-                )
-                self.parent.after(0, self.start_data_refresh)
-            except Exception as e:
-                from tkinter import messagebox
-
-                err = str(e)
-                self.parent.after(0, lambda: messagebox.showerror("Backup Error", err))
-                self.parent.after(0, self.start_data_refresh)
-
-        threading.Thread(target=run, daemon=True).start()

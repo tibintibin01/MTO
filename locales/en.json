@@ -28,21 +28,22 @@
         "title": "Revenue Dashboard",
         "subtitle": "Real-time collection monitoring and analytics",
         "stats": {
-            "total_properties": "Total Properties",
+            "total_properties": "Property Records",
             "collections_today": "Today's Collection",
+            "receipts_today": "Receipts Today",
             "collections_month": "Monthly Total"
         },
         "charts": {
             "revenue_month": "Revenue by Month",
-            "collection_trend": "Collection Trend"
+            "recent_collections": "Recent Collections"
         },
         "backup": {
-            "title": "SYSTEM DATA PROTECTION STATUS",
+            "title": "SYSTEM PROTECTION",
             "local": "Local Backup",
             "usb": "USB Mirror",
             "cloud": "Cloud Sync",
             "verify": "Restore Test",
-            "run_now": "RUN HYBRID BACKUP NOW",
+            "review_settings": "REVIEW BACKUP SETTINGS",
             "running": "BACKUP IN PROGRESS...",
             "success_toast": "Hybrid backup started in background",
             "refresh_toast": "Dashboard data refreshed"

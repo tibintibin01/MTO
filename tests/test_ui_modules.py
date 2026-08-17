@@ -1,4 +1,5 @@
 import unittest
+import inspect
 from unittest.mock import MagicMock, patch
 import sys
 import os
@@ -20,7 +21,11 @@ customtkinter.set_default_color_theme = MagicMock()
 
 from ui.navigation import NavigationSidebar
 from ui.status_bar import ConnectivityStatusBar
-from ui.dashboard_home import DashboardHomePage
+from ui.dashboard_home import (
+    DashboardHomePage,
+    _dashboard_month_label,
+    _recent_payment_display,
+)
 from ui.assessment_roll import (
     AssessmentRollPage,
     assessment_roll_export_dialog_options,
@@ -141,6 +146,37 @@ class TestCompliantDashboardLabels(unittest.TestCase):
 
 
 class TestDashboardHome(unittest.TestCase):
+    def test_recent_payment_rows_are_normalized_for_dashboard_display(self):
+        row = _recent_payment_display(
+            [
+                "2026-08-17",
+                "7812001",
+                "06-0012-00001",
+                "DELA CRUZ, JUAN",
+                "2026",
+                1250.5,
+            ]
+        )
+
+        self.assertEqual(row["date"], "2026-08-17")
+        self.assertEqual(row["or_number"], "7812001")
+        self.assertEqual(row["td_number"], "06-0012-00001")
+        self.assertEqual(row["owner_year"], "DELA CRUZ, JUAN / 2026")
+        self.assertEqual(row["amount"], 1250.5)
+
+    def test_month_labels_include_year_to_avoid_cross_year_ambiguity(self):
+        self.assertEqual(_dashboard_month_label("2026-08"), "Aug 26")
+        self.assertEqual(_dashboard_month_label("invalid"), "invalid")
+
+    def test_dashboard_replaces_duplicate_trend_and_direct_backup_action(self):
+        setup_source = inspect.getsource(DashboardHomePage.setup_ui)
+        class_source = inspect.getsource(DashboardHomePage)
+
+        self.assertNotIn("trend_chart", setup_source)
+        self.assertIn("_setup_recent_collections", setup_source)
+        self.assertNotIn("trigger_manual_backup", class_source)
+        self.assertIn("_open_backup_settings", class_source)
+
     def test_readiness_check_is_admin_only(self):
         home = object.__new__(DashboardHomePage)
         home.user = {"role": "cashier"}
@@ -177,9 +213,9 @@ class TestDashboardHome(unittest.TestCase):
         home = object.__new__(DashboardHomePage)
         home.parent = MagicMock()
         home.callbacks = {
-            "trigger_backup": MagicMock(),
             "get_summary": MagicMock(return_value={"total_properties": 100}),
             "get_trend": MagicMock(return_value=[]),
+            "get_recent": MagicMock(return_value=[]),
         }
         home._update_ui = MagicMock()
         home._hide_loading = MagicMock()
@@ -192,9 +228,11 @@ class TestDashboardHome(unittest.TestCase):
         home.callbacks["get_summary"].assert_called_once_with()
         home.callbacks["get_trend"].assert_called_once_with(6)
         scheduled_render = home.parent.after.call_args.args[1]
+        home.callbacks["get_recent"].assert_called_once_with(6)
         scheduled_render()
         home._update_ui.assert_called_once_with(
             {"total_properties": 100, "infra_stats": {"pool": {}}},
+            [],
             [],
         )
 

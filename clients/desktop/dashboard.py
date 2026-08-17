@@ -151,7 +151,11 @@ class DashboardApp(ctk.CTk):
             from ui.portfolio import PortfolioPage
 
             if page_class == DashboardHomePage:
-                cb = {"trigger_backup": self.trigger_backup_action, "get_summary": system.get_dashboard_summary, "get_trend": payment.get_monthly_collection_trend}
+                cb = {
+                    "get_summary": system.get_dashboard_summary,
+                    "get_trend": payment.get_monthly_collection_trend,
+                    "get_recent": payment.get_recent_payments,
+                }
                 self.current_page = page_class(self.main_area, self.user_data, cb)
             elif page_class == PortfolioPage:
                 callbacks = {
