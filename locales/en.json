@@ -28,7 +28,7 @@
         "title": "Revenue Dashboard",
         "subtitle": "Real-time collection monitoring and analytics",
         "stats": {
-            "total_properties": "Property Records",
+            "total_properties": "Active Properties",
             "collections_today": "Today's Collection",
             "receipts_today": "Receipts Today",
             "collections_month": "Monthly Total"
