@@ -161,9 +161,15 @@ def get_backup_status(db_session: Session = None):
                 ts_str = "Timestamp unavailable"
 
             raw_health = latest.health or "UNKNOWN"
+            cloud_failure_messages = {
+                "CLOUD_QUOTA_BLOCKED": "CLOUD QUOTA OR RETENTION BLOCKED",
+                "CLOUD_CONFIG_ERROR": "CLOUD CONFIGURATION ERROR",
+                "CLOUD_UPLOAD_FAILED": "CLOUD UPLOAD FAILED",
+            }
             health_display = (
                 "SUCCESS" if raw_health in ("OK", "Success", "SUCCESS") or "Success" in raw_health
                 else "RESTORE SKIPPED" if raw_health == "RESTORE_SKIPPED"
+                else cloud_failure_messages[raw_health] if raw_health in cloud_failure_messages
                 else raw_health.replace("Issue: ", "").strip()
             )
             status = (latest.status or "UNKNOWN").upper()
@@ -171,6 +177,8 @@ def get_backup_status(db_session: Session = None):
             local_status = ts_str if status in local_statuses else f"FAILED: {ts_str}"
             usb_status = ts_str if status in {"USB_ONLY", "SYNCED"} else (f"Ready: {usb_path}" if usb_path else "USB drive not detected")
             cloud_status = ts_str if status in {"CLOUD_ONLY", "SYNCED"} else ("No upload in latest run" if cloud_configured else result["last_cloud"])
+            if raw_health in cloud_failure_messages:
+                cloud_status = cloud_failure_messages[raw_health]
             checksum = latest.checksum or "None"
             checksum_short = f"{checksum[:12]}...{checksum[-8:]}" if checksum != "None" and len(checksum) > 24 else checksum
             storage_status = {
@@ -184,6 +192,8 @@ def get_backup_status(db_session: Session = None):
                 "VERIFY_FAILED": "Backup created but verification failed",
                 "FAILED": "Latest backup failed",
             }.get(status, status.replace("_", " ").title())
+            if raw_health in cloud_failure_messages and status in {"LOCAL_ONLY", "USB_ONLY"}:
+                storage_status = f"{storage_status}; cloud was not updated"
             if status in local_statuses and not local_file:
                 local_status = "Backup file missing"
                 storage_status = "Latest backup record exists, but the server file is missing"
@@ -308,11 +318,10 @@ async def run_hybrid_backup(user=None, db_session: Session = None):
 
         # 5. Cloud Sync
         await report_progress(5, 90, "Syncing to Cloud...")
-        cloud_success = False
-        for _ in range(3):
-            if await asyncio.to_thread(_sync_to_cloud, local_path):
-                cloud_success = True
-                break
+        cloud_result = await asyncio.to_thread(_sync_to_cloud, local_path, checksum)
+        cloud_success = bool(cloud_result)
+        if not cloud_success and cloud_result.code != "DISABLED":
+            health = cloud_result.code
 
         if cloud_success and usb_success:
             final_status = "SYNCED"
@@ -323,6 +332,11 @@ async def run_hybrid_backup(user=None, db_session: Session = None):
         else:
             final_status = "LOCAL_ONLY"
         await report_progress(6, 100, "Finalizing backup logs...")
+        if not cloud_success and cloud_result.code != "DISABLED":
+            return True, (
+                "Local backup completed, but cloud protection was not updated: "
+                f"{cloud_result.message}"
+            )
         return True, "Hybrid backup completed successfully."
 
     except Exception as e:
@@ -489,33 +503,20 @@ def _find_usb_drive():
     return None
 
 
-def _sync_to_cloud(file_path):
+def _sync_to_cloud(file_path, plaintext_checksum=None):
     """
-    Uploads the backup file to S3-compatible object storage.
-    Returns True on success, False on failure or when cloud backup is disabled.
+    Encrypts and uploads the backup through the quota-bounded cloud workflow.
+    Raw SQL is never passed to object storage.
     """
-    from utils.config import config as _cfg
-    if not _cfg.ENABLE_CLOUD_BACKUP:
-        return False
-
     try:
-        from backend.services.storage_service import storage_service
-        if not storage_service.enabled:
-            mto_logger.warning("Cloud backup requested but S3 storage is not configured.")
-            return False
+        from backend.services.cloud_backup_service import sync_encrypted_backup
 
-        import os
-        file_name = os.path.basename(file_path)
-        s3_key = f"backups/{file_name}"
-        result = storage_service.upload_file(file_path, s3_key)
-        if result:
-            mto_logger.info(f"Cloud backup uploaded: {s3_key}")
-            return True
-        mto_logger.warning(f"Cloud backup upload returned no key for {file_path}")
-        return False
+        return sync_encrypted_backup(file_path, plaintext_checksum)
     except Exception as e:
-        mto_logger.error(f"Cloud backup upload failed: {e}")
-        return False
+        from backend.services.cloud_backup_service import CloudSyncResult
+
+        mto_logger.error(f"Cloud backup workflow failed: {e}")
+        return CloudSyncResult(False, "CLOUD_UPLOAD_FAILED", str(e))
 
 
 def _generate_checksum(file_path):

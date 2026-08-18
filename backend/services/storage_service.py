@@ -150,5 +150,103 @@ class StorageService:
             logger.error(f"StorageService: Failed to download '{s3_key}' to '{target_local_path}': {e}")
             return False
 
+    def head_object(self, s3_key: str) -> Optional[dict]:
+        """Returns trusted object metadata used for post-upload verification."""
+        if not self.enabled or not self.s3_client:
+            return None
+        try:
+            response = self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
+            return {
+                "key": s3_key,
+                "size": int(response.get("ContentLength", 0)),
+                "etag": str(response.get("ETag", "")).strip('"'),
+                "last_modified": response.get("LastModified"),
+            }
+        except Exception as e:
+            logger.error(f"StorageService: Failed to inspect object '{s3_key}': {e}")
+            return None
+
+    def get_object_bytes(self, s3_key: str, max_bytes: int = 1024 * 1024) -> Optional[bytes]:
+        """Downloads a small object into memory with a strict size ceiling."""
+        if not self.enabled or not self.s3_client or max_bytes <= 0:
+            return None
+        try:
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
+            content_length = int(response.get("ContentLength", 0))
+            if content_length > max_bytes:
+                logger.error(
+                    f"StorageService: Refused oversized object '{s3_key}' ({content_length} bytes)."
+                )
+                response["Body"].close()
+                return None
+            body = response["Body"]
+            try:
+                data = body.read(max_bytes + 1)
+            finally:
+                body.close()
+            if len(data) > max_bytes:
+                logger.error(f"StorageService: Object '{s3_key}' exceeded its read limit.")
+                return None
+            return data
+        except Exception as e:
+            logger.error(f"StorageService: Failed to read object '{s3_key}': {e}")
+            return None
+
+    def list_objects(self, prefix: str = "") -> list[dict]:
+        """Lists every object under a prefix, raising on incomplete/failed listings."""
+        if not self.enabled or not self.s3_client:
+            raise RuntimeError("S3-compatible storage is disabled or unavailable.")
+
+        objects = []
+        continuation_token = None
+        try:
+            while True:
+                params = {"Bucket": self.bucket_name, "Prefix": prefix}
+                if continuation_token:
+                    params["ContinuationToken"] = continuation_token
+                response = self.s3_client.list_objects_v2(**params)
+                for item in response.get("Contents", []):
+                    objects.append({
+                        "key": item["Key"],
+                        "size": int(item.get("Size", 0)),
+                        "last_modified": item.get("LastModified"),
+                    })
+                if not response.get("IsTruncated"):
+                    break
+                continuation_token = response.get("NextContinuationToken")
+                if not continuation_token:
+                    raise RuntimeError("S3 listing was truncated without a continuation token.")
+            return objects
+        except Exception as e:
+            logger.error(f"StorageService: Failed to list objects under '{prefix}': {e}")
+            raise RuntimeError("Could not enumerate cloud backup objects safely.") from e
+
+    def delete_objects(self, s3_keys: list[str]) -> bool:
+        """Deletes explicitly named objects in S3 API-sized batches."""
+        if not self.enabled or not self.s3_client:
+            return False
+        keys = [key for key in dict.fromkeys(s3_keys) if key]
+        if not keys:
+            return True
+        try:
+            for start in range(0, len(keys), 1000):
+                batch = keys[start:start + 1000]
+                response = self.s3_client.delete_objects(
+                    Bucket=self.bucket_name,
+                    Delete={
+                        "Objects": [{"Key": key} for key in batch],
+                        "Quiet": True,
+                    },
+                )
+                errors = response.get("Errors", [])
+                if errors:
+                    logger.error(f"StorageService: Cloud object deletion errors: {errors}")
+                    return False
+            logger.info(f"StorageService: Deleted {len(keys)} cloud object(s).")
+            return True
+        except Exception as e:
+            logger.error(f"StorageService: Failed to delete cloud objects: {e}")
+            return False
+
 # Global singleton instance
 storage_service = StorageService()

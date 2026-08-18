@@ -98,6 +98,13 @@ class MTOSettings(BaseSettings):
     BACKUP_SCHEDULE_HOUR: int = Field(default=16, ge=0, le=23)
     BACKUP_SCHEDULE_MINUTE: int = Field(default=30, ge=0, le=59)
     BACKUP_SCHEDULE_DAY_OF_WEEK: int = Field(default=0, ge=0, le=6)
+    # Cloud copies are encrypted before upload and bounded below the current
+    # provider free-tier allowance. Cloud backup remains disabled by default.
+    CLOUD_BACKUP_PREFIX: str = Field(default="backups/")
+    CLOUD_BACKUP_MAX_BYTES: int = Field(
+        default=8 * 1024 * 1024 * 1024, ge=1024 * 1024
+    )
+    CLOUD_BACKUP_KEEP: int = Field(default=14, ge=1, le=365)
 
     # --- MUNICIPAL CUSTOMIZATION ---
     MUNICIPALITY_NAME: str = "Revenue System"

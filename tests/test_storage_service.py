@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import io
 import os
 import pytest
 from unittest.mock import MagicMock, patch
@@ -29,6 +30,11 @@ def test_storage_disabled_by_default(clean_env):
     # Operations should handle being disabled gracefully
     assert service.upload_file("dummy_path.pdf", "dummy_key.pdf") is None
     assert service.generate_presigned_url("dummy_key.pdf") is None
+    assert service.head_object("dummy_key") is None
+    assert service.get_object_bytes("dummy_key") is None
+    assert service.delete_objects(["dummy_key"]) is False
+    with pytest.raises(RuntimeError, match="disabled"):
+        service.list_objects("backups/")
     assert service.download_file("dummy_key.pdf", "dummy_path.pdf") is False
 
 @patch("boto3.client")
@@ -123,3 +129,94 @@ def test_storage_generate_presigned_url(mock_boto_client, clean_env):
         Params={"Bucket": "test-bucket", "Key": "receipts/test.pdf"},
         ExpiresIn=1800
     )
+
+
+@patch("boto3.client")
+def test_storage_metadata_and_bounded_read(mock_boto_client, clean_env):
+    os.environ["S3_STORAGE_ENABLED"] = "true"
+    os.environ["S3_BUCKET_NAME"] = "test-bucket"
+    mock_s3 = MagicMock()
+    mock_boto_client.return_value = mock_s3
+    mock_s3.head_bucket.return_value = {}
+    mock_s3.head_object.return_value = {
+        "ContentLength": 7,
+        "ETag": '"abc123"',
+        "LastModified": None,
+    }
+    mock_s3.get_object.return_value = {
+        "ContentLength": 7,
+        "Body": io.BytesIO(b"content"),
+    }
+
+    service = StorageService()
+
+    assert service.head_object("backups/item") == {
+        "key": "backups/item",
+        "size": 7,
+        "etag": "abc123",
+        "last_modified": None,
+    }
+    assert service.get_object_bytes("backups/item", max_bytes=8) == b"content"
+
+
+@patch("boto3.client")
+def test_storage_lists_all_pages(mock_boto_client, clean_env):
+    os.environ["S3_STORAGE_ENABLED"] = "true"
+    os.environ["S3_BUCKET_NAME"] = "test-bucket"
+    mock_s3 = MagicMock()
+    mock_boto_client.return_value = mock_s3
+    mock_s3.head_bucket.return_value = {}
+    mock_s3.list_objects_v2.side_effect = [
+        {
+            "Contents": [{"Key": "backups/a", "Size": 10}],
+            "IsTruncated": True,
+            "NextContinuationToken": "page-2",
+        },
+        {
+            "Contents": [{"Key": "backups/b", "Size": 20}],
+            "IsTruncated": False,
+        },
+    ]
+
+    service = StorageService()
+    objects = service.list_objects("backups/")
+
+    assert [item["key"] for item in objects] == ["backups/a", "backups/b"]
+    assert sum(item["size"] for item in objects) == 30
+    mock_s3.list_objects_v2.assert_any_call(
+        Bucket="test-bucket", Prefix="backups/", ContinuationToken="page-2"
+    )
+
+
+@patch("boto3.client")
+def test_storage_deletes_only_explicit_keys(mock_boto_client, clean_env):
+    os.environ["S3_STORAGE_ENABLED"] = "true"
+    os.environ["S3_BUCKET_NAME"] = "test-bucket"
+    mock_s3 = MagicMock()
+    mock_boto_client.return_value = mock_s3
+    mock_s3.head_bucket.return_value = {}
+    mock_s3.delete_objects.return_value = {}
+
+    service = StorageService()
+    success = service.delete_objects(["backups/a", "backups/a", "backups/b"])
+
+    assert success is True
+    mock_s3.delete_objects.assert_called_once_with(
+        Bucket="test-bucket",
+        Delete={
+            "Objects": [{"Key": "backups/a"}, {"Key": "backups/b"}],
+            "Quiet": True,
+        },
+    )
+
+
+@patch("boto3.client")
+def test_storage_reports_delete_errors(mock_boto_client, clean_env):
+    os.environ["S3_STORAGE_ENABLED"] = "true"
+    mock_s3 = MagicMock()
+    mock_boto_client.return_value = mock_s3
+    mock_s3.head_bucket.return_value = {}
+    mock_s3.delete_objects.return_value = {"Errors": [{"Key": "backups/a"}]}
+
+    service = StorageService()
+    assert service.delete_objects(["backups/a"]) is False

@@ -70,7 +70,9 @@ docker compose up -d
 
 ## 🧬 Disaster Recovery
 - **Hybrid Backups:** Automated Local, USB, and S3-compatible cloud sync
+- **Encrypted Cloud Copies:** SQL dumps are compressed and protected with AES-256-GCM before upload; raw SQL is never sent to object storage
 - **Data Integrity:** SHA256 checksum verification for every backup
+- **Cloud Safety Limits:** Signed manifests, post-upload checks, a configurable byte ceiling, and complete-set retention
 - **Scheduled Automation:** Configurable daily/weekly backup schedule
 - **Pre-Restore Safety:** Automatic safety backup before any restore operation
 
