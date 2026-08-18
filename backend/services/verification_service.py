@@ -1,6 +1,8 @@
 import os
 import subprocess
 import hashlib
+import re
+import uuid
 import pymysql
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -75,7 +77,31 @@ def _calculate_sha256(file_path):
     return sha256_hash.hexdigest()
 
 
-def verify_sql_dump(file_path, db_session: Session = None, expected_checksum: str = None):
+DATABASE_SCOPE_STATEMENT = re.compile(
+    r"(?:^|;)\s*(?:/\*![0-9]{5}\s*)?"
+    r"(?:USE\s+|(?:CREATE|DROP|ALTER)\s+(?:DATABASE|SCHEMA)\b)",
+    re.IGNORECASE,
+)
+
+
+def _find_database_scope_statement(file_path: str) -> str | None:
+    """Rejects dump commands that could redirect a restore outside the test DB."""
+    with open(file_path, "r", encoding="utf-8", errors="ignore") as source:
+        for line_number, line in enumerate(source, start=1):
+            match = DATABASE_SCOPE_STATEMENT.search(line)
+            if match:
+                statement = " ".join(match.group(0).strip(" ;").split())
+                return f"line {line_number}: {statement[:80]}"
+    return None
+
+
+def verify_sql_dump(
+    file_path,
+    db_session: Session = None,
+    expected_checksum: str = None,
+    *,
+    require_restore_test: bool = False,
+):
     """
     Performs a multi-point integrity check on a MySQL dump file.
     1. Shallow Check: File presence and completion marker.
@@ -112,15 +138,33 @@ def verify_sql_dump(file_path, db_session: Session = None, expected_checksum: st
     if db_session is None:
         try:
             with SessionLocal() as session:
-                return perform_restore_test(file_path, db_session=session)
-        except Exception:
+                return perform_restore_test(
+                    file_path,
+                    db_session=session,
+                    require_restore_test=require_restore_test,
+                )
+        except Exception as exc:
+            if require_restore_test:
+                return False, (
+                    "Full restore verification is required but the application "
+                    f"database session could not be opened: {exc}"
+                )
             # If we can't get a session (e.g. DB not configured), skip deep check
             return True, "Shallow check passed. Deep restore test skipped (no DB session)."
 
-    return perform_restore_test(file_path, db_session=db_session)
+    return perform_restore_test(
+        file_path,
+        db_session=db_session,
+        require_restore_test=require_restore_test,
+    )
 
 
-def perform_restore_test(file_path, db_session: Session = None):
+def perform_restore_test(
+    file_path,
+    db_session: Session = None,
+    *,
+    require_restore_test: bool = False,
+):
     """
     Verifies that the backup can actually be restored by performing
     a dry-run restore into a temporary validation database.
@@ -134,10 +178,16 @@ def perform_restore_test(file_path, db_session: Session = None):
     # Only allow alphanumeric + underscore; no SQL injection possible.
     base_name = os.path.basename(file_path).split('.')[0]
     safe_name = "".join([c if c.isalnum() else "_" for c in base_name])[:40]
-    temp_db_name = f"mto_verify_{safe_name}"
+    temp_db_name = f"mto_verify_{safe_name}_{uuid.uuid4().hex[:8]}"
+    unsafe_statement = _find_database_scope_statement(file_path)
+    if unsafe_statement:
+        return False, (
+            "Restore Test Failed: SQL dump contains a database-level statement "
+            f"that is unsafe for isolated verification ({unsafe_statement})."
+        )
 
-    import re as _re
-    if not _re.fullmatch(r"[a-zA-Z0-9_]+", temp_db_name):
+
+    if not re.fullmatch(r"[a-zA-Z0-9_]+", temp_db_name):
         return False, f"Unsafe temp DB name generated: {temp_db_name!r}"
 
     mysql_path = DB_CONFIG.get("mysql_path", "mysql")
@@ -167,6 +217,11 @@ def perform_restore_test(file_path, db_session: Session = None):
             break
 
     if not actual_mysql_executable:
+        if require_restore_test:
+            return False, (
+                "Full restore verification is required, but the mysql executable "
+                "was not found. Configure MTO_MYSQL_PATH before enabling cloud backup."
+            )
         return True, "Checksum passed. Restore test skipped: mysql executable was not found."
 
     conn = None
@@ -180,6 +235,13 @@ def perform_restore_test(file_path, db_session: Session = None):
             except pymysql.err.OperationalError as exc:
                 code = exc.args[0] if exc.args else None
                 if code in (1044, 1045):
+                    if require_restore_test:
+                        return False, (
+                            "Full restore verification is required, but the configured "
+                            "verification DB user cannot create and remove the isolated "
+                            "test database. Configure MTO_BACKUP_VERIFY_DB_USER and "
+                            "MTO_BACKUP_VERIFY_DB_PASSWORD with CREATE/DROP privileges."
+                        )
                     return True, (
                         "Checksum passed. Restore test skipped: the configured DB user "
                         "cannot create a temporary verification database. Configure "
@@ -193,6 +255,7 @@ def perform_restore_test(file_path, db_session: Session = None):
             f"-u{db_user}",
             f"-h{DB_CONFIG['host']}",
             f"-P{DB_CONFIG['port']}",
+            "--one-database",
             temp_db_name,
         ]
         env = dict(os.environ)

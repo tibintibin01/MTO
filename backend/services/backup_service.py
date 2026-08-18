@@ -131,20 +131,43 @@ def get_backup_status(db_session: Session = None):
             local_file = latest.file_path
         usb_path = _find_usb_drive()
         usb_file = _latest_sql_file(os.path.join(usb_path, "MTO_Backups")) if usb_path else None
-        cloud_enabled = bool(mto_config.ENABLE_CLOUD_BACKUP)
+        from backend.services.cloud_backup_service import (
+            cloud_backup_activation_ready,
+            cloud_backup_enabled,
+        )
+
+        cloud_enabled = cloud_backup_enabled()
+        activation_ready, _ = (
+            cloud_backup_activation_ready()
+            if cloud_enabled
+            else (False, "Cloud backup disabled")
+        )
         try:
             from backend.services.storage_service import backup_storage_service
 
-            cloud_configured = cloud_enabled and bool(backup_storage_service.enabled)
+            cloud_configured = (
+                cloud_enabled
+                and activation_ready
+                and bool(backup_storage_service.enabled)
+            )
         except Exception:
             cloud_configured = False
+
+        if cloud_configured:
+            cloud_status = "No upload recorded"
+        elif cloud_enabled and not activation_ready:
+            cloud_status = "Cloud backup requires Phase 3 re-verification"
+        elif cloud_enabled:
+            cloud_status = "Cloud storage not configured"
+        else:
+            cloud_status = "Cloud backup disabled"
 
         result = {
             "is_running": running is not None,
             "has_backup_history": latest is not None,
             "last_local": (_display_file_timestamp(local_file) if local_file else "Not yet created"),
             "last_usb": (_display_file_timestamp(usb_file) if usb_file else (f"Ready: {usb_path}" if usb_path else "USB drive not detected")),
-            "last_cloud": ("No upload recorded" if cloud_configured else ("Cloud storage not configured" if cloud_enabled else "Cloud backup disabled")),
+            "last_cloud": cloud_status,
             "last_verify": "Not yet tested",
             "last_checksum": "None",
             "last_checksum_short": "None",

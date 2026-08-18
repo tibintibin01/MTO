@@ -166,7 +166,9 @@ def _write_recovery_key(path: Path, encoded_key: str) -> None:
         raise
 
 
-def _cloud_backup_is_enabled(project_root: Path) -> bool:
+def _cloud_backup_is_enabled(
+    project_root: Path, vault_path: Path | None = None
+) -> bool:
     environment_value = os.getenv("MTO_ENABLE_CLOUD_BACKUP", "").strip().lower()
     env_file_value = (
         str(
@@ -176,7 +178,15 @@ def _cloud_backup_is_enabled(project_root: Path) -> bool:
         .strip()
         .lower()
     )
-    return environment_value in TRUE_VALUES or env_file_value in TRUE_VALUES
+    vault_value = ""
+    if vault_path is not None:
+        vault_value = str(
+            _read_vault(vault_path).get("MTO_ENABLE_CLOUD_BACKUP", "") or ""
+        ).strip().lower()
+    return any(
+        value in TRUE_VALUES
+        for value in (environment_value, env_file_value, vault_value)
+    )
 
 
 def _run_r2_operation(label: str, operation):
@@ -314,7 +324,7 @@ def _settings_from_vault(vault: dict[str, Any]) -> dict[str, str]:
 
 
 def _configure(project_root: Path, vault_path: Path) -> None:
-    if _cloud_backup_is_enabled(project_root):
+    if _cloud_backup_is_enabled(project_root, vault_path):
         raise RuntimeError(
             "Live cloud backup is already enabled. Set MTO_ENABLE_CLOUD_BACKUP=0 and "
             "restart the API before running Phase 2 configuration."

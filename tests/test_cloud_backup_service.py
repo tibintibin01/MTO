@@ -80,6 +80,8 @@ def sql_file(tmp_path):
 def _configure_enabled(monkeypatch, master_key, *, keep=14, max_bytes=8 * 1024**3):
     encoded = base64.urlsafe_b64encode(master_key).decode("ascii")
     monkeypatch.setattr(cloud.mto_config, "ENABLE_CLOUD_BACKUP", True)
+    monkeypatch.setattr(cloud, "cloud_backup_enabled", lambda: True)
+    monkeypatch.setattr(cloud, "cloud_backup_activation_ready", lambda: (True, "ready"))
     monkeypatch.setattr(cloud.mto_config, "CLOUD_BACKUP_PREFIX", "backups/")
     monkeypatch.setattr(cloud.mto_config, "CLOUD_BACKUP_KEEP", keep)
     monkeypatch.setattr(cloud.mto_config, "CLOUD_BACKUP_MAX_BYTES", max_bytes)
@@ -195,8 +197,11 @@ def test_cloud_verification_decrypts_and_checks_sql(
     result = cloud.sync_encrypted_backup(str(sql_file), storage=storage)
     verified = {}
 
-    def fake_verify(path, db_session=None, expected_checksum=None):
+    def fake_verify(
+        path, db_session=None, expected_checksum=None, *, require_restore_test=False
+    ):
         verified["data"] = Path(path).read_bytes()
+        verified["restore_required"] = require_restore_test
         verified["checksum"] = expected_checksum
         return True, "Restore verification passed."
 
@@ -209,6 +214,7 @@ def test_cloud_verification_decrypts_and_checks_sql(
     assert message == "Restore verification passed."
     assert verified["data"] == SQL_BYTES
     assert verified["checksum"] == cloud._sha256(str(sql_file))
+    assert verified["restore_required"] is True
 
 
 def test_cloud_verification_rejects_tampered_manifest(
@@ -228,8 +234,71 @@ def test_cloud_verification_rejects_tampered_manifest(
 
 
 def test_disabled_cloud_backup_does_not_touch_storage(monkeypatch):
-    monkeypatch.setattr(cloud.mto_config, "ENABLE_CLOUD_BACKUP", False)
+    monkeypatch.setattr(cloud, "cloud_backup_enabled", lambda: False)
     storage = MemoryStorage()
     result = cloud.sync_encrypted_backup("missing.sql", storage=storage)
     assert result.code == "DISABLED"
     assert storage.uploaded == []
+
+
+def test_live_upload_is_blocked_without_phase3_attestation(monkeypatch):
+    monkeypatch.setattr(cloud, "cloud_backup_enabled", lambda: True)
+    monkeypatch.setattr(
+        cloud,
+        "cloud_backup_activation_ready",
+        lambda: (False, "Phase 3 has not passed."),
+    )
+    storage = MemoryStorage()
+
+    result = cloud.sync_encrypted_backup("missing.sql", storage=storage)
+
+    assert result.code == "CLOUD_CONFIG_ERROR"
+    assert "Phase 3" in result.message
+    assert storage.uploaded == []
+
+
+def test_phase3_upload_can_run_while_live_cloud_is_disabled(
+    monkeypatch, sql_file, master_key
+):
+    _configure_enabled(monkeypatch, master_key)
+    monkeypatch.setattr(cloud, "cloud_backup_enabled", lambda: False)
+    storage = MemoryStorage()
+
+    result = cloud.sync_encrypted_backup_for_restore_test(
+        str(sql_file), storage=storage
+    )
+
+    assert result.success is True
+    assert len(storage.uploaded) == 2
+
+
+def test_phase3_attestation_is_bound_to_bucket_prefix_and_key(
+    monkeypatch, master_key
+):
+    encoded = base64.urlsafe_b64encode(master_key).decode("ascii")
+    values = {
+        "MTO_BACKUP_ENCRYPTION_KEY": encoded,
+        "MTO_BACKUP_S3_BUCKET_NAME": "mto-treasury-backups",
+        "MTO_BACKUP_S3_ENDPOINT_URL": "https://account.r2.cloudflarestorage.com",
+        "MTO_CLOUD_BACKUP_PHASE3_VERIFIED": "false",
+        "MTO_CLOUD_BACKUP_PHASE3_CONFIG_FINGERPRINT": "",
+    }
+    monkeypatch.setattr(cloud.mto_config, "CLOUD_BACKUP_PREFIX", "backups/")
+    monkeypatch.setattr(
+        cloud.secrets,
+        "get",
+        lambda key, default=None: values.get(key, default),
+    )
+
+    fingerprint = cloud.cloud_backup_configuration_fingerprint()
+    values["MTO_CLOUD_BACKUP_PHASE3_VERIFIED"] = "true"
+    values["MTO_CLOUD_BACKUP_PHASE3_CONFIG_FINGERPRINT"] = fingerprint
+
+    ready, _ = cloud.cloud_backup_activation_ready()
+    assert ready is True
+
+    values["MTO_BACKUP_S3_BUCKET_NAME"] = "different-backup-bucket"
+    ready, message = cloud.cloud_backup_activation_ready()
+
+    assert ready is False
+    assert "changed after Phase 3" in message

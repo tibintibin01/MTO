@@ -100,7 +100,65 @@ def test_restore_invokes_mysql_without_a_command_shell(tmp_path, monkeypatch):
     assert success is True
     assert "restore test passed" in message.lower()
     run_mock.assert_called_once()
+    assert "--one-database" in run_mock.call_args.args[0]
     assert run_mock.call_args.kwargs.get("shell", False) is False
+
+
+def test_strict_restore_verification_fails_when_mysql_is_missing(
+    tmp_path, monkeypatch
+):
+    dump_path = tmp_path / "verified-backup.sql"
+    dump_path.write_text("SELECT 1;", encoding="utf-8")
+
+    monkeypatch.setitem(
+        verification_service.DB_CONFIG, "mysql_path", "missing-mysql-client"
+    )
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    real_exists = verification_service.os.path.exists
+    monkeypatch.setattr(
+        verification_service.os.path,
+        "exists",
+        lambda path: False if "mysql" in str(path).lower() else real_exists(path),
+    )
+
+    success, message = verification_service.perform_restore_test(
+        str(dump_path), require_restore_test=True
+    )
+
+    assert success is False
+    assert "required" in message.lower()
+    assert "mysql executable" in message.lower()
+
+
+def test_non_strict_restore_verification_can_report_mysql_skip(tmp_path, monkeypatch):
+    dump_path = tmp_path / "verified-backup.sql"
+    dump_path.write_text("SELECT 1;", encoding="utf-8")
+    monkeypatch.setitem(verification_service.DB_CONFIG, "mysql_path", "missing-client")
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    monkeypatch.setattr(verification_service.os.path, "exists", lambda _path: False)
+
+    success, message = verification_service.perform_restore_test(str(dump_path))
+
+    assert success is True
+    assert "skipped" in message.lower()
+
+
+def test_restore_rejects_database_switch_statements_before_mysql(
+    tmp_path, monkeypatch
+):
+    dump_path = tmp_path / "unsafe-backup.sql"
+    dump_path.write_text(
+        "CREATE DATABASE live_revenue;\nUSE live_revenue;\n",
+        encoding="utf-8",
+    )
+    run_mock = MagicMock()
+    monkeypatch.setattr(verification_service.subprocess, "run", run_mock)
+
+    success, message = verification_service.perform_restore_test(str(dump_path))
+
+    assert success is False
+    assert "database-level statement" in message
+    run_mock.assert_not_called()
 
 
 def test_logger_positional_args_compatibility_does_not_raise():

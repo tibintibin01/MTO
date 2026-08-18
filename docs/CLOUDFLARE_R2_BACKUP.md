@@ -120,3 +120,83 @@ Do not paste credentials or the recovery key into chat, email, GitHub, or a
 shared document. Without the recovery key, encrypted R2 backups cannot be
 restored. Anyone who obtains both an encrypted backup and that key can decrypt
 municipal data.
+
+## 6. Run the controlled Phase 3 recovery test
+
+Phase 3 is deliberately separate from routine backups. It uses the newest
+local `.sql` backup by default and performs this complete chain:
+
+1. Verify the local SHA-256 checksum when its sidecar file is present.
+2. Compress and encrypt the SQL dump with AES-256-GCM.
+3. Upload only the encrypted artifact and signed manifest under `backups/`.
+4. Download both objects into an isolated temporary directory.
+5. Authenticate and decrypt the artifact and verify the original checksum.
+6. Restore the recovered SQL into a randomly named temporary database.
+7. Confirm the required tables and live property/payment row counts.
+8. Drop the temporary database and delete all temporary local files.
+
+This test never restores over the live MTO database. A checksum-only or
+skipped restore is a Phase 3 failure.
+
+Before running it, obtain a dedicated MariaDB/MySQL verification account from
+the database administrator. This is a database account, not an MTO user shown
+under User Management. It must be able to create and drop only the temporary
+verification databases used by the test. Do not use the `mto_app` account and
+do not run the MTO application as `root`.
+
+On the MTO server, leave the USB recovery key disconnected and run:
+
+```bat
+cd /d C:\MTO
+call venv\Scripts\activate
+python scripts\verify_r2_backup_restore.py
+```
+
+The command asks for the verification database username and password if they
+are not already in the protected vault. It then requires the exact confirmation:
+
+```text
+RESTORE TEST
+```
+
+If the full restore succeeds, the command records a Phase 3 attestation bound
+to the current R2 endpoint, bucket, object prefix, and encryption key. Changing
+any of those values invalidates the attestation and blocks future cloud uploads
+until Phase 3 passes again.
+
+The final prompt offers activation. Type this exact phrase only after the
+restore success message is displayed:
+
+```text
+ACTIVATE CLOUD BACKUP
+```
+
+Pressing Enter instead records the successful recovery test but keeps live
+cloud copies disabled.
+
+After activation, restart the MTO API so it reloads the protected vault. Then
+run one Hybrid Backup from System Settings and confirm all of the following:
+
+- The local backup succeeds.
+- The cloud status reports a successful upload.
+- R2 contains one `.sql.gz.enc` object and its `.manifest.json` partner under
+  `backups/`.
+- No readable `.sql` object exists in R2.
+
+## Phase 3 failure behavior
+
+Any failure leaves automatic cloud backup disabled. The encrypted test object
+may remain in R2 because the seven-day bucket lock correctly prevents its
+early deletion; the 30-day lifecycle rule will eventually remove it.
+
+Common blockers are:
+
+- The verification database credentials are not MariaDB/MySQL credentials.
+- The account cannot create or drop an isolated test database.
+- `mysql.exe` cannot be found; set `MTO_MYSQL_PATH` to its full path.
+- The local SQL file is incomplete or no longer matches its checksum.
+- The uploaded object or signed manifest does not match after download.
+
+Do not set `MTO_ENABLE_CLOUD_BACKUP=true` manually to bypass a failure. The
+application also requires the Phase 3 attestation, so manual activation alone
+cannot start cloud uploads.

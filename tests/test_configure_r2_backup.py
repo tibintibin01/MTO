@@ -185,3 +185,10 @@ def test_cloud_backup_enable_guard_checks_process_and_env_file(tmp_path, monkeyp
     (tmp_path / ".env").write_text("MTO_ENABLE_CLOUD_BACKUP=0\n", encoding="utf-8")
     monkeypatch.setenv("MTO_ENABLE_CLOUD_BACKUP", "1")
     assert r2._cloud_backup_is_enabled(tmp_path) is True
+
+    monkeypatch.delenv("MTO_ENABLE_CLOUD_BACKUP", raising=False)
+    vault_path = tmp_path / "secrets.json"
+    vault_path.write_text(
+        '{"MTO_ENABLE_CLOUD_BACKUP": "true"}\n', encoding="utf-8"
+    )
+    assert r2._cloud_backup_is_enabled(tmp_path, vault_path) is True

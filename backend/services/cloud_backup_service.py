@@ -76,6 +76,64 @@ class PreparedCloudBackup:
     manifest: dict[str, Any]
 
 
+TRUE_VALUES = {"1", "true", "yes", "on"}
+
+
+def cloud_backup_enabled() -> bool:
+    """Returns the live activation flag, preferring the protected secrets vault."""
+    fallback = "true" if mto_config.ENABLE_CLOUD_BACKUP else "false"
+    value = secrets.get("MTO_ENABLE_CLOUD_BACKUP", default=fallback)
+    return str(value or "").strip().lower() in TRUE_VALUES
+
+
+def cloud_backup_configuration_fingerprint() -> str:
+    """Binds Phase 3 approval to the bucket, endpoint, prefix, and encryption key."""
+    values = {
+        "bucket": str(
+            secrets.get("MTO_BACKUP_S3_BUCKET_NAME", default="") or ""
+        ).strip(),
+        "endpoint": str(
+            secrets.get("MTO_BACKUP_S3_ENDPOINT_URL", default="") or ""
+        ).strip().rstrip("/"),
+        "prefix": _normalized_prefix(mto_config.CLOUD_BACKUP_PREFIX),
+        "key_sha256": hashlib.sha256(load_backup_encryption_key()).hexdigest(),
+    }
+    if not values["bucket"] or not values["endpoint"]:
+        raise CloudBackupConfigurationError(
+            "The dedicated cloud backup bucket and endpoint are required."
+        )
+    payload = json.dumps(values, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return hashlib.sha256(payload).hexdigest()
+
+
+def cloud_backup_activation_ready() -> tuple[bool, str]:
+    """Requires a successful Phase 3 restore test for the current configuration."""
+    verified = str(
+        secrets.get("MTO_CLOUD_BACKUP_PHASE3_VERIFIED", default="false") or ""
+    ).strip().lower()
+    if verified not in TRUE_VALUES:
+        return False, "Phase 3 cloud restore verification has not passed."
+    expected = str(
+        secrets.get(
+            "MTO_CLOUD_BACKUP_PHASE3_CONFIG_FINGERPRINT", default=""
+        )
+        or ""
+    ).strip()
+    try:
+        current = cloud_backup_configuration_fingerprint()
+    except CloudBackupConfigurationError as exc:
+        return False, str(exc)
+    if not expected or not hmac.compare_digest(expected, current):
+        return False, (
+            "The cloud backup destination or encryption key changed after Phase 3; "
+            "run restore verification again."
+        )
+    return True, "Phase 3 cloud restore verification is current."
+
+
+
 def _sha256(file_path: str) -> str:
     digest = hashlib.sha256()
     with open(file_path, "rb") as source:
@@ -358,8 +416,39 @@ def sync_encrypted_backup(
     storage=None,
 ) -> CloudSyncResult:
     """Encrypts, uploads, and verifies a cloud backup without exposing raw SQL."""
-    if not mto_config.ENABLE_CLOUD_BACKUP:
+    if not cloud_backup_enabled():
         return CloudSyncResult(False, "DISABLED", "Cloud backup is disabled.")
+
+    activation_ready, activation_message = cloud_backup_activation_ready()
+    if not activation_ready:
+        return CloudSyncResult(False, "CLOUD_CONFIG_ERROR", activation_message)
+
+    return _sync_encrypted_backup(sql_path, plaintext_checksum, storage=storage)
+
+
+def sync_encrypted_backup_for_restore_test(
+    sql_path: str,
+    plaintext_checksum: str | None = None,
+    *,
+    storage=None,
+) -> CloudSyncResult:
+    """Uploads one encrypted artifact for the explicit Phase 3 recovery test."""
+    if cloud_backup_enabled():
+        return CloudSyncResult(
+            False,
+            "CLOUD_CONFIG_ERROR",
+            "Disable live cloud backup before running the Phase 3 restore test.",
+        )
+    return _sync_encrypted_backup(sql_path, plaintext_checksum, storage=storage)
+
+
+def _sync_encrypted_backup(
+    sql_path: str,
+    plaintext_checksum: str | None = None,
+    *,
+    storage=None,
+) -> CloudSyncResult:
+    """Shared upload implementation after the caller's activation guard passes."""
 
     try:
         if storage is None:
@@ -472,6 +561,7 @@ def verify_cloud_backup(
                 sql_path,
                 db_session=db_session,
                 expected_checksum=manifest["plaintext_sha256"],
+                require_restore_test=True,
             )
     except Exception as exc:
         mto_logger.error(f"Cloud restore verification failed: {exc}")

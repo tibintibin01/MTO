@@ -73,7 +73,8 @@ docker compose up -d
 - **Encrypted Cloud Copies:** SQL dumps are compressed and protected with AES-256-GCM before upload; raw SQL is never sent to object storage
 - **Data Integrity:** SHA256 checksum verification for every backup
 - **Cloud Safety Limits:** Signed manifests, post-upload checks, a configurable byte ceiling, and complete-set retention
-- **Cloudflare R2 Setup:** Follow the guarded [Phase 2 R2 runbook](docs/CLOUDFLARE_R2_BACKUP.md); configuration does not enable live uploads
+- **Cloudflare R2 Setup:** Follow the guarded [R2 backup runbook](docs/CLOUDFLARE_R2_BACKUP.md); configuration alone does not enable live uploads
+- **Recovery-Gated Activation:** `python scripts/verify_r2_backup_restore.py` enables cloud copies only after an encrypted round trip and real isolated database restore pass
 - **Scheduled Automation:** Configurable daily/weekly backup schedule
 - **Pre-Restore Safety:** Automatic safety backup before any restore operation
 
