@@ -3,6 +3,7 @@ import json
 from dotenv import load_dotenv
 from typing import Optional
 from utils.logger import mto_logger
+from utils.secrets_vault import resolve_secrets_vault_path
 
 class SecretsManager:
     """
@@ -24,15 +25,23 @@ class SecretsManager:
             
         self._vault_secrets = {}
         
-        # 1. Resolve secure user-level credentials vault (Stored outside the repository)
-        vault_path = os.path.expanduser("~/.mto/secrets.json")
-        if os.path.exists(vault_path):
+        # 1. Resolve the machine-level vault shared by Administrator setup
+        # commands and the Windows SYSTEM API task.
+        vault_path = resolve_secrets_vault_path()
+        self._vault_path = vault_path
+        if vault_path.exists():
             try:
-                with open(vault_path, "r", encoding="utf-8") as f:
+                with vault_path.open("r", encoding="utf-8") as f:
                     self._vault_secrets = json.load(f) or {}
-                mto_logger.info("SecretsManager: Loaded credentials vault from ~/.mto/secrets.json")
+                if not isinstance(self._vault_secrets, dict):
+                    raise ValueError("vault root must be a JSON object")
+                mto_logger.info(
+                    f"SecretsManager: Loaded credentials vault from {vault_path}"
+                )
             except Exception as e:
-                mto_logger.error(f"SecretsManager: Failed to parse ~/.mto/secrets.json: {e}")
+                mto_logger.error(
+                    f"SecretsManager: Failed to parse protected vault {vault_path}: {e}"
+                )
 
         # 2. Load .env file as a local developer-friendly fallback
         load_dotenv()
@@ -51,7 +60,7 @@ class SecretsManager:
             if os.path.exists(".env") and not self._vault_secrets:
                 mto_logger.security(
                     "WARNING: Clear-text .env file detected in production workspace! "
-                    "Migrate secrets to system environment or ~/.mto/secrets.json secure vault.",
+                    f"Migrate secrets to system environment or {vault_path}.",
                     key="MTO_ENV"
                 )
             mto_logger.info("SecretsManager initialized in SECURE PRODUCTION mode.")

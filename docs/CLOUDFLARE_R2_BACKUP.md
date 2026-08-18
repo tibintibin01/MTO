@@ -10,8 +10,10 @@ separate Phase 3 decision after a controlled encrypted restore test.
 - The R2 token is limited to one backup bucket.
 - Raw SQL is never uploaded. Cloud objects are `.sql.gz.enc` plus a signed
   `.manifest.json` file.
-- Credentials and the encryption key are stored in `~/.mto/secrets.json`, not
-  in Git or the project `.env` file.
+- Credentials and the encryption key are stored in the protected machine vault
+  at `C:\ProgramData\MTO\secrets.json`, not in Git or the project `.env` file.
+- The machine vault is shared by Administrator setup commands and the Windows
+  SYSTEM API task, with access restricted to SYSTEM and Administrators.
 - `MTO_ENABLE_CLOUD_BACKUP` remains `0` throughout Phase 2.
 
 ## 1. Create the private Standard bucket
@@ -113,6 +115,24 @@ R2 backup bucket readiness check passed; live backup state was unchanged.
 Restart the API after configuration so it reloads the secrets vault. The
 System Administration screen must still show cloud backup as disabled until
 Phase 3 is approved.
+
+### Existing Phase 2/3 installations created before the machine-vault update
+
+Older releases stored R2 settings under the interactive Administrator profile,
+while the automatic API task ran as Windows SYSTEM. After pulling this update,
+migrate the already-verified vault once from an Administrator Command Prompt:
+
+```bat
+cd /d C:\MTO
+call venv\Scripts\activate
+python scripts\migrate_r2_vault.py
+```
+
+The migration fails closed on missing Phase 3 evidence or conflicting machine
+settings. It never displays secret values, writes the machine vault atomically,
+and restricts its Windows ACL. A successful Phase 3 attestation is preserved;
+do not repeat the restore test unless the migration reports an error or the R2
+destination/encryption key has changed.
 
 ## Recovery-key rule
 

@@ -2,7 +2,7 @@
 
 This script intentionally does not enable live cloud backups. It validates a
 private, bucket-scoped R2 credential using a random probe object, then stores
-credentials in ~/.mto/secrets.json without printing them.
+credentials in the protected machine vault without printing them.
 """
 
 from __future__ import annotations
@@ -22,16 +22,22 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import boto3
 from botocore.client import Config
 from botocore.exceptions import ClientError
 from dotenv import dotenv_values
+from utils.secrets_vault import resolve_secrets_vault_path
 
 
 ACCOUNT_ID_PATTERN = re.compile(r"^[a-fA-F0-9]{32}$")
 BUCKET_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
 TRUE_VALUES = {"1", "true", "yes", "on"}
-VAULT_PATH = Path.home() / ".mto" / "secrets.json"
+VAULT_PATH = resolve_secrets_vault_path()
 BACKUP_PREFIX = "backups/"
 
 
@@ -115,8 +121,43 @@ def _harden_file(path: Path) -> None:
         )
 
 
+def _harden_directory(path: Path) -> None:
+    if os.name != "nt":
+        path.chmod(0o700)
+        return
+
+    identity_result = subprocess.run(
+        ["whoami"], capture_output=True, text=True, check=True, timeout=15
+    )
+    identity = identity_result.stdout.strip()
+    if not identity:
+        raise RuntimeError(
+            "Could not determine the Windows account for vault permissions."
+        )
+    result = subprocess.run(
+        [
+            "icacls",
+            str(path),
+            "/inheritance:r",
+            "/grant:r",
+            f"{identity}:(OI)(CI)(F)",
+            "*S-1-5-18:(OI)(CI)(F)",
+            "*S-1-5-32-544:(OI)(CI)(F)",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Windows could not restrict the secrets directory permissions: "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+
+
 def _atomic_write_vault(data: dict[str, Any], path: Path = VAULT_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    _harden_directory(path.parent)
     temporary_path = None
     try:
         with tempfile.NamedTemporaryFile(
