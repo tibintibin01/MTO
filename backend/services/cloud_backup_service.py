@@ -97,19 +97,13 @@ def load_backup_encryption_key() -> bytes:
     """Loads a strict URL-safe base64-encoded 256-bit key from the secret store."""
     encoded = secrets.get("MTO_BACKUP_ENCRYPTION_KEY", default=None)
     if not encoded:
-        raise CloudBackupConfigurationError(
-            "MTO_BACKUP_ENCRYPTION_KEY is required when cloud backup is enabled."
-        )
+        raise CloudBackupConfigurationError("MTO_BACKUP_ENCRYPTION_KEY is required when cloud backup is enabled.")
     try:
         raw = base64.b64decode(encoded.strip().encode("ascii"), altchars=b"-_", validate=True)
     except (ValueError, UnicodeEncodeError) as exc:
-        raise CloudBackupConfigurationError(
-            "MTO_BACKUP_ENCRYPTION_KEY must be URL-safe base64."
-        ) from exc
+        raise CloudBackupConfigurationError("MTO_BACKUP_ENCRYPTION_KEY must be URL-safe base64.") from exc
     if len(raw) != 32:
-        raise CloudBackupConfigurationError(
-            "MTO_BACKUP_ENCRYPTION_KEY must decode to exactly 32 bytes (AES-256)."
-        )
+        raise CloudBackupConfigurationError("MTO_BACKUP_ENCRYPTION_KEY must decode to exactly 32 bytes (AES-256).")
     return raw
 
 
@@ -131,9 +125,7 @@ def _copy_stream(source, target) -> None:
 
 def _compress_sql(sql_path: str, compressed_path: str) -> None:
     with open(sql_path, "rb") as source, open(compressed_path, "wb") as raw_target:
-        with gzip.GzipFile(
-            filename="", mode="wb", fileobj=raw_target, compresslevel=6, mtime=0
-        ) as target:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw_target, compresslevel=6, mtime=0) as target:
             _copy_stream(source, target)
 
 
@@ -178,9 +170,7 @@ def _decrypt_file(encrypted_path: str, decrypted_path: str, key: bytes) -> None:
                 os.remove(decrypted_path)
             except OSError:
                 pass
-            raise CloudBackupIntegrityError(
-                "Encrypted backup authentication failed; the file or key is incorrect."
-            ) from exc
+            raise CloudBackupIntegrityError("Encrypted backup authentication failed; the file or key is incorrect.") from exc
 
 
 def _decompress_gzip(compressed_path: str, sql_path: str) -> None:
@@ -197,9 +187,7 @@ def _decompress_gzip(compressed_path: str, sql_path: str) -> None:
 
 def _canonical_manifest(manifest: dict[str, Any]) -> bytes:
     unsigned = {key: value for key, value in manifest.items() if key != "manifest_hmac_sha256"}
-    return json.dumps(
-        unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("utf-8")
+    return json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
 
 
 def _sign_manifest(manifest: dict[str, Any], key: bytes) -> str:
@@ -225,11 +213,7 @@ def _validate_manifest(manifest: dict[str, Any], key: bytes) -> None:
         raise CloudBackupIntegrityError("Cloud backup manifest is incomplete.")
     if manifest["format"] != FORMAT_NAME or manifest["version"] != FORMAT_VERSION:
         raise CloudBackupIntegrityError("Cloud backup manifest format is unsupported.")
-    if (
-        manifest["compression"] != "gzip"
-        or manifest["encryption"] != "AES-256-GCM"
-        or manifest["key_derivation"] != "HKDF-SHA256"
-    ):
+    if manifest["compression"] != "gzip" or manifest["encryption"] != "AES-256-GCM" or manifest["key_derivation"] != "HKDF-SHA256":
         raise CloudBackupIntegrityError("Cloud backup algorithms are unsupported.")
     signature = str(manifest.get("manifest_hmac_sha256", ""))
     if not hmac.compare_digest(signature, _sign_manifest(manifest, key)):
@@ -255,12 +239,8 @@ def prepare_cloud_backup(
     aes_key, manifest_key_material = _derive_keys(master_key)
     object_prefix = _normalized_prefix(prefix or mto_config.CLOUD_BACKUP_PREFIX)
     plain_digest = _sha256(str(source))
-    if plaintext_checksum and not hmac.compare_digest(
-        plain_digest.lower(), plaintext_checksum.lower()
-    ):
-        raise CloudBackupIntegrityError(
-            "Local SQL checksum changed before cloud encryption began."
-        )
+    if plaintext_checksum and not hmac.compare_digest(plain_digest.lower(), plaintext_checksum.lower()):
+        raise CloudBackupIntegrityError("Local SQL checksum changed before cloud encryption began.")
 
     stem = source.name[:-4] if source.name.lower().endswith(".sql") else source.name
     artifact_name = f"{stem}.sql.gz.enc"
@@ -332,9 +312,7 @@ def _backup_sets(objects: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], l
             recognized.append(entry)
         else:
             unknown.extend(entry["objects"])
-    recognized.sort(
-        key=lambda item: item.get("last_modified") or datetime.min.replace(tzinfo=timezone.utc)
-    )
+    recognized.sort(key=lambda item: item.get("last_modified") or datetime.min.replace(tzinfo=timezone.utc))
     return recognized, unknown
 
 
@@ -344,9 +322,7 @@ def enforce_cloud_limits(storage, incoming_bytes: int) -> None:
     max_bytes = int(mto_config.CLOUD_BACKUP_MAX_BYTES)
     keep = int(mto_config.CLOUD_BACKUP_KEEP)
     if incoming_bytes <= 0 or incoming_bytes > max_bytes:
-        raise CloudBackupQuotaError(
-            "Encrypted backup is larger than the configured cloud backup quota."
-        )
+        raise CloudBackupQuotaError("Encrypted backup is larger than the configured cloud backup quota.")
 
     objects = storage.list_objects(prefix=prefix)
     backup_sets, unknown = _backup_sets(objects)
@@ -356,19 +332,12 @@ def enforce_cloud_limits(storage, incoming_bytes: int) -> None:
     # Unknown/incomplete objects are never auto-deleted because they may be unrelated.
     # They still count against the application quota, so the operation fails closed.
     if unknown_bytes + incoming_bytes > max_bytes:
-        raise CloudBackupQuotaError(
-            "Cloud backup quota is occupied by unknown or incomplete objects; "
-            "manual review is required."
-        )
+        raise CloudBackupQuotaError("Cloud backup quota is occupied by unknown or incomplete objects; " "manual review is required.")
 
-    while backup_sets and (
-        len(backup_sets) >= keep or total_bytes + incoming_bytes > max_bytes
-    ):
+    while backup_sets and (len(backup_sets) >= keep or total_bytes + incoming_bytes > max_bytes):
         oldest = backup_sets.pop(0)
         if not storage.delete_objects(oldest["keys"]):
-            raise CloudBackupQuotaError(
-                "Old cloud backups could not be removed safely; upload was stopped."
-            )
+            raise CloudBackupQuotaError("Old cloud backups could not be removed safely; upload was stopped.")
         total_bytes -= int(oldest["size"])
 
     if total_bytes + incoming_bytes > max_bytes:
@@ -394,13 +363,11 @@ def sync_encrypted_backup(
 
     try:
         if storage is None:
-            from backend.services.storage_service import storage_service
+            from backend.services.storage_service import backup_storage_service
 
-            storage = storage_service
+            storage = backup_storage_service
         if not storage.enabled:
-            raise CloudBackupConfigurationError(
-                "S3-compatible object storage is not configured."
-            )
+            raise CloudBackupConfigurationError("S3-compatible object storage is not configured.")
 
         with prepare_cloud_backup(sql_path, plaintext_checksum) as prepared:
             manifest_size = os.path.getsize(prepared.manifest_path)
@@ -424,25 +391,13 @@ def sync_encrypted_backup(
                 raise CloudBackupError("Cloud backup manifest upload failed.")
 
             artifact_head = storage.head_object(prepared.artifact_key)
-            remote_manifest = storage.get_object_bytes(
-                prepared.manifest_key, max_bytes=1024 * 1024
-            )
+            remote_manifest = storage.get_object_bytes(prepared.manifest_key, max_bytes=1024 * 1024)
             expected_manifest = Path(prepared.manifest_path).read_bytes()
-            if (
-                not artifact_head
-                or int(artifact_head.get("size", -1)) != prepared.manifest["encrypted_size"]
-                or remote_manifest != expected_manifest
-            ):
-                _best_effort_delete(
-                    storage, [prepared.artifact_key, prepared.manifest_key]
-                )
-                raise CloudBackupIntegrityError(
-                    "Cloud upload verification failed; uploaded size or manifest changed."
-                )
+            if not artifact_head or int(artifact_head.get("size", -1)) != prepared.manifest["encrypted_size"] or remote_manifest != expected_manifest:
+                _best_effort_delete(storage, [prepared.artifact_key, prepared.manifest_key])
+                raise CloudBackupIntegrityError("Cloud upload verification failed; uploaded size or manifest changed.")
 
-            mto_logger.info(
-                f"Encrypted cloud backup uploaded and verified: {prepared.artifact_key}"
-            )
+            mto_logger.info(f"Encrypted cloud backup uploaded and verified: {prepared.artifact_key}")
             return CloudSyncResult(
                 True,
                 "UPLOADED",
@@ -470,9 +425,9 @@ def verify_cloud_backup(
     """Downloads, authenticates, decrypts, and restore-tests one cloud backup."""
     try:
         if storage is None:
-            from backend.services.storage_service import storage_service
+            from backend.services.storage_service import backup_storage_service
 
-            storage = storage_service
+            storage = backup_storage_service
         if not storage.enabled:
             raise CloudBackupConfigurationError("Cloud storage is not configured.")
 

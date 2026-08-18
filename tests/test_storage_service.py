@@ -6,19 +6,40 @@ from unittest.mock import MagicMock, patch
 from botocore.exceptions import ClientError
 from backend.services.storage_service import StorageService
 
+
 @pytest.fixture
-def clean_env():
+def clean_env(monkeypatch):
     """Backup and restore S3-related env variables."""
-    old_env = {k: os.environ.get(k) for k in [
-        "S3_STORAGE_ENABLED", "S3_BUCKET_NAME", "S3_ENDPOINT_URL",
-        "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_REGION_NAME", "S3_SECURE"
-    ]}
+    old_env = {
+        k: os.environ.get(k)
+        for k in [
+            "S3_STORAGE_ENABLED",
+            "S3_BUCKET_NAME",
+            "S3_ENDPOINT_URL",
+            "S3_ACCESS_KEY",
+            "S3_SECRET_KEY",
+            "S3_REGION_NAME",
+            "S3_SECURE",
+            "MTO_BACKUP_S3_STORAGE_ENABLED",
+            "MTO_BACKUP_S3_BUCKET_NAME",
+            "MTO_BACKUP_S3_ENDPOINT_URL",
+            "MTO_BACKUP_S3_ACCESS_KEY",
+            "MTO_BACKUP_S3_SECRET_KEY",
+            "MTO_BACKUP_S3_REGION_NAME",
+            "MTO_BACKUP_S3_SECURE",
+        ]
+    }
+    monkeypatch.setattr(
+        "backend.services.storage_service.secrets.get",
+        lambda key, default=None: os.environ.get(key, default),
+    )
     yield
     for k, v in old_env.items():
         if v is None:
             os.environ.pop(k, None)
         else:
             os.environ[k] = v
+
 
 def test_storage_disabled_by_default(clean_env):
     """Verifies that storage is disabled if env says so."""
@@ -36,6 +57,7 @@ def test_storage_disabled_by_default(clean_env):
     with pytest.raises(RuntimeError, match="disabled"):
         service.list_objects("backups/")
     assert service.download_file("dummy_key.pdf", "dummy_path.pdf") is False
+
 
 @patch("boto3.client")
 def test_storage_initialization_bucket_exists(mock_boto_client, clean_env):
@@ -55,10 +77,8 @@ def test_storage_initialization_bucket_exists(mock_boto_client, clean_env):
     assert service.enabled is True
     mock_s3.head_bucket.assert_called_once_with(Bucket="test-bucket")
     mock_s3.create_bucket.assert_not_called()
-    mock_s3.put_bucket_versioning.assert_called_once_with(
-        Bucket="test-bucket",
-        VersioningConfiguration={"Status": "Enabled"}
-    )
+    mock_s3.put_bucket_versioning.assert_called_once_with(Bucket="test-bucket", VersioningConfiguration={"Status": "Enabled"})
+
 
 @patch("boto3.client")
 def test_storage_initialization_bucket_missing(mock_boto_client, clean_env):
@@ -71,18 +91,14 @@ def test_storage_initialization_bucket_missing(mock_boto_client, clean_env):
     mock_boto_client.return_value = mock_s3
 
     # head_bucket throws 404
-    mock_s3.head_bucket.side_effect = ClientError(
-        {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadBucket"
-    )
+    mock_s3.head_bucket.side_effect = ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadBucket")
 
     service = StorageService()
 
     assert service.enabled is True
     mock_s3.create_bucket.assert_called_once_with(Bucket="missing-bucket")
-    mock_s3.put_bucket_versioning.assert_called_once_with(
-        Bucket="missing-bucket",
-        VersioningConfiguration={"Status": "Enabled"}
-    )
+    mock_s3.put_bucket_versioning.assert_called_once_with(Bucket="missing-bucket", VersioningConfiguration={"Status": "Enabled"})
+
 
 @patch("boto3.client")
 def test_storage_upload_success(mock_boto_client, clean_env, tmp_path):
@@ -106,8 +122,9 @@ def test_storage_upload_success(mock_boto_client, clean_env, tmp_path):
         Filename=str(temp_file),
         Bucket="test-bucket",
         Key="receipts/test.pdf",
-        ExtraArgs={"ContentType": "application/pdf"}
+        ExtraArgs={"ContentType": "application/pdf"},
     )
+
 
 @patch("boto3.client")
 def test_storage_generate_presigned_url(mock_boto_client, clean_env):
@@ -127,7 +144,7 @@ def test_storage_generate_presigned_url(mock_boto_client, clean_env):
     mock_s3.generate_presigned_url.assert_called_once_with(
         ClientMethod="get_object",
         Params={"Bucket": "test-bucket", "Key": "receipts/test.pdf"},
-        ExpiresIn=1800
+        ExpiresIn=1800,
     )
 
 
@@ -183,9 +200,7 @@ def test_storage_lists_all_pages(mock_boto_client, clean_env):
 
     assert [item["key"] for item in objects] == ["backups/a", "backups/b"]
     assert sum(item["size"] for item in objects) == 30
-    mock_s3.list_objects_v2.assert_any_call(
-        Bucket="test-bucket", Prefix="backups/", ContinuationToken="page-2"
-    )
+    mock_s3.list_objects_v2.assert_any_call(Bucket="test-bucket", Prefix="backups/", ContinuationToken="page-2")
 
 
 @patch("boto3.client")

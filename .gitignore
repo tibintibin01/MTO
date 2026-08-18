@@ -22,6 +22,10 @@ build/
 dist/
 frontend/.mto-built-tree
 
+# Offline cloud-backup recovery keys must never enter source control
+mto_backup_recovery_key*.txt
+MTO_BACKUP_RECOVERY_KEY*.txt
+
 # Database
 mto_local.db
 backups/

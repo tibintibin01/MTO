@@ -5,25 +5,68 @@ from typing import Optional
 import boto3
 from botocore.exceptions import ClientError
 from botocore.client import Config
+from utils.secrets_manager import secrets
 
 logger = logging.getLogger("MTO_SYSTEM")
 
+
 class StorageService:
     """
-    Resilient S3-compatible Object Storage Service with local fallback and automatic bucket versioning setup.
+    Resilient S3-compatible storage with optional activation and versioning.
     """
-    def __init__(self):
-        self.enabled = os.getenv("S3_STORAGE_ENABLED", "false").lower() == "true"
-        self.bucket_name = os.getenv("S3_BUCKET_NAME", "mto-ledgers")
-        self.endpoint_url = os.getenv("S3_ENDPOINT_URL", "http://localhost:9000")
-        self.access_key = os.getenv("S3_ACCESS_KEY", "minioadmin")
-        self.secret_key = os.getenv("S3_SECRET_KEY", "minioadmin")
-        self.region_name = os.getenv("S3_REGION_NAME", "us-east-1")
-        self.secure = os.getenv("S3_SECURE", "false").lower() == "true"
+
+    def __init__(
+        self,
+        settings_prefix: str = "S3",
+        *,
+        allow_bucket_create: bool = True,
+        enable_versioning: bool = True,
+        activation_setting: str | None = None,
+    ):
+        self.settings_prefix = settings_prefix.strip().upper()
+        self.allow_bucket_create = allow_bucket_create
+        self.enable_versioning = enable_versioning
+        self.activation_setting = activation_setting
+
+        def setting(name: str, default: str = "") -> str:
+            return str(secrets.get(f"{self.settings_prefix}_{name}", default=default) or "")
+
+        is_document_storage = self.settings_prefix == "S3"
+        self.configured = setting("STORAGE_ENABLED", "false").lower() == "true"
+        self.enabled = self.configured
+        self.bucket_name = setting("BUCKET_NAME", "mto-ledgers" if is_document_storage else "")
+        self.endpoint_url = setting("ENDPOINT_URL", "http://localhost:9000" if is_document_storage else "")
+        self.access_key = setting("ACCESS_KEY", "minioadmin" if is_document_storage else "")
+        self.secret_key = setting("SECRET_KEY", "minioadmin" if is_document_storage else "")
+        self.region_name = setting("REGION_NAME", "us-east-1" if is_document_storage else "auto")
+        self.secure = setting("SECURE", "false" if is_document_storage else "true").lower() == "true"
 
         self.s3_client = None
+        if self.enabled and self.activation_setting:
+            activation_value = secrets.get(self.activation_setting, default="false")
+            if str(activation_value or "").strip().lower() not in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }:
+                self.enabled = False
 
         if self.enabled:
+            missing = [
+                label
+                for label, value in (
+                    ("bucket name", self.bucket_name),
+                    ("endpoint URL", self.endpoint_url),
+                    ("access key", self.access_key),
+                    ("secret key", self.secret_key),
+                )
+                if not value
+            ]
+            if missing:
+                logger.error(f"StorageService[{self.settings_prefix}]: disabled because " f"{', '.join(missing)} is missing.")
+                self.enabled = False
+                return
             try:
                 # Use signature_version='s3v4' for MinIO compatibility
                 self.s3_client = boto3.client(
@@ -33,7 +76,7 @@ class StorageService:
                     aws_secret_access_key=self.secret_key,
                     region_name=self.region_name,
                     use_ssl=self.secure,
-                    config=Config(signature_version="s3v4")
+                    config=Config(signature_version="s3v4"),
                 )
                 self._ensure_bucket_and_versioning()
                 logger.info(f"StorageService: Connected to S3-compatible host at {self.endpoint_url}")
@@ -53,6 +96,8 @@ class StorageService:
             error_code = e.response.get("Error", {}).get("Code")
             # If bucket doesn't exist, create it
             if error_code in ["404", "NoSuchBucket"]:
+                if not self.allow_bucket_create:
+                    raise RuntimeError(f"Required bucket '{self.bucket_name}' does not exist or is not " "accessible. Create it manually and use a bucket-scoped token.") from e
                 try:
                     logger.info(f"StorageService: Bucket '{self.bucket_name}' not found. Creating it...")
                     # AWS S3 requires LocationConstraint if not in us-east-1, but MinIO does not
@@ -61,7 +106,7 @@ class StorageService:
                     else:
                         self.s3_client.create_bucket(
                             Bucket=self.bucket_name,
-                            CreateBucketConfiguration={"LocationConstraint": self.region_name}
+                            CreateBucketConfiguration={"LocationConstraint": self.region_name},
                         )
                 except Exception as create_err:
                     logger.error(f"StorageService: Failed to create bucket '{self.bucket_name}': {create_err}")
@@ -70,14 +115,12 @@ class StorageService:
                 logger.error(f"StorageService: Unexpected head_bucket error: {e}")
                 raise
 
+        if not self.enable_versioning:
+            return
+
         # Enable versioning on the bucket
         try:
-            self.s3_client.put_bucket_versioning(
-                Bucket=self.bucket_name,
-                VersioningConfiguration={
-                    "Status": "Enabled"
-                }
-            )
+            self.s3_client.put_bucket_versioning(Bucket=self.bucket_name, VersioningConfiguration={"Status": "Enabled"})
             logger.info(f"StorageService: Bucket '{self.bucket_name}' versioning is verified/enabled.")
         except Exception as ver_err:
             logger.warning(f"StorageService: Failed to enable versioning on bucket '{self.bucket_name}': {ver_err}")
@@ -100,7 +143,7 @@ class StorageService:
                 Filename=local_path,
                 Bucket=self.bucket_name,
                 Key=s3_key,
-                ExtraArgs={"ContentType": content_type}
+                ExtraArgs={"ContentType": content_type},
             )
             logger.info(f"StorageService: Successfully uploaded '{local_path}' to S3 as '{s3_key}'")
             return s3_key
@@ -119,11 +162,8 @@ class StorageService:
         try:
             url = self.s3_client.generate_presigned_url(
                 ClientMethod="get_object",
-                Params={
-                    "Bucket": self.bucket_name,
-                    "Key": s3_key
-                },
-                ExpiresIn=expiration
+                Params={"Bucket": self.bucket_name, "Key": s3_key},
+                ExpiresIn=expiration,
             )
             return url
         except Exception as e:
@@ -139,11 +179,7 @@ class StorageService:
             return False
 
         try:
-            self.s3_client.download_file(
-                Bucket=self.bucket_name,
-                Key=s3_key,
-                Filename=target_local_path
-            )
+            self.s3_client.download_file(Bucket=self.bucket_name, Key=s3_key, Filename=target_local_path)
             logger.info(f"StorageService: Downloaded '{s3_key}' to '{target_local_path}'")
             return True
         except Exception as e:
@@ -174,9 +210,7 @@ class StorageService:
             response = self.s3_client.get_object(Bucket=self.bucket_name, Key=s3_key)
             content_length = int(response.get("ContentLength", 0))
             if content_length > max_bytes:
-                logger.error(
-                    f"StorageService: Refused oversized object '{s3_key}' ({content_length} bytes)."
-                )
+                logger.error(f"StorageService: Refused oversized object '{s3_key}' ({content_length} bytes).")
                 response["Body"].close()
                 return None
             body = response["Body"]
@@ -206,11 +240,13 @@ class StorageService:
                     params["ContinuationToken"] = continuation_token
                 response = self.s3_client.list_objects_v2(**params)
                 for item in response.get("Contents", []):
-                    objects.append({
-                        "key": item["Key"],
-                        "size": int(item.get("Size", 0)),
-                        "last_modified": item.get("LastModified"),
-                    })
+                    objects.append(
+                        {
+                            "key": item["Key"],
+                            "size": int(item.get("Size", 0)),
+                            "last_modified": item.get("LastModified"),
+                        }
+                    )
                 if not response.get("IsTruncated"):
                     break
                 continuation_token = response.get("NextContinuationToken")
@@ -230,7 +266,7 @@ class StorageService:
             return True
         try:
             for start in range(0, len(keys), 1000):
-                batch = keys[start:start + 1000]
+                batch = keys[start : start + 1000]
                 response = self.s3_client.delete_objects(
                     Bucket=self.bucket_name,
                     Delete={
@@ -248,5 +284,16 @@ class StorageService:
             logger.error(f"StorageService: Failed to delete cloud objects: {e}")
             return False
 
+
 # Global singleton instance
 storage_service = StorageService()
+
+# Database backups use separate credentials and a dedicated private bucket.
+# This prevents enabling cloud backup from also uploading receipts and billing
+# PDFs handled by the legacy/document storage singleton above.
+backup_storage_service = StorageService(
+    settings_prefix="MTO_BACKUP_S3",
+    allow_bucket_create=False,
+    enable_versioning=False,
+    activation_setting="MTO_ENABLE_CLOUD_BACKUP",
+)
