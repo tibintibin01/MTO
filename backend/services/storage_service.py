@@ -22,11 +22,13 @@ class StorageService:
         allow_bucket_create: bool = True,
         enable_versioning: bool = True,
         activation_setting: str | None = None,
+        object_prefix_access_check: str | None = None,
     ):
         self.settings_prefix = settings_prefix.strip().upper()
         self.allow_bucket_create = allow_bucket_create
         self.enable_versioning = enable_versioning
         self.activation_setting = activation_setting
+        self.object_prefix_access_check = object_prefix_access_check
 
         def setting(name: str, default: str = "") -> str:
             return str(secrets.get(f"{self.settings_prefix}_{name}", default=default) or "")
@@ -78,11 +80,24 @@ class StorageService:
                     use_ssl=self.secure,
                     config=Config(signature_version="s3v4"),
                 )
-                self._ensure_bucket_and_versioning()
+                if self.object_prefix_access_check is not None:
+                    self._verify_object_prefix_access()
+                else:
+                    self._ensure_bucket_and_versioning()
                 logger.info(f"StorageService: Connected to S3-compatible host at {self.endpoint_url}")
             except Exception as e:
                 logger.error(f"StorageService: Failed to connect to S3-compatible host: {e}. Falling back to local disk.")
                 self.enabled = False
+
+    def _verify_object_prefix_access(self):
+        """Validate least-privilege object access without bucket management APIs."""
+        if not self.s3_client:
+            return
+        self.s3_client.list_objects_v2(
+            Bucket=self.bucket_name,
+            Prefix=self.object_prefix_access_check or "",
+            MaxKeys=1,
+        )
 
     def _ensure_bucket_and_versioning(self):
         """Ensures the configured S3 bucket exists and has versioning enabled."""
@@ -296,4 +311,5 @@ backup_storage_service = StorageService(
     allow_bucket_create=False,
     enable_versioning=False,
     activation_setting="MTO_ENABLE_CLOUD_BACKUP",
+    object_prefix_access_check="backups/",
 )

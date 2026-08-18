@@ -24,6 +24,7 @@ from typing import Any
 
 import boto3
 from botocore.client import Config
+from botocore.exceptions import ClientError
 from dotenv import dotenv_values
 
 
@@ -178,6 +179,52 @@ def _cloud_backup_is_enabled(project_root: Path) -> bool:
     return environment_value in TRUE_VALUES or env_file_value in TRUE_VALUES
 
 
+def _run_r2_operation(label: str, operation):
+    """Run one R2 operation and return a useful error without exposing secrets."""
+    try:
+        return operation()
+    except ClientError as exc:
+        response = exc.response or {}
+        error = response.get("Error", {})
+        metadata = response.get("ResponseMetadata", {})
+        status = metadata.get("HTTPStatusCode", "unknown")
+        code = str(error.get("Code", "unknown"))
+        request_id = (
+            metadata.get("RequestId") or error.get("RequestId") or "unavailable"
+        )
+
+        if str(status) == "400" or code in {
+            "400",
+            "InvalidRequest",
+            "RequestExpired",
+        }:
+            hint = (
+                "Synchronize Windows date, time, and time zone, then verify that "
+                "the values entered are the two R2 credential values, not the "
+                "Cloudflare API token value."
+            )
+        elif str(status) in {"401", "403"} or code in {
+            "AccessDenied",
+            "InvalidAccessKeyId",
+            "SignatureDoesNotMatch",
+        }:
+            hint = (
+                "Verify the R2 credentials and confirm the token has Object Read & "
+                "Write permission for this exact bucket."
+            )
+        elif str(status) == "404" or code in {"404", "NoSuchBucket"}:
+            hint = (
+                "Verify the bucket name and confirm it belongs to this Cloudflare account."
+            )
+        else:
+            hint = "Review the R2 token scope, bucket name, endpoint, and network connection."
+
+        raise RuntimeError(
+            f"R2 {label} failed (HTTP {status}, code {code}, request {request_id}). "
+            f"{hint}"
+        ) from exc
+
+
 def test_r2_access(settings: dict[str, str]) -> None:
     """Runs bounded create/read/list/delete checks using a non-taxpayer probe."""
     client = boto3.client(
@@ -199,30 +246,55 @@ def test_r2_access(settings: dict[str, str]) -> None:
     probe_data = py_secrets.token_bytes(64)
     uploaded = False
     try:
-        client.head_bucket(Bucket=bucket)
-        client.put_object(
-            Bucket=bucket,
-            Key=probe_key,
-            Body=probe_data,
-            ContentType="application/octet-stream",
+        # Bucket-scoped Object Read & Write tokens need object operations, not
+        # bucket-management access. HeadBucket can hide the real failure behind
+        # a generic 400 response, so check the isolated probe prefix instead.
+        _run_r2_operation(
+            "list check",
+            lambda: client.list_objects_v2(
+                Bucket=bucket, Prefix="phase2-probe/", MaxKeys=1
+            ),
+        )
+        _run_r2_operation(
+            "probe upload",
+            lambda: client.put_object(
+                Bucket=bucket,
+                Key=probe_key,
+                Body=probe_data,
+                ContentType="application/octet-stream",
+            ),
         )
         uploaded = True
-        metadata = client.head_object(Bucket=bucket, Key=probe_key)
+        metadata = _run_r2_operation(
+            "probe metadata check",
+            lambda: client.head_object(Bucket=bucket, Key=probe_key),
+        )
         if int(metadata.get("ContentLength", -1)) != len(probe_data):
             raise RuntimeError("R2 returned an unexpected probe-object size.")
-        response = client.get_object(Bucket=bucket, Key=probe_key)
+        response = _run_r2_operation(
+            "probe download",
+            lambda: client.get_object(Bucket=bucket, Key=probe_key),
+        )
         try:
             downloaded = response["Body"].read(len(probe_data) + 1)
         finally:
             response["Body"].close()
         if downloaded != probe_data:
             raise RuntimeError("R2 probe download did not match the uploaded bytes.")
-        listed = client.list_objects_v2(Bucket=bucket, Prefix=probe_key, MaxKeys=1)
+        listed = _run_r2_operation(
+            "uploaded-object list check",
+            lambda: client.list_objects_v2(
+                Bucket=bucket, Prefix=probe_key, MaxKeys=1
+            ),
+        )
         if not any(item.get("Key") == probe_key for item in listed.get("Contents", [])):
             raise RuntimeError("R2 token cannot list the uploaded probe object.")
     finally:
         if uploaded:
-            client.delete_object(Bucket=bucket, Key=probe_key)
+            _run_r2_operation(
+                "probe cleanup",
+                lambda: client.delete_object(Bucket=bucket, Key=probe_key),
+            )
 
 
 def _settings_from_vault(vault: dict[str, Any]) -> dict[str, str]:

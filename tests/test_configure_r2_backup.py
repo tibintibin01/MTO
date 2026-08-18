@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from botocore.exceptions import ClientError
 
 from scripts import configure_r2_backup as r2
 
@@ -101,9 +102,10 @@ def test_r2_probe_uses_random_non_taxpayer_bytes_and_cleans_up(monkeypatch):
     body = io.BytesIO(b"P" * 64)
     client.head_object.return_value = {"ContentLength": 64}
     client.get_object.return_value = {"Body": body}
-    client.list_objects_v2.return_value = {
-        "Contents": [{"Key": "phase2-probe/probe-id.bin"}]
-    }
+    client.list_objects_v2.side_effect = [
+        {"Contents": []},
+        {"Contents": [{"Key": "phase2-probe/probe-id.bin"}]},
+    ]
     boto_client = MagicMock(return_value=client)
     monkeypatch.setattr(r2.boto3, "client", boto_client)
     monkeypatch.setattr(r2.py_secrets, "token_bytes", lambda size: b"P" * size)
@@ -113,7 +115,12 @@ def test_r2_probe_uses_random_non_taxpayer_bytes_and_cleans_up(monkeypatch):
 
     boto_client.assert_called_once()
     assert boto_client.call_args.kwargs["region_name"] == "auto"
-    client.head_bucket.assert_called_once_with(Bucket="mto-treasury-backups")
+    client.head_bucket.assert_not_called()
+    assert client.list_objects_v2.call_args_list[0].kwargs == {
+        "Bucket": "mto-treasury-backups",
+        "Prefix": "phase2-probe/",
+        "MaxKeys": 1,
+    }
     client.put_object.assert_called_once_with(
         Bucket="mto-treasury-backups",
         Key="phase2-probe/probe-id.bin",
@@ -123,6 +130,31 @@ def test_r2_probe_uses_random_non_taxpayer_bytes_and_cleans_up(monkeypatch):
     client.delete_object.assert_called_once_with(
         Bucket="mto-treasury-backups", Key="phase2-probe/probe-id.bin"
     )
+
+
+def test_r2_probe_reports_actionable_redacted_client_error(monkeypatch):
+    client = MagicMock()
+    client.list_objects_v2.side_effect = ClientError(
+        {
+            "Error": {"Code": "400", "Message": "Bad Request"},
+            "ResponseMetadata": {
+                "HTTPStatusCode": 400,
+                "RequestId": "request-123",
+            },
+        },
+        "ListObjectsV2",
+    )
+    monkeypatch.setattr(r2.boto3, "client", MagicMock(return_value=client))
+
+    with pytest.raises(RuntimeError) as error:
+        r2.test_r2_access(_valid_settings())
+
+    message = str(error.value)
+    assert "R2 list check failed" in message
+    assert "HTTP 400" in message
+    assert "request-123" in message
+    assert "Synchronize Windows" in message
+    assert "secret" not in message.lower()
 
 
 def test_r2_probe_deletes_uploaded_object_after_verification_failure(monkeypatch):
