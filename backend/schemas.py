@@ -86,6 +86,18 @@ class ReceiptRecordSchema(BaseSanitizedModel):
     user_name: str
 
 
+class RecentPaymentSchema(BaseModel):
+    """Stable dashboard contract for a successfully posted payment."""
+
+    id: int
+    date_paid: Optional[str] = None
+    or_number: Optional[str] = None
+    td_number: Optional[str] = None
+    owner_name: Optional[str] = None
+    tax_year: Optional[str] = None
+    amount: float
+
+
 class LogActionSchema(BaseSanitizedModel):
     model_config = ConfigDict(extra="forbid")
     action: str

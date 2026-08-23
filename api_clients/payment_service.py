@@ -4,7 +4,12 @@ from api_clients.api_helper import api_request
 
 
 def get_recent_payments(limit=8):
-    return api_request("GET", "/payments/recent", params={"limit": limit})
+    result = api_request("GET", "/payments/recent", params={"limit": limit})
+    if isinstance(result, list):
+        return result
+    if isinstance(result, dict) and isinstance(result.get("items"), list):
+        return result["items"]
+    raise ValueError("The server returned an invalid recent-payments response.")
 
 
 def get_payment_receipt_records(term):

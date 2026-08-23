@@ -164,6 +164,22 @@ class TestDashboardHome(unittest.TestCase):
         self.assertEqual(row["owner_year"], "DELA CRUZ, JUAN / 2026")
         self.assertEqual(row["amount"], 1250.5)
 
+    def test_named_recent_payment_rows_are_normalized_for_dashboard_display(self):
+        row = _recent_payment_display(
+            {
+                "date_paid": "2026-08-20T09:15:00",
+                "or_number": "7812002",
+                "td_number": "06-0012-00002",
+                "owner_name": "SANTOS, MARIA",
+                "tax_year": "2026",
+                "amount": 900.25,
+            }
+        )
+
+        self.assertEqual(row["date"], "2026-08-20")
+        self.assertEqual(row["owner_year"], "SANTOS, MARIA / 2026")
+        self.assertEqual(row["amount"], 900.25)
+
     def test_month_labels_include_year_to_avoid_cross_year_ambiguity(self):
         self.assertEqual(_dashboard_month_label("2026-08"), "Aug 26")
         self.assertEqual(_dashboard_month_label("invalid"), "invalid")
@@ -234,7 +250,37 @@ class TestDashboardHome(unittest.TestCase):
             {"total_properties": 100, "infra_stats": {"pool": {}}},
             [],
             [],
+            None,
         )
+
+    def test_dashboard_recent_payment_failure_is_rendered_as_an_error(self):
+        home = object.__new__(DashboardHomePage)
+        home.parent = MagicMock()
+        home.callbacks = {
+            "get_summary": MagicMock(return_value={"total_properties": 100}),
+            "get_trend": MagicMock(return_value=[]),
+            "get_recent": MagicMock(side_effect=RuntimeError("endpoint failed")),
+        }
+        home._update_ui = MagicMock()
+        home._hide_loading = MagicMock()
+
+        with patch(
+            "ui.dashboard_home.system.get_system_stats", return_value={"pool": {}}
+        ), patch("utils.log_error_to_file"):
+            home.refresh_data()
+
+        scheduled_render = home.parent.after.call_args.args[1]
+        scheduled_render()
+        args = home._update_ui.call_args.args
+        self.assertEqual(
+            args[:3],
+            (
+                {"total_properties": 100, "infra_stats": {"pool": {}}},
+                [],
+                [],
+            ),
+        )
+        self.assertIn("endpoint failed", args[3])
 
 
 if __name__ == "__main__":

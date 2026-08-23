@@ -292,27 +292,50 @@ def get_next_or_number(default_prefix="OR-", db_session: Session = None):
 
 
 def get_recent_payments(limit=8, db_session: Session = None):
-    safe_limit = max(1, int(limit))
+    """Return the latest posted payments using the dashboard's counting scope.
+
+    Payment history remains financially relevant even if its property is later
+    archived. The dashboard summary counts all posted payments, so filtering
+    archived properties here made the recent list disagree with its cards.
+    """
+    safe_limit = max(1, min(int(limit), 50))
+    effective_paid_at = func.coalesce(
+        Payment.date_paid, Payment.created_at
+    ).label("date_paid")
     rows = (
         db_session.query(
-            Payment.date_paid,
+            Payment.id.label("id"),
+            effective_paid_at,
             Payment.or_number,
             Property.td_number,
             Property.owner_name,
             Payment.tax_year,
             Payment.amount,
-            Payment.id,
         )
-        .join(Property, Property.id == Payment.property_id)
-        .filter(Property.deleted_at == None)
+        .outerjoin(Property, Property.id == Payment.property_id)
         .order_by(
-            func.coalesce(Payment.date_paid, cast(Payment.created_at, Date)).desc(),
+            effective_paid_at.desc(),
             Payment.id.desc(),
         )
         .limit(safe_limit)
         .all()
     )
-    return [list(r) for r in rows]
+    return [
+        {
+            "id": int(row.id),
+            "date_paid": (
+                row.date_paid.isoformat()
+                if hasattr(row.date_paid, "isoformat")
+                else str(row.date_paid or "") or None
+            ),
+            "or_number": row.or_number,
+            "td_number": row.td_number,
+            "owner_name": row.owner_name,
+            "tax_year": row.tax_year,
+            "amount": float(_d(row.amount)),
+        }
+        for row in rows
+    ]
 
 
 def get_monthly_collection_trend(months=6, db_session: Session = None):

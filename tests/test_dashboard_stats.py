@@ -11,6 +11,7 @@ from backend.database import Base
 from backend.models import Property, Payment, SystemStats
 from backend.services.stats_service import refresh_system_stats, stats_are_stale
 from backend.services.system_service import get_dashboard_summary
+from backend.services.payment_service import get_recent_payments
 
 
 @pytest.fixture()
@@ -71,3 +72,37 @@ def test_get_dashboard_summary_refreshes_stale_cache(db):
     assert summary["collections_month"] == 500.0
     assert summary["receipts_today"] == 1
     assert stats_are_stale(db) is False
+
+
+def test_recent_payments_use_named_contract_and_keep_archived_history(db):
+    archived = Property(
+        td_number="06-0001-0002",
+        owner_name="ARCHIVED OWNER",
+        assessed_value=75_000.0,
+        tax_year="2024",
+        deleted_at=datetime.now(timezone.utc),
+    )
+    db.add(archived)
+    db.flush()
+    db.add(
+        Payment(
+            property_id=archived.id,
+            amount=750.25,
+            or_number="OR-101",
+            tax_year="2024",
+            date_paid=datetime.now(timezone.utc),
+            posted_by="admin",
+        )
+    )
+    db.commit()
+
+    rows = get_recent_payments(limit=10, db_session=db)
+    archived_row = next(row for row in rows if row["or_number"] == "OR-101")
+
+    assert archived_row["id"] > 0
+    assert archived_row["date_paid"].startswith(datetime.now().date().isoformat())
+    assert archived_row["or_number"] == "OR-101"
+    assert archived_row["td_number"] == "06-0001-0002"
+    assert archived_row["owner_name"] == "ARCHIVED OWNER"
+    assert archived_row["tax_year"] == "2024"
+    assert archived_row["amount"] == 750.25

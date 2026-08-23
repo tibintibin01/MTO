@@ -291,7 +291,7 @@ class DashboardHomePage:
         )
         self._render_recent_collections([])
 
-    def _render_recent_collections(self, rows):
+    def _render_recent_collections(self, rows, load_error=None):
         for child in self.recent_rows.winfo_children():
             child.destroy()
 
@@ -320,6 +320,19 @@ class DashboardHomePage:
             ).grid(
                 row=0, column=column, sticky="ew", padx=6, pady=6
             )
+
+        if load_error:
+            ctk.CTkLabel(
+                self.recent_rows,
+                text=(
+                    "Recent collections could not be loaded.\n"
+                    "Reopen the Dashboard or check the server connection."
+                ),
+                font=("Segoe UI", 10),
+                text_color=ModernTheme.WARNING,
+                justify="center",
+            ).pack(expand=True, pady=52)
+            return
 
         if not rows:
             ctk.CTkLabel(
@@ -587,6 +600,7 @@ class DashboardHomePage:
 
             trend_rows = self.callbacks["get_trend"](6) or []
             recent_rows = []
+            recent_error = None
             get_recent = self.callbacks.get("get_recent")
             if callable(get_recent):
                 try:
@@ -595,14 +609,18 @@ class DashboardHomePage:
                     from utils import log_error_to_file
 
                     log_error_to_file("Dashboard recent payments fetch failed", exc)
+                    recent_error = str(exc)
             self.parent.after(
-                0, lambda: self._update_ui(summary, trend_rows, recent_rows)
+                0,
+                lambda: self._update_ui(
+                    summary, trend_rows, recent_rows, recent_error
+                ),
             )
         except Exception as e:
             print(f"Dashboard refresh error: {e}")
             self.parent.after(0, self._hide_loading)
 
-    def _update_ui(self, summary, trend_rows, recent_rows):
+    def _update_ui(self, summary, trend_rows, recent_rows, recent_error=None):
         self._hide_loading()
         if not self.stat_cards["total_properties"].winfo_exists():
             return
@@ -623,7 +641,7 @@ class DashboardHomePage:
         months = [_dashboard_month_label(row.get("month")) for row in trend_rows]
         totals = [row["total"] for row in trend_rows]
         self.bar_chart.draw(months, totals, chart_type="bar")
-        self._render_recent_collections(recent_rows)
+        self._render_recent_collections(recent_rows, load_error=recent_error)
 
         b = summary.get("backup")
         if b:

@@ -1,11 +1,11 @@
 import os
 import asyncio
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from backend.deps import get_current_user, write_access, get_db, Session
-from backend.schemas import ReceiptRecordSchema
+from backend.schemas import ReceiptRecordSchema, RecentPaymentSchema
 from backend.models import Payment, Property
 import backend.services.payment_service as pay_svc
 from backend.generators import receipt_gen
@@ -25,9 +25,9 @@ class PaymentUpdateRequest(BaseModel):
     remarks: Optional[str] = None
 
 
-@router.get("/recent")
+@router.get("/recent", response_model=list[RecentPaymentSchema])
 def get_recent_payments(
-    limit: int = 8,
+    limit: int = Query(default=8, ge=1, le=50),
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
