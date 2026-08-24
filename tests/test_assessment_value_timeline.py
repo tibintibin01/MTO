@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
@@ -343,6 +345,35 @@ def test_payment_posts_to_requested_td_when_it_has_its_own_billing():
     assert link.billing_id == old_billing.id
     assert float(old_billing.amount_paid) == 2_000
     assert float(replacement_billing.amount_paid) == 4_000
+
+
+def test_manual_payment_refreshes_dashboard_stats_after_commit():
+    db = _session()
+    old, _replacement_2026, _replacement_2027 = _add_td_chain(db)
+    db.add(
+        PropertyBilling(
+            property_id=old.id,
+            tax_year=2027,
+            assessed_value=100_000,
+            amount_paid=0,
+            is_archived=False,
+        )
+    )
+    db.commit()
+
+    with patch(
+        "backend.services.stats_service.refresh_system_stats",
+        return_value=True,
+    ) as refresh_stats:
+        save_property(
+            _payment_payload(old, tax_year="2027"),
+            editing_id=old.id,
+            user={"id": 1, "username": "tester"},
+            db_session=db,
+        )
+
+    refresh_stats.assert_called_once_with(db_session=db)
+    assert db.query(Payment).count() == 1
 
 
 def test_archived_requested_td_billing_does_not_override_effectivity():

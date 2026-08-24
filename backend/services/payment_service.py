@@ -308,16 +308,22 @@ def get_next_or_number(default_prefix="OR-", db_session: Session = None):
 
 
 def get_recent_payments(limit=8, db_session: Session = None):
-    """Return the latest posted payments using the dashboard's counting scope.
+    """Return the latest encoded payments using the dashboard's counting scope.
 
     Payment history remains financially relevant even if its property is later
     archived. The dashboard summary counts all posted payments, so filtering
     archived properties here made the recent list disagree with its cards.
+
+    ``date_paid`` remains the official receipt date shown to staff, while
+    ``created_at`` determines recency. This keeps a backdated receipt encoded
+    today visible in Recent Collections without misclassifying it as today's
+    actual collection.
     """
     safe_limit = max(1, min(int(limit), 50))
     effective_paid_at = func.coalesce(
         Payment.date_paid, Payment.created_at
     ).label("date_paid")
+    effective_posted_at = func.coalesce(Payment.created_at, Payment.date_paid)
     rows = (
         db_session.query(
             Payment.id.label("id"),
@@ -330,7 +336,7 @@ def get_recent_payments(limit=8, db_session: Session = None):
         )
         .outerjoin(Property, Property.id == Payment.property_id)
         .order_by(
-            effective_paid_at.desc(),
+            effective_posted_at.desc(),
             Payment.id.desc(),
         )
         .limit(safe_limit)

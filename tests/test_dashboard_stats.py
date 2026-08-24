@@ -106,3 +106,36 @@ def test_recent_payments_use_named_contract_and_keep_archived_history(db):
     assert archived_row["owner_name"] == "ARCHIVED OWNER"
     assert archived_row["tax_year"] == "2024"
     assert archived_row["amount"] == 750.25
+
+
+def test_recent_payments_prioritize_encoding_time_over_receipt_date(db):
+    prop = db.query(Property).filter(Property.td_number == "06-0001-0001").one()
+    encoded_now = datetime.now(timezone.utc)
+    db.add_all(
+        [
+            Payment(
+                property_id=prop.id,
+                amount=800.0,
+                or_number="OR-OLDER-ENTRY",
+                tax_year="2026",
+                date_paid=datetime(2026, 8, 20, tzinfo=timezone.utc),
+                created_at=encoded_now - timedelta(days=1),
+                posted_by="admin",
+            ),
+            Payment(
+                property_id=prop.id,
+                amount=900.0,
+                or_number="OR-BACKDATED-NEW-ENTRY",
+                tax_year="2024",
+                date_paid=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                created_at=encoded_now + timedelta(minutes=1),
+                posted_by="admin",
+            ),
+        ]
+    )
+    db.commit()
+
+    rows = get_recent_payments(limit=10, db_session=db)
+
+    assert rows[0]["or_number"] == "OR-BACKDATED-NEW-ENTRY"
+    assert rows[0]["date_paid"].startswith("2024-01-15")

@@ -660,12 +660,14 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                     if target_props and target_props[0]:
                         target_prop = target_props[0]
 
-                _sync_financial_records(
+                payment_posted = _sync_financial_records(
                     target_prop.id,
                     _payment_only_payload(target_prop, data, user=user),
                     db_session,
                 )
                 db_session.commit()
+                if payment_posted:
+                    _refresh_dashboard_stats_after_payment(db_session)
                 return {
                     "ok": True,
                     "property_id": target_prop.id,
@@ -768,7 +770,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
         )
 
         # 5. Financial Sync
-        _sync_financial_records(prop.id, data, db_session)
+        payment_posted = _sync_financial_records(prop.id, data, db_session)
 
         billing_sync = {"updated": 0, "years": []}
         old_assessed = (
@@ -870,6 +872,14 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             )
 
         db_session.commit()
+
+        # The payment and its billing allocation are already committed. Refresh
+        # the dashboard cache afterward so manual receipt entry is visible on
+        # the next Dashboard load. A statistics failure must never roll back or
+        # report failure for a payment that was successfully saved.
+        if payment_posted:
+            _refresh_dashboard_stats_after_payment(db_session)
+
         return {
             "ok": True,
             "property_id": prop.id,
@@ -888,6 +898,21 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                 detail="TD Number is already used by another property.",
             )
         raise HTTPException(status_code=500, detail=f"Save failed: {str(e)}")
+
+
+def _refresh_dashboard_stats_after_payment(db_session: Session):
+    """Refresh dashboard cache without endangering an already-saved payment."""
+    try:
+        from backend.services.stats_service import refresh_system_stats
+
+        refresh_system_stats(db_session=db_session)
+    except Exception as stats_err:
+        from utils import log_error_to_file
+
+        log_error_to_file(
+            "Stats refresh failed after manual payment posting",
+            stats_err,
+        )
 
 
 def _sync_financial_records(prop_id, data, db_session: Session):
@@ -990,6 +1015,8 @@ def _sync_financial_records(prop_id, data, db_session: Session):
 
         db_session.flush()  # Get payment_id
         billing.sync_payment_billings(pay_obj.id, allocated, db_session=db_session)
+
+    return should_pay
 
 
 @require_permission("property_edit")
