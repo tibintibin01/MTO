@@ -125,8 +125,8 @@
         "subtitle": "Integrated Payment & Receipt History",
         "search_placeholder": "Search TD Number, Owner, or OR Number...",
         "btn_fetch": "FETCH HISTORY",
-        "btn_view": "VIEW RECEIPT",
-        "btn_regen": "REGENERATE",
+        "btn_view": "VIEW PDF COPY",
+        "btn_regen": "REGENERATE PDF",
         "btn_export": "EXPORT DATA",
         "table": {
             "date": "Date",
@@ -138,9 +138,10 @@
             "discount": "Discount",
             "total": "Total Paid",
             "posted": "Posted By",
-            "status": "File Status",
-            "status_ready": "📄 READY",
-            "status_missing": "❌ MISSING"
+            "status": "PDF Copy",
+            "status_ready": "📄 AVAILABLE",
+            "status_missing": "❌ MISSING",
+            "status_not_generated": "— NOT GENERATED"
         },
         "footer": {
             "total": "Lifetime Payments: {value}"
@@ -150,8 +151,8 @@
             "input_req_msg": "Please enter a TD Number, Owner Name, or OR Number.",
             "not_found": "Not Found",
             "not_found_msg": "No financial history found for '{term}'.",
-            "receipt_missing": "Receipt Missing",
-            "receipt_missing_msg": "PDF file not found. Generate it now?",
+            "receipt_missing": "PDF Copy Unavailable",
+            "receipt_missing_msg": "No retained PDF copy is available. Generate the current payment record now?",
             "gen_error": "Generation Error"
         }
     },

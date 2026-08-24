@@ -134,6 +134,24 @@ async def generate_receipt_pdf(
                 storage_service.generate_presigned_url, s3_key
             )
             stored_path = s3_key  # Store the S3 key so it can be re-signed later
+            try:
+                pay_svc.save_receipt_record(
+                    details["property_id"],
+                    payment_id,
+                    details,
+                    stored_path,
+                    current_user.get("username", "system"),
+                    current_user=current_user,
+                    db_session=db_session,
+                )
+            except Exception as save_err:
+                mto_logger.error(
+                    f"Failed to register cloud payment-record PDF: {save_err}"
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail="The PDF was created but its retained copy could not be registered.",
+                ) from save_err
             if presigned_url:
                 try:
                     os.remove(pdf_path)
@@ -141,24 +159,10 @@ async def generate_receipt_pdf(
                     mto_logger.warning(
                         f"Failed to remove local temp PDF '{pdf_path}': {cleanup_err}"
                     )
-                # Update receipt_history with the new S3 path before redirecting
-                try:
-                    pay_svc.save_receipt_record(
-                        details["property_id"],
-                        payment_id,
-                        details,
-                        stored_path,
-                        current_user.get("username", "system"),
-                        current_user=current_user,
-                        db_session=db_session,
-                    )
-                except Exception as save_err:
-                    mto_logger.warning(
-                        f"Failed to update receipt_history after S3 upload: {save_err}"
-                    )
-                return RedirectResponse(presigned_url, status_code=307)
+                return RedirectResponse(presigned_url, status_code=303)
 
-    # Update receipt_history so the ledger "View Receipt" always opens the latest file
+    # Keep one current server-side PDF reference for this payment. Generating
+    # again replaces that copy instead of creating a new historical document.
     try:
         pay_svc.save_receipt_record(
             details["property_id"],
@@ -170,9 +174,55 @@ async def generate_receipt_pdf(
             db_session=db_session,
         )
     except Exception as save_err:
-        mto_logger.warning(f"Failed to update receipt_history: {save_err}")
+        mto_logger.error(f"Failed to register payment-record PDF: {save_err}")
+        raise HTTPException(
+            status_code=500,
+            detail="The PDF was created but its retained copy could not be registered.",
+        ) from save_err
 
     return FileResponse(pdf_path, media_type="application/pdf", filename=file_name)
+
+
+@router.get("/{payment_id}/receipt-pdf")
+async def view_receipt_pdf(
+    payment_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """Download the current retained PDF copy without regenerating it."""
+    details = pay_svc.get_payment_receipt_details(payment_id, db_session=db_session)
+    if not details:
+        raise HTTPException(status_code=404, detail="Payment details not found")
+
+    stored_path = details.get("file_path")
+    local_path = pay_svc._trusted_local_receipt_path(stored_path)
+    if local_path is not None and local_path.is_file():
+        return FileResponse(
+            str(local_path),
+            media_type="application/pdf",
+            filename=local_path.name,
+        )
+
+    if (
+        stored_path
+        and local_path is None
+        and pay_svc._trusted_receipt_reference(stored_path)
+        and storage_service.enabled
+    ):
+        presigned_url = await asyncio.to_thread(
+            storage_service.generate_presigned_url,
+            str(stored_path).replace("\\", "/"),
+        )
+        if presigned_url:
+            return RedirectResponse(presigned_url, status_code=307)
+
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            "The payment is recorded, but its generated PDF copy is unavailable. "
+            "Use Regenerate PDF to create the current copy."
+        ),
+    )
 
 
 @router.put("/{payment_id}")

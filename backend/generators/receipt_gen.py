@@ -67,7 +67,7 @@ def _num_to_words(amount: float) -> str:
         return f"{amount:,.2f}"
 
 
-def _draw_official_header(c, width, height, margin_x):
+def _draw_payment_record_header(c, width, height, margin_x):
     """
     Draws a clean official-document header.
     Left: Municipality of Dipaculao seal. Right: Bagong Pilipinas mark.
@@ -100,7 +100,7 @@ def _draw_official_header(c, width, height, margin_x):
 
     # Municipal seal and Bagong Pilipinas mark, both without background boxes.
     _draw_png(logo_path, margin_x, height - 39 * mm, 29 * mm, 29 * mm)
-    _draw_png(seal_path, width - margin_x - 32 * mm, height - 40 * mm, 32 * mm, 32 * mm)
+    _draw_png(seal_path, width - margin_x - 25 * mm, height - 35 * mm, 25 * mm, 25 * mm)
 
     centre_x = width / 2
     c.setFillColor(colors.black)
@@ -124,14 +124,25 @@ def _draw_official_header(c, width, height, margin_x):
     c.setLineWidth(0.7)
     c.line(centre_x - 36 * mm, height - 29 * mm, centre_x + 36 * mm, height - 29 * mm)
 
-    c.setFont("Helvetica-Bold", 18)
+    c.setFont("Helvetica-Bold", 15)
     c.setFillColor(primary)
-    c.drawCentredString(centre_x, height - 38 * mm, "OFFICIAL RECEIPT")
+    c.drawCentredString(
+        centre_x, height - 37 * mm, "REAL PROPERTY TAX PAYMENT RECORD"
+    )
+    c.setFont("Helvetica-Bold", 7.5)
+    c.setFillColor(secondary)
+    c.drawCentredString(
+        centre_x, height - 42 * mm, "SYSTEM-GENERATED REFERENCE COPY"
+    )
 
     now = datetime.now()
     c.setFillColor(secondary)
     c.setFont("Helvetica-Bold", 8)
-    c.drawRightString(width - margin_x, height - 51 * mm, now.strftime("%B %d, %Y"))
+    c.drawRightString(
+        width - margin_x,
+        height - 51 * mm,
+        f"Generated on: {now.strftime('%B %d, %Y')}",
+    )
     c.setFont("Helvetica", 8)
     c.drawRightString(width - margin_x, height - 56 * mm, now.strftime("%I:%M %p"))
 
@@ -182,18 +193,21 @@ def generate_or_receipt(receipt_data, base_dir):
 
     or_number = safe_text(receipt_data.get("or_number")) or "NO_OR_NUMBER"
     td_number = safe_text(receipt_data.get("td_number")) or "NO_TD"
-    date_part = datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_name = (f"OR_{safe_filename(or_number)}_"
-                 f"{safe_filename(td_number)}_{date_part}.pdf")
+    payment_id = safe_text(receipt_data.get("payment_id")) or "UNASSIGNED"
+    file_name = (
+        f"RPT_PAYMENT_RECORD_{safe_filename(payment_id)}_"
+        f"{safe_filename(or_number)}_{safe_filename(td_number)}.pdf"
+    )
     output_path = os.path.join(receipts_dir, file_name)
+    working_path = output_path + ".tmp"
 
-    c = canvas.Canvas(output_path, pagesize=A4)
+    c = canvas.Canvas(working_path, pagesize=A4)
     width, height = A4
     margin_x = 18 * mm
 
     # ── Watermark seal ────────────────────────────────────────────────────────
     # ── Header ────────────────────────────────────────────────────────────────
-    _draw_official_header(c, width, height, margin_x)
+    _draw_payment_record_header(c, width, height, margin_x)
 
     current_y = height - 55 * mm
     c.setFillColor(colors.black)
@@ -228,8 +242,8 @@ def generate_or_receipt(receipt_data, base_dir):
     row1_y = current_y - 7 * mm
     row2_y = current_y - 14 * mm
 
-    _lbl("OR Number", col1_x, row1_y)
-    _val(receipt_data.get("or_number"), col1_x + 22 * mm, row1_y)
+    _lbl("Source Official Receipt No.", col1_x, row1_y)
+    _val(receipt_data.get("or_number"), col1_x + 50 * mm, row1_y)
 
     tax_year_label = (
         ", ".join(receipt_data.get("tax_years", []))
@@ -243,8 +257,8 @@ def generate_or_receipt(receipt_data, base_dir):
     _val(receipt_data.get("date_paid"), col1_x + 22 * mm, row2_y)
 
     ao = safe_text(receipt_data.get("accountable_officer"))
-    _lbl("Accountable Officer", col2_x, row2_y)
-    _val(ao if ao else "—", col_right, row2_y, align="right")
+    _lbl("Collecting Officer", col2_x, row2_y)
+    _val(ao if ao else "Not recorded", col_right, row2_y, align="right")
 
     current_y -= box_h + 10 * mm
 
@@ -383,27 +397,36 @@ def generate_or_receipt(receipt_data, base_dir):
     )
     c.drawString(margin_x + 30 * mm, current_y, payor)
 
-    # ── Signature block ───────────────────────────────────────────────────────
-    current_y -= 20 * mm
-    sig_x = width / 2 + 10 * mm
-    sig_width = width - margin_x - sig_x
-
-    # Signature line
-    c.setStrokeColor(colors.black)
-    c.setLineWidth(0.5)
-    c.line(sig_x, current_y, sig_x + sig_width, current_y)
-
-    # Officer name above line
-    officer_name = safe_text(receipt_data.get("accountable_officer"))
-    c.setFont("Helvetica-Bold", 9)
-    c.setFillColor(colors.black)
-    c.drawCentredString(sig_x + sig_width / 2, current_y + 2 * mm, officer_name)
-
-    current_y -= 5 * mm
-    c.setFont("Helvetica", 8)
+    # ── Reference-copy notice ─────────────────────────────────────────────────
+    current_y -= 10 * mm
+    notice_h = 20 * mm
+    c.setFillColor(colors.HexColor("#f8fafc"))
+    c.setStrokeColor(colors.HexColor(BRANDING["branding_colors"]["accent"]))
+    c.setLineWidth(0.7)
+    c.roundRect(
+        margin_x,
+        current_y - notice_h,
+        width - 2 * margin_x,
+        notice_h,
+        2 * mm,
+        fill=1,
+        stroke=1,
+    )
+    c.setFillColor(colors.HexColor(BRANDING["branding_colors"]["primary"]))
+    c.setFont("Helvetica-Bold", 8)
+    c.drawString(margin_x + 4 * mm, current_y - 6 * mm, "REFERENCE COPY ONLY")
     c.setFillColor(colors.HexColor(BRANDING["branding_colors"]["secondary"]))
-    c.drawCentredString(sig_x + sig_width / 2, current_y,
-                        "Collecting Officer / Cashier")
+    c.setFont("Helvetica", 7.5)
+    c.drawString(
+        margin_x + 4 * mm,
+        current_y - 11 * mm,
+        "This document summarizes the payment recorded under the Source Official Receipt number shown above.",
+    )
+    c.drawString(
+        margin_x + 4 * mm,
+        current_y - 15.5 * mm,
+        "It does not replace the original accountable receipt issued by the Municipal Treasurer's Office.",
+    )
 
     # ── Footer ────────────────────────────────────────────────────────────────
     footer_y = 18 * mm
@@ -413,7 +436,11 @@ def generate_or_receipt(receipt_data, base_dir):
 
     c.setFont("Helvetica", 7)
     c.setFillColor(colors.HexColor(BRANDING["branding_colors"]["secondary"]))
-    c.drawCentredString(width / 2, footer_y, BRANDING["footer_text"])
+    c.drawCentredString(
+        width / 2,
+        footer_y,
+        "Payment record generated electronically by the Municipal Revenue System.",
+    )
     c.drawCentredString(
         width / 2, footer_y - 5 * mm,
         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | "
@@ -421,4 +448,5 @@ def generate_or_receipt(receipt_data, base_dir):
     )
 
     c.save()
+    os.replace(working_path, output_path)
     return output_path

@@ -14,7 +14,7 @@
         "header": "Helvetica-Bold",
         "body": "Helvetica"
     },
-    "footer_text": "This is a system-generated Official Receipt. Valid without wet signature when printed from the Municipal Revenue System.",
+    "footer_text": "This document was generated electronically by the Municipal Revenue System.",
     "logo_path": "assets/official/logo.png",
     "seal_path": "assets/official/seal.png"
 }

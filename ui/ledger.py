@@ -19,6 +19,7 @@ class LedgerPage:
         self.search_timer = None
         self._ledger_property_ids = {}
         self._ledger_property_contexts = {}
+        self._ledger_receipt_statuses = {}
         self._active_property_context = None
         self.setup_ui()
 
@@ -223,7 +224,7 @@ class LedgerPage:
                 # 0 payment_id, 1 date_paid, 2 OR, 3 tax_year, 4 basic, 5 SEF,
                 # 6 penalty, 7 discount, 8 amount, 9 posted_by, 10 remarks,
                 # 11 file_path, 12 receipt_id, 13 TD, 14 owner, 15 property_id,
-                # 16 barangay, 17 classification.
+                # 16 barangay, 17 classification, 18 retained PDF status.
                 rows = payment.get_unified_payment_history(term)
                 fallback_context = None
                 if not rows:
@@ -245,6 +246,7 @@ class LedgerPage:
         grand_total = 0.0
         self._ledger_property_ids = {}
         self._ledger_property_contexts = {}
+        self._ledger_receipt_statuses = {}
         self._active_property_context = None
         if rows:
             for i, r in enumerate(rows):
@@ -252,7 +254,16 @@ class LedgerPage:
                 # 7:disc, 8:amt, 9:user, 10:remarks, 11:path, 12:rid
                 f_r = list(r[:11])
                 file_path = r[11] if len(r) > 11 else None
-                status = tr("ledger.table.status_ready") if file_path and os.path.exists(file_path) else tr("ledger.table.status_missing")
+                status_code = (
+                    str(r[18] or "").upper()
+                    if len(r) > 18
+                    else ("READY" if file_path else "NOT_GENERATED")
+                )
+                status_key = {
+                    "READY": "ledger.table.status_ready",
+                    "NOT_GENERATED": "ledger.table.status_not_generated",
+                }.get(status_code, "ledger.table.status_missing")
+                status = tr(status_key)
                 f_r.append(status)
                 
                 # Format Currencies
@@ -264,7 +275,8 @@ class LedgerPage:
                 f_r[10] = str(f_r[10] or "")
                 
                 tag = 'evenrow' if i % 2 == 0 else 'oddrow'
-                item_id = self.tree.insert("", "end", values=f_r, tags=(file_path or "", tag)) # Store path and zebra tag
+                item_id = self.tree.insert("", "end", values=f_r, tags=(tag,))
+                self._ledger_receipt_statuses[item_id] = status_code
                 if len(r) > 15:
                     self._ledger_property_ids[item_id] = r[15]
                     self._ledger_property_contexts[item_id] = {
@@ -299,24 +311,50 @@ class LedgerPage:
     def open_receipt(self):
         sel = self.tree.selection()
         if not sel: return
-        
-        item = self.tree.item(sel[0])
-        pay_id = item["values"][0]
-        file_path = item["tags"][0] if item["tags"] else None
-        
-        if file_path and os.path.exists(str(file_path)):
-            try: os.startfile(file_path)
-            except Exception as e: messagebox.showerror("Error", f"Could not open PDF: {e}")
-        else:
-            if messagebox.askyesno(tr("ledger.errors.receipt_missing"), tr("ledger.errors.receipt_missing_msg")):
+
+        item_id = sel[0]
+        pay_id = self.tree.item(item_id)["values"][0]
+        status = self._ledger_receipt_statuses.get(item_id, "NOT_GENERATED")
+        if status != "READY":
+            if messagebox.askyesno(
+                tr("ledger.errors.receipt_missing"),
+                tr("ledger.errors.receipt_missing_msg"),
+            ):
                 self.regenerate_receipt()
+            return
+
+        overlay = LoadingOverlay(self.container, "Opening retained PDF copy...")
+
+        def worker():
+            try:
+                local_path = payment.get_receipt_pdf(pay_id)
+                self.container.after(0, lambda: os.startfile(local_path))
+            except Exception as exc:
+                error_message = str(exc)
+                self.container.after(
+                    0,
+                    lambda: self._handle_receipt_open_error(error_message),
+                )
+            finally:
+                self.container.after(0, overlay.hide)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_receipt_open_error(self, error_message):
+        if "Status 404" in error_message and messagebox.askyesno(
+            tr("ledger.errors.receipt_missing"),
+            tr("ledger.errors.receipt_missing_msg"),
+        ):
+            self.regenerate_receipt()
+            return
+        messagebox.showerror("PDF Copy Error", error_message)
 
     def regenerate_receipt(self):
         sel = self.tree.selection()
         if not sel: return
         
         pay_id = self.tree.item(sel[0])["values"][0]
-        overlay = LoadingOverlay(self.container, "Regenerating PDF...")
+        overlay = LoadingOverlay(self.container, "Generating current PDF copy...")
         
         def worker():
             try:
@@ -325,7 +363,10 @@ class LedgerPage:
                 if not new_path:
                     raise Exception("Backend did not return a PDF path.")
 
-                system.log_action(self.user, f"Regenerated receipt for payment ID {pay_id}")
+                system.log_action(
+                    self.user,
+                    f"Regenerated payment-record PDF for payment ID {pay_id}",
+                )
                 self.container.after(0, lambda: [self.load_ledger(), os.startfile(new_path)])
             except Exception as e:
                 err_msg = str(e)

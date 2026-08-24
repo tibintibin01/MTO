@@ -581,7 +581,7 @@ class SystemHelpPage:
         help_text = [
             ("🏠 Dashboard", "View real-time revenue collection charts and protection status."),
             ("📋 Property Records", "Search, edit, or delete property assessments. Use the 'Export' button to save to Excel."),
-            ("🏦 Unified Ledger", "View all payment history. Use 'View Receipt' to open a PDF copy."),
+            ("🏦 Unified Ledger", "View all payment history. Use 'View PDF Copy' to open the retained payment record."),
             ("⌨️ Shortcuts", "Ctrl+F: Quick Search | Ctrl+P: Command Palette | Ctrl+K: Global Search"),
             ("🛡️ Data Protection", "The 'Restore Test' on the dashboard verifies that your backups are 100% healthy."),
             ("💼 Audit Trail", "Administrators can view all changes made to any record in the System Settings."),

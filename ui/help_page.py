@@ -25,7 +25,7 @@ class SystemHelpPage:
             ),
             (
                 "🏦 Unified Ledger",
-                "View all payment history. Use 'View Receipt' to open a PDF copy.",
+                "View all payment history. Use 'View PDF Copy' to open the retained payment record.",
             ),
             (
                 "⌨️ Keyboard Shortcuts",

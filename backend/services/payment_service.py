@@ -51,6 +51,22 @@ def _trusted_receipt_reference(value) -> bool:
     return bool(re.fullmatch(r"receipts/[A-Za-z0-9._-]+\.pdf", normalized))
 
 
+def receipt_pdf_status(value) -> str:
+    """Return a server-side status for the one retained PDF copy."""
+    text = str(value or "").strip()
+    if not text:
+        return "NOT_GENERATED"
+
+    local_path = _trusted_local_receipt_path(text)
+    if local_path is not None:
+        return "READY" if local_path.is_file() else "MISSING"
+
+    normalized = text.replace("\\", "/")
+    if re.fullmatch(r"receipts/[A-Za-z0-9._-]+\.pdf", normalized):
+        return "READY"
+    return "MISSING"
+
+
 def _d(value) -> Decimal:
     """Convert any numeric value to Decimal safely. Use instead of float() for financial values."""
     if value is None:
@@ -689,7 +705,7 @@ def get_unified_payment_history(term, db_session: Session = None):
         .all()
     )
 
-    return [list(r) for r in results]
+    return [list(row) + [receipt_pdf_status(row.file_path)] for row in results]
 
 
 def get_payment_ledger(td_number, db_session: Session = None):
@@ -763,8 +779,14 @@ def get_payment_receipt_records(
     items = rows[:safe_limit]
     next_cursor = items[-1][0] if has_more and items else None
 
+    serialized_items = []
+    for row in items:
+        item = list(row)
+        item[10] = receipt_pdf_status(row.file_path)
+        serialized_items.append(item)
+
     return {
-        "items": [list(r) for r in items],
+        "items": serialized_items,
         "next_cursor": next_cursor,
         "has_more": has_more,
         "count": len(items),

@@ -96,6 +96,13 @@ def generate_receipt_pdf(payment_id) -> str:
     return api_download_file("POST", f"/payments/{payment_id}/receipt-pdf")
 
 
+def get_receipt_pdf(payment_id) -> str:
+    """Downloads the retained PDF copy without creating a replacement."""
+    from api_clients.api_helper import api_download_file
+
+    return api_download_file("GET", f"/payments/{payment_id}/receipt-pdf")
+
+
 def batch_delete_preview(or_numbers: list):
     """Preview which payments match the given OR numbers before deleting."""
     return api_request("POST", "/payments/batch-delete/preview",
