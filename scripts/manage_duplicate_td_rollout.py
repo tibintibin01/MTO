@@ -179,6 +179,19 @@ def _duplicate_group_snapshots(session) -> list[dict[str, Any]]:
     return result
 
 
+def _raw_active_duplicate_tds(session) -> list[str]:
+    """Inspect duplicate TD groups without selecting newly migrated ORM columns."""
+    rows = session.execute(
+        text(
+            "SELECT UPPER(TRIM(td_number)) AS td_key "
+            "FROM properties WHERE deleted_at IS NULL "
+            "GROUP BY UPPER(TRIM(td_number)) HAVING COUNT(*) > 1 "
+            "ORDER BY td_key"
+        )
+    ).all()
+    return [str(row[0] or "").strip().upper() for row in rows if row[0]]
+
+
 def collect_preflight(session, pilot_td: str) -> dict[str, Any]:
     try:
         migration_applied = bool(
@@ -199,16 +212,46 @@ def collect_preflight(session, pilot_td: str) -> dict[str, Any]:
         cloud_ready = False
         cloud_message = f"Cloud configuration check failed: {exc}"
 
-    groups = _duplicate_group_snapshots(session)
-    pilot_matches = (
-        session.query(Property)
-        .filter(
-            Property.deleted_at == None,  # noqa: E711
-            func.upper(func.trim(Property.td_number)) == pilot_td,
+    schema = _schema_snapshot(session)
+    if schema["required_columns_present"]:
+        groups = _duplicate_group_snapshots(session)
+        unresolved_duplicate_tds = [
+            group["td_number"] for group in groups if not group["fully_verified"]
+        ]
+        verified_duplicate_tds = [
+            group["td_number"] for group in groups if group["fully_verified"]
+        ]
+        pilot_matches = (
+            session.query(Property)
+            .filter(
+                Property.deleted_at == None,  # noqa: E711
+                func.upper(func.trim(Property.td_number)) == pilot_td,
+            )
+            .order_by(Property.id.asc())
+            .all()
         )
-        .order_by(Property.id.asc())
-        .all()
-    )
+        pilot_property_ids = [row.id for row in pilot_matches]
+        pilot_fully_verified = bool(pilot_matches) and all(
+            row.duplicate_td_verified for row in pilot_matches
+        )
+    else:
+        # A missing migration must produce a concise fail-closed report rather
+        # than letting SQLAlchemy select columns that do not exist yet.
+        unresolved_duplicate_tds = _raw_active_duplicate_tds(session)
+        verified_duplicate_tds = []
+        pilot_property_ids = [
+            int(row[0])
+            for row in session.execute(
+                text(
+                    "SELECT id FROM properties "
+                    "WHERE deleted_at IS NULL AND UPPER(TRIM(td_number)) = :td "
+                    "ORDER BY id"
+                ),
+                {"td": pilot_td},
+            ).all()
+        ]
+        pilot_matches = pilot_property_ids
+        pilot_fully_verified = False
     backup_running = bool(
         session.query(BackupHistory)
         .filter(BackupHistory.status == "RUNNING")
@@ -216,25 +259,73 @@ def collect_preflight(session, pilot_td: str) -> dict[str, Any]:
     )
     return {
         "migration_applied": migration_applied,
-        "schema": _schema_snapshot(session),
+        "schema": schema,
         "backup": _latest_backup(session),
         "backup_running": backup_running,
         "cloud_enabled": cloud_enabled,
         "cloud_ready": cloud_ready,
         "cloud_message": cloud_message,
-        "unresolved_duplicate_tds": [
-            group["td_number"] for group in groups if not group["fully_verified"]
-        ],
-        "verified_duplicate_tds": [
-            group["td_number"] for group in groups if group["fully_verified"]
-        ],
+        "unresolved_duplicate_tds": unresolved_duplicate_tds,
+        "verified_duplicate_tds": verified_duplicate_tds,
         "pilot_td": pilot_td,
         "pilot_match_count": len(pilot_matches),
-        "pilot_property_ids": [row.id for row in pilot_matches],
-        "pilot_fully_verified": bool(pilot_matches) and all(
-            row.duplicate_td_verified for row in pilot_matches
-        ),
+        "pilot_property_ids": pilot_property_ids,
+        "pilot_fully_verified": pilot_fully_verified,
     }
+
+
+def evaluate_migration_preflight(
+    snapshot: dict[str, Any],
+    *,
+    max_backup_age_hours: int = 24,
+    now: datetime | None = None,
+) -> list[str]:
+    """Return blockers for the one-time controlled schema migration."""
+    errors: list[str] = []
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    schema = snapshot.get("schema") or {}
+    if schema.get("dialect") not in {"mysql", "mariadb"}:
+        errors.append("Production duplicate-TD migration requires MariaDB/MySQL.")
+    if snapshot.get("backup_running"):
+        errors.append("A Hybrid Backup is currently running.")
+    if not snapshot.get("cloud_enabled"):
+        errors.append("Encrypted cloud backup is not enabled.")
+    if not snapshot.get("cloud_ready"):
+        errors.append(str(snapshot.get("cloud_message") or "Cloud restore attestation is not current."))
+    existing_duplicates = snapshot.get("unresolved_duplicate_tds") or []
+    if existing_duplicates:
+        errors.append(
+            "Active duplicate TD groups already exist before migration: "
+            + ", ".join(existing_duplicates)
+        )
+
+    backup = snapshot.get("backup")
+    if not backup:
+        errors.append("No completed Hybrid Backup record exists.")
+    else:
+        status = str(backup.get("status") or "").upper()
+        health = str(backup.get("health") or "").upper()
+        checksum = str(backup.get("checksum") or "")
+        created_at = _timestamp(backup.get("timestamp"))
+        if status not in SUCCESS_BACKUP_STATUSES:
+            errors.append("Latest backup is not protected in cloud: " + (status or "missing status"))
+        if health not in SUCCESS_BACKUP_HEALTH:
+            errors.append(
+                "Latest backup did not pass full restore verification: "
+                + (health or "missing health")
+            )
+        if len(checksum) != 64:
+            errors.append("Latest backup does not have a complete SHA-256 checksum.")
+        file_path = str(backup.get("file_path") or "")
+        if not file_path or not os.path.isfile(file_path):
+            errors.append("Latest verified backup file is missing from the server.")
+        if created_at is None:
+            errors.append("Latest backup timestamp is missing or invalid.")
+        elif current - created_at > timedelta(hours=max_backup_age_hours):
+            errors.append(
+                f"Latest cloud-protected backup is older than {max_backup_age_hours} hours."
+            )
+    return errors
 
 
 def evaluate_preflight(
@@ -510,6 +601,61 @@ def _write_rollout_state(
         raise
 
 
+def _apply_duplicate_td_migration(session, *, user: User) -> None:
+    """Apply only the approved duplicate-TD migration and audit the action."""
+    _require_administrator()
+    from backend.services.migration_service import ensure_verified_duplicate_td_schema
+
+    before = _schema_snapshot(session)
+    ensure_verified_duplicate_td_schema(session)
+    session.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS system_migrations ("
+            "id VARCHAR(255) PRIMARY KEY, applied_at DATETIME)"
+        )
+    )
+    session.execute(
+        text(
+            "INSERT INTO system_migrations (id, applied_at) VALUES (:id, :now) "
+            "ON DUPLICATE KEY UPDATE applied_at = VALUES(applied_at)"
+        ),
+        {"id": MIGRATION_ID, "now": datetime.now(timezone.utc)},
+    )
+    after = _schema_snapshot(session)
+    if not after.get("required_columns_present"):
+        raise RuntimeError(
+            "Migration did not create every required column: "
+            + ", ".join(after.get("missing_columns") or ["unknown"])
+        )
+    if after.get("td_unique_names"):
+        raise RuntimeError(
+            "Migration did not remove TD uniqueness: "
+            + ", ".join(after["td_unique_names"])
+        )
+    if not after.get("has_td_lookup_index"):
+        raise RuntimeError("Migration did not create the non-unique TD lookup index.")
+    log_data_change(
+        user.id,
+        "system_migrations",
+        0,
+        "APPLY_VERIFIED_DUPLICATE_TD_SCHEMA",
+        before={
+            "migration_id": MIGRATION_ID,
+            "missing_columns": before.get("missing_columns"),
+            "td_unique_names": before.get("td_unique_names"),
+        },
+        after={
+            "migration_id": MIGRATION_ID,
+            "missing_columns": after.get("missing_columns"),
+            "td_unique_names": after.get("td_unique_names"),
+            "has_td_lookup_index": after.get("has_td_lookup_index"),
+        },
+        username=user.username,
+        db_session=session,
+    )
+    session.commit()
+
+
 def _print_preflight(snapshot: dict[str, Any], errors: list[str]) -> None:
     backup = snapshot.get("backup") or {}
     print("\nVERIFIED DUPLICATE TD - PHASE 4 PREFLIGHT")
@@ -560,6 +706,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--preflight", action="store_true")
+    modes.add_argument("--apply-migration", action="store_true")
     modes.add_argument("--activate", action="store_true")
     modes.add_argument("--verify-td", metavar="TD_NUMBER")
     modes.add_argument("--expand", action="store_true")
@@ -569,7 +716,16 @@ def main() -> int:
     parser.add_argument("--max-backup-age-hours", type=int, default=24)
     args = parser.parse_args()
 
-    if not any((args.preflight, args.activate, args.verify_td, args.expand, args.deactivate)):
+    if not any(
+        (
+            args.preflight,
+            args.apply_migration,
+            args.activate,
+            args.verify_td,
+            args.expand,
+            args.deactivate,
+        )
+    ):
         args.preflight = True
 
     session = SessionLocal()
@@ -580,6 +736,51 @@ def main() -> int:
             errors = evaluate_acceptance(acceptance)
             _print_acceptance(acceptance, errors)
             return 2 if errors else 0
+
+        if args.apply_migration:
+            if not args.admin_username:
+                raise RuntimeError("--admin-username is required for migration.")
+            migration_snapshot = collect_preflight(session, "MIGRATION-CHECK")
+            schema = migration_snapshot.get("schema") or {}
+            if (
+                migration_snapshot.get("migration_applied")
+                and schema.get("required_columns_present")
+                and not schema.get("td_unique_names")
+                and schema.get("has_td_lookup_index")
+            ):
+                print("Verified duplicate TD migration is already fully applied.")
+                return 0
+            errors = evaluate_migration_preflight(
+                migration_snapshot,
+                max_backup_age_hours=args.max_backup_age_hours,
+            )
+            print("\nVERIFIED DUPLICATE TD - CONTROLLED MIGRATION PREFLIGHT")
+            backup = migration_snapshot.get("backup") or {}
+            print(
+                f"Latest backup: {backup.get('filename') or 'NONE'} | "
+                f"{backup.get('status') or 'UNKNOWN'} | {backup.get('health') or 'UNKNOWN'}"
+            )
+            print(
+                "Cloud restore attestation: "
+                f"{'PASS' if migration_snapshot.get('cloud_ready') else 'FAIL'}"
+            )
+            print(
+                "Existing active duplicate groups: "
+                f"{len(migration_snapshot.get('unresolved_duplicate_tds') or [])}"
+            )
+            if errors:
+                print("CONTROLLED MIGRATION BLOCKED")
+                for error in errors:
+                    print(f"- {error}")
+                return 2
+            user = _admin_user(session, args.admin_username)
+            expected = "APPLY DUPLICATE TD MIGRATION - USERS LOGGED OUT"
+            if input(f"Type {expected} to continue: ").strip() != expected:
+                raise RuntimeError("Migration cancelled; no migration command was run.")
+            _apply_duplicate_td_migration(session, user=user)
+            print("Controlled duplicate TD migration PASSED.")
+            print("Duplicate creation remains disabled. Restart the MTO API, then rerun preflight.")
+            return 0
 
         vault = _read_vault(VAULT_PATH)
         stored_pilot = str(vault.get(PILOT_KEY) or "").strip().upper()

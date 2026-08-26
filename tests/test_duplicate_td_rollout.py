@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from scripts.manage_duplicate_td_rollout import (
     evaluate_acceptance,
+    evaluate_migration_preflight,
     evaluate_preflight,
     normalize_td,
 )
@@ -92,6 +93,27 @@ def test_phase4_preflight_requires_cloud_restore_and_no_unresolved_duplicates(tm
     assert any("full restore verification" in error for error in errors)
     assert any("Phase 3 is missing" in error for error in errors)
     assert any("Unverified active duplicate" in error for error in errors)
+
+
+def test_controlled_migration_preflight_accepts_legacy_schema_with_verified_backup(tmp_path):
+    now = datetime(2026, 8, 26, 8, 0, tzinfo=timezone.utc)
+    snapshot = _preflight(tmp_path, now)
+    snapshot["migration_applied"] = False
+    snapshot["schema"]["required_columns_present"] = False
+    snapshot["schema"]["missing_columns"] = ["previous_property_id"]
+    snapshot["schema"]["td_unique_names"] = ["ix_properties_td_number"]
+
+    assert evaluate_migration_preflight(snapshot, now=now) == []
+
+
+def test_controlled_migration_blocks_existing_duplicate_groups(tmp_path):
+    now = datetime(2026, 8, 26, 8, 0, tzinfo=timezone.utc)
+    snapshot = _preflight(tmp_path, now)
+    snapshot["unresolved_duplicate_tds"] = ["06-0001-00001"]
+
+    errors = evaluate_migration_preflight(snapshot, now=now)
+
+    assert any("already exist before migration" in error for error in errors)
 
 
 def test_phase4_expansion_requires_verified_group_and_newer_backup(tmp_path):

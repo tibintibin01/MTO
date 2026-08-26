@@ -69,6 +69,20 @@ call venv\Scripts\activate
 python scripts\manage_duplicate_td_rollout.py --preflight --pilot-td 06-XXXX-XXXXX
 ```
 
+If preflight reports that `verified_duplicate_td_accounts_v1` or its columns
+are missing, take a new successful Hybrid Backup, log out all users, stop the
+API, and apply only the approved migration:
+
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop_mto_runtime.ps1 -ProjectRoot C:\MTO
+python scripts\manage_duplicate_td_rollout.py --apply-migration --admin-username YOUR_ADMIN_USERNAME
+```
+
+The command verifies cloud protection and requires the exact confirmation
+`APPLY DUPLICATE TD MIGRATION - USERS LOGGED OUT`. It does not activate
+duplicate creation. Run `update_mto.bat` afterward to restart the API, then
+repeat the read-only pilot preflight.
+
 If it passes, activate only that TD and restart the API:
 
 ```bat

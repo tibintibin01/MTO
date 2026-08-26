@@ -75,6 +75,7 @@ def test_get_dashboard_summary_refreshes_stale_cache(db):
 
 
 def test_recent_payments_use_named_contract_and_keep_archived_history(db):
+    paid_at = datetime.now(timezone.utc)
     archived = Property(
         td_number="06-0001-0002",
         owner_name="ARCHIVED OWNER",
@@ -90,7 +91,7 @@ def test_recent_payments_use_named_contract_and_keep_archived_history(db):
             amount=750.25,
             or_number="OR-101",
             tax_year="2024",
-            date_paid=datetime.now(timezone.utc),
+            date_paid=paid_at,
             posted_by="admin",
         )
     )
@@ -100,7 +101,7 @@ def test_recent_payments_use_named_contract_and_keep_archived_history(db):
     archived_row = next(row for row in rows if row["or_number"] == "OR-101")
 
     assert archived_row["id"] > 0
-    assert archived_row["date_paid"].startswith(datetime.now().date().isoformat())
+    assert archived_row["date_paid"].startswith(paid_at.date().isoformat())
     assert archived_row["or_number"] == "OR-101"
     assert archived_row["td_number"] == "06-0001-0002"
     assert archived_row["owner_name"] == "ARCHIVED OWNER"
