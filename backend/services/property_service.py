@@ -26,6 +26,7 @@ from backend.services.assessment_value_service import (
 )
 from fastapi import HTTPException
 from utils.sanitizer import sanitize_string
+from utils.secrets_manager import secrets
 
 
 # ---------------------------------------------------------------------------
@@ -99,9 +100,17 @@ class AmbiguousPropertyError(ValueError):
 
 def verified_duplicate_td_feature_enabled() -> bool:
     """Return whether controlled duplicate creation is activated on this API."""
-    return str(os.getenv("MTO_ENABLE_VERIFIED_DUPLICATE_TD", "0")).strip().lower() in {
+    value = secrets.get("MTO_ENABLE_VERIFIED_DUPLICATE_TD", default="0")
+    return str(value or "").strip().lower() in {
         "1", "true", "yes", "on",
     }
+
+
+def verified_duplicate_td_pilot_td() -> str | None:
+    """Return the one TD allowed during the controlled production pilot."""
+    value = secrets.get("MTO_VERIFIED_DUPLICATE_TD_PILOT_TD", default="")
+    normalized = _normalized_td(value)
+    return normalized or None
 
 
 def _normalized_td(value):
@@ -916,6 +925,16 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                     detail=(
                         f"TD Number {new_td_number} already exists. Controlled "
                         "duplicate-TD creation is not activated on this server."
+                    ),
+                )
+            pilot_td = verified_duplicate_td_pilot_td()
+            if pilot_td and new_td_number != pilot_td:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Controlled duplicate-TD pilot mode currently allows only "
+                        f"TD {pilot_td}. TD {new_td_number} remains blocked until the "
+                        "pilot is accepted and the rollout is explicitly expanded."
                     ),
                 )
             if get_user_role(user) != "admin":

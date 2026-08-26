@@ -510,12 +510,19 @@ class PropertyEditModal(ctk.CTkToplevel):
                 state="normal" if enabled else "disabled",
             )
             self.duplicate_checkbox.pack(anchor="w", padx=12, pady=(10, 4))
-            policy_text = (
-                "Use only for an Assessor-confirmed duplicate active TD. "
-                "Payments remain separate by internal property account."
-                if enabled
-                else "Controlled duplicate creation is installed but not activated on this server."
-            )
+            pilot_td = str(self.duplicate_policy.get("pilot_td") or "").strip()
+            if enabled and pilot_td:
+                policy_text = (
+                    f"CONTROLLED PILOT: only TD {pilot_td} may be authorized. "
+                    "All other duplicate TDs remain blocked until pilot approval."
+                )
+            elif enabled:
+                policy_text = (
+                    "Use only for an Assessor-confirmed duplicate active TD. "
+                    "Payments remain separate by internal property account."
+                )
+            else:
+                policy_text = "Controlled duplicate creation is installed but not activated on this server."
             ctk.CTkLabel(
                 duplicate_box,
                 text=policy_text,
@@ -1089,6 +1096,15 @@ class PropertyEditModal(ctk.CTkToplevel):
             and duplicate_matches
         )
         if duplicate_matches and not unchanged_verified:
+            pilot_td = str(self.duplicate_policy.get("pilot_td") or "").strip().upper()
+            if pilot_td and td_number.upper() != pilot_td:
+                messagebox.showerror(
+                    "Duplicate TD Pilot Restriction",
+                    f"The controlled pilot currently allows only TD {pilot_td}.\n\n"
+                    f"TD {td_number.upper()} remains blocked until the pilot is accepted and rollout is expanded.",
+                    parent=self,
+                )
+                return
             if not self.duplicate_td_var.get():
                 messagebox.showerror(
                     "Duplicate TD Requires Authorization",

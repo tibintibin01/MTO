@@ -16,8 +16,12 @@ router = APIRouter(prefix="/properties", tags=["Properties"])
 @router.get("/duplicate-td-policy")
 def duplicate_td_policy(current_user: dict = Depends(get_current_user)):
     """Expose rollout state without disclosing configuration secrets."""
+    enabled = prop_svc.verified_duplicate_td_feature_enabled()
+    pilot_td = prop_svc.verified_duplicate_td_pilot_td()
     return {
-        "enabled": prop_svc.verified_duplicate_td_feature_enabled(),
+        "enabled": enabled,
+        "rollout_mode": "disabled" if not enabled else ("pilot" if pilot_td else "expanded"),
+        "pilot_td": pilot_td,
         "admin_authorized": str(current_user.get("role") or "").lower() == "admin",
         "requirements": [
             "Administrator role",

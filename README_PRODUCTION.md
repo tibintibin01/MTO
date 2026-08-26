@@ -55,17 +55,52 @@ Verified duplicate active TD creation is installed **disabled by default**.
 Do not enable it until a verified Hybrid Backup has completed and the one-record
 production acceptance test is approved.
 
-When Phase 4 is authorized, set this on the Windows API server and restart the
-MTO API:
+Do not set the feature flag manually. Phase 4 uses a fail-closed rollout command
+that validates the MariaDB migration, protected cloud backup, full restore test,
+schema indexes, unresolved duplicate count, and MTO administrator account.
+
+First choose one Assessor-confirmed TD that currently has exactly one active
+property in MTO, then run the read-only preflight from an Administrator Command
+Prompt:
 
 ```powershell
-setx /M MTO_ENABLE_VERIFIED_DUPLICATE_TD 1
+cd /d C:\MTO
+call venv\Scripts\activate
+python scripts\manage_duplicate_td_rollout.py --preflight --pilot-td 06-XXXX-XXXXX
 ```
 
-Only administrators can then create a duplicate. The form requires an Assessor
-reference, a written reason, and explicit confirmation. Bulk imports remain
-blocked from creating duplicates. Payments, billings, reports, and documents
-continue to use the internal property ID and are never merged by TD number.
+If it passes, activate only that TD and restart the API:
+
+```powershell
+python scripts\manage_duplicate_td_rollout.py --activate --pilot-td 06-XXXX-XXXXX --admin-username YOUR_ADMIN_USERNAME
+```
+
+The command requires an exact typed confirmation. During the pilot, every other
+duplicate TD remains blocked. Create the one verified duplicate through Property
+Records, then run:
+
+```powershell
+python scripts\manage_duplicate_td_rollout.py --verify-td 06-XXXX-XXXXX
+```
+
+Complete the five manual checks printed by the command. After they pass, run a
+new Hybrid Backup so the accepted pilot is protected. Expansion is then an
+explicit second decision:
+
+```powershell
+python scripts\manage_duplicate_td_rollout.py --expand --admin-username YOUR_ADMIN_USERNAME
+```
+
+Restart the API after activation or expansion. Emergency rollback is immediate:
+
+```powershell
+python scripts\manage_duplicate_td_rollout.py --deactivate --admin-username YOUR_ADMIN_USERNAME
+```
+
+Only administrators can authorize duplicates. The form requires an Assessor
+reference, written reason, and exact TD confirmation. Bulk imports remain
+blocked. Payments, billings, reports, and documents continue to use immutable
+internal property IDs and are never merged by TD number.
 
 ### 2. Start Redis
 ```bash

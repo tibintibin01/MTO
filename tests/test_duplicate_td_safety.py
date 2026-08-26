@@ -225,6 +225,31 @@ def test_only_admin_can_authorize_duplicate_td(db, monkeypatch):
     assert exc_info.value.status_code == 403
 
 
+def test_pilot_mode_blocks_every_other_duplicate_td(db, monkeypatch):
+    monkeypatch.setenv("MTO_ENABLE_VERIFIED_DUPLICATE_TD", "1")
+    monkeypatch.setenv("MTO_VERIFIED_DUPLICATE_TD_PILOT_TD", "06-0017-00999")
+    db.add(_property("06-0017-00249", "FIRST OWNER"))
+    db.commit()
+    payload = _duplicate_payload()
+    payload.update({
+        "Verified Duplicate TD": True,
+        "Assessor Reference": "ARP-2026-001",
+        "Duplicate TD Reason": "Confirmed separate active assessment record.",
+        "Duplicate TD Confirmation": "06-0017-00249",
+    })
+
+    with pytest.raises(HTTPException) as exc_info:
+        save_property(
+            payload,
+            user={"id": 1, "username": "admin", "role": "admin"},
+            db_session=db,
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "pilot mode" in exc_info.value.detail
+    assert db.query(Property).count() == 1
+
+
 def test_admin_authorization_marks_group_and_audits_every_record(db, monkeypatch):
     monkeypatch.setenv("MTO_ENABLE_VERIFIED_DUPLICATE_TD", "1")
     first = _property("06-0017-00249", "FIRST OWNER")
