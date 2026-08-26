@@ -46,6 +46,32 @@ def _validate_public_query(query: str) -> None:
         )
 
 
+def _find_unique_public_property(query: str, db_session: Session) -> Property:
+    """Return one active property or refuse to guess between duplicate accounts."""
+    matches = (
+        db_session.query(Property)
+        .filter(
+            (Property.td_number == query) | (Property.pin == query),
+            Property.deleted_at == None,
+        )
+        .order_by(Property.id.asc())
+        .limit(2)
+        .all()
+    )
+    if not matches:
+        raise HTTPException(status_code=404, detail="Property not found.")
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "More than one property account matches this TDN or PIN. "
+                "Please contact the Municipal Treasury Office so the correct "
+                "property can be identified safely."
+            ),
+        )
+    return matches[0]
+
+
 def _mask_owner_name(name: str) -> str:
     """
     Masks an owner name to protect privacy while remaining recognisable to
@@ -234,17 +260,7 @@ def search_property_public(
     """
     _validate_public_query(query)
 
-    prop = (
-        db_session.query(Property)
-        .filter(
-            (Property.td_number == query) | (Property.pin == query),
-            Property.deleted_at == None,
-        )
-        .first()
-    )
-
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found.")
+    prop = _find_unique_public_property(query, db_session)
 
     breakdown = _compute_billing_breakdown(prop.id, db_session)
     status = _derive_status(breakdown)
@@ -295,17 +311,7 @@ def get_property_history_public(
     """
     _validate_public_query(query)
 
-    prop = (
-        db_session.query(Property)
-        .filter(
-            (Property.td_number == query) | (Property.pin == query),
-            Property.deleted_at == None,
-        )
-        .first()
-    )
-
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found.")
+    prop = _find_unique_public_property(query, db_session)
 
     payments = (
         db_session.query(Payment)
@@ -438,17 +444,7 @@ def download_soa_public(
 
     _validate_public_query(query)
 
-    prop = (
-        db_session.query(Property)
-        .filter(
-            (Property.td_number == query) | (Property.pin == query),
-            Property.deleted_at == None,
-        )
-        .first()
-    )
-
-    if not prop:
-        raise HTTPException(status_code=404, detail="Property not found.")
+    prop = _find_unique_public_property(query, db_session)
 
     breakdown = _compute_billing_breakdown(prop.id, db_session)
     if not breakdown["years"]:

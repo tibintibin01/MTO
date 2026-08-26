@@ -33,7 +33,9 @@ def global_search(query, limit=10, db_session: Session = None):
                 "title": f"🏠 {p.td_number}",
                 "subtitle": p.owner_name,
                 "type": "property",
-                "identifier": p.td_number,  # TD Number for navigation
+                # Internal property ID remains unambiguous even when two
+                # legitimate accounts share the same TD number.
+                "identifier": p.id,
             }
         )
 

@@ -152,18 +152,17 @@ def find_duplicate_payment(
 
 
 def find_duplicate_payment_entry(
-    td_number,
+    property_id,
     or_number,
     or_date,
     tax_year_text,
     exclude_payment_id=None,
     db_session: Session = None,
 ):
-    td_text = str(td_number or "").strip()
     or_text = str(or_number or "").strip()
     date_text = normalize_date_input(or_date)
     normalized_years = format_tax_years(tax_year_text)
-    if not td_text or not or_text or not date_text or not normalized_years:
+    if not property_id or not or_text or not date_text or not normalized_years:
         return None
 
     date_start = datetime.strptime(date_text, "%Y-%m-%d")
@@ -182,7 +181,7 @@ def find_duplicate_payment_entry(
         .join(Property, Property.id == Payment.property_id)
         .filter(
             Property.deleted_at == None,
-            Property.td_number == td_text,
+            Payment.property_id == int(property_id),
             Payment.or_number == or_text,
             Payment.date_paid >= date_start,
             Payment.date_paid < date_end,
@@ -659,7 +658,7 @@ def get_operational_analytics(year=None, barangay=None, db_session: Session = No
     }
 
 
-def get_unified_payment_history(term, db_session: Session = None):
+def get_unified_payment_history(term=None, property_id=None, db_session: Session = None):
     """
     Unified query for the Integrated Ledger & Receipt History.
     Returns payment details combined with receipt audit info using SQLAlchemy.
@@ -667,14 +666,13 @@ def get_unified_payment_history(term, db_session: Session = None):
     Basic/SEF amounts are derived from the TaxPolicy rate for the billing year.
     Falls back to 1% each if no policy is configured for that year.
     """
-    if not term:
+    if not term and not property_id:
         return []
 
     from backend.models import TaxPolicy
     from backend.services.billing_service import basic_rate_expr, sef_rate_expr
 
-    like_term = f"%{term}%"
-    results = (
+    query = (
         db_session.query(
             Payment.id.label("payment_id"),
             Payment.date_paid,
@@ -699,22 +697,30 @@ def get_unified_payment_history(term, db_session: Session = None):
         .join(Property, Property.id == Payment.property_id)
         .outerjoin(ReceiptHistory, ReceiptHistory.payment_id == Payment.id)
         .outerjoin(TaxPolicy, TaxPolicy.tax_year == Property.tax_year)
-        .filter(
-            Property.deleted_at == None,
+        .filter(Property.deleted_at == None)
+    )
+
+    if property_id:
+        # Once the operator selects a property account, the immutable internal
+        # ID is authoritative. A TD number is a searchable business identifier,
+        # not a safe database identity when verified duplicates are introduced.
+        query = query.filter(Property.id == int(property_id))
+    else:
+        like_term = f"%{term}%"
+        query = query.filter(
             or_(
                 Property.td_number == term,
                 Property.owner_name.like(like_term),
                 Payment.or_number.like(like_term),
-            ),
+            )
         )
-        .order_by(Payment.date_paid.desc(), Payment.id.desc())
-        .all()
-    )
+
+    results = query.order_by(Payment.date_paid.desc(), Payment.id.desc()).all()
 
     return [list(row) + [receipt_pdf_status(row.file_path)] for row in results]
 
 
-def get_payment_ledger(td_number, db_session: Session = None):
+def get_payment_ledger(property_id, db_session: Session = None):
     """
     Specific ledger query for the Dossier UI using SQLAlchemy.
     Uses TaxPolicy rates for the basic/SEF split display.
@@ -736,7 +742,7 @@ def get_payment_ledger(td_number, db_session: Session = None):
         )
         .join(Property, Property.id == Payment.property_id)
         .outerjoin(TaxPolicy, TaxPolicy.tax_year == Property.tax_year)
-        .filter(Property.td_number == td_number, Property.deleted_at == None)
+        .filter(Property.id == int(property_id), Property.deleted_at == None)
         .order_by(Payment.date_paid.desc(), Payment.id.desc())
         .all()
     )

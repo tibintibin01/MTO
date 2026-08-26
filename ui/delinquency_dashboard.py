@@ -521,11 +521,12 @@ class DelinquencyDashboardPage:
         if not item:
             return
         td = str(item.get("td_number", "")).strip()
+        property_id = item.get("id")
         overlay = LoadingOverlay(self.container, f"Opening dossier for {td}...")
 
         def worker():
             try:
-                data = api.api_request("GET", f"/properties/dossier/{td}")
+                data = properties.get_property_dossier(property_id)
                 self.container.after(0, lambda: PropertyDossierModal(self.parent, data))
             except Exception as e:
                 self.container.after(0, lambda err=e: messagebox.showerror("Dossier", str(err)))

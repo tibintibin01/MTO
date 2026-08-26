@@ -31,29 +31,57 @@ def get_property_by_id(property_id):
     return api_request("GET", f"/properties/{property_id}")
 
 
-def find_property_by_td_number(td_number, exclude_id=None):
-    """Return an exact, fresh TD match for validation in the property editor."""
+def find_properties_by_td_number(td_number, exclude_id=None):
+    """Return every fresh exact TD match; never silently choose one."""
     normalized_td = str(td_number or "").strip().upper()
     if not normalized_td:
-        return None
+        return []
 
     # Do not use the list cache here: a newly added or recently edited TD must
     # be visible immediately when it is selected as a Previous TD.
     response = api_request("GET", "/properties", params={"search": normalized_td, "limit": 100})
+    matches = []
     for row in response.get("items", []):
         if exclude_id is not None and str(row[0]) == str(exclude_id):
             continue
         if str(row[1] or "").strip().upper() == normalized_td:
-            return {"id": row[0], "td_number": row[1], "owner_name": row[2]}
-    return None
+            matches.append(
+                {
+                    "id": row[0],
+                    "td_number": row[1],
+                    "owner_name": row[2],
+                    "lot_number": row[4] if len(row) > 4 else "",
+                    "area": row[5] if len(row) > 5 else "",
+                    "location": row[6] if len(row) > 6 else "",
+                    "kind_of_property": row[7] if len(row) > 7 else "",
+                    "assessed_value": row[9] if len(row) > 9 else 0,
+                    "pin": row[18] if len(row) > 18 else "",
+                    "block_number": row[19] if len(row) > 19 else "",
+                    "barangay": row[22] if len(row) > 22 else "",
+                }
+            )
+    return matches
 
 
-def resolve_payment_target(td_number, tax_year):
+def find_property_by_td_number(td_number, exclude_id=None):
+    """Return one exact TD match only when it is unambiguous."""
+    matches = find_properties_by_td_number(td_number, exclude_id=exclude_id)
+    return matches[0] if len(matches) == 1 else None
+
+
+def resolve_payment_target(td_number, tax_year, property_id=None):
+    params = {"td_number": td_number, "tax_year": tax_year}
+    if property_id:
+        params["property_id"] = int(property_id)
     return api_request(
         "GET",
         "/properties/payment-target",
-        params={"td_number": td_number, "tax_year": tax_year},
+        params=params,
     )
+
+
+def get_property_dossier(property_id):
+    return api_request("GET", f"/properties/dossier-by-id/{int(property_id)}")
 
 
 def acquire_property_lock(property_id, user_name, stale_minutes=30):

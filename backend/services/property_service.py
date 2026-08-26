@@ -83,6 +83,18 @@ class SyncConflictError(Exception):
         super().__init__("Offline Sync Conflict Detected.")
 
 
+class AmbiguousPropertyError(ValueError):
+    """Raised when a TD lookup matches more than one active property."""
+
+    def __init__(self, td_number, matches):
+        self.td_number = _td_text(td_number)
+        self.matches = list(matches or [])
+        super().__init__(
+            f"{len(self.matches)} active properties use TD {self.td_number}. "
+            "Select the correct property account before continuing."
+        )
+
+
 def clean_currency(value):
     if value is None:
         return 0.0
@@ -406,6 +418,29 @@ def _td_text(value):
     return str(value or "").strip().upper()
 
 
+def get_active_properties_by_td(td_number, db_session: Session, exclude_id=None):
+    """Return every exact active TD match in a stable, reviewable order."""
+    td = _td_text(td_number)
+    if not td:
+        return []
+    query = db_session.query(Property).filter(
+        Property.deleted_at == None,
+        func.upper(func.trim(Property.td_number)) == td,
+    )
+    if exclude_id is not None:
+        query = query.filter(Property.id != int(exclude_id))
+    return query.order_by(Property.id.asc()).all()
+
+
+def _one_active_property_by_td(td_number, db_session: Session, exclude_id=None):
+    matches = get_active_properties_by_td(
+        td_number, db_session=db_session, exclude_id=exclude_id
+    )
+    if len(matches) > 1:
+        raise AmbiguousPropertyError(td_number, matches)
+    return matches[0] if matches else None
+
+
 def _td_chain_for_property(seed_prop, db_session: Session):
     """Return all active TD records connected by Previous TD, oldest to newest."""
     if not seed_prop:
@@ -417,24 +452,15 @@ def _td_chain_for_property(seed_prop, db_session: Session):
 
     # Walk backwards through Previous TD links.
     while current and _td_text(current.prev_td_number):
-        parent = (
-            db_session.query(Property)
-            .filter(
-                Property.deleted_at == None,
-                func.upper(func.trim(Property.td_number))
-                == _td_text(current.prev_td_number),
-            )
-            .first()
-        )
+        parent = _one_active_property_by_td(current.prev_td_number, db_session)
         if not parent or parent.id in visited:
             break
         by_id[parent.id] = parent
         visited.add(parent.id)
         current = parent
 
-    # Walk forwards through replacement links. If a data error creates more
-    # than one replacement, pick the earliest effective replacement first so
-    # the chain remains deterministic.
+    # Walk forwards through replacement links. Refuse to choose automatically
+    # when a former TD has several successors (for example, a subdivision).
     queue = list(by_id.values())
     scanned = set()
     while queue:
@@ -451,6 +477,11 @@ def _td_chain_for_property(seed_prop, db_session: Session):
             )
             .all()
         )
+        if len(children) > 1:
+            # One former TD may legitimately lead to several subdivided
+            # properties. That is a selection problem, not a condition where
+            # the server may choose a child based on sort order.
+            raise AmbiguousPropertyError(current.td_number, children)
         children.sort(key=lambda p: (_property_effectivity_year(p) or 9999, p.id or 0))
         for child in children:
             if child.id not in by_id:
@@ -462,7 +493,9 @@ def _td_chain_for_property(seed_prop, db_session: Session):
     return chain
 
 
-def resolve_property_for_tax_year(td_number, tax_year, db_session: Session):
+def resolve_property_for_tax_year(
+    td_number, tax_year, db_session: Session, property_id=None
+):
     """Resolve the TD record that should receive a payment for a tax year.
 
     A searched TD can be an old TD, current TD, or a Previous TD value on a
@@ -477,24 +510,24 @@ def resolve_property_for_tax_year(td_number, tax_year, db_session: Session):
     except (TypeError, ValueError):
         return None
 
-    seed = (
-        db_session.query(Property)
-        .filter(
-            Property.deleted_at == None,
-            func.upper(func.trim(Property.td_number)) == td,
-        )
-        .first()
-    )
+    seed = None
+    if property_id is not None:
+        seed = get_property_by_id(int(property_id), db_session)
+    else:
+        seed = _one_active_property_by_td(td, db_session)
     if not seed:
-        seed = (
+        previous_matches = (
             db_session.query(Property)
             .filter(
                 Property.deleted_at == None,
                 func.upper(func.trim(Property.prev_td_number)) == td,
             )
             .order_by(Property.id.asc())
-            .first()
+            .all()
         )
+        if len(previous_matches) > 1:
+            raise AmbiguousPropertyError(td, previous_matches)
+        seed = previous_matches[0] if previous_matches else None
     if not seed:
         return None
 
@@ -505,10 +538,22 @@ def resolve_property_for_tax_year(td_number, tax_year, db_session: Session):
         if _property_effectivity_year(prop) is None
         or _property_effectivity_year(prop) <= year
     ]
-    return eligible[-1] if eligible else None
+    if not eligible:
+        return None
+    latest_year = max(_property_effectivity_year(prop) or 0 for prop in eligible)
+    latest = [
+        prop
+        for prop in eligible
+        if (_property_effectivity_year(prop) or 0) == latest_year
+    ]
+    if len(latest) > 1:
+        raise AmbiguousPropertyError(td, latest)
+    return latest[0]
 
 
-def resolve_payment_property_for_tax_year(td_number, tax_year, db_session: Session):
+def resolve_payment_property_for_tax_year(
+    td_number, tax_year, db_session: Session, property_id=None
+):
     """Resolve the property that owns the concrete billing obligation.
 
     A non-archived PropertyBilling row on the exact TD selected by the user is
@@ -524,12 +569,9 @@ def resolve_payment_property_for_tax_year(td_number, tax_year, db_session: Sessi
         return None
 
     requested_property = (
-        db_session.query(Property)
-        .filter(
-            Property.deleted_at == None,
-            func.upper(func.trim(Property.td_number)) == td,
-        )
-        .first()
+        get_property_by_id(int(property_id), db_session)
+        if property_id is not None
+        else _one_active_property_by_td(td, db_session)
     )
     if requested_property:
         direct_billing = (
@@ -544,11 +586,20 @@ def resolve_payment_property_for_tax_year(td_number, tax_year, db_session: Sessi
         if direct_billing:
             return requested_property
 
-    return resolve_property_for_tax_year(td, year, db_session)
+    return resolve_property_for_tax_year(
+        td,
+        year,
+        db_session,
+        property_id=requested_property.id if requested_property else None,
+    )
 
 
-def resolve_payment_target(td_number, tax_year, db_session: Session):
-    target = resolve_payment_property_for_tax_year(td_number, tax_year, db_session)
+def resolve_payment_target(
+    td_number, tax_year, db_session: Session, property_id=None
+):
+    target = resolve_payment_property_for_tax_year(
+        td_number, tax_year, db_session, property_id=property_id
+    )
     if not target:
         return None
     chain = _td_chain_for_property(target, db_session)
@@ -624,7 +675,10 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                 if tax_years:
                     target_props = [
                         resolve_payment_property_for_tax_year(
-                            prop.td_number, year, db_session
+                            prop.td_number,
+                            year,
+                            db_session,
+                            property_id=prop.id,
                         )
                         for year in tax_years
                     ]
@@ -982,7 +1036,7 @@ def _sync_financial_records(prop_id, data, db_session: Session):
         remarks = str(data.get("Remarks") or "").strip()[:500] or None
 
         duplicate = payment.find_duplicate_payment_entry(
-            data.get("TD Number"),
+            prop_id,
             or_no,
             or_dt_raw,
             tax_year_str,
@@ -1264,11 +1318,7 @@ def bulk_update_barangay(
 
 
 def get_property_by_td(td_number, db_session: Session = None):
-    prop = (
-        db_session.query(Property)
-        .filter(Property.td_number == td_number, Property.deleted_at == None)
-        .first()
-    )
+    prop = _one_active_property_by_td(td_number, db_session)
     if not prop:
         return None
     return {c.name: getattr(prop, c.name) for c in prop.__table__.columns}

@@ -11,6 +11,183 @@ import api_clients.system_service as system
 from utils import format_curr, export_data_to_excel, tr
 from ui_components import LoadingOverlay, ErrorDialog
 
+
+class PropertyAccountSelectionDialog(ctk.CTkToplevel):
+    """Require an explicit property choice when an exact TD is duplicated."""
+
+    def __init__(self, parent, td_number, matches, on_select):
+        super().__init__(parent)
+        self.matches = {int(item["id"]): item for item in matches}
+        self.on_select = on_select
+        self.title("Select Property Account")
+        self.geometry("1040x470")
+        self.minsize(900, 420)
+        self.transient(parent)
+        self.grab_set()
+        self.configure(fg_color="#0f172a")
+
+        header = ctk.CTkFrame(self, fg_color="#1e293b", corner_radius=0)
+        header.pack(fill="x")
+        ctk.CTkLabel(
+            header,
+            text="⚠ MULTIPLE PROPERTY ACCOUNTS FOUND",
+            font=("Inter", 18, "bold"),
+            text_color="#fbbf24",
+        ).pack(anchor="w", padx=22, pady=(18, 4))
+        ctk.CTkLabel(
+            header,
+            text=(
+                f"{len(matches)} properties use TD {td_number}. "
+                "Select the correct owner/property before viewing or posting payments."
+            ),
+            font=("Inter", 11),
+            text_color="#cbd5e1",
+        ).pack(anchor="w", padx=22, pady=(0, 18))
+
+        table_frame = ctk.CTkFrame(
+            self,
+            fg_color="#111827",
+            border_width=1,
+            border_color="#d97706",
+            corner_radius=8,
+        )
+        table_frame.pack(fill="both", expand=True, padx=20, pady=18)
+
+        style = ttk.Style()
+        style.configure(
+            "PropertyChoice.Treeview",
+            rowheight=38,
+            font=("Inter", 10),
+            background="#172033",
+            fieldbackground="#172033",
+            foreground="#f8fafc",
+            borderwidth=0,
+        )
+        style.configure(
+            "PropertyChoice.Treeview.Heading",
+            font=("Inter", 9, "bold"),
+            background="#92400e",
+            foreground="#ffffff",
+            borderwidth=0,
+        )
+        style.map(
+            "PropertyChoice.Treeview",
+            background=[("selected", "#d97706")],
+            foreground=[("selected", "#ffffff")],
+        )
+
+        columns = (
+            "Record",
+            "Owner",
+            "PIN",
+            "Lot / Block",
+            "Barangay",
+            "Classification",
+            "Assessed Value",
+        )
+        self.tree = ttk.Treeview(
+            table_frame,
+            columns=columns,
+            show="headings",
+            style="PropertyChoice.Treeview",
+        )
+        widths = {
+            "Record": 80,
+            "Owner": 240,
+            "PIN": 145,
+            "Lot / Block": 125,
+            "Barangay": 130,
+            "Classification": 155,
+            "Assessed Value": 125,
+        }
+        for column in columns:
+            self.tree.heading(column, text=column.upper())
+            self.tree.column(
+                column,
+                width=widths[column],
+                anchor="w" if column in ("Owner", "Classification") else "center",
+            )
+        for match in matches:
+            lot_block = " / ".join(
+                value
+                for value in (
+                    str(match.get("lot_number") or "").strip(),
+                    str(match.get("block_number") or "").strip(),
+                )
+                if value
+            ) or "—"
+            self.tree.insert(
+                "",
+                "end",
+                iid=str(match["id"]),
+                values=(
+                    f"#{match['id']}",
+                    match.get("owner_name") or "UNKNOWN OWNER",
+                    match.get("pin") or "—",
+                    lot_block,
+                    match.get("barangay") or match.get("location") or "—",
+                    match.get("kind_of_property") or "—",
+                    format_curr(match.get("assessed_value") or 0),
+                ),
+                tags=("duplicate_td",),
+            )
+        self.tree.tag_configure(
+            "duplicate_td", background="#3b2a16", foreground="#fef3c7"
+        )
+        scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y", pady=1, padx=(0, 1))
+        self.tree.pack(side="left", fill="both", expand=True, padx=1, pady=1)
+        self.tree.bind("<<TreeviewSelect>>", self._on_selection)
+        self.tree.bind("<Double-1>", lambda _event: self._confirm())
+
+        actions = ctk.CTkFrame(self, fg_color="transparent")
+        actions.pack(fill="x", padx=20, pady=(0, 18))
+        ctk.CTkButton(
+            actions,
+            text="CANCEL",
+            command=self.destroy,
+            width=120,
+            fg_color="#475569",
+            hover_color="#64748b",
+        ).pack(side="right")
+        self.open_btn = ctk.CTkButton(
+            actions,
+            text="OPEN SELECTED LEDGER",
+            command=self._confirm,
+            width=210,
+            state="disabled",
+            fg_color="#d97706",
+            hover_color="#b45309",
+        )
+        self.open_btn.pack(side="right", padx=(0, 10))
+        self.after(50, self._center)
+
+    def _center(self):
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = max(0, (self.winfo_screenwidth() - width) // 2)
+        y = max(0, (self.winfo_screenheight() - height) // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _on_selection(self, _event=None):
+        self.open_btn.configure(
+            state="normal" if self.tree.selection() else "disabled"
+        )
+
+    def _confirm(self):
+        selection = self.tree.selection()
+        if not selection:
+            return
+        match = self.matches.get(int(selection[0]))
+        if not match:
+            return
+        self.grab_release()
+        self.destroy()
+        self.on_select(match)
+
+
 class LedgerPage:
     def __init__(self, parent, user):
         self.parent = parent
@@ -176,7 +353,10 @@ class LedgerPage:
 
     def _show_property_context(self, context, payment_values=None):
         if not context:
-            self.property_owner_lbl.configure(text="PROPERTY ACCOUNT  |  No property loaded")
+            self.property_owner_lbl.configure(
+                text="PROPERTY ACCOUNT  |  No property loaded",
+                text_color="#f8fafc",
+            )
             self.property_context_lbl.configure(
                 text="Search a TD number, owner, or OR number to view its payment history."
             )
@@ -196,12 +376,31 @@ class LedgerPage:
         classification = str(
             context.get("kind_of_property") or "Unspecified classification"
         ).strip()
-        details = f"TD {td_number}  |  {barangay}  |  {classification}"
+        record_id = context.get("property_id")
+        pin = str(context.get("pin") or "").strip()
+        lot = str(context.get("lot_number") or "").strip()
+        block = str(context.get("block_number") or "").strip()
+        details = f"TD {td_number}"
+        if record_id:
+            details += f"  |  Record #{record_id}"
+        if pin:
+            details += f"  |  PIN {pin}"
+        if lot or block:
+            details += f"  |  Lot/Block {lot or '—'} / {block or '—'}"
+        details += f"  |  {barangay}  |  {classification}"
         if payment_values and len(payment_values) > 3:
             or_number = str(payment_values[2] or "No OR")
             tax_year = str(payment_values[3] or "No tax year")
             details += f"  |  Selected: OR {or_number} - Tax Year {tax_year}"
-        self.property_owner_lbl.configure(text=f"PROPERTY OWNER  |  {owner}")
+        prefix = (
+            "⚠ DUPLICATE TD ACCOUNT"
+            if context.get("duplicate_td")
+            else "PROPERTY OWNER"
+        )
+        self.property_owner_lbl.configure(text=f"{prefix}  |  {owner}")
+        self.property_owner_lbl.configure(
+            text_color="#fbbf24" if context.get("duplicate_td") else "#f8fafc"
+        )
         self.property_context_lbl.configure(text=details)
 
     def load_ledger(self):
@@ -220,14 +419,31 @@ class LedgerPage:
 
         def worker():
             try:
+                exact_matches = prop_svc.find_properties_by_td_number(term)
+                if len(exact_matches) > 1:
+                    self.container.after(
+                        0,
+                        lambda matches=exact_matches: self._show_property_selector(
+                            term, matches
+                        ),
+                    )
+                    return
+
                 # Unified query returns:
                 # 0 payment_id, 1 date_paid, 2 OR, 3 tax_year, 4 basic, 5 SEF,
                 # 6 penalty, 7 discount, 8 amount, 9 posted_by, 10 remarks,
                 # 11 file_path, 12 receipt_id, 13 TD, 14 owner, 15 property_id,
                 # 16 barangay, 17 classification, 18 retained PDF status.
-                rows = payment.get_unified_payment_history(term)
-                fallback_context = None
-                if not rows:
+                if len(exact_matches) == 1:
+                    selected = exact_matches[0]
+                    rows = payment.get_unified_payment_history(
+                        property_id=selected["id"]
+                    )
+                    fallback_context = self._property_context_from_detail(selected)
+                else:
+                    rows = payment.get_unified_payment_history(term=term)
+                    fallback_context = None
+                if not rows and fallback_context is None:
                     fallback_context = self._resolve_property_context(term)
                 self.container.after(
                     0,
@@ -239,6 +455,60 @@ class LedgerPage:
                 self.is_loading = False
                 self.container.after(0, lambda: self.overlay.hide())
                 self.container.after(0, lambda: self.search_btn.configure(state="normal"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _show_property_selector(self, td_number, matches):
+        for match in matches:
+            match["duplicate_count"] = len(matches)
+        PropertyAccountSelectionDialog(
+            self.container.winfo_toplevel(),
+            td_number,
+            matches,
+            self._load_selected_property,
+        )
+        self._active_property_context = {
+            "multiple": True,
+            "count": len(matches),
+        }
+        self._show_property_context(self._active_property_context)
+
+    def _load_selected_property(self, match):
+        if self.is_loading:
+            return
+        self.is_loading = True
+        self.search_btn.configure(state="disabled")
+        overlay = LoadingOverlay(self.container, "Loading selected property ledger...")
+        context = self._property_context_from_detail(match)
+        context["duplicate_td"] = True
+        context["duplicate_count"] = int(match.get("duplicate_count") or 2)
+
+        for row_id in self.tree.get_children():
+            self.tree.delete(row_id)
+
+        def worker():
+            try:
+                rows = payment.get_unified_payment_history(
+                    property_id=match["id"]
+                )
+                self.container.after(
+                    0,
+                    lambda: self._update_ui(
+                        rows,
+                        str(match.get("td_number") or ""),
+                        context,
+                    ),
+                )
+            except Exception as exc:
+                self.container.after(
+                    0, lambda err=exc: messagebox.showerror("Ledger", str(err))
+                )
+            finally:
+                self.is_loading = False
+                self.container.after(0, overlay.hide)
+                self.container.after(
+                    0, lambda: self.search_btn.configure(state="normal")
+                )
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -294,7 +564,15 @@ class LedgerPage:
                 for context in self._ledger_property_contexts.values()
             }
             if len(contexts_by_property) == 1:
-                self._active_property_context = next(iter(contexts_by_property.values()))
+                only_context = next(iter(contexts_by_property.values()))
+                if (
+                    fallback_context
+                    and fallback_context.get("property_id")
+                    == only_context.get("property_id")
+                ):
+                    self._active_property_context = fallback_context
+                else:
+                    self._active_property_context = only_context
             elif contexts_by_property:
                 self._active_property_context = {
                     "multiple": True,
@@ -386,6 +664,17 @@ class LedgerPage:
             self._open_payment_modal(selected_property_id)
             return
 
+        if (
+            self._active_property_context
+            and not self._active_property_context.get("multiple")
+            and self._active_property_context.get("property_id")
+        ):
+            self._open_payment_modal(
+                self._active_property_context["property_id"],
+                self._active_property_context,
+            )
+            return
+
         term = self.search_ent.get().strip()
         if not term:
             ErrorDialog(
@@ -472,6 +761,9 @@ class LedgerPage:
             "owner_name": detail.get("owner_name"),
             "barangay": detail.get("barangay") or detail.get("location"),
             "kind_of_property": detail.get("kind_of_property"),
+            "pin": detail.get("pin"),
+            "lot_number": detail.get("lot_number"),
+            "block_number": detail.get("block_number"),
         }
 
     def _property_context_from_search_row(self, row):

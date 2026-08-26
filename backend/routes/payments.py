@@ -78,11 +78,21 @@ def save_receipt_record(
 
 @router.get("/ledger")
 def get_payment_ledger(
-    term: str,
+    term: Optional[str] = None,
+    property_id: Optional[int] = Query(default=None, ge=1),
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
-    return pay_svc.get_unified_payment_history(term, db_session=db_session)
+    if not term and not property_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Enter a search term or select a property account.",
+        )
+    return pay_svc.get_unified_payment_history(
+        term=term,
+        property_id=property_id,
+        db_session=db_session,
+    )
 
 
 @router.get("/next-or")

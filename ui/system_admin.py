@@ -1404,7 +1404,9 @@ class SystemAdminPage:
             dup_td_count  = result.get("duplicate_td_count", 0)
             dup_pay_count = result.get("duplicate_payment_count", 0)
             shadow_count  = result.get("shadow_duplicate_count", 0)
-            total_issues  = fmt_count + dup_td_count + dup_pay_count + shadow_count
+            # Shadow duplicates are a review subset of format issues, not
+            # additional records. Do not count them twice in the headline.
+            total_issues  = fmt_count + dup_td_count + dup_pay_count
 
             # ── Result window ─────────────────────────────────────────────
             win = ctk.CTkToplevel(self.container)

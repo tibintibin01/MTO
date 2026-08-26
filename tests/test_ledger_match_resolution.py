@@ -104,6 +104,9 @@ def test_zero_payment_property_context_uses_exact_td_lookup(monkeypatch):
         "owner_name": "APALLA, BONIFACIO R.",
         "barangay": "BORLONGAN",
         "kind_of_property": "AGRICULTURAL",
+        "pin": None,
+        "lot_number": None,
+        "block_number": None,
     }
 
 

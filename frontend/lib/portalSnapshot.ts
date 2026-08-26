@@ -33,6 +33,13 @@ export class PortalSnapshotDataError extends Error {
   }
 }
 
+export class PortalSnapshotAmbiguousLookupError extends Error {
+  constructor() {
+    super("More than one property account matches this TDN or PIN.");
+    this.name = "PortalSnapshotAmbiguousLookupError";
+  }
+}
+
 let localSnapshotCache: {
   signature: string;
   snapshot: PortalSnapshot;
@@ -43,7 +50,7 @@ let blobSnapshotCache: {
   snapshot: PortalSnapshot;
 } | null = null;
 
-const propertyIndexCache = new WeakMap<object, Map<string, SnapshotRecord>>();
+const propertyIndexCache = new WeakMap<object, Map<string, SnapshotRecord | null>>();
 
 function requireLookupSecret(): string {
   const secret = process.env.MTO_PORTAL_LOOKUP_SECRET?.trim();
@@ -170,12 +177,23 @@ export function findSnapshotProperty(snapshot: PortalSnapshot, query: string): S
   const hash = lookupHash(query);
   let index = propertyIndexCache.get(snapshot);
   if (!index) {
-    index = new Map<string, SnapshotRecord>();
+    index = new Map<string, SnapshotRecord | null>();
+    const addLookup = (lookupHashValue: string | undefined, record: SnapshotRecord) => {
+      if (!lookupHashValue) return;
+      if (index!.has(lookupHashValue) && index!.get(lookupHashValue) !== record) {
+        index!.set(lookupHashValue, null);
+        return;
+      }
+      index!.set(lookupHashValue, record);
+    };
     for (const record of snapshot.properties || []) {
-      if (record?.td_lookup_hash) index.set(record.td_lookup_hash, record);
-      if (record?.pin_lookup_hash) index.set(record.pin_lookup_hash, record);
+      addLookup(record?.td_lookup_hash, record);
+      addLookup(record?.pin_lookup_hash, record);
     }
     propertyIndexCache.set(snapshot, index);
+  }
+  if (index.has(hash) && index.get(hash) === null) {
+    throw new PortalSnapshotAmbiguousLookupError();
   }
   return index.get(hash) || null;
 }

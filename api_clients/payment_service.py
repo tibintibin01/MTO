@@ -29,12 +29,17 @@ def find_duplicate_payment(property_id, or_number, tax_year_text):
     return None
 
 
-def get_payment_ledger(term):
-    return api_request("GET", "/payments/ledger", params={"term": term})
+def get_payment_ledger(term=None, property_id=None):
+    params = {}
+    if term:
+        params["term"] = term
+    if property_id:
+        params["property_id"] = int(property_id)
+    return api_request("GET", "/payments/ledger", params=params)
 
 
-def get_unified_payment_history(term):
-    return api_request("GET", "/payments/ledger", params={"term": term})
+def get_unified_payment_history(term=None, property_id=None):
+    return get_payment_ledger(term=term, property_id=property_id)
 
 
 def get_next_or_number():

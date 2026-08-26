@@ -83,10 +83,37 @@ def list_barangays(current_user: dict = Depends(get_current_user), db_session: S
 def resolve_payment_target(
     td_number: str,
     tax_year: int,
+    property_id: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
-    result = prop_svc.resolve_payment_target(td_number, tax_year, db_session=db_session)
+    try:
+        result = prop_svc.resolve_payment_target(
+            td_number,
+            tax_year,
+            property_id=property_id,
+            db_session=db_session,
+        )
+    except prop_svc.AmbiguousPropertyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "td_number": exc.td_number,
+                "matches": [
+                    {
+                        "id": prop.id,
+                        "td_number": prop.td_number,
+                        "owner_name": prop.owner_name,
+                        "pin": prop.pin,
+                        "lot_number": prop.lot_number,
+                        "barangay": prop.barangay or prop.location,
+                        "kind_of_property": prop.kind_of_property,
+                    }
+                    for prop in exc.matches
+                ],
+            },
+        )
     if not result:
         raise HTTPException(
             status_code=422,
@@ -216,74 +243,165 @@ def bulk_update_barangay(data: BulkUpdateBarangaySchema, current_user: dict = De
     count = prop_svc.bulk_update_barangay(ids, new_brgy, user=current_user, db_session=db_session)
     return {"updated": count}
 
+def _clean_dossier_data(obj):
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return {
+            key: (
+                float(value)
+                if hasattr(value, "to_integral_value")
+                else str(value)
+                if hasattr(value, "strftime")
+                else value
+            )
+            for key, value in obj.items()
+        }
+    if isinstance(obj, (list, tuple)):
+        return [
+            float(value)
+            if hasattr(value, "to_integral_value")
+            else str(value)
+            if hasattr(value, "strftime")
+            else value
+            for value in obj
+        ]
+    return obj
+
+
+def _build_property_dossier(raw_prop, db_session: Session):
+    if hasattr(raw_prop, "__table__"):
+        raw_prop = {
+            column.name: getattr(raw_prop, column.name)
+            for column in raw_prop.__table__.columns
+        }
+    prop = _clean_dossier_data(raw_prop)
+    property_id = int(prop["id"])
+
+    import backend.services.payment_service as payment_svc
+
+    payments = [
+        _clean_dossier_data(payment)
+        for payment in payment_svc.get_payment_ledger(
+            property_id, db_session=db_session
+        )
+    ]
+
+    ancestry = []
+    ancestry_ambiguous = []
+    prev_td = str(prop.get("prev_td_number") or "").strip()
+    if prev_td and prev_td.upper() != str(prop.get("td_number") or "").strip().upper():
+        parent_matches = prop_svc.get_active_properties_by_td(
+            prev_td, db_session=db_session
+        )
+        if len(parent_matches) == 1:
+            parent = parent_matches[0]
+            ancestry.append(
+                _clean_dossier_data(
+                    {
+                        column.name: getattr(parent, column.name)
+                        for column in parent.__table__.columns
+                    }
+                )
+            )
+        elif len(parent_matches) > 1:
+            ancestry_ambiguous = [
+                {
+                    "id": parent.id,
+                    "td_number": parent.td_number,
+                    "owner_name": parent.owner_name,
+                }
+                for parent in parent_matches
+            ]
+
+    from backend.models import AuditLog, PropertyAssessmentHistory
+
+    raw_logs = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.table_name == "properties",
+            AuditLog.record_id == property_id,
+        )
+        .order_by(AuditLog.timestamp.desc())
+        .limit(10)
+        .all()
+    )
+    logs = [
+        {
+            "id": log.id,
+            "user_id": log.user_id,
+            "username": log.username,
+            "action": log.action,
+            "table_name": log.table_name,
+            "record_id": log.record_id,
+            "old_values": log.old_values,
+            "new_values": log.new_values,
+            "ip_address": log.ip_address,
+            "timestamp": log.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+            if log.timestamp
+            else "",
+        }
+        for log in raw_logs
+    ]
+    raw_history = (
+        db_session.query(PropertyAssessmentHistory)
+        .filter(PropertyAssessmentHistory.property_id == property_id)
+        .order_by(PropertyAssessmentHistory.created_at.desc())
+        .all()
+    )
+    history = [
+        {
+            "id": row.id,
+            "td_number": row.td_number,
+            "assessed_value": float(row.assessed_value or 0),
+            "kind": row.kind_of_property,
+            "tax_year": row.tax_year,
+            "changed_by": row.changed_by,
+            "change_reason": row.change_reason,
+            "date": row.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            if row.created_at
+            else "",
+        }
+        for row in raw_history
+    ]
+    return {
+        "master": prop,
+        "payments": payments,
+        "ancestry": ancestry,
+        "ancestry_ambiguous": ancestry_ambiguous,
+        "audit_summary": logs,
+        "assessment_history": history,
+    }
+
+
+@router.get("/dossier-by-id/{property_id}")
+def get_property_dossier_by_id(
+    property_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    prop = prop_svc.get_property_by_id(property_id, db_session=db_session)
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    return _build_property_dossier(prop, db_session)
+
+
 @router.get("/dossier/{td_number}")
 def get_property_dossier(
-    td_number: str, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    td_number: str,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     try:
-        raw_prop = prop_svc.get_property_by_td(td_number, db_session=db_session)
-        if not raw_prop:
-            raise HTTPException(status_code=404, detail=f"Property {td_number} not found")
-        
-        # Convert ORM to dict if needed, but get_property_by_td should probably return dict or ORM
-        # If it's ORM:
-        if hasattr(raw_prop, "__table__"):
-            prop = {c.name: getattr(raw_prop, c.name) for c in raw_prop.__table__.columns}
-        else:
-            prop = raw_prop
-
-        def clean_data(obj):
-            if obj is None: return None
-            if isinstance(obj, dict):
-                return {k: (float(v) if hasattr(v, "to_integral_value") else str(v) if hasattr(v, "strftime") else v) for k, v in obj.items()}
-            if isinstance(obj, (list, tuple)):
-                return [(float(v) if hasattr(v, "to_integral_value") else str(v) if hasattr(v, "strftime") else v) for v in obj]
-            return obj
-
-        prop = clean_data(raw_prop)
-        # Using the correct service import
-        import backend.services.payment_service as payment_svc
-        raw_payments = payment_svc.get_payment_ledger(td_number, db_session=db_session)
-        payments = [clean_data(p) for p in raw_payments]
-
-        ancestry = []
-        prev_td = prop.get("prev_td_number")
-        if prev_td and str(prev_td).strip() and str(prev_td).strip() != td_number:
-            parent_prop = prop_svc.get_property_by_td(str(prev_td).strip(), db_session=db_session)
-            if parent_prop:
-                if hasattr(parent_prop, "__table__"):
-                    ancestry.append(clean_data({c.name: getattr(parent_prop, c.name) for c in parent_prop.__table__.columns}))
-                else:
-                    ancestry.append(clean_data(parent_prop))
-
-        from backend.models import AuditLog
-        raw_logs = db_session.query(AuditLog).filter(
-            AuditLog.table_name == "properties",
-            AuditLog.record_id == prop.get("id")
-        ).order_by(AuditLog.timestamp.desc()).limit(10).all()
-        logs = [
-            {
-                "id": log.id,
-                "user_id": log.user_id,
-                "username": log.username,
-                "action": log.action,
-                "table_name": log.table_name,
-                "record_id": log.record_id,
-                "old_values": log.old_values,
-                "new_values": log.new_values,
-                "ip_address": log.ip_address,
-                "timestamp": log.timestamp.strftime("%Y-%m-%d %H:%M:%S") if log.timestamp else ""
-            }
-            for log in raw_logs
-        ]
-        
-        # Use ORM for history
-        from backend.models import PropertyAssessmentHistory
-        raw_history = db_session.query(PropertyAssessmentHistory).filter(PropertyAssessmentHistory.property_id == prop.get("id")).order_by(PropertyAssessmentHistory.created_at.desc()).all()
-        history = [{"id": r.id, "td_number": r.td_number, "assessed_value": float(r.assessed_value or 0), "kind": r.kind_of_property, "tax_year": r.tax_year, "changed_by": r.changed_by, "change_reason": r.change_reason, "date": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else ""} for r in raw_history]
-
-        return {"master": prop, "payments": payments, "ancestry": ancestry, "audit_summary": logs, "assessment_history": history}
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Internal Dossier Error: {str(e)}")
+        prop = prop_svc.get_property_by_td(td_number, db_session=db_session)
+    except prop_svc.AmbiguousPropertyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{len(exc.matches)} properties use TD {exc.td_number}. "
+                "Select a property row before opening its dossier."
+            ),
+        )
+    if not prop:
+        raise HTTPException(status_code=404, detail=f"Property {td_number} not found")
+    return _build_property_dossier(prop, db_session)

@@ -529,6 +529,7 @@ class AssessmentRollPage:
         if not sel:
             return
         vals = self.tree.item(sel[0])["values"]
+        property_id = int(vals[0]) if vals else None
         td_number = str(vals[1]).strip() if len(vals) > 1 else ""
 
         if not td_number:
@@ -558,7 +559,7 @@ class AssessmentRollPage:
         def worker():
             try:
                 # Use centralized API helper
-                data = api.api_request("GET", f"/properties/dossier/{td_number}")
+                data = prop_svc.get_property_dossier(property_id)
                 self.container.after(
                     0,
                     lambda: [

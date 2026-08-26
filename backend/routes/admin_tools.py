@@ -90,18 +90,24 @@ async def td_number_audit(
 
     # ── 3. Duplicate payments ─────────────────────────────────────────────────
     pay_rows = (
-        db_session.query(Payment.id, Payment.or_number, Payment.tax_year, Payment.amount,
-                         Payment.date_paid, Property.td_number, Property.owner_name)
+        db_session.query(Payment.property_id, Payment.id, Payment.or_number,
+                         Payment.tax_year, Payment.amount, Payment.date_paid,
+                         Property.td_number, Property.owner_name)
         .join(Property, Property.id == Payment.property_id)
         .filter(Payment.or_number != None, Payment.or_number != "")
-        .order_by(Payment.or_number.asc(), Payment.tax_year.asc())
+        .order_by(Payment.property_id.asc(), Payment.or_number.asc(), Payment.tax_year.asc())
         .all()
     )
 
     pay_groups: dict = defaultdict(list)
-    for pay_id, or_no, tax_yr, amount, date_paid, td_no, owner in pay_rows:
-        key = (str(or_no).strip(), str(tax_yr).strip() if tax_yr else "")
+    for property_id, pay_id, or_no, tax_yr, amount, date_paid, td_no, owner in pay_rows:
+        key = (
+            int(property_id),
+            str(or_no).strip(),
+            str(tax_yr).strip() if tax_yr else "",
+        )
         pay_groups[key].append({
+            "property_id": int(property_id),
             "payment_id": pay_id, "or_number": str(or_no).strip(),
             "tax_year": str(tax_yr) if tax_yr else "", "amount": float(amount or 0),
             "date_paid": date_paid.strftime("%Y-%m-%d") if date_paid else "",
@@ -109,7 +115,7 @@ async def td_number_audit(
         })
 
     duplicate_payments = []
-    for (or_no, tax_yr), entries in pay_groups.items():
+    for (_property_id, or_no, tax_yr), entries in pay_groups.items():
         if len(entries) > 1:
             sorted_entries = sorted(entries, key=lambda e: e["payment_id"])
             original_id = sorted_entries[0]["payment_id"]
@@ -117,7 +123,10 @@ async def td_number_audit(
             for entry in sorted_entries[1:]:
                 duplicate_payments.append({
                     **entry,
-                    "reason": f"Extra copy — keep ID {original_id}, delete this (all IDs: {all_ids})",
+                    "reason": (
+                        f"Same property account, OR and tax year — keep ID "
+                        f"{original_id}, review this copy (all IDs: {all_ids})"
+                    ),
                 })
 
     # ── 4. Shadow duplicates ──────────────────────────────────────────────────

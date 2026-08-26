@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findSnapshotProperty, loadPortalSnapshot, publicProperty, PortalSnapshotConfigError, PortalSnapshotDataError } from "../../../../../../lib/portalSnapshot";
+import { findSnapshotProperty, loadPortalSnapshot, publicProperty, PortalSnapshotAmbiguousLookupError, PortalSnapshotConfigError, PortalSnapshotDataError } from "../../../../../../lib/portalSnapshot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +25,9 @@ export async function GET(_request: NextRequest, { params }: { params: { query: 
 
     return json(200, publicProperty(record, snapshot));
   } catch (error) {
+    if (error instanceof PortalSnapshotAmbiguousLookupError) {
+      return json(409, { detail: "More than one property account matches this TDN or PIN. Please contact the Municipal Treasury Office." });
+    }
     if (error instanceof PortalSnapshotConfigError || error instanceof PortalSnapshotDataError) {
       return json(503, { detail: "Portal data is temporarily unavailable. Please contact the Municipal Treasury Office." });
     }

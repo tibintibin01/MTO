@@ -443,9 +443,21 @@ def commit_assessment_import(data_list, user, db_session: Session = None):
                 if new_assessed_value <= 0:
                     raise ValueError("Assessed Value must be greater than zero")
 
-                prop = (
-                    db_session.query(Property).filter(Property.td_number == td).first()
+                matches = (
+                    db_session.query(Property)
+                    .filter(
+                        Property.td_number == td,
+                        Property.deleted_at == None,
+                    )
+                    .order_by(Property.id.asc())
+                    .limit(2)
+                    .all()
                 )
+                if len(matches) > 1:
+                    raise ValueError(
+                        f"TD {td} matches multiple properties. Select/map a property ID before importing."
+                    )
+                prop = matches[0] if matches else None
 
                 if prop:
                     old_assessed_value = float(prop.assessed_value or 0)
@@ -719,12 +731,16 @@ def import_assessment_roll_from_excel(file_path, user, db_session: Session = Non
             ]
 
             # Fetch existing properties in this batch
-            existing_props = {
-                p.td_number: p
-                for p in db_session.query(Property)
+            existing_props = {}
+            existing_rows = (
+                db_session.query(Property)
                 .filter(Property.td_number.in_(td_numbers))
                 .all()
-            }
+            )
+            for existing_prop in existing_rows:
+                existing_props.setdefault(existing_prop.td_number, []).append(
+                    existing_prop
+                )
 
             to_insert = []
 
@@ -774,9 +790,13 @@ def import_assessment_roll_from_excel(file_path, user, db_session: Session = Non
                             else:
                                 lot_val = parts[0].strip()
 
-                    if td in existing_props:
-
-                        prop = existing_props[td]
+                    matches = existing_props.get(td, [])
+                    if len(matches) > 1:
+                        raise ValueError(
+                            f"TD {td} matches multiple properties. Bulk assessment import requires an explicit property ID."
+                        )
+                    if matches:
+                        prop = matches[0]
                         prop.owner_name = owner
                         prop.kind_of_property = kind
                         prop.assessed_value = val
@@ -930,23 +950,27 @@ def validate_payment_import(file_content, file_extension, db_session: Session = 
             DataCleanser.to_str(r.get(found_cols["td_number"]))
             for _, r in df.iterrows()
         ]
-        props = {
-            p.td_number: p
-            for p in db_session.query(Property)
+        props_by_td = {}
+        existing_rows = (
+            db_session.query(Property)
             .filter(Property.td_number.in_(td_list))
             .all()
-        }
+        )
+        for existing_prop in existing_rows:
+            props_by_td.setdefault(existing_prop.td_number, []).append(existing_prop)
 
         # Pre-fetch existing OR numbers from the DB — keyed by (or_number, tax_year)
         # so we can distinguish true duplicates from same-OR-different-year cases.
         existing_or_keys = {
-            (r[0], str(r[1]) if r[1] else "")
-            for r in db_session.query(Payment.or_number, Payment.tax_year)
+            (int(r[0]), r[1], str(r[2]) if r[2] else "")
+            for r in db_session.query(
+                Payment.property_id, Payment.or_number, Payment.tax_year
+            )
             .filter(Payment.or_number != None, Payment.or_number != "")
             .all()
         }
         # Also keep a set of just OR numbers for the "different tax year" warning
-        existing_or_numbers = {k[0] for k in existing_or_keys}
+        existing_or_numbers = {key[1] for key in existing_or_keys}
 
         # Track (or_number, tax_year) pairs seen within this file
         seen_in_file: set = set()
@@ -983,13 +1007,24 @@ def validate_payment_import(file_content, file_extension, db_session: Session = 
                 else 0.0
             )
 
-            prop = props.get(td)
+            prop_matches = props_by_td.get(td, [])
+            prop = prop_matches[0] if len(prop_matches) == 1 else None
             status = "✅ VALID"
             msg = "Ready to import"
-            system_owner = prop.owner_name if prop else "N/A"
+            system_owner = (
+                prop.owner_name
+                if prop
+                else "MULTIPLE PROPERTY ACCOUNTS"
+                if len(prop_matches) > 1
+                else "N/A"
+            )
 
             if not td:
                 errors.append("Missing TD Number")
+            elif len(prop_matches) > 1:
+                errors.append(
+                    f"TD {td} matches {len(prop_matches)} properties; select/map a property ID before importing"
+                )
             elif not prop:
                 errors.append(f"TD {td} not found in system")
 
@@ -1004,7 +1039,7 @@ def validate_payment_import(file_content, file_extension, db_session: Session = 
                 if found_cols.get("tax_year")
                 else ""
             )
-            or_key = (or_no, tax_yr_str)
+            or_key = (prop.id if prop else None, or_no, tax_yr_str)
 
             if or_no:
                 if or_key in seen_in_file:
@@ -1012,7 +1047,7 @@ def validate_payment_import(file_content, file_extension, db_session: Session = 
                     errors.append(
                         f"Duplicate in file: OR {or_no} / {tax_yr_str} appears more than once"
                     )
-                elif or_key in existing_or_keys:
+                elif prop and or_key in existing_or_keys:
                     # Exact duplicate in the DB (same OR + same tax year)
                     errors.append(
                         f"Duplicate: OR {or_no} for tax year {tax_yr_str} already posted in system"

@@ -5,7 +5,8 @@ from api_clients.api_helper import api_request
 
 def global_search(query):
     """Hits the global search API endpoint."""
-    return api_request("GET", "/search/global", params={"q": query})
+    response = api_request("GET", "/search/global", params={"q": query})
+    return response.get("results", []) if isinstance(response, dict) else response
 
 
 def get_quick_actions():
@@ -13,7 +14,8 @@ def get_quick_actions():
     # If the endpoint doesn't exist, we can return a hardcoded list for the UI
     # or better, fetch it from a system-config endpoint.
     try:
-        return api_request("GET", "/search/quick-actions")
+        response = api_request("GET", "/search/quick-actions")
+        return response.get("results", []) if isinstance(response, dict) else response
     except Exception:
         # Fallback for the UI if server doesn't support this yet
         return [

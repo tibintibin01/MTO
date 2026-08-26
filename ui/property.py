@@ -102,6 +102,9 @@ class PropertyPage:
         self.tree.column(tr("property.table.location"), width=160, anchor="w")
         scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview, style="Prop.Vertical.TScrollbar")
         self.tree.configure(yscrollcommand=scrolly.set)
+        self.tree.tag_configure(
+            "duplicate_td", background="#3b2a16", foreground="#fef3c7"
+        )
         scrolly.pack(side="right", fill="y", pady=1, padx=(0, 1))
         self.tree.pack(side="left", fill="both", expand=True, padx=1, pady=1)
 
@@ -162,8 +165,14 @@ class PropertyPage:
         self.prev_btn.configure(state="normal" if self.current_page > 0 else "disabled")
         self.next_btn.configure(state="normal" if has_more else "disabled")
         for item in self.tree.get_children(): self.tree.delete(item)
+        td_counts = {}
+        for row in results:
+            normalized_td = str(row[1] or "").strip().upper()
+            td_counts[normalized_td] = td_counts.get(normalized_td, 0) + 1
         for r in results:
-            self.tree.insert("", "end", values=(r[0], r[1], r[2], r[6], format_curr(r[9]), format_curr(r[12]), format_curr(r[13]), format_curr(r[14])))
+            normalized_td = str(r[1] or "").strip().upper()
+            tags = ("duplicate_td",) if td_counts.get(normalized_td, 0) > 1 else ()
+            self.tree.insert("", "end", values=(r[0], r[1], r[2], r[6], format_curr(r[9]), format_curr(r[12]), format_curr(r[13]), format_curr(r[14])), tags=tags)
         self.on_selection_change()
 
     def fetch_barangays(self):
@@ -192,11 +201,13 @@ class PropertyPage:
     def open_dossier(self):
         sel = self.tree.selection()
         if not sel: return
-        td = str(self.tree.item(sel[0])["values"][1]).strip()
+        values = self.tree.item(sel[0])["values"]
+        property_id = int(values[0])
+        td = str(values[1]).strip()
         overlay = LoadingOverlay(self.container, "📂 FETCHING DOSSIER...")
         def worker():
             try:
-                data = api.api_request("GET", f"/properties/dossier/{td}")
+                data = prop_svc.get_property_dossier(property_id)
                 self.container.after(0, lambda: [overlay.hide(), PropertyDossierModal(self.parent, data)])
             except Exception as e: self.container.after(0, lambda err=e: [overlay.hide(), messagebox.showerror("Error", str(err))])
         threading.Thread(target=worker, daemon=True).start()
@@ -612,7 +623,11 @@ class PropertyEditModal(ctk.CTkToplevel):
 
         def worker():
             try:
-                result = prop_svc.resolve_payment_target(td_number, int(year_text))
+                result = prop_svc.resolve_payment_target(
+                    td_number,
+                    int(year_text),
+                    property_id=self.property_id,
+                )
                 self.after(0, lambda r=result, old_td=td_number, year=year_text: self._apply_payment_target_resolution(r, old_td, year))
             except Exception:
                 # Do not interrupt typing. Save still has server-side validation.

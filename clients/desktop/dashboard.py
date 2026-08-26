@@ -314,8 +314,11 @@ class DashboardApp(ctk.CTk):
         res_type, identifier, command = result.get("type"), result.get("identifier"), result.get("command")
         
         if res_type == "property":
-            from ui.dossier import PropertyDossierWindow
-            PropertyDossierWindow(self, identifier, self.user_data)
+            import api_clients.property_service as property_svc
+            from ui.dossier import PropertyDossierModal
+
+            dossier = property_svc.get_property_dossier(identifier)
+            PropertyDossierModal(self, dossier)
         elif res_type == "receipt":
             from ui.ledger import LedgerPage
             self.load_page(LedgerPage)
