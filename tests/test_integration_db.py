@@ -142,14 +142,24 @@ class TestSchemaConstraints:
             make_user(db, username="alice")
             db.commit()
 
-    def test_property_td_number_unique(self, db):
-        """UNIQUE constraint on properties.td_number must be enforced."""
-        make_property(db, td="TD-UNIQUE-001")
+    def test_property_td_number_can_store_separate_internal_accounts(self, db):
+        """Approved duplicate TD exceptions remain separate by property ID.
+
+        The admin authorization gate is covered by the duplicate-TD service
+        tests; the database intentionally permits the resulting two rows.
+        """
+        first = make_property(db, td="TD-CONTROLLED-DUPLICATE")
+        db.commit()
+        second = make_property(db, td="TD-CONTROLLED-DUPLICATE")
         db.commit()
 
-        with pytest.raises(Exception):
-            make_property(db, td="TD-UNIQUE-001")
-            db.commit()
+        assert first.id != second.id
+        assert (
+            db.query(Property)
+            .filter(Property.td_number == "TD-CONTROLLED-DUPLICATE")
+            .count()
+            == 2
+        )
 
     def test_payment_requires_existing_property(self, db):
         """FK constraint: payment.property_id must reference a real property."""

@@ -49,6 +49,24 @@ export MTO_DB_PASSWORD=your-password
 export MTO_JWT_SECRET=your-secret-min-32-chars
 ```
 
+#### Controlled duplicate TD rollout
+
+Verified duplicate active TD creation is installed **disabled by default**.
+Do not enable it until a verified Hybrid Backup has completed and the one-record
+production acceptance test is approved.
+
+When Phase 4 is authorized, set this on the Windows API server and restart the
+MTO API:
+
+```powershell
+setx /M MTO_ENABLE_VERIFIED_DUPLICATE_TD 1
+```
+
+Only administrators can then create a duplicate. The form requires an Assessor
+reference, a written reason, and explicit confirmation. Bulk imports remain
+blocked from creating duplicates. Payments, billings, reports, and documents
+continue to use the internal property ID and are never merged by TD number.
+
 ### 2. Start Redis
 ```bash
 docker-compose up -d redis

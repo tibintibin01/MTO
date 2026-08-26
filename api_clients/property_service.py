@@ -31,6 +31,10 @@ def get_property_by_id(property_id):
     return api_request("GET", f"/properties/{property_id}")
 
 
+def get_duplicate_td_policy():
+    return api_request("GET", "/properties/duplicate-td-policy")
+
+
 def find_properties_by_td_number(td_number, exclude_id=None):
     """Return every fresh exact TD match; never silently choose one."""
     normalized_td = str(td_number or "").strip().upper()
@@ -58,6 +62,8 @@ def find_properties_by_td_number(td_number, exclude_id=None):
                     "pin": row[18] if len(row) > 18 else "",
                     "block_number": row[19] if len(row) > 19 else "",
                     "barangay": row[22] if len(row) > 22 else "",
+                    "duplicate_td_verified": bool(row[23]) if len(row) > 23 else False,
+                    "duplicate_td_reference": row[24] if len(row) > 24 else "",
                 }
             )
     return matches

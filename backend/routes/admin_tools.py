@@ -42,7 +42,16 @@ async def td_number_audit(
     PATTERN = re.compile(r"^\d{2}-\d{4}-\d{5}$")
 
     rows = (
-        db_session.query(Property.id, Property.td_number, Property.owner_name)
+        db_session.query(
+            Property.id,
+            Property.td_number,
+            Property.owner_name,
+            Property.duplicate_td_verified,
+            Property.duplicate_td_reference,
+            Property.duplicate_td_reason,
+            Property.duplicate_td_approved_by,
+            Property.duplicate_td_approved_at,
+        )
         .filter(Property.deleted_at == None)
         .order_by(Property.id.asc())
         .all()
@@ -50,7 +59,8 @@ async def td_number_audit(
 
     # ── 1. Malformed TD numbers ───────────────────────────────────────────────
     invalid = []
-    for prop_id, td, owner in rows:
+    for row in rows:
+        prop_id, td, owner = row[:3]
         td_str = (td or "").strip()
         if not td_str:
             reason = "Empty TD number"
@@ -74,19 +84,45 @@ async def td_number_audit(
 
     # ── 2. Duplicate TD numbers ───────────────────────────────────────────────
     td_groups: dict = defaultdict(list)
-    for prop_id, td, owner in rows:
+    for row in rows:
+        prop_id, td, owner = row[:3]
+        verified, reference, reason, approved_by, approved_at = row[3:]
         td_str = (td or "").strip()
         if td_str:
-            td_groups[td_str].append({"id": prop_id, "owner_name": owner or ""})
+            td_groups[td_str].append({
+                "id": prop_id,
+                "owner_name": owner or "",
+                "verified": bool(verified),
+                "reference": reference or "",
+                "reason": reason or "",
+                "approved_by": approved_by or "",
+                "approved_at": approved_at.isoformat() if approved_at else "",
+            })
 
     duplicate_tds = []
+    verified_duplicate_tds = []
     for td_str, entries in td_groups.items():
         if len(entries) > 1:
+            is_verified_group = all(entry["verified"] for entry in entries)
             for entry in entries:
-                duplicate_tds.append({
-                    "id": entry["id"], "td_number": td_str, "owner_name": entry["owner_name"],
-                    "reason": f"Duplicate — shared by {len(entries)} properties (IDs: {', '.join(str(e['id']) for e in entries)})",
-                })
+                result = {
+                    "id": entry["id"], "td_number": td_str,
+                    "owner_name": entry["owner_name"],
+                    "reference": entry["reference"],
+                    "authorization_reason": entry["reason"],
+                    "approved_by": entry["approved_by"],
+                    "approved_at": entry["approved_at"],
+                    "reason": (
+                        f"Verified duplicate — shared by {len(entries)} properties"
+                        if is_verified_group
+                        else f"Unresolved duplicate — shared by {len(entries)} properties "
+                             f"(IDs: {', '.join(str(e['id']) for e in entries)})"
+                    ),
+                }
+                if is_verified_group:
+                    verified_duplicate_tds.append(result)
+                else:
+                    duplicate_tds.append(result)
 
     # ── 3. Duplicate payments ─────────────────────────────────────────────────
     pay_rows = (
@@ -130,7 +166,11 @@ async def td_number_audit(
                 })
 
     # ── 4. Shadow duplicates ──────────────────────────────────────────────────
-    valid_td_set = {(td or "").strip() for _, td, _ in rows if PATTERN.match((td or "").strip())}
+    valid_td_set = {
+        (row[1] or "").strip()
+        for row in rows
+        if PATTERN.match((row[1] or "").strip())
+    }
 
     def apply_fix_rules(td: str):
         parts = td.split("-")
@@ -149,9 +189,13 @@ async def td_number_audit(
         candidate = f"{s1}-{s2}-{s3}"
         return candidate if PATTERN.match(candidate) else None
 
-    td_lookup = {(td or "").strip(): (prop_id, owner or "") for prop_id, td, owner in rows}
+    td_lookup = {
+        (row[1] or "").strip(): (row[0], row[2] or "")
+        for row in rows
+    }
     shadow_duplicates = []
-    for prop_id, td, owner in rows:
+    for row in rows:
+        prop_id, td, owner = row[:3]
         td_str = (td or "").strip()
         if not td_str or PATTERN.match(td_str):
             continue
@@ -169,10 +213,12 @@ async def td_number_audit(
         "total_payments_scanned": len(pay_rows),
         "invalid_count": len(invalid),
         "duplicate_td_count": len(duplicate_tds),
+        "verified_duplicate_td_count": len(verified_duplicate_tds),
         "duplicate_payment_count": len(duplicate_payments),
         "shadow_duplicate_count": len(shadow_duplicates),
         "invalid": invalid,
         "duplicate_tds": duplicate_tds,
+        "verified_duplicate_tds": verified_duplicate_tds,
         "duplicate_payments": duplicate_payments,
         "shadow_duplicates": shadow_duplicates,
         "format": "DD-DDDD-DDDDD (e.g. 06-0014-00239)",

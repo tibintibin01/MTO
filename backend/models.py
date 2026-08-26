@@ -26,7 +26,9 @@ class Property(Base):
     __tablename__ = "properties"
 
     id = Column(Integer, primary_key=True, index=True)
-    td_number = Column(String(100), nullable=False, unique=True, index=True)
+    # Exceptional duplicate TDs are authorized by the application. Financial
+    # records always link to this row's immutable internal ``id``.
+    td_number = Column(String(100), nullable=False, index=True)
     owner_name = Column(String(255), nullable=False)
     payor_name = Column(String(255), nullable=True)
     lot_number = Column(String(100), nullable=True)
@@ -44,6 +46,17 @@ class Property(Base):
     tax_year = Column(String(100), nullable=True)
     pin = Column(String(100), nullable=True)
     prev_td_number = Column(String(100), nullable=True)
+    previous_property_id = Column(
+        Integer,
+        ForeignKey("properties.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    duplicate_td_verified = Column(Boolean, nullable=False, default=False)
+    duplicate_td_reason = Column(String(500), nullable=True)
+    duplicate_td_reference = Column(String(255), nullable=True)
+    duplicate_td_approved_by = Column(String(150), nullable=True)
+    duplicate_td_approved_at = Column(DateTime, nullable=True)
     effectivity_date = Column(String(100), nullable=True)
     version = Column(Integer, default=1)
     deleted_at = Column(DateTime, nullable=True, index=True)
@@ -53,6 +66,12 @@ class Property(Base):
     payments = relationship("Payment", back_populates="property")
     billings = relationship("PropertyBilling", back_populates="property")
     assessment_history = relationship("PropertyAssessmentHistory", back_populates="property")
+    previous_property = relationship(
+        "Property",
+        remote_side=[id],
+        foreign_keys=[previous_property_id],
+        uselist=False,
+    )
 
 class Payment(Base):
     __tablename__ = "payments"

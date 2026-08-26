@@ -156,25 +156,67 @@ def _property_effectivity_year_expr(model):
     return cast(func.substr(year_source, 1, 4), Integer)
 
 
+def _replacement_links_subquery(db_session: Session):
+    """Resolve successor-to-predecessor links by internal property ID.
+
+    Legacy Previous-TD text is accepted only where exactly one active parent
+    has that TD. This keeps existing clean records compatible while refusing
+    to apply a successor to every member of a duplicated TD group.
+    """
+    replacement = aliased(Property)
+    parent = aliased(Property)
+    parent_key = func.upper(func.trim(parent.td_number))
+    unique_parents = (
+        db_session.query(
+            parent_key.label("td_key"),
+            func.min(parent.id).label("property_id"),
+        )
+        .filter(parent.deleted_at == None)
+        .group_by(parent_key)
+        .having(func.count(parent.id) == 1)
+        .subquery()
+    )
+    replacement_year = _property_effectivity_year_expr(replacement)
+    predecessor_id = func.coalesce(
+        replacement.previous_property_id,
+        unique_parents.c.property_id,
+    )
+    return (
+        db_session.query(
+            predecessor_id.label("predecessor_id"),
+            replacement.id.label("successor_id"),
+            replacement_year.label("replacement_year"),
+        )
+        .outerjoin(
+            unique_parents,
+            and_(
+                replacement.previous_property_id == None,
+                func.upper(func.trim(replacement.prev_td_number))
+                == unique_parents.c.td_key,
+            ),
+        )
+        .filter(
+            replacement.deleted_at == None,
+            predecessor_id != None,
+            replacement_year != None,
+        )
+        .subquery()
+    )
+
+
 def _compliance_property_scope(as_of_year: int, db_session: Session):
     """Filters properties to those active for the selected compliance year."""
     year = int(as_of_year)
     effectivity_year = _property_effectivity_year_expr(Property)
-    replacement = aliased(Property)
-    replacement_effectivity_year = _property_effectivity_year_expr(replacement)
-    replaced_td_numbers = (
-        db_session.query(func.trim(replacement.prev_td_number))
-        .filter(
-            replacement.deleted_at == None,
-            replacement.prev_td_number != None,
-            func.trim(replacement.prev_td_number) != "",
-            replacement_effectivity_year <= year,
-        )
+    replacement_links = _replacement_links_subquery(db_session)
+    replaced_property_ids = (
+        db_session.query(replacement_links.c.predecessor_id)
+        .filter(replacement_links.c.replacement_year <= year)
         .scalar_subquery()
     )
     return (
         or_(effectivity_year == None, effectivity_year <= year),
-        ~func.trim(Property.td_number).in_(replaced_td_numbers),
+        ~Property.id.in_(replaced_property_ids),
     )
 
 
@@ -185,18 +227,12 @@ def _valid_property_billing_scope(db_session: Session):
     receivables for the successor TD's effective year or any later year.
     """
     property_effectivity_year = _property_effectivity_year_expr(Property)
-    replacement = aliased(Property)
-    replacement_effectivity_year = _property_effectivity_year_expr(replacement)
+    replacement_links = _replacement_links_subquery(db_session)
     effective_replacement_exists = (
-        db_session.query(replacement.id)
+        db_session.query(replacement_links.c.successor_id)
         .filter(
-            replacement.deleted_at == None,
-            replacement.prev_td_number != None,
-            func.trim(replacement.prev_td_number) != "",
-            func.upper(func.trim(replacement.prev_td_number))
-            == func.upper(func.trim(Property.td_number)),
-            replacement_effectivity_year != None,
-            replacement_effectivity_year <= PropertyBilling.tax_year,
+            replacement_links.c.predecessor_id == Property.id,
+            replacement_links.c.replacement_year <= PropertyBilling.tax_year,
         )
         .exists()
     )
@@ -219,21 +255,13 @@ def _replacement_cutoffs_subquery(db_session: Session):
     every billing row. Materializing this small mapping once preserves the
     replacement rule without the nested scan.
     """
-    replacement = aliased(Property)
-    previous_td_key = func.upper(func.trim(replacement.prev_td_number))
-    replacement_year = _property_effectivity_year_expr(replacement)
+    replacement_links = _replacement_links_subquery(db_session)
     return (
         db_session.query(
-            previous_td_key.label("previous_td_key"),
-            func.min(replacement_year).label("replacement_year"),
+            replacement_links.c.predecessor_id.label("predecessor_id"),
+            func.min(replacement_links.c.replacement_year).label("replacement_year"),
         )
-        .filter(
-            replacement.deleted_at == None,
-            replacement.prev_td_number != None,
-            func.trim(replacement.prev_td_number) != "",
-            replacement_year != None,
-        )
-        .group_by(previous_td_key)
+        .group_by(replacement_links.c.predecessor_id)
         .subquery()
     )
 
@@ -3086,8 +3114,7 @@ def get_collections_worklist(
         )
         .outerjoin(
             replacement_cutoffs,
-            replacement_cutoffs.c.previous_td_key
-            == func.upper(func.trim(Property.td_number)),
+            replacement_cutoffs.c.predecessor_id == Property.id,
         )
         .filter(
             Property.deleted_at == None,

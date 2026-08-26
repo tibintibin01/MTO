@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 import api_clients.property_service as prop_svc
 import api_clients.api_helper as api
+import api_clients.auth_service as auth
 from ui.dossier import PropertyDossierModal
 from ui.import_wizard import ImportWizardModal
 from theme_manager import ModernTheme
@@ -91,7 +92,7 @@ class PropertyPage:
         style.map("Prop.Treeview", background=[("selected", colors["blue"])], foreground=[("selected", "#ffffff")])
         style.configure("Prop.Vertical.TScrollbar", background="#475569", troughcolor="#0f172a", bordercolor="#0f172a", arrowcolor="#cbd5e1")
 
-        self.cols = (tr("property.table.id"), tr("property.table.td"), tr("property.table.owner"), tr("property.table.location"), tr("property.table.value"), tr("property.table.penalty"), tr("property.table.discount"), tr("property.table.due"))
+        self.cols = (tr("property.table.id"), tr("property.table.td"), tr("property.table.owner"), tr("property.table.location"), tr("property.table.value"), tr("property.table.penalty"), tr("property.table.discount"), tr("property.table.due"), "STATUS")
         self.tree = ttk.Treeview(table_fr, columns=self.cols, show="headings", style="Prop.Treeview")
         for col in self.cols:
             self.tree.heading(col, text=col.upper())
@@ -100,6 +101,7 @@ class PropertyPage:
         self.tree.column(tr("property.table.td"), width=155)
         self.tree.column(tr("property.table.owner"), width=300, anchor="w")
         self.tree.column(tr("property.table.location"), width=160, anchor="w")
+        self.tree.column("STATUS", width=175, anchor="center")
         scrolly = ttk.Scrollbar(table_fr, orient="vertical", command=self.tree.yview, style="Prop.Vertical.TScrollbar")
         self.tree.configure(yscrollcommand=scrolly.set)
         self.tree.tag_configure(
@@ -171,8 +173,17 @@ class PropertyPage:
             td_counts[normalized_td] = td_counts.get(normalized_td, 0) + 1
         for r in results:
             normalized_td = str(r[1] or "").strip().upper()
-            tags = ("duplicate_td",) if td_counts.get(normalized_td, 0) > 1 else ()
-            self.tree.insert("", "end", values=(r[0], r[1], r[2], r[6], format_curr(r[9]), format_curr(r[12]), format_curr(r[13]), format_curr(r[14])), tags=tags)
+            verified = bool(r[23]) if len(r) > 23 else False
+            duplicate_on_page = td_counts.get(normalized_td, 0) > 1
+            tags = ("duplicate_td",) if verified or duplicate_on_page else ()
+            status = (
+                "⚠ VERIFIED DUPLICATE"
+                if verified
+                else "⚠ REVIEW DUPLICATE"
+                if duplicate_on_page
+                else "STANDARD"
+            )
+            self.tree.insert("", "end", values=(r[0], r[1], r[2], r[6], format_curr(r[9]), format_curr(r[12]), format_curr(r[13]), format_curr(r[14]), status), tags=tags)
         self.on_selection_change()
 
     def fetch_barangays(self):
@@ -316,6 +327,9 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.vars = {}
         self._loaded_version = None
         self._original_prev_td = ""
+        self._original_td = ""
+        self._loaded_duplicate_verified = False
+        self._selected_previous_property_id = None
         self._first_input = None
         self._last_input = None
         self._field_entries = []
@@ -327,6 +341,12 @@ class PropertyEditModal(ctk.CTkToplevel):
         self._resolving_payment_target = False
         self._last_resolved_target_key = None
         self.barangays = ["NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN", "BUENAVISTA", "CALAOCAN", "DIAMANEN", "DIANED", "DIARABASIN", "DIBUTUNAN", "DIMABUNO", "DINADIAWAN", "DITALE", "GUPA", "IPIL", "LABOY", "LIPIT", "LOBBOT", "MALIGAYA", "MIJARES", "MUCDOL", "PUANGI", "SALAY", "SAPANGKAWAYAN", "TOYTOYAN"]
+        self.duplicate_policy = {"enabled": False, "admin_authorized": False}
+        if not self.payment_mode and auth.get_user_role(self.user) == "admin":
+            try:
+                self.duplicate_policy = prop_svc.get_duplicate_td_policy() or self.duplicate_policy
+            except Exception:
+                pass
 
         # Generate a fresh idempotency key when the form opens — NOT on submit.
         # This ensures every submission attempt for this form session uses the
@@ -401,6 +421,9 @@ class PropertyEditModal(ctk.CTkToplevel):
 
         for _, key in fields + correction_fields + payment_fields:
             self.vars[key] = tk.StringVar()
+        self.vars["duplicate_td_reason"] = tk.StringVar()
+        self.vars["duplicate_td_reference"] = tk.StringVar()
+        self.duplicate_td_var = tk.BooleanVar(value=False)
 
         visible_fields = fields + payment_fields if self.payment_mode else fields + correction_fields
 
@@ -467,6 +490,58 @@ class PropertyEditModal(ctk.CTkToplevel):
             self._last_input = entry
             self._field_entries.append(entry)
             self._field_entries_by_key[key] = entry
+
+        if not self.payment_mode and auth.get_user_role(self.user) == "admin":
+            enabled = bool(self.duplicate_policy.get("enabled"))
+            duplicate_box = ctk.CTkFrame(
+                self.scroll_form,
+                fg_color="#3b2a16",
+                border_width=1,
+                border_color="#d97706",
+                corner_radius=8,
+            )
+            duplicate_box.pack(fill="x", padx=10, pady=(14, 4))
+            self.duplicate_checkbox = ctk.CTkCheckBox(
+                duplicate_box,
+                text="AUTHORIZED DUPLICATE TD (ADMIN ONLY)",
+                variable=self.duplicate_td_var,
+                font=("Inter", 10, "bold"),
+                text_color="#fbbf24",
+                state="normal" if enabled else "disabled",
+            )
+            self.duplicate_checkbox.pack(anchor="w", padx=12, pady=(10, 4))
+            policy_text = (
+                "Use only for an Assessor-confirmed duplicate active TD. "
+                "Payments remain separate by internal property account."
+                if enabled
+                else "Controlled duplicate creation is installed but not activated on this server."
+            )
+            ctk.CTkLabel(
+                duplicate_box,
+                text=policy_text,
+                wraplength=500,
+                justify="left",
+                font=("Inter", 9),
+                text_color="#fde68a",
+            ).pack(anchor="w", padx=12, pady=(0, 8))
+            for label, key, placeholder in (
+                ("ASSESSOR REFERENCE", "duplicate_td_reference", "Assessment record, memo, or reference number"),
+                ("REASON", "duplicate_td_reason", "Explain why the duplicate active TD is legitimate"),
+            ):
+                ctk.CTkLabel(
+                    duplicate_box,
+                    text=label,
+                    font=("Inter", 9, "bold"),
+                    text_color="#fef3c7",
+                ).pack(anchor="w", padx=12)
+                entry = ctk.CTkEntry(
+                    duplicate_box,
+                    textvariable=self.vars[key],
+                    placeholder_text=placeholder,
+                    height=36,
+                    state="normal" if enabled else "disabled",
+                )
+                entry.pack(fill="x", padx=12, pady=(2, 8))
 
         self.calc_box = ctk.CTkFrame(self.scroll_form, fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK), corner_radius=8)
         self.calc_box.pack(fill="x", padx=10, pady=15)
@@ -829,8 +904,97 @@ class PropertyEditModal(ctk.CTkToplevel):
             for k, v in mapping.items():
                 if k in self.vars: self.vars[k].set(str(v) if v is not None else "")
             self._original_prev_td = self.vars["prev_td_number"].get().strip().upper()
+            self._original_td = self.vars["td_number"].get().strip().upper()
+            if isinstance(prop, dict):
+                self._selected_previous_property_id = prop.get("previous_property_id")
+                self._loaded_duplicate_verified = bool(prop.get("duplicate_td_verified"))
+                self.duplicate_td_var.set(self._loaded_duplicate_verified)
+                self.vars["duplicate_td_reason"].set(
+                    str(prop.get("duplicate_td_reason") or "")
+                )
+                self.vars["duplicate_td_reference"].set(
+                    str(prop.get("duplicate_td_reference") or "")
+                )
             self.recompute()
         except Exception as e: print(f"Load Error: {e}")
+
+    def _choose_previous_property(self, td_number, matches):
+        """Return the explicitly selected predecessor ID, or None on cancel."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Select Previous Property")
+        dialog.geometry("900x430")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.configure(fg_color="#0f172a")
+        selected = {"id": None}
+
+        ctk.CTkLabel(
+            dialog,
+            text="SELECT THE EXACT PREVIOUS PROPERTY ACCOUNT",
+            font=("Inter", 17, "bold"),
+            text_color="#fbbf24",
+        ).pack(anchor="w", padx=20, pady=(18, 4))
+        ctk.CTkLabel(
+            dialog,
+            text=(
+                f"{len(matches)} active accounts use Previous TD {td_number}. "
+                "This selection controls lineage only; it never combines payments."
+            ),
+            font=("Inter", 10),
+            text_color="#cbd5e1",
+        ).pack(anchor="w", padx=20, pady=(0, 12))
+
+        frame = ctk.CTkFrame(dialog, fg_color="#111827")
+        frame.pack(fill="both", expand=True, padx=20, pady=(0, 12))
+        columns = ("ID", "OWNER", "PIN", "LOT / BLOCK", "BARANGAY", "CLASSIFICATION")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", height=8)
+        widths = (70, 250, 130, 120, 130, 170)
+        for column, width in zip(columns, widths):
+            tree.heading(column, text=column)
+            tree.column(column, width=width, anchor="w" if column == "OWNER" else "center")
+        for match in matches:
+            lot_block = " / ".join(
+                value for value in (
+                    str(match.get("lot_number") or "").strip(),
+                    str(match.get("block_number") or "").strip(),
+                ) if value
+            ) or "—"
+            tree.insert(
+                "", "end", iid=str(match["id"]),
+                values=(
+                    match["id"], match.get("owner_name") or "UNKNOWN",
+                    match.get("pin") or "—", lot_block,
+                    match.get("barangay") or match.get("location") or "—",
+                    match.get("kind_of_property") or "—",
+                ),
+            )
+        tree.pack(fill="both", expand=True, padx=8, pady=8)
+
+        def confirm():
+            choice = tree.selection()
+            if not choice:
+                messagebox.showwarning(
+                    "Selection Required",
+                    "Select the exact previous property account.",
+                    parent=dialog,
+                )
+                return
+            selected["id"] = int(choice[0])
+            dialog.destroy()
+
+        buttons = ctk.CTkFrame(dialog, fg_color="transparent")
+        buttons.pack(fill="x", padx=20, pady=(0, 16))
+        ctk.CTkButton(
+            buttons, text="CANCEL", command=dialog.destroy,
+            fg_color="#475569", width=120,
+        ).pack(side="right")
+        ctk.CTkButton(
+            buttons, text="USE SELECTED PROPERTY", command=confirm,
+            fg_color="#d97706", hover_color="#b45309", width=210,
+        ).pack(side="right", padx=(0, 8))
+        tree.bind("<Double-1>", lambda _event: confirm())
+        self.wait_window(dialog)
+        return selected["id"]
 
     def save(self):
         # Map the internal var keys to the Title Case keys the backend expects
@@ -882,10 +1046,21 @@ class PropertyEditModal(ctk.CTkToplevel):
 
         if prev_td and prev_td.upper() != self._original_prev_td:
             try:
-                existing_prev = prop_svc.find_property_by_td_number(prev_td, exclude_id=self.property_id)
+                previous_matches = prop_svc.find_properties_by_td_number(
+                    prev_td, exclude_id=self.property_id
+                )
             except Exception:
-                existing_prev = None
-            if not existing_prev:
+                previous_matches = []
+            if len(previous_matches) > 1:
+                selected_previous_id = self._choose_previous_property(
+                    prev_td, previous_matches
+                )
+                if selected_previous_id is None:
+                    return
+                self._selected_previous_property_id = selected_previous_id
+            elif len(previous_matches) == 1:
+                self._selected_previous_property_id = previous_matches[0]["id"]
+            else:
                 proceed = messagebox.askyesno(
                     "Previous TD Not Found",
                     "The Previous TD was not found in the system.\n\n"
@@ -894,6 +1069,61 @@ class PropertyEditModal(ctk.CTkToplevel):
                 )
                 if not proceed:
                     return
+                self._selected_previous_property_id = None
+        elif not prev_td:
+            self._selected_previous_property_id = None
+
+        if self._selected_previous_property_id is not None:
+            data["Previous Property ID"] = int(self._selected_previous_property_id)
+
+        duplicate_matches = []
+        try:
+            duplicate_matches = prop_svc.find_properties_by_td_number(
+                td_number, exclude_id=self.property_id
+            )
+        except Exception:
+            duplicate_matches = []
+        unchanged_verified = bool(
+            self._loaded_duplicate_verified
+            and td_number.upper() == self._original_td
+            and duplicate_matches
+        )
+        if duplicate_matches and not unchanged_verified:
+            if not self.duplicate_td_var.get():
+                messagebox.showerror(
+                    "Duplicate TD Requires Authorization",
+                    f"{len(duplicate_matches)} active property account(s) already use TD {td_number}.\n\n"
+                    "An administrator must select AUTHORIZED DUPLICATE TD and complete the reference and reason.",
+                    parent=self,
+                )
+                return
+            reference = self.vars["duplicate_td_reference"].get().strip()
+            reason = self.vars["duplicate_td_reason"].get().strip()
+            if len(reference) < 3 or len(reason) < 10:
+                messagebox.showerror(
+                    "Incomplete Duplicate Authorization",
+                    "Enter the Assessor reference and a reason of at least 10 characters.",
+                    parent=self,
+                )
+                return
+            existing_summary = "\n".join(
+                f"• Record #{item['id']} — {item.get('owner_name') or 'UNKNOWN OWNER'}"
+                for item in duplicate_matches[:8]
+            )
+            confirmed = messagebox.askyesno(
+                "Confirm Verified Duplicate TD",
+                f"You are authorizing another active account with TD {td_number}.\n\n"
+                f"Existing account(s):\n{existing_summary}\n\n"
+                f"Assessor reference: {reference}\nReason: {reason}\n\n"
+                "Payments, billings, and documents will remain separate by property account. Continue?",
+                parent=self,
+            )
+            if not confirmed:
+                return
+            data["Verified Duplicate TD"] = True
+            data["Assessor Reference"] = reference
+            data["Duplicate TD Reason"] = reason
+            data["Duplicate TD Confirmation"] = td_number
 
         if self.property_id is not None and self._loaded_version is not None:
             data["version"] = self._loaded_version

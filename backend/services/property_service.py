@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 import json
+import os
+import hashlib
 from datetime import datetime, timezone
-from sqlalchemy import text, func, cast, Integer, exists, or_
+from sqlalchemy import text, func, cast, Integer, exists, or_, and_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 from backend.models import (
@@ -12,7 +14,7 @@ from backend.models import (
     AuditLog,
     TaxPolicy,
 )
-from backend.services.auth_service import get_username, require_permission
+from backend.services.auth_service import get_username, get_user_role, require_permission
 import backend.services.billing_service as billing
 import backend.services.payment_service as payment
 from backend.services.assessment_value_service import (
@@ -93,6 +95,103 @@ class AmbiguousPropertyError(ValueError):
             f"{len(self.matches)} active properties use TD {self.td_number}. "
             "Select the correct property account before continuing."
         )
+
+
+def verified_duplicate_td_feature_enabled() -> bool:
+    """Return whether controlled duplicate creation is activated on this API."""
+    return str(os.getenv("MTO_ENABLE_VERIFIED_DUPLICATE_TD", "0")).strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _normalized_td(value):
+    return str(value or "").strip().upper()
+
+
+def _active_duplicate_matches(td_number, db_session, exclude_id=None):
+    query = db_session.query(Property).filter(
+        Property.deleted_at == None,
+        func.upper(func.trim(Property.td_number)) == _normalized_td(td_number),
+    )
+    if exclude_id is not None:
+        query = query.filter(Property.id != int(exclude_id))
+    return list(query.order_by(Property.id.asc()).all() or [])
+
+
+def _acquire_td_write_lock(td_number, db_session):
+    """Serialize same-TD creates on MariaDB after removing the unique index."""
+    bind = db_session.get_bind()
+    if not bind or bind.dialect.name not in {"mysql", "mariadb"}:
+        return None
+    digest = hashlib.sha256(_normalized_td(td_number).encode("utf-8")).hexdigest()[:32]
+    lock_name = f"mto-property-td-{digest}"
+    acquired = db_session.execute(
+        text("SELECT GET_LOCK(:lock_name, 10)"),
+        {"lock_name": lock_name},
+    ).scalar()
+    if int(acquired or 0) != 1:
+        raise HTTPException(
+            status_code=503,
+            detail="Another user is saving this TD. Wait a moment and try again.",
+        )
+    return lock_name
+
+
+def _release_td_write_lock(lock_name, db_session):
+    if not lock_name:
+        return
+    try:
+        db_session.execute(
+            text("SELECT RELEASE_LOCK(:lock_name)"),
+            {"lock_name": lock_name},
+        )
+    except Exception:
+        # Connection-scoped locks are released automatically if the connection
+        # closes. Never mask the real save result with cleanup noise.
+        pass
+
+
+def _replacement_parent_ids_subquery(db_session, as_of_year):
+    """IDs replaced by effective successors, including safe legacy links."""
+    replacement = aliased(Property)
+    parent = aliased(Property)
+    parent_key = func.upper(func.trim(parent.td_number))
+    unique_parents = (
+        db_session.query(
+            parent_key.label("td_key"),
+            func.min(parent.id).label("property_id"),
+        )
+        .filter(parent.deleted_at == None)
+        .group_by(parent_key)
+        .having(func.count(parent.id) == 1)
+        .subquery()
+    )
+    effective = _assessment_effective_by_year(replacement, int(as_of_year))
+    explicit = (
+        db_session.query(replacement.previous_property_id.label("property_id"))
+        .filter(
+            replacement.deleted_at == None,
+            replacement.previous_property_id != None,
+            effective,
+        )
+    )
+    legacy = (
+        db_session.query(unique_parents.c.property_id.label("property_id"))
+        .join(
+            replacement,
+            func.upper(func.trim(replacement.prev_td_number))
+            == unique_parents.c.td_key,
+        )
+        .filter(
+            replacement.deleted_at == None,
+            replacement.previous_property_id == None,
+            replacement.prev_td_number != None,
+            func.trim(replacement.prev_td_number) != "",
+            effective,
+        )
+    )
+    links = explicit.union_all(legacy).subquery()
+    return db_session.query(links.c.property_id).scalar_subquery()
 
 
 def clean_currency(value):
@@ -243,19 +342,11 @@ def search_properties(
 
     if as_of_year:
         as_of = int(as_of_year)
-        replacement = aliased(Property)
-        replaced_td_numbers = (
-            db_session.query(func.trim(replacement.prev_td_number))
-            .filter(
-                replacement.deleted_at == None,
-                replacement.prev_td_number != None,
-                func.trim(replacement.prev_td_number) != "",
-                _assessment_effective_by_year(replacement, as_of),
-            )
-            .scalar_subquery()
+        replaced_property_ids = _replacement_parent_ids_subquery(
+            db_session, as_of
         )
         query = query.filter(_assessment_effective_by_year(Property, as_of))
-        query = query.filter(~func.trim(Property.td_number).in_(replaced_td_numbers))
+        query = query.filter(~Property.id.in_(replaced_property_ids))
     elif year_start or year_end:
         # effectivity_date is legacy text and may contain either "2024" or
         # full dates like "2024-01-01". Compare on the extracted year so the
@@ -382,6 +473,8 @@ def search_properties(
                 prop.prev_td_number,
                 selected_effectivity,
                 prop.barangay,
+                bool(prop.duplicate_td_verified),
+                prop.duplicate_td_reference or "",
             )
         )
 
@@ -451,8 +544,21 @@ def _td_chain_for_property(seed_prop, db_session: Session):
     visited = {seed_prop.id}
 
     # Walk backwards through Previous TD links.
-    while current and _td_text(current.prev_td_number):
-        parent = _one_active_property_by_td(current.prev_td_number, db_session)
+    while current and (
+        current.previous_property_id or _td_text(current.prev_td_number)
+    ):
+        if current.previous_property_id:
+            parent = (
+                db_session.query(Property)
+                .filter(
+                    Property.id == current.previous_property_id,
+                    Property.deleted_at == None,
+                )
+                .first()
+            )
+        else:
+            # Legacy fallback is permitted only when the TD is unambiguous.
+            parent = _one_active_property_by_td(current.prev_td_number, db_session)
         if not parent or parent.id in visited:
             break
         by_id[parent.id] = parent
@@ -472,8 +578,14 @@ def _td_chain_for_property(seed_prop, db_session: Session):
             db_session.query(Property)
             .filter(
                 Property.deleted_at == None,
-                func.upper(func.trim(Property.prev_td_number))
-                == _td_text(current.td_number),
+                or_(
+                    Property.previous_property_id == current.id,
+                    and_(
+                        Property.previous_property_id == None,
+                        func.upper(func.trim(Property.prev_td_number))
+                        == _td_text(current.td_number),
+                    ),
+                ),
             )
             .all()
         )
@@ -516,11 +628,23 @@ def resolve_property_for_tax_year(
     else:
         seed = _one_active_property_by_td(td, db_session)
     if not seed:
+        previous_parent = aliased(Property)
         previous_matches = (
             db_session.query(Property)
             .filter(
                 Property.deleted_at == None,
-                func.upper(func.trim(Property.prev_td_number)) == td,
+                or_(
+                    Property.previous_property_id.in_(
+                        db_session.query(previous_parent.id).filter(
+                            previous_parent.deleted_at == None,
+                            func.upper(func.trim(previous_parent.td_number)) == td,
+                        )
+                    ),
+                    and_(
+                        Property.previous_property_id == None,
+                        func.upper(func.trim(Property.prev_td_number)) == td,
+                    ),
+                ),
             )
             .order_by(Property.id.asc())
             .all()
@@ -659,6 +783,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
     )
     from backend.services.history_service import log_data_change
 
+    td_write_lock = None
     try:
         # 1. Validate
         enforce_property_rules(data)
@@ -756,19 +881,76 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             return cleaned.upper() if cleaned else None
 
         new_td_number = _up(data.get("TD Number", prop.td_number))
-        duplicate_query = db_session.query(Property).filter(
-            Property.td_number == new_td_number
+        if not new_td_number:
+            raise HTTPException(status_code=422, detail="TD Number is required.")
+        td_write_lock = _acquire_td_write_lock(new_td_number, db_session)
+
+        old_td_number = _normalized_td(prop.td_number) if prop.id else ""
+        duplicates = _active_duplicate_matches(
+            new_td_number,
+            db_session,
+            exclude_id=prop.id,
         )
-        if prop.id:
-            duplicate_query = duplicate_query.filter(Property.id != prop.id)
-        duplicate = duplicate_query.first()
-        if duplicate:
+        requested_duplicate = bool(data.get("Verified Duplicate TD"))
+        unchanged_verified_group = bool(
+            prop.id
+            and old_td_number == new_td_number
+            and prop.duplicate_td_verified
+            and duplicates
+            and all(item.duplicate_td_verified for item in duplicates)
+        )
+        authorizing_duplicate = bool(duplicates and not unchanged_verified_group)
+        approval_reason = sanitize_string(data.get("Duplicate TD Reason"))
+        approval_reference = sanitize_string(data.get("Assessor Reference"))
+        approval_confirmation = _normalized_td(
+            data.get("Duplicate TD Confirmation")
+        )
+        approval_time = datetime.now(timezone.utc)
+        approval_user = get_username(user)
+        duplicate_marker_changes = []
+
+        if authorizing_duplicate:
+            if not verified_duplicate_td_feature_enabled():
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"TD Number {new_td_number} already exists. Controlled "
+                        "duplicate-TD creation is not activated on this server."
+                    ),
+                )
+            if get_user_role(user) != "admin":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Only an administrator can authorize a duplicate TD.",
+                )
+            if not requested_duplicate:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"TD Number {new_td_number} is already used by "
+                        f"{len(duplicates)} active property account(s). Select "
+                        "Verified Duplicate TD and complete the authorization."
+                    ),
+                )
+            if len(approval_reason or "") < 10:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Duplicate TD reason must contain at least 10 characters.",
+                )
+            if len(approval_reference or "") < 3:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Enter the Assessor reference for this duplicate TD.",
+                )
+            if approval_confirmation != new_td_number:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Duplicate TD confirmation does not match the TD Number.",
+                )
+        elif requested_duplicate and not duplicates:
             raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"TD Number {new_td_number} is already used by property "
-                    f"ID {duplicate.id}: {duplicate.owner_name}"
-                ),
+                status_code=422,
+                detail="This TD is unique; duplicate authorization is not applicable.",
             )
 
         prop.td_number = new_td_number
@@ -795,12 +977,94 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
         prop.pin = _up(data.get("PIN", prop.pin))
         prop.block_number = _up(data.get("Block Number", prop.block_number))
         prop.prev_td_number = _up(data.get("Previous TD Number", prop.prev_td_number))
+        requested_previous_id = data.get("Previous Property ID")
+        prop.previous_property_id = None
+        if prop.prev_td_number:
+            predecessor = None
+            if requested_previous_id not in (None, ""):
+                try:
+                    requested_previous_id = int(requested_previous_id)
+                except (TypeError, ValueError):
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Previous Property ID must be a valid record number.",
+                    )
+                predecessor = (
+                    db_session.query(Property)
+                    .filter(
+                        Property.id == requested_previous_id,
+                        Property.deleted_at == None,
+                    )
+                    .first()
+                )
+                if not predecessor:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="The selected Previous Property record no longer exists.",
+                    )
+                if _normalized_td(predecessor.td_number) != prop.prev_td_number:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="Previous Property ID does not match Previous TD Number.",
+                    )
+            else:
+                predecessor_matches = _active_duplicate_matches(
+                    prop.prev_td_number,
+                    db_session,
+                    exclude_id=prop.id,
+                )
+                if len(predecessor_matches) > 1:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Previous TD {prop.prev_td_number} matches multiple "
+                            "property accounts. Select the exact Previous Property record."
+                        ),
+                    )
+                predecessor = (
+                    predecessor_matches[0] if predecessor_matches else None
+                )
+            if predecessor and predecessor.id == prop.id:
+                raise HTTPException(
+                    status_code=422,
+                    detail="A property cannot be its own Previous Property.",
+                )
+            prop.previous_property_id = predecessor.id if predecessor else None
         prop.effectivity_date = _normalize_effectivity_date(
             data.get("Effectivity Date", prop.effectivity_date)
         )
         prop.barangay = _up(
             data.get("Barangay", prop.barangay) or data.get("Location", prop.location)
         )
+
+        if authorizing_duplicate:
+            prop.duplicate_td_verified = True
+            prop.duplicate_td_reason = approval_reason
+            prop.duplicate_td_reference = approval_reference
+            prop.duplicate_td_approved_by = approval_user
+            prop.duplicate_td_approved_at = approval_time
+            action = (
+                "CREATE_VERIFIED_DUPLICATE_TD"
+                if not editing_id
+                else "AUTHORIZE_VERIFIED_DUPLICATE_TD"
+            )
+            for existing in duplicates:
+                marker_before = {
+                    c.name: getattr(existing, c.name)
+                    for c in existing.__table__.columns
+                }
+                existing.duplicate_td_verified = True
+                existing.duplicate_td_reason = approval_reason
+                existing.duplicate_td_reference = approval_reference
+                existing.duplicate_td_approved_by = approval_user
+                existing.duplicate_td_approved_at = approval_time
+                duplicate_marker_changes.append((existing, marker_before))
+        elif not duplicates and old_td_number != new_td_number:
+            prop.duplicate_td_verified = False
+            prop.duplicate_td_reason = None
+            prop.duplicate_td_reference = None
+            prop.duplicate_td_approved_by = None
+            prop.duplicate_td_approved_at = None
 
         if editing_id:
             prop.version += 1
@@ -809,6 +1073,55 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             prop.deleted_at = None
 
         db_session.flush()  # Get ID for new properties
+
+        for existing, marker_before in duplicate_marker_changes:
+            marker_after = {
+                c.name: getattr(existing, c.name)
+                for c in existing.__table__.columns
+            }
+            log_data_change(
+                user["id"] if user else 0,
+                "properties",
+                existing.id,
+                "MARK_VERIFIED_DUPLICATE_TD",
+                before=marker_before,
+                after=marker_after,
+                username=approval_user,
+                db_session=db_session,
+            )
+
+        # If an edited property leaves a verified duplicate group, remove the
+        # visible marker from the one remaining account. The audit history is
+        # retained even though the current TD is unique again.
+        if editing_id and old_td_number and old_td_number != new_td_number:
+            old_group = _active_duplicate_matches(old_td_number, db_session)
+            if len(old_group) < 2:
+                for remaining in old_group:
+                    if not remaining.duplicate_td_verified:
+                        continue
+                    marker_before = {
+                        c.name: getattr(remaining, c.name)
+                        for c in remaining.__table__.columns
+                    }
+                    remaining.duplicate_td_verified = False
+                    remaining.duplicate_td_reason = None
+                    remaining.duplicate_td_reference = None
+                    remaining.duplicate_td_approved_by = None
+                    remaining.duplicate_td_approved_at = None
+                    marker_after = {
+                        c.name: getattr(remaining, c.name)
+                        for c in remaining.__table__.columns
+                    }
+                    log_data_change(
+                        user["id"] if user else 0,
+                        "properties",
+                        remaining.id,
+                        "CLEAR_VERIFIED_DUPLICATE_TD",
+                        before=marker_before,
+                        after=marker_after,
+                        username=get_username(user),
+                        db_session=db_session,
+                    )
 
         # 4. Log Change
         after_data = {c.name: getattr(prop, c.name) for c in prop.__table__.columns}
@@ -938,6 +1251,8 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             "ok": True,
             "property_id": prop.id,
             "new_version": prop.version,
+            "verified_duplicate_td": bool(prop.duplicate_td_verified),
+            "duplicate_group_size": len(duplicates) + 1 if duplicates else 1,
             "billing_sync": billing_sync,
             "prior_assessment_sync": prior_sync,
         }
@@ -952,6 +1267,8 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                 detail="TD Number is already used by another property.",
             )
         raise HTTPException(status_code=500, detail=f"Save failed: {str(e)}")
+    finally:
+        _release_td_write_lock(td_write_lock, db_session)
 
 
 def _refresh_dashboard_stats_after_payment(db_session: Session):

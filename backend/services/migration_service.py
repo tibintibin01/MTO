@@ -206,6 +206,11 @@ MIGRATIONS = [
     {
         "id": "add_payment_remarks_column",
         "sql": "ALTER TABLE payments ADD COLUMN IF NOT EXISTS remarks VARCHAR(500) NULL;"
+    },
+    {
+        "id": "verified_duplicate_td_accounts_v1",
+        "handler": "ensure_verified_duplicate_td_schema",
+        "sql": "",
     }
 
 ]
@@ -288,6 +293,99 @@ def ensure_payment_remarks_column(db_session: Session) -> None:
         print(f"WARNING: Could not ensure payments.remarks column: {e}")
 
 
+def ensure_verified_duplicate_td_schema(db_session: Session) -> None:
+    """Prepare MariaDB for controlled, audited duplicate TD accounts."""
+    connection = db_session.connection()
+    if connection.dialect.name not in {"mysql", "mariadb"}:
+        raise RuntimeError(
+            "Verified duplicate TD migration requires MariaDB/MySQL."
+        )
+
+    column_sql = {
+        "previous_property_id": "INT NULL",
+        "duplicate_td_verified": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "duplicate_td_reason": "VARCHAR(500) NULL",
+        "duplicate_td_reference": "VARCHAR(255) NULL",
+        "duplicate_td_approved_by": "VARCHAR(150) NULL",
+        "duplicate_td_approved_at": "DATETIME NULL",
+    }
+    inspector = inspect(connection)
+    existing_columns = {
+        column["name"] for column in inspector.get_columns("properties")
+    }
+    for name, definition in column_sql.items():
+        if name not in existing_columns:
+            db_session.execute(
+                text(f"ALTER TABLE properties ADD COLUMN {name} {definition}")
+            )
+
+    # Link legacy Previous-TD text only when exactly one active predecessor
+    # exists. Ambiguous values remain unlinked so billing cannot choose a row.
+    db_session.execute(
+        text(
+            "UPDATE properties child "
+            "JOIN ("
+            "  SELECT UPPER(TRIM(td_number)) AS td_key, MIN(id) AS parent_id "
+            "  FROM properties WHERE deleted_at IS NULL "
+            "  GROUP BY UPPER(TRIM(td_number)) HAVING COUNT(*) = 1"
+            ") parent ON parent.td_key = UPPER(TRIM(child.prev_td_number)) "
+            "SET child.previous_property_id = parent.parent_id "
+            "WHERE child.previous_property_id IS NULL "
+            "  AND parent.parent_id <> child.id "
+            "  AND child.prev_td_number IS NOT NULL "
+            "  AND TRIM(child.prev_td_number) <> ''"
+        )
+    )
+
+    # SQLAlchemy-generated unique index names differ across installations.
+    # Introspect and remove only single-column TD uniqueness; retain all other
+    # database constraints and immediately install a normal lookup index.
+    inspector = inspect(connection)
+    unique_names = set()
+    for constraint in inspector.get_unique_constraints("properties"):
+        if (
+            constraint.get("name")
+            and constraint.get("column_names") == ["td_number"]
+        ):
+            unique_names.add(constraint["name"])
+    for index in inspector.get_indexes("properties"):
+        if (
+            index.get("name")
+            and index.get("unique")
+            and index.get("column_names") == ["td_number"]
+        ):
+            unique_names.add(index["name"])
+
+    quote = connection.dialect.identifier_preparer.quote
+    for index_name in sorted(unique_names):
+        db_session.execute(
+            text(f"ALTER TABLE properties DROP INDEX {quote(index_name)}")
+        )
+
+    inspector = inspect(connection)
+    indexes = inspector.get_indexes("properties")
+    if not any(
+        index.get("column_names") == ["td_number"] and not index.get("unique")
+        for index in indexes
+    ):
+        db_session.execute(
+            text(
+                "CREATE INDEX ix_properties_td_number_lookup "
+                "ON properties (td_number)"
+            )
+        )
+    if not any(
+        index.get("column_names") == ["previous_property_id"]
+        for index in indexes
+    ):
+        db_session.execute(
+            text(
+                "CREATE INDEX ix_properties_previous_property_id "
+                "ON properties (previous_property_id)"
+            )
+        )
+
+
 def run_migrations(db_session: Session = None):
     """Checks and applies all pending database migrations."""
     print("--- DATABASE MIGRATION ENGINE ---")
@@ -316,24 +414,31 @@ def run_migrations(db_session: Session = None):
         if m_id not in applied_ids:
             print(f"Applying Migration: [{m_id}]...")
             try:
+                if m.get("handler") == "ensure_verified_duplicate_td_schema":
+                    ensure_verified_duplicate_td_schema(db_session)
+                    statements = []
+                else:
+                    statements = None
+
                 # Support multi-statement migrations by splitting by semicolon
                 # Support multi-statement migrations by splitting by semicolon (ignoring semicolons inside single quotes)
-                statements = []
-                current = []
-                in_quote = False
-                for char in m["sql"]:
-                    if char == "'":
-                        in_quote = not in_quote
-                        current.append(char)
-                    elif char == ";" and not in_quote:
-                        statements.append("".join(current).strip())
-                        current = []
-                    else:
-                        current.append(char)
-                if current:
-                    stmt = "".join(current).strip()
-                    if stmt:
-                        statements.append(stmt)
+                if statements is None:
+                    statements = []
+                    current = []
+                    in_quote = False
+                    for char in m["sql"]:
+                        if char == "'":
+                            in_quote = not in_quote
+                            current.append(char)
+                        elif char == ";" and not in_quote:
+                            statements.append("".join(current).strip())
+                            current = []
+                        else:
+                            current.append(char)
+                    if current:
+                        stmt = "".join(current).strip()
+                        if stmt:
+                            statements.append(stmt)
                 for statement in statements:
                     db_session.execute(text(statement))
                 

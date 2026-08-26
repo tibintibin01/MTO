@@ -12,6 +12,21 @@ from utils.logger import mto_logger
 
 router = APIRouter(prefix="/properties", tags=["Properties"])
 
+
+@router.get("/duplicate-td-policy")
+def duplicate_td_policy(current_user: dict = Depends(get_current_user)):
+    """Expose rollout state without disclosing configuration secrets."""
+    return {
+        "enabled": prop_svc.verified_duplicate_td_feature_enabled(),
+        "admin_authorized": str(current_user.get("role") or "").lower() == "admin",
+        "requirements": [
+            "Administrator role",
+            "Assessor reference",
+            "Reason",
+            "Explicit TD confirmation",
+        ],
+    }
+
 @router.get("")
 def list_properties(
     search: str = "",

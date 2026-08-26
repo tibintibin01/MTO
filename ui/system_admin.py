@@ -1398,10 +1398,12 @@ class SystemAdminPage:
             total_pay     = result.get("total_payments_scanned", 0)
             invalid       = result.get("invalid", [])
             dup_tds       = result.get("duplicate_tds", [])
+            verified_dups = result.get("verified_duplicate_tds", [])
             dup_pays      = result.get("duplicate_payments", [])
             shadows       = result.get("shadow_duplicates", [])
             fmt_count     = result.get("invalid_count", 0)
             dup_td_count  = result.get("duplicate_td_count", 0)
+            verified_dup_count = result.get("verified_duplicate_td_count", 0)
             dup_pay_count = result.get("duplicate_payment_count", 0)
             shadow_count  = result.get("shadow_duplicate_count", 0)
             # Shadow duplicates are a review subset of format issues, not
@@ -1447,10 +1449,11 @@ class SystemAdminPage:
 
             badge(badges, "Format Issues",      fmt_count,     "#c0392b" if fmt_count     else "#27ae60")
             badge(badges, "Duplicate TDs",      dup_td_count,  "#e67e22" if dup_td_count  else "#27ae60")
+            badge(badges, "Verified Duplicates", verified_dup_count, "#0f766e")
             badge(badges, "Duplicate Payments", dup_pay_count, "#8e44ad" if dup_pay_count else "#27ae60")
             badge(badges, "Shadow Duplicates",  shadow_count,  "#c0392b" if shadow_count  else "#27ae60")
 
-            if total_issues == 0:
+            if total_issues == 0 and verified_dup_count == 0:
                 ctk.CTkLabel(
                     win,
                     text="✅  No issues found. All TD numbers and payments are clean.",
@@ -1496,6 +1499,7 @@ class SystemAdminPage:
                 tree.tag_configure("evenrow", background="#162032", foreground="#cbd5e1")
                 tree.tag_configure("duprow",  background="#2d1b4e", foreground="#c4b5fd")
                 tree.tag_configure("paydup",  background="#1e1b4b", foreground="#a5b4fc")
+                tree.tag_configure("verified", background="#12352f", foreground="#99f6e4")
                 return tree
 
             # ── Tab 1: Format Issues ──────────────────────────────────────
@@ -1526,6 +1530,33 @@ class SystemAdminPage:
             else:
                 ctk.CTkLabel(tab2, text="✅  No duplicate TD numbers found.",
                              font=("Inter", 13, "bold"), text_color="#2ecc71").pack(expand=True)
+
+            # ── Authorized duplicate TD groups (not counted as issues) ────
+            verified_tab = tabview.add(
+                f"✅ Verified Duplicates ({verified_dup_count})"
+            )
+            if verified_dups:
+                verified_tree = make_tree(
+                    verified_tab,
+                    ("ID", "TD NUMBER", "OWNER NAME", "ASSESSOR REFERENCE", "APPROVED BY", "NOTE"),
+                    (60, 150, 230, 190, 120, 300),
+                )
+                for row in verified_dups:
+                    verified_tree.insert(
+                        "", "end", tags=("verified",),
+                        values=(
+                            row["id"], row["td_number"], row["owner_name"],
+                            row.get("reference") or "—",
+                            row.get("approved_by") or "—",
+                            row.get("authorization_reason") or row.get("reason") or "",
+                        ),
+                    )
+            else:
+                ctk.CTkLabel(
+                    verified_tab,
+                    text="No administrator-authorized duplicate TD groups.",
+                    font=("Inter", 13, "bold"), text_color="#94a3b8",
+                ).pack(expand=True)
 
             # ── Tab 3: Duplicate Payments ─────────────────────────────────
             tab3 = tabview.add(f"💳 Duplicate Payments ({dup_pay_count})")

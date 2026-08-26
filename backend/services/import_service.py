@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
-from sqlalchemy import or_, text
+from sqlalchemy import or_, text, func
 from sqlalchemy.orm import Session
 from backend.models import Property, PropertyAssessmentHistory, Payment, PropertyBilling
 from backend.database import SessionLocal
@@ -628,10 +628,32 @@ def commit_property_import(data_list, user, db_session: Session = None):
 
     count = 0
     total = len(data_list)
+    seen_tds = set()
     try:
         for i, row in enumerate(data_list):
+            td_number = str(row.get("td_number") or "").strip().upper()
+            if not td_number:
+                raise ValueError(f"Row {i + 2}: TD Number is required")
+            if td_number in seen_tds:
+                raise ValueError(
+                    f"Row {i + 2}: Duplicate TD Number in import file: {td_number}"
+                )
+            seen_tds.add(td_number)
+            existing = (
+                db_session.query(Property.id)
+                .filter(
+                    Property.deleted_at == None,
+                    func.upper(func.trim(Property.td_number)) == td_number,
+                )
+                .first()
+            )
+            if existing:
+                raise ValueError(
+                    f"Row {i + 2}: TD {td_number} already exists. "
+                    "Verified duplicates can only be created individually by an administrator."
+                )
             new_prop = Property(
-                td_number=row.get("td_number"),
+                td_number=td_number,
                 owner_name=row.get("owner_name"),
                 assessed_value=row.get("assessed_value"),
                 location=row.get("location"),
