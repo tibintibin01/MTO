@@ -63,7 +63,7 @@ First choose one Assessor-confirmed TD that currently has exactly one active
 property in MTO, then run the read-only preflight from an Administrator Command
 Prompt:
 
-```powershell
+```bat
 cd /d C:\MTO
 call venv\Scripts\activate
 python scripts\manage_duplicate_td_rollout.py --preflight --pilot-td 06-XXXX-XXXXX
@@ -71,7 +71,7 @@ python scripts\manage_duplicate_td_rollout.py --preflight --pilot-td 06-XXXX-XXX
 
 If it passes, activate only that TD and restart the API:
 
-```powershell
+```bat
 python scripts\manage_duplicate_td_rollout.py --activate --pilot-td 06-XXXX-XXXXX --admin-username YOUR_ADMIN_USERNAME
 ```
 
@@ -79,7 +79,7 @@ The command requires an exact typed confirmation. During the pilot, every other
 duplicate TD remains blocked. Create the one verified duplicate through Property
 Records, then run:
 
-```powershell
+```bat
 python scripts\manage_duplicate_td_rollout.py --verify-td 06-XXXX-XXXXX
 ```
 
@@ -87,13 +87,13 @@ Complete the five manual checks printed by the command. After they pass, run a
 new Hybrid Backup so the accepted pilot is protected. Expansion is then an
 explicit second decision:
 
-```powershell
+```bat
 python scripts\manage_duplicate_td_rollout.py --expand --admin-username YOUR_ADMIN_USERNAME
 ```
 
 Restart the API after activation or expansion. Emergency rollback is immediate:
 
-```powershell
+```bat
 python scripts\manage_duplicate_td_rollout.py --deactivate --admin-username YOUR_ADMIN_USERNAME
 ```
 
