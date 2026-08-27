@@ -34,11 +34,23 @@ export class PortalSnapshotDataError extends Error {
 }
 
 export class PortalSnapshotAmbiguousLookupError extends Error {
-  constructor() {
+  candidates: PublicPropertyCandidate[];
+
+  constructor(candidates: PublicPropertyCandidate[]) {
     super("More than one property account matches this TDN or PIN.");
     this.name = "PortalSnapshotAmbiguousLookupError";
+    this.candidates = candidates;
   }
 }
+
+export type PublicPropertyCandidate = {
+  account_key: string;
+  owner_name: string;
+  pin: string | null;
+  barangay: string | null;
+  location: string | null;
+  kind: string | null;
+};
 
 let localSnapshotCache: {
   signature: string;
@@ -50,7 +62,9 @@ let blobSnapshotCache: {
   snapshot: PortalSnapshot;
 } | null = null;
 
-const propertyIndexCache = new WeakMap<object, Map<string, SnapshotRecord | null>>();
+type IndexedSnapshotRecord = { record: SnapshotRecord; index: number };
+
+const propertyIndexCache = new WeakMap<object, Map<string, IndexedSnapshotRecord[]>>();
 
 function requireLookupSecret(): string {
   const secret = process.env.MTO_PORTAL_LOOKUP_SECRET?.trim();
@@ -173,29 +187,81 @@ export async function storePortalSnapshot(snapshot: PortalSnapshot) {
   return result;
 }
 
-export function findSnapshotProperty(snapshot: PortalSnapshot, query: string): SnapshotRecord | null {
+function publicAccountKey(indexed: IndexedSnapshotRecord): string {
+  const publishedKey = String(indexed.record?.public_account_key || "").trim().toLowerCase();
+  if (/^[a-f0-9]{64}$/.test(publishedKey)) return publishedKey;
+
+  // Backward-compatible selector for snapshots published before account keys
+  // were added. It remains opaque and is valid only for this exact snapshot
+  // record, so the public client never receives an internal database ID.
+  return lookupHash([
+    "PUBLIC-ACCOUNT",
+    indexed.index,
+    indexed.record?.td_lookup_hash || "",
+    indexed.record?.pin_lookup_hash || "",
+    indexed.record?.owner_name || "",
+  ].join(":"));
+}
+
+function publicCandidate(indexed: IndexedSnapshotRecord): PublicPropertyCandidate {
+  const record = indexed.record;
+  return {
+    account_key: publicAccountKey(indexed),
+    owner_name: record.owner_name || "Taxpayer",
+    pin: record.pin_masked || null,
+    barangay: record.barangay || null,
+    location: record.location || record.barangay || null,
+    kind: record.kind || null,
+  };
+}
+
+export function findSnapshotProperty(
+  snapshot: PortalSnapshot,
+  query: string,
+  accountKey?: string,
+): SnapshotRecord | null {
   const hash = lookupHash(query);
   let index = propertyIndexCache.get(snapshot);
   if (!index) {
-    index = new Map<string, SnapshotRecord | null>();
-    const addLookup = (lookupHashValue: string | undefined, record: SnapshotRecord) => {
+    index = new Map<string, IndexedSnapshotRecord[]>();
+    const addLookup = (lookupHashValue: string | undefined, indexed: IndexedSnapshotRecord) => {
       if (!lookupHashValue) return;
-      if (index!.has(lookupHashValue) && index!.get(lookupHashValue) !== record) {
-        index!.set(lookupHashValue, null);
-        return;
+      const existing = index!.get(lookupHashValue) || [];
+      if (!existing.some((item) => item.index === indexed.index)) {
+        existing.push(indexed);
       }
-      index!.set(lookupHashValue, record);
+      index!.set(lookupHashValue, existing);
     };
-    for (const record of snapshot.properties || []) {
-      addLookup(record?.td_lookup_hash, record);
-      addLookup(record?.pin_lookup_hash, record);
-    }
+    (snapshot.properties || []).forEach((record, recordIndex) => {
+      const indexed = { record, index: recordIndex };
+      addLookup(record?.td_lookup_hash, indexed);
+      addLookup(record?.pin_lookup_hash, indexed);
+    });
     propertyIndexCache.set(snapshot, index);
   }
-  if (index.has(hash) && index.get(hash) === null) {
-    throw new PortalSnapshotAmbiguousLookupError();
+
+  const matches = index.get(hash) || [];
+  if (matches.length === 0) return null;
+
+  if (accountKey) {
+    const selected = matches.find(
+      (indexed) => publicAccountKey(indexed) === accountKey.toLowerCase(),
+    );
+    return selected?.record || null;
   }
-  return index.get(hash) || null;
+
+  if (matches.length > 1) {
+    throw new PortalSnapshotAmbiguousLookupError(
+      matches.map((indexed) => publicCandidate(indexed)),
+    );
+  }
+  return matches[0].record;
+}
+
+export function publicAccountKeyForRecord(snapshot: PortalSnapshot, record: SnapshotRecord): string | null {
+  const recordIndex = (snapshot.properties || []).indexOf(record);
+  if (recordIndex < 0) return null;
+  return publicAccountKey({ record, index: recordIndex });
 }
 
 export async function portalSnapshotHealth() {
@@ -278,9 +344,10 @@ export function findOwnerMatches(snapshot: PortalSnapshot, name: string, baranga
     .filter((record) => !cleanBarangay || cleanBarangay === "ALL" || normalizeLookup(record.barangay || "") === cleanBarangay);
 }
 
-export function findResult(record: SnapshotRecord) {
+export function findResult(record: SnapshotRecord, snapshot: PortalSnapshot) {
   const td = String(record.td_number || "");
   return {
+    account_key: publicAccountKeyForRecord(snapshot, record),
     owner_name: record.owner_name || "Taxpayer",
     td_tail: td ? `...${td.slice(-4)}` : "...",
     td_number: td,

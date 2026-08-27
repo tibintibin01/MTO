@@ -19,6 +19,15 @@ import {
 
 const QUERY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9\-./# ]{1,49}$/;
 
+type PropertyAccountMatch = {
+  account_key: string;
+  owner_name: string;
+  pin: string | null;
+  barangay: string | null;
+  location: string | null;
+  kind: string | null;
+};
+
 const heroCards = [
   {
     label: "Read-only",
@@ -69,6 +78,7 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [duplicateMatches, setDuplicateMatches] = useState<PropertyAccountMatch[]>([]);
 
   // "Find my TDN" by owner name + barangay
   const [showFind, setShowFind] = useState(false);
@@ -122,6 +132,7 @@ export default function Home() {
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setDuplicateMatches([]);
     const trimmed = query.trim();
     if (!trimmed) {
       setError("Please enter a Tax Declaration Number or PIN.");
@@ -136,6 +147,18 @@ export default function Home() {
       const res = await fetch(`/api/public/property/${encodeURIComponent(trimmed)}`, { cache: "no-store" });
       if (res.status === 404) {
         setError("No property found for that TDN or PIN. Please check and try again.");
+        return;
+      }
+      if (res.status === 409) {
+        const payload = await res.json().catch(() => null);
+        const matches = Array.isArray(payload?.matches) ? payload.matches : [];
+        if (payload?.code === "MULTIPLE_PROPERTY_ACCOUNTS" && matches.length > 1) {
+          setDuplicateMatches(matches);
+          return;
+        }
+        setError(
+          payload?.detail || "More than one property account matches this search. Please contact the Municipal Treasury Office.",
+        );
         return;
       }
       if (!res.ok) {
@@ -293,7 +316,11 @@ export default function Home() {
                   className="block w-full border-none bg-transparent py-4 pl-11 pr-4 text-base text-slate-800 outline-none placeholder:text-slate-400 focus:ring-0"
                   placeholder="e.g. 06-0012-01379"
                   value={query}
-                  onChange={(e) => { setQuery(e.target.value); setError(""); }}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setError("");
+                    setDuplicateMatches([]);
+                  }}
                   aria-label="Tax Declaration Number or PIN"
                   autoComplete="off"
                   spellCheck={false}
@@ -325,6 +352,40 @@ export default function Home() {
               <div className="mt-3 flex items-center gap-2 rounded-xl border border-red-400/40 bg-red-500/20 px-4 py-2.5 backdrop-blur">
                 <AlertCircle className="w-4 h-4 text-red-300 flex-shrink-0" />
                 <p className="text-sm text-red-200 font-medium">{error}</p>
+              </div>
+            )}
+            {duplicateMatches.length > 0 && (
+              <div className="mt-4 overflow-hidden rounded-2xl border border-amber-200/60 bg-white text-left shadow-2xl">
+                <div className="border-b border-amber-100 bg-amber-50 px-5 py-4">
+                  <p className="font-black text-slate-900">
+                    {duplicateMatches.length} separate property accounts use this TDN
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Select the correct owner and property. Billing and payment history will remain separate.
+                  </p>
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {duplicateMatches.map((match) => (
+                    <button
+                      key={match.account_key}
+                      type="button"
+                      onClick={() => router.push(
+                        `/property/${encodeURIComponent(query.trim())}?account=${encodeURIComponent(match.account_key)}`,
+                      )}
+                      className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-blue-50"
+                    >
+                      <div>
+                        <p className="font-bold text-slate-900">{match.owner_name}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {match.barangay || match.location || "Location unavailable"}
+                          {" · "}{match.kind || "Property"}
+                          {match.pin ? ` · PIN ${match.pin}` : ""}
+                        </p>
+                      </div>
+                      <span className="whitespace-nowrap text-sm font-bold text-blue-800">Select →</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </motion.form>
@@ -383,7 +444,12 @@ export default function Home() {
                   {findResults.map((r, i) => (
                     <button
                       key={i}
-                      onClick={() => router.push(`/property/${encodeURIComponent(r.td_number)}`)}
+                      onClick={() => {
+                        const account = r.account_key
+                          ? `?account=${encodeURIComponent(r.account_key)}`
+                          : "";
+                        router.push(`/property/${encodeURIComponent(r.td_number)}${account}`);
+                      }}
                       className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors text-left"
                     >
                       <div>

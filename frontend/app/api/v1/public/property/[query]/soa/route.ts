@@ -5,6 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const QUERY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9\-./# ]{0,49}$/;
+const ACCOUNT_KEY_PATTERN = /^[a-f0-9]{64}$/;
 
 function escapeHtml(value: any): string {
   return String(value ?? "")
@@ -214,17 +215,21 @@ function html(data: any): string {
 </html>`;
 }
 
-export async function GET(_request: NextRequest, { params }: { params: { query: string } }) {
+export async function GET(request: NextRequest, { params }: { params: { query: string } }) {
   const query = decodeURIComponent(params.query || "").trim();
   if (!QUERY_PATTERN.test(query)) {
     return new Response("Invalid query format.", { status: 400, headers: { "Cache-Control": "no-store" } });
+  }
+  const accountKey = (request.nextUrl.searchParams.get("account") || "").trim().toLowerCase();
+  if (accountKey && !ACCOUNT_KEY_PATTERN.test(accountKey)) {
+    return new Response("Invalid property-account selection.", { status: 400, headers: { "Cache-Control": "no-store" } });
   }
 
   try {
     const snapshot = await loadPortalSnapshot();
     if (!snapshot) return new Response("Portal data has not been published yet.", { status: 503, headers: { "Cache-Control": "no-store" } });
 
-    const record = findSnapshotProperty(snapshot, query);
+    const record = findSnapshotProperty(snapshot, query, accountKey || undefined);
     if (!record) return new Response("Property not found.", { status: 404, headers: { "Cache-Control": "no-store" } });
 
     return new Response(html(publicProperty(record, snapshot)), {

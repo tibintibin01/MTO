@@ -91,6 +91,8 @@ def test_generate_portal_snapshot_is_sanitized_and_checksummed(db, monkeypatch):
     assert record["pin_masked"] == "1234****7890"
     assert record["td_lookup_hash"]
     assert record["pin_lookup_hash"]
+    assert len(record["public_account_key"]) == 64
+    assert record["public_account_key"] != str(prop.id)
     assert record["payment_history"][0]["or_number"] == "781****"
     assert (
         _owner_lookup_hash("JUAN", "test-lookup-secret")

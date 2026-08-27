@@ -371,6 +371,10 @@ def generate_portal_snapshot(db_session: Session) -> dict:
         records.append(
             {
                 "td_number": prop.td_number,
+                # Opaque public selector used only after a duplicate TDN/PIN
+                # lookup. It prevents exposing the internal database ID while
+                # keeping every account's billing and payments isolated.
+                "public_account_key": _lookup_hash(f"PROPERTY:{prop.id}", lookup_secret),
                 "td_lookup_hash": _lookup_hash(prop.td_number, lookup_secret),
                 "pin_masked": _mask_pin(prop.pin),
                 "pin_lookup_hash": _lookup_hash(prop.pin, lookup_secret),

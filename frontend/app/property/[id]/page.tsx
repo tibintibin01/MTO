@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import {
   ArrowLeft, FileText, CheckCircle2, AlertCircle,
   Building2, MapPin, RefreshCw, Phone, Clock,
@@ -55,9 +55,20 @@ function Skeleton() {
   );
 }
 
-export default function PropertyDetail() {
+export default function PropertyDetailPage() {
+  return (
+    <Suspense fallback={<Skeleton />}>
+      <PropertyDetail />
+    </Suspense>
+  );
+}
+
+function PropertyDetail() {
   const params   = useParams();
+  const searchParams = useSearchParams();
   const id       = params.id as string;
+  const accountKey = (searchParams.get("account") || "").trim().toLowerCase();
+  const accountQuery = accountKey ? `?account=${encodeURIComponent(accountKey)}` : "";
   const { toast } = useToast();
 
   const [data,     setData]     = useState<any>(null);
@@ -71,7 +82,7 @@ export default function PropertyDetail() {
   const load = async () => {
     setError("");
     try {
-      const r = await fetch(`/api/public/property/${id}`, { cache: "no-store" });
+      const r = await fetch(`/api/public/property/${id}${accountQuery}`, { cache: "no-store" });
       if (r.status === 404) { setError("Property not found. Check your TDN or PIN."); return; }
       if (r.status === 429) { setError("Too many requests. Please wait and try again."); return; }
       if (!r.ok)            { setError("Unable to load property data. Please try again."); return; }
@@ -84,7 +95,7 @@ export default function PropertyDetail() {
       setData(json);
 
       try {
-        const h = await fetch(`/api/public/property/${id}/history`, { cache: "no-store" });
+        const h = await fetch(`/api/public/property/${id}/history${accountQuery}`, { cache: "no-store" });
         if (h.ok) {
           const ht = await h.text();
           if (ht && ht.trim()) setHistory(JSON.parse(ht));
@@ -96,7 +107,7 @@ export default function PropertyDetail() {
     finally  { setLoading(false); setRetrying(false); }
   };
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id, accountKey]);
 
   const retry = () => { setLoading(true); setRetrying(true); load(); };
   const copy  = () => {
@@ -346,7 +357,7 @@ export default function PropertyDetail() {
               style={{background:"#f5c518", color:"#1a1a2e"}}>
               How to Pay <ChevronRight className="w-4 h-4" />
             </Link>
-            <a href={`/api/public/property/${encodeURIComponent(id)}/soa`} target="_blank" rel="noopener noreferrer"
+            <a href={`/api/public/property/${encodeURIComponent(id)}/soa${accountQuery}`} target="_blank" rel="noopener noreferrer"
               className="flex items-center justify-center gap-2 font-bold text-sm px-5 py-3 rounded-xl border transition-colors whitespace-nowrap"
               style={{background:"#ffffff", color:C.teal, borderColor:C.teal}}>
               <FileText className="w-4 h-4" /> Download SOA

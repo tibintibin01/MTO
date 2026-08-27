@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
     }
 
     return json(200, {
-      results: matches.map(findResult),
+      results: matches.map((record) => findResult(record, snapshot)),
       too_many: false,
       count: matches.length,
     });

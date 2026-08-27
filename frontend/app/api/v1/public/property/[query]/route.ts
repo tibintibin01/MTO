@@ -5,28 +5,38 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const QUERY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9\-./# ]{0,49}$/;
+const ACCOUNT_KEY_PATTERN = /^[a-f0-9]{64}$/;
 
 function json(status: number, body: Record<string, any>) {
   return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export async function GET(_request: NextRequest, { params }: { params: { query: string } }) {
+export async function GET(request: NextRequest, { params }: { params: { query: string } }) {
   const query = decodeURIComponent(params.query || "").trim();
   if (!QUERY_PATTERN.test(query)) {
     return json(400, { detail: "Invalid query format. Use your TDN or PIN." });
+  }
+  const accountKey = (request.nextUrl.searchParams.get("account") || "").trim().toLowerCase();
+  if (accountKey && !ACCOUNT_KEY_PATTERN.test(accountKey)) {
+    return json(400, { detail: "Invalid property-account selection." });
   }
 
   try {
     const snapshot = await loadPortalSnapshot();
     if (!snapshot) return json(503, { detail: "Portal data has not been published yet." });
 
-    const record = findSnapshotProperty(snapshot, query);
+    const record = findSnapshotProperty(snapshot, query, accountKey || undefined);
     if (!record) return json(404, { detail: "Property not found." });
 
     return json(200, publicProperty(record, snapshot));
   } catch (error) {
     if (error instanceof PortalSnapshotAmbiguousLookupError) {
-      return json(409, { detail: "More than one property account matches this TDN or PIN. Please contact the Municipal Treasury Office." });
+      return json(409, {
+        code: "MULTIPLE_PROPERTY_ACCOUNTS",
+        detail: `${error.candidates.length} property accounts use this TDN or PIN. Select the correct property to continue.`,
+        count: error.candidates.length,
+        matches: error.candidates,
+      });
     }
     if (error instanceof PortalSnapshotConfigError || error instanceof PortalSnapshotDataError) {
       return json(503, { detail: "Portal data is temporarily unavailable. Please contact the Municipal Treasury Office." });
