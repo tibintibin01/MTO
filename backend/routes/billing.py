@@ -28,6 +28,7 @@ from utils.logger import mto_logger
 from backend.services.storage_service import storage_service
 from backend.services.compliance_impact_service import build_compliance_impact_report
 from utils.config import config as mto_config
+from utils.assessment_roll_status import assessment_roll_excel_values
 
 router = APIRouter(tags=["Billing"])
 
@@ -860,6 +861,8 @@ async def export_billing_excel(
         # ── Shared styles ────────────────────────────────────────────────────
         header_font = Font(bold=True, color="FFFFFF", size=11)
         header_fill = PatternFill("solid", fgColor="1F4E78")
+        verified_duplicate_fill = PatternFill("solid", fgColor="FEF3C7")
+        verified_duplicate_font = Font(bold=True, color="92400E")
         title_font = Font(bold=True, size=13)
         center_align = Alignment(horizontal="center", vertical="center")
         right_align = Alignment(horizontal="right")
@@ -1171,12 +1174,21 @@ async def export_billing_excel(
                 "ASSESSED VALUE",
                 "PREVIOUS TD",
                 "EFFECTIVITY",
+                "STATUS",
             ]
             ws.merge_cells(
                 start_row=1, start_column=1, end_row=1, end_column=len(headers)
             )
             ws.merge_cells(
                 start_row=2, start_column=1, end_row=2, end_column=len(headers)
+            )
+            ws["A3"] = (
+                "Legend: Amber rows are Assessor-authorized duplicate TD accounts. "
+                "Each row is a separate property account."
+            )
+            ws["A3"].font = Font(italic=True, color="92400E", size=9)
+            ws.merge_cells(
+                start_row=3, start_column=1, end_row=3, end_column=len(headers)
             )
             ws["A1"].alignment = center_align
             ws["A2"].alignment = center_align
@@ -1194,37 +1206,19 @@ async def export_billing_excel(
             )
 
             for row_idx, item in enumerate(items or [], start=5):
-                eff_year = item[21] if len(item) > 21 else ""
-                if eff_year and len(str(eff_year)) >= 4:
-                    eff_year = str(eff_year)[:4]
-
-                lot = item[4] if len(item) > 4 and item[4] else ""
-                block = item[19] if len(item) > 19 and item[19] else ""
-                lot_blk = f"{lot} / {block}" if lot and block else (lot or block or "")
-                location = (
-                    item[22]
-                    if len(item) > 22 and item[22]
-                    else (item[6] if len(item) > 6 else "")
-                )
-
-                vals = [
-                    item[1] or "",
-                    item[18] if len(item) > 18 and item[18] else "",
-                    lot_blk,
-                    item[2] or "",
-                    location,
-                    item[7] if len(item) > 7 and item[7] else "",
-                    float(item[9] or 0),
-                    item[20] if len(item) > 20 and item[20] else "",
-                    eff_year or "",
-                ]
+                vals, is_verified_duplicate = assessment_roll_excel_values(item)
 
                 for col_idx, val in enumerate(vals, 1):
                     cell = ws.cell(row=row_idx, column=col_idx, value=val)
                     cell.border = thin_border
+                    if is_verified_duplicate:
+                        cell.fill = verified_duplicate_fill
+                        cell.font = verified_duplicate_font
                     if col_idx == 7:
                         cell.number_format = currency_fmt
                         cell.alignment = right_align
+                    elif col_idx == len(headers):
+                        cell.alignment = center_align
 
         auto_width(ws)
 

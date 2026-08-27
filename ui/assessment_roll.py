@@ -12,6 +12,7 @@ import os
 from ui.dossier import PropertyDossierModal
 from ui.import_wizard import ImportWizardModal
 import threading
+from utils.assessment_roll_status import assessment_roll_duplicate_status
 
 
 def parse_assessment_roll_as_of_year(value):
@@ -219,6 +220,24 @@ class AssessmentRollPage:
         )
         self._excel_btn.pack(side="right")
 
+        duplicate_legend = ctk.CTkFrame(
+            self.container,
+            fg_color="#3b2a16",
+            corner_radius=7,
+            border_width=1,
+            border_color="#b45309",
+        )
+        duplicate_legend.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(
+            duplicate_legend,
+            text=(
+                "AMBER ROWS — Assessor-authorized duplicate TD accounts. "
+                "Each row remains a separate property account."
+            ),
+            font=ModernTheme.BUTTON_SMALL,
+            text_color="#fef3c7",
+        ).pack(anchor="w", padx=12, pady=7)
+
         table_fr = ctk.CTkFrame(
             self.container,
             fg_color="#0f172a",
@@ -286,6 +305,7 @@ class AssessmentRollPage:
             "ASSESSED VALUE",
             "PREVIOUS TD",
             "EFFECTIVITY",
+            "STATUS",
         )
         tree_host = tk.Frame(table_fr, bg="#0f172a", bd=0, highlightthickness=0)
         tree_host.pack(fill="both", expand=True, padx=1, pady=1)
@@ -305,6 +325,7 @@ class AssessmentRollPage:
             "ASSESSED VALUE": 120,
             "PREVIOUS TD": 110,
             "EFFECTIVITY": 100,
+            "STATUS": 145,
         }
 
         for col in self.cols:
@@ -332,6 +353,11 @@ class AssessmentRollPage:
         # Zebra Tags
         self.tree.tag_configure("oddrow", background="#162032", foreground="#e2e8f0")
         self.tree.tag_configure("evenrow", background="#1e293b", foreground="#f8fafc")
+        self.tree.tag_configure(
+            "verified_duplicate",
+            background="#3b2a16",
+            foreground="#fef3c7",
+        )
 
         scrolly.pack(side="right", fill="y")
         scrollx.pack(side="bottom", fill="x")
@@ -486,7 +512,8 @@ class AssessmentRollPage:
 
         for i, r in enumerate(results):
             # Indices from backend search_properties:
-            # 0:id, 1:td, 2:owner, 4:lot, 6:loc, 7:kind, 9:av, 18:pin, 19:blk, 20:prev, 21:eff, 22:brgy
+            # 0:id, 1:td, 2:owner, 4:lot, 6:loc, 7:kind, 9:av,
+            # 18:pin, 19:blk, 20:prev, 21:eff, 22:brgy, 23:verified duplicate
             td = r[1]
             pin = r[18] if len(r) > 18 else ""
             lot_blk = f"{r[4]} / {r[19]}" if len(r) > 19 and r[19] else str(r[4])
@@ -496,16 +523,33 @@ class AssessmentRollPage:
             av = f"{r[9]:,.2f}"
             prev = r[20] if len(r) > 20 else ""
             eff = r[21] if len(r) > 21 else ""
+            duplicate_status = assessment_roll_duplicate_status(r)
 
             # If it's a full date string like 2023-01-01, just show the year
             if eff and len(str(eff)) >= 4:
                 eff = str(eff)[:4]
 
-            tag = "evenrow" if (current_count + i) % 2 == 0 else "oddrow"
+            tag = (
+                "verified_duplicate"
+                if duplicate_status
+                else ("evenrow" if (current_count + i) % 2 == 0 else "oddrow")
+            )
             self.tree.insert(
                 "",
                 "end",
-                values=(r[0], td, pin, lot_blk, owner, loc, kind, av, prev, eff),
+                values=(
+                    r[0],
+                    td,
+                    pin,
+                    lot_blk,
+                    owner,
+                    loc,
+                    kind,
+                    av,
+                    prev,
+                    eff,
+                    duplicate_status,
+                ),
                 tags=(tag,),
             )
 

@@ -31,6 +31,7 @@ from ui.assessment_roll import (
     assessment_roll_export_dialog_options,
     parse_assessment_roll_as_of_year,
 )
+from utils.assessment_roll_status import VERIFIED_DUPLICATE_LABEL
 from ui.compliant_dashboard import (
     _COMPLIANT_PAYMENTS_LABEL,
     compliance_scope_text,
@@ -124,6 +125,39 @@ class TestAssessmentRollFilters(unittest.TestCase):
         self.assertEqual(options["defaultextension"], ".pdf")
         self.assertEqual(options["initialfile"], "download.pdf")
         self.assertEqual(options["filetypes"], [("PDF document (*.pdf)", "*.pdf")])
+
+    def test_verified_duplicate_row_is_amber_and_keeps_internal_property_id(self):
+        page = object.__new__(AssessmentRollPage)
+        page.current_page = 0
+        page.page_size = 50
+        page.all_loaded = False
+        page.page_lbl = MagicMock()
+        page.prev_btn = MagicMock()
+        page.next_btn = MagicMock()
+        page.tree = MagicMock()
+        page.tree.get_children.return_value = []
+
+        row = [None] * 25
+        row[0] = 9001
+        row[1] = "06-0012-00094"
+        row[2] = "SECOND OWNER"
+        row[4] = "20-H"
+        row[6] = "DINADIAWAN"
+        row[7] = "RESIDENTIAL LOT"
+        row[9] = 46350
+        row[18] = "01-134"
+        row[20] = "02-06012-02007-A-PAR"
+        row[21] = "2023-01-01"
+        row[22] = "DINADIAWAN"
+        row[23] = True
+
+        page._update_table([row], has_more=False)
+
+        insert_call = page.tree.insert.call_args
+        values = insert_call.kwargs["values"]
+        self.assertEqual(values[0], 9001)
+        self.assertEqual(values[-1], VERIFIED_DUPLICATE_LABEL)
+        self.assertEqual(insert_call.kwargs["tags"], ("verified_duplicate",))
 
 
 class TestCompliantDashboardLabels(unittest.TestCase):
@@ -264,9 +298,12 @@ class TestDashboardHome(unittest.TestCase):
         home._update_ui = MagicMock()
         home._hide_loading = MagicMock()
 
-        with patch(
-            "ui.dashboard_home.system.get_system_stats", return_value={"pool": {}}
-        ), patch("utils.log_error_to_file"):
+        with (
+            patch(
+                "ui.dashboard_home.system.get_system_stats", return_value={"pool": {}}
+            ),
+            patch("utils.log_error_to_file"),
+        ):
             home.refresh_data()
 
         scheduled_render = home.parent.after.call_args.args[1]
