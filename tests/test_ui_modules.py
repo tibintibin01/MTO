@@ -26,6 +26,7 @@ from ui.dashboard_home import (
     _dashboard_month_label,
     _recent_payment_display,
 )
+from ui.ledger import LedgerPage
 from ui.assessment_roll import (
     AssessmentRollPage,
     assessment_roll_export_dialog_options,
@@ -158,6 +159,22 @@ class TestAssessmentRollFilters(unittest.TestCase):
         self.assertEqual(values[0], 9001)
         self.assertEqual(values[-1], VERIFIED_DUPLICATE_LABEL)
         self.assertEqual(insert_call.kwargs["tags"], ("verified_duplicate",))
+
+    def test_duplicate_legend_uses_neutral_authorization_wording(self):
+        setup_source = inspect.getsource(AssessmentRollPage.setup_ui)
+
+        self.assertIn("Authorized duplicate TD accounts", setup_source)
+        self.assertNotIn("Assessor-authorized", setup_source)
+
+
+class TestLedgerColumns(unittest.TestCase):
+    def test_pdf_status_column_uses_stable_internal_identifier(self):
+        setup_source = inspect.getsource(LedgerPage.setup_ui)
+
+        self.assertIn('"pdf_copy"', setup_source)
+        self.assertIn('self.tree.column("pdf_copy"', setup_source)
+        self.assertNotIn('self.tree.column("File Status"', setup_source)
+        self.assertIn("self.column_labels", setup_source)
 
 
 class TestCompliantDashboardLabels(unittest.TestCase):

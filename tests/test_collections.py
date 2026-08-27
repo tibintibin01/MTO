@@ -191,6 +191,29 @@ def test_barangay_filter(db):
     assert tds == ["TD-SJ"]
 
 
+def test_exact_duplicate_td_search_keeps_property_accounts_separate(db):
+    first = _prop(db, "06-0012-00094", owner="FIRST OWNER")
+    second = _prop(db, "06-0012-00094", owner="SECOND OWNER")
+    first.duplicate_td_verified = True
+    second.duplicate_td_verified = True
+    _billing(db, first.id, 2023, assessed=47_900.0)
+    _billing(db, second.id, 2023, assessed=46_350.0)
+    db.commit()
+
+    result = get_collections_worklist(
+        search="06-0012-00094",
+        as_of_date=TEST_AS_OF,
+        db_session=db,
+    )
+
+    assert result["summary"]["delinquent_count"] == 2
+    assert {item["id"] for item in result["items"]} == {first.id, second.id}
+    assert {item["owner_name"] for item in result["items"]} == {
+        "FIRST OWNER",
+        "SECOND OWNER",
+    }
+
+
 def test_worklist_adds_live_penalty_to_unpaid_balance(db):
     prop = _prop(db, "TD-LIVE-PENALTY")
     _billing(db, prop.id, 2024, assessed=100_000.0, paid=0.0)

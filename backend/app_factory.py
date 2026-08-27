@@ -77,6 +77,27 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         mto_logger.warning(f"Could not verify property portfolio schema: {e}")
 
+    # Controlled duplicate TD accounts must remain independently visible in
+    # billing-driven screens. Repair missing years idempotently for accounts
+    # created before immediate billing initialization was introduced.
+    try:
+        from backend.services.billing_sync_service import (
+            sync_verified_duplicate_td_billings,
+        )
+
+        with SessionLocal() as db:
+            result = sync_verified_duplicate_td_billings(db)
+            if result["records_created"]:
+                db.commit()
+                mto_logger.info(
+                    "Verified duplicate TD billing readiness created "
+                    f"{result['records_created']} missing year(s)."
+                )
+    except Exception as e:
+        mto_logger.warning(
+            f"Could not verify duplicate TD billing readiness: {e}"
+        )
+
     # Refresh dashboard stats so the first page load shows real numbers.
     try:
         from backend.services.migration_service import ensure_payment_remarks_column

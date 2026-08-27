@@ -1159,6 +1159,12 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
         payment_posted = _sync_financial_records(prop.id, data, db_session)
 
         billing_sync = {"updated": 0, "years": []}
+        billing_year_sync = {
+            "records_created": 0,
+            "records_skipped": 0,
+            "errors": [],
+            "property_ids": [],
+        }
         old_assessed = (
             clean_currency(before_data.get("assessed_value")) if before_data else None
         )
@@ -1257,6 +1263,30 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                 db_session=db_session,
             )
 
+        # A property that has no billing rows is invisible to delinquency and
+        # compliance calculations. Seed missing years immediately for every
+        # new active property. When authorizing a duplicate TD, also repair the
+        # existing group so every account remains independently visible.
+        if not editing_id or authorizing_duplicate:
+            from backend.services.billing_sync_service import (
+                sync_property_billing_years,
+            )
+            db_session.flush()
+
+            targets = [prop]
+            if authorizing_duplicate:
+                targets.extend(duplicates)
+            seen_ids = set()
+            for target in targets:
+                if target.id in seen_ids:
+                    continue
+                seen_ids.add(target.id)
+                result = sync_property_billing_years(target, db_session)
+                billing_year_sync["records_created"] += result["records_created"]
+                billing_year_sync["records_skipped"] += result["records_skipped"]
+                billing_year_sync["errors"].extend(result["errors"])
+                billing_year_sync["property_ids"].append(target.id)
+
         db_session.commit()
 
         # The payment and its billing allocation are already committed. Refresh
@@ -1273,6 +1303,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             "verified_duplicate_td": bool(prop.duplicate_td_verified),
             "duplicate_group_size": len(duplicates) + 1 if duplicates else 1,
             "billing_sync": billing_sync,
+            "billing_year_sync": billing_year_sync,
             "prior_assessment_sync": prior_sync,
         }
 

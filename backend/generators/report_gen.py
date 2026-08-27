@@ -303,7 +303,7 @@ def generate_assessment_roll_pdf(
         c.drawString(
             margin_x + 6 * mm,
             legend_y - 1.3 * mm,
-            "VERIFIED DUPLICATE = Assessor-authorized duplicate TD account",
+            "VERIFIED DUPLICATE = Authorized duplicate TD account",
         )
         c.setStrokeColor(_BORDER)
         c.line(margin_x, legend_y - 4 * mm, width - margin_x, legend_y - 4 * mm)

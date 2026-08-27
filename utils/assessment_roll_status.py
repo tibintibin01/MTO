@@ -1,4 +1,4 @@
-"""Shared Assessment Roll labels for Assessor-authorized duplicate TD accounts."""
+"""Shared Assessment Roll labels for authorized duplicate TD accounts."""
 
 VERIFIED_DUPLICATE_LABEL = "VERIFIED DUPLICATE"
 VERIFIED_DUPLICATE_TUPLE_INDEX = 23

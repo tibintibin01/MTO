@@ -231,7 +231,7 @@ class AssessmentRollPage:
         ctk.CTkLabel(
             duplicate_legend,
             text=(
-                "AMBER ROWS — Assessor-authorized duplicate TD accounts. "
+                "AMBER ROWS — Authorized duplicate TD accounts. "
                 "Each row remains a separate property account."
             ),
             font=ModernTheme.BUTTON_SMALL,

@@ -285,8 +285,23 @@ class LedgerPage:
         style.map("Ledger.Treeview", background=[("selected", colors["blue"])], foreground=[("selected", "#ffffff")])
         style.configure("Ledger.Vertical.TScrollbar", background="#475569", troughcolor="#0f172a", bordercolor="#0f172a", arrowcolor="#cbd5e1")
 
-        # Internal ID, Date, OR, Year, Basic, SEF, Penalty, Discount, Total, PostedBy, FilePath
+        # Use stable internal identifiers. Translated text is display-only;
+        # using it as a Treeview column ID made label changes crash the page.
         self.cols = (
+            "id",
+            "date",
+            "or_number",
+            "tax_year",
+            "basic",
+            "sef",
+            "penalty",
+            "discount",
+            "total_paid",
+            "posted_by",
+            "remarks",
+            "pdf_copy",
+        )
+        self.column_labels = (
             tr("property.table.id"),
             tr("ledger.table.date"),
             tr("ledger.table.or"),
@@ -298,20 +313,20 @@ class LedgerPage:
             tr("ledger.table.total"),
             tr("ledger.table.posted"),
             "Remarks",
-            tr("ledger.table.status")
+            tr("ledger.table.status"),
         )
         self.tree = ttk.Treeview(t_frame, columns=self.cols, show="headings", style="Ledger.Treeview")
-        
-        for col in self.cols:
-            self.tree.heading(col, text=col.upper())
+
+        for col, label in zip(self.cols, self.column_labels):
+            self.tree.heading(col, text=label.upper())
             self.tree.column(col, width=100, anchor="center")
 
-        self.tree.column("ID", width=0, stretch=tk.NO)
-        self.tree.column("OR Number", width=120)
-        self.tree.column("Total Paid", width=130)
-        self.tree.column("Posted By", width=150)
-        self.tree.column("Remarks", width=220, anchor="w")
-        self.tree.column("File Status", width=120)
+        self.tree.column("id", width=0, stretch=tk.NO)
+        self.tree.column("or_number", width=120)
+        self.tree.column("total_paid", width=130)
+        self.tree.column("posted_by", width=150)
+        self.tree.column("remarks", width=220, anchor="w")
+        self.tree.column("pdf_copy", width=120)
 
         scrolly = ttk.Scrollbar(t_frame, orient="vertical", command=self.tree.yview, style="Ledger.Vertical.TScrollbar")
         self.tree.configure(yscrollcommand=scrolly.set)
@@ -839,7 +854,7 @@ class LedgerPage:
             messagebox.showwarning("Export", "No data to export. Please search for a record first.")
             return
             
-        export_data_to_excel(data, self.cols, filename_prefix="LedgerExport")
+        export_data_to_excel(data, self.column_labels, filename_prefix="LedgerExport")
 
     def edit_payment(self):
         sel = self.tree.selection()

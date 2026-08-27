@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
-from backend.models import AuditLog, Payment, Property
+from backend.models import AuditLog, Payment, Property, PropertyBilling
 from backend.routes.admin_tools import td_number_audit
 from backend.routes.public import _find_unique_public_property
 from backend.services.payment_service import get_payment_ledger
@@ -278,6 +278,13 @@ def test_admin_authorization_marks_group_and_audits_every_record(db, monkeypatch
     actions = {row.action for row in db.query(AuditLog).all()}
     assert "MARK_VERIFIED_DUPLICATE_TD" in actions
     assert "CREATE_VERIFIED_DUPLICATE_TD" in actions
+    billed_property_ids = {
+        row[0]
+        for row in db.query(PropertyBilling.property_id)
+        .filter(PropertyBilling.tax_year == 2026)
+        .all()
+    }
+    assert billed_property_ids == {row.id for row in rows}
 
 
 def test_ambiguous_previous_td_requires_explicit_property_id(db, monkeypatch):

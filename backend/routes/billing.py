@@ -1183,7 +1183,7 @@ async def export_billing_excel(
                 start_row=2, start_column=1, end_row=2, end_column=len(headers)
             )
             ws["A3"] = (
-                "Legend: Amber rows are Assessor-authorized duplicate TD accounts. "
+                "Legend: Amber rows are authorized duplicate TD accounts. "
                 "Each row is a separate property account."
             )
             ws["A3"].font = Font(italic=True, color="92400E", size=9)

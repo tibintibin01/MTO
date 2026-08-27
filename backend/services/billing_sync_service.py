@@ -29,7 +29,6 @@ WHAT IT DOES NOT DO:
 """
 
 from datetime import datetime
-from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy.orm import Session
 
 from backend.models import Property, PropertyBilling
@@ -38,6 +37,7 @@ from backend.services.assessment_value_service import (
     assessment_versions,
     earliest_assessment_year,
 )
+from backend.services.tax_year_readiness_service import philippine_today
 from utils.logger import mto_logger
 
 
@@ -87,6 +87,120 @@ def _extract_start_year(prop: Property) -> int:
     return current_year
 
 
+def sync_property_billing_years(
+    prop: Property,
+    db_session: Session,
+    through_year: int = None,
+    dry_run: bool = False,
+) -> dict:
+    """Create only the missing billing years for one active property account.
+
+    The caller owns the transaction. Future-effective properties are left
+    untouched until their effectivity year arrives, and existing billing rows
+    are never overwritten.
+    """
+    target_year = int(through_year or philippine_today().year)
+    versions = assessment_versions(prop, db_session)
+    start_year = earliest_assessment_year(
+        prop, db_session, versions=versions
+    ) or _extract_start_year(prop)
+
+    if start_year > target_year:
+        return {
+            "records_created": 0,
+            "records_skipped": 0,
+            "errors": [],
+            "start_year": start_year,
+            "through_year": target_year,
+            "future_effective": True,
+        }
+
+    start_year = max(2000, start_year)
+    existing_years = {
+        int(row[0])
+        for row in db_session.query(PropertyBilling.tax_year)
+        .filter(PropertyBilling.property_id == prop.id)
+        .all()
+    }
+    created = 0
+    skipped = 0
+    errors = []
+
+    for year in range(start_year, target_year + 1):
+        if year in existing_years:
+            skipped += 1
+            continue
+
+        assessed = assessed_value_for_year(
+            prop,
+            year,
+            db_session,
+            versions=versions,
+        )
+        if assessed is None:
+            errors.append(
+                f"No assessment version is effective for {year}; billing year skipped"
+            )
+            continue
+
+        if not dry_run:
+            db_session.add(
+                PropertyBilling(
+                    property_id=prop.id,
+                    tax_year=year,
+                    assessed_value=assessed,
+                    penalty=0,
+                    discount=0,
+                    amount_paid=0,
+                )
+            )
+        created += 1
+
+    return {
+        "records_created": created,
+        "records_skipped": skipped,
+        "errors": errors,
+        "start_year": start_year,
+        "through_year": target_year,
+        "future_effective": False,
+    }
+
+
+def sync_verified_duplicate_td_billings(
+    db_session: Session,
+    through_year: int = None,
+) -> dict:
+    """Idempotently repair billing readiness for verified duplicate accounts."""
+    properties = (
+        db_session.query(Property)
+        .filter(
+            Property.deleted_at == None,
+            Property.duplicate_td_verified == True,
+        )
+        .order_by(Property.id.asc())
+        .all()
+    )
+    summary = {
+        "properties_scanned": len(properties),
+        "records_created": 0,
+        "records_skipped": 0,
+        "errors": [],
+    }
+    for prop in properties:
+        result = sync_property_billing_years(
+            prop,
+            db_session,
+            through_year=through_year,
+        )
+        summary["records_created"] += result["records_created"]
+        summary["records_skipped"] += result["records_skipped"]
+        summary["errors"].extend(
+            f"Property {prop.id} ({prop.td_number}): {message}"
+            for message in result["errors"]
+        )
+    return summary
+
+
 def sync_billing_years(
     db_session: Session,
     dry_run: bool = False,
@@ -115,7 +229,7 @@ def sync_billing_years(
         errors              : list of str
         dry_run             : bool
     """
-    current_year = datetime.now().year
+    current_year = philippine_today().year
     created = 0
     skipped = 0
     errors = []
@@ -136,63 +250,17 @@ def sync_billing_years(
 
     for idx, prop in enumerate(properties, 1):
         try:
-            versions = assessment_versions(prop, db_session)
-            start_year = (
-                earliest_assessment_year(prop, db_session, versions=versions)
-                or _extract_start_year(prop)
+            result = sync_property_billing_years(
+                prop,
+                db_session,
+                through_year=current_year,
+                dry_run=dry_run,
             )
-
-            # Safety: don't go further back than 2000 or further forward than now
-            start_year = max(2000, min(start_year, current_year))
-
-            # Fetch existing billing years for this property in one query
-            existing_years = set(
-                int(row[0])
-                for row in db_session.query(PropertyBilling.tax_year)
-                .filter(PropertyBilling.property_id == prop.id)
-                .all()
+            created += result["records_created"]
+            skipped += result["records_skipped"]
+            errors.extend(
+                f"Property {prop.td_number}: {message}" for message in result["errors"]
             )
-
-            # Fetch tax policy rates per year — fall back to 1%+1% if not configured
-            from backend.models import TaxPolicy
-
-            for year in range(start_year, current_year + 1):
-                if year in existing_years:
-                    skipped += 1
-                    continue
-
-                assessed = assessed_value_for_year(
-                    prop, year, db_session, versions=versions
-                )
-                if assessed is None:
-                    errors.append(
-                        f"Property {prop.td_number}: no assessment version is effective for {year}; skipped"
-                    )
-                    continue
-
-                # Look up rate for this specific year
-                policy = db_session.query(TaxPolicy).filter(
-                    TaxPolicy.tax_year == year
-                ).first()
-                basic_rate = Decimal(str(policy.basic_rate)) if policy else Decimal("0.01")
-                sef_rate   = Decimal(str(policy.sef_rate))   if policy else Decimal("0.01")
-
-                basic = (assessed * basic_rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                sef   = (assessed * sef_rate).quantize(Decimal("0.01"),   rounding=ROUND_HALF_UP)
-                total_due = basic + sef
-
-                if not dry_run:
-                    billing = PropertyBilling(
-                        property_id=prop.id,
-                        tax_year=year,
-                        assessed_value=assessed,
-                        penalty=Decimal("0.00"),
-                        discount=Decimal("0.00"),
-                        amount_paid=Decimal("0.00"),
-                    )
-                    db_session.add(billing)
-
-                created += 1
 
             # Commit in batches of 100 properties to avoid huge transactions
             if not dry_run and idx % 100 == 0:
