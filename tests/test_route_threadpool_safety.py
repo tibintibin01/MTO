@@ -14,6 +14,7 @@ def test_database_heavy_routes_run_in_fastapi_threadpool():
         billing.get_delinquent_list,
         billing.get_collections_worklist,
         billing.get_compliant_list,
+        billing.generate_notice_preview,
         billing.get_compliant_summary,
         billing.get_compliant_impact_preview,
         billing.get_receivables_by_barangay,

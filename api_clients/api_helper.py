@@ -34,6 +34,19 @@ def record_connection_success():
     set_connection_status("ONLINE")
 
 
+def record_connection_slow():
+    """Record a reachable API whose response exceeded the read timeout.
+
+    A read timeout is not an outage: the TCP connection was established. Keep
+    the status degraded without accumulating failures that would falsely move
+    the whole desktop client into offline mode.
+    """
+    global CONNECTION_STATUS, _CONSECUTIVE_CONNECTION_FAILURES
+    with _CONNECTION_STATUS_LOCK:
+        CONNECTION_STATUS = "DEGRADED"
+        _CONSECUTIVE_CONNECTION_FAILURES = 0
+
+
 def record_connection_failure():
     """Records one failed connection without declaring an outage too early."""
     global CONNECTION_STATUS, _CONSECUTIVE_CONNECTION_FAILURES
@@ -383,7 +396,17 @@ def api_request(
         if response.content:
             return response.json()
         return True
-    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+    except requests.exceptions.ReadTimeout as e:
+        record_connection_slow()
+        raise Exception(
+            f"The API server at {BASE_URL} is reachable but did not finish "
+            f"this request within {timeout} seconds. No offline action was "
+            "queued. Please try again."
+        ) from e
+    except (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.ConnectTimeout,
+    ) as e:
         record_connection_failure()
 
         # Multipart uploads cannot be replayed by the offline queue because it
@@ -524,7 +547,17 @@ def api_download_file(method, endpoint, params=None, timeout=120):
 
         return save_stream_response_to_temp_file(response, default_suffix=".pdf")
 
-    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+    except requests.exceptions.ReadTimeout as e:
+        record_connection_slow()
+        raise Exception(
+            f"The API server at {BASE_URL} is reachable but took longer than "
+            f"{timeout} seconds to generate this file. Please try again; if "
+            "this repeats, review the API log."
+        ) from e
+    except (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.ConnectTimeout,
+    ) as e:
         record_connection_failure()
         raise Exception(
             f"Cannot reach API server at {BASE_URL}. "

@@ -175,6 +175,27 @@ def test_worklist_materializes_account_aggregates_once(db):
     assert select_count == 1
 
 
+def test_paginated_worklist_keeps_full_set_summary_in_one_query(db):
+    for index, assessed in enumerate((100_000.0, 200_000.0, 300_000.0), start=1):
+        prop = _prop(db, f"TD-PAGE-{index}")
+        _billing(db, prop.id, 2023, assessed=assessed)
+    db.commit()
+
+    result = get_collections_worklist(
+        limit=1,
+        offset=1,
+        as_of_date=TEST_AS_OF,
+        db_session=db,
+    )
+
+    assert result["count"] == 1
+    assert result["total_matching"] == 3
+    assert result["summary"]["delinquent_count"] == 3
+    assert result["summary"]["total_balance"] == pytest.approx(13_680.0)
+    assert result["has_more"] is True
+    assert result["next_offset"] == 2
+
+
 def test_barangay_filter(db):
     a = _prop(db, "TD-POB", barangay="POBLACION")
     _billing(db, a.id, 2023, paid=0.0)

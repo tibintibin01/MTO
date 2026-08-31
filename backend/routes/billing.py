@@ -738,11 +738,17 @@ async def generate_notice_pdf(
 
 
 @router.get("/properties/{property_id}/notice-preview", tags=["Financial"])
-async def generate_notice_preview(
+def generate_notice_preview(
     property_id: int,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
+    """Generate the preview in FastAPI's worker pool.
+
+    This handler performs synchronous SQL and filesystem work. Keeping it as a
+    plain ``def`` prevents a slow preview from blocking the API event loop and
+    starving readiness/login requests for every connected workstation.
+    """
     try:
         details = bill_svc.get_property_delinquency_statement_data(
             property_id, db_session=db_session
@@ -759,9 +765,7 @@ async def generate_notice_preview(
             or ""
         )
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        html_path = await asyncio.to_thread(
-            notice_gen.generate_delinquency_notice_preview, details, base_dir
-        )
+        html_path = notice_gen.generate_delinquency_notice_preview(details, base_dir)
         return FileResponse(
             html_path,
             media_type="text/html",

@@ -3032,6 +3032,28 @@ def get_collections_worklist(
     safe_offset = max(0, int(offset))
     today = as_of_date or philippine_today()
 
+    def _age_days(earliest_year) -> int:
+        try:
+            year = int(earliest_year)
+        except (ValueError, TypeError):
+            return 0
+        return max(0, (today - date(year, 2, 1)).days)
+
+    def _bucket(days: int) -> str:
+        if days >= 120:
+            return "120+"
+        if days >= 90:
+            return "90"
+        if days >= 60:
+            return "60"
+        if days >= 30:
+            return "30"
+        return "CURRENT"
+
+    def _latest_year_for_age(days: int) -> int:
+        cutoff = today - timedelta(days=max(0, int(days)))
+        return cutoff.year if cutoff >= date(cutoff.year, 2, 1) else cutoff.year - 1
+
     # Aggregate payment links once. Four correlated subqueries per billing row
     # made this endpoint progressively slower as the ledger grew.
     allocation_totals = (
@@ -3136,18 +3158,30 @@ def get_collections_worklist(
 
     if search and str(search).strip():
         term = str(search).strip()
-        like_term = f"%{term}%"
-        account_query = account_query.filter(
-            or_(
-                Property.td_number.like(like_term),
-                Property.prev_td_number.like(like_term),
-                Property.pin.like(like_term),
-                Property.owner_name.like(like_term),
-                Property.payor_name.like(like_term),
-                Property.location.like(like_term),
-                Property.barangay.like(like_term),
+        normalized_term = term.upper()
+        if re.fullmatch(r"\d{2}-\d{4}-[A-Z0-9]+(?:-[A-Z0-9]+)*", normalized_term):
+            # Exact TD searches are common at the collection counter. Preserve
+            # all verified duplicate accounts while allowing the indexed TD
+            # lookup to avoid a multi-column wildcard scan.
+            account_query = account_query.filter(
+                or_(
+                    Property.td_number == normalized_term,
+                    Property.prev_td_number == normalized_term,
+                )
             )
-        )
+        else:
+            like_term = f"%{term}%"
+            account_query = account_query.filter(
+                or_(
+                    Property.td_number.like(like_term),
+                    Property.prev_td_number.like(like_term),
+                    Property.pin.like(like_term),
+                    Property.owner_name.like(like_term),
+                    Property.payor_name.like(like_term),
+                    Property.location.like(like_term),
+                    Property.barangay.like(like_term),
+                )
+            )
 
     account_query = account_query.group_by(
         Property.id,
@@ -3167,37 +3201,58 @@ def get_collections_worklist(
         account_query = account_query.having(total_paid_expr > 0)
 
     if min_age_days:
-        cutoff = today - timedelta(days=max(0, int(min_age_days)))
-        latest_eligible_year = (
-            cutoff.year if cutoff >= date(cutoff.year, 2, 1) else cutoff.year - 1
-        )
+        latest_eligible_year = _latest_year_for_age(min_age_days)
         account_query = account_query.having(earliest_year_expr <= latest_eligible_year)
 
-    # Execute the jurisdiction aggregate once. The previous implementation
-    # wrapped this query twice (page + summary), forcing MariaDB to repeat the
-    # full billing/payment calculation. About 16k compact account rows are
-    # inexpensive to sort and summarize in Python and avoid a second DB pass.
-    account_rows = account_query.all()
-    account_rows.sort(key=lambda row: (-float(row.balance or 0), int(row.id)))
-    rows = account_rows[safe_offset : safe_offset + safe_limit]
+    # Materialize the account aggregate inside the database, then use window
+    # totals so MariaDB returns only the requested page plus its full-set
+    # summary. The old implementation transferred and sorted every matching
+    # account in Python (about 16k rows on production) before displaying 50.
+    accounts = account_query.subquery("collection_accounts")
+    age_bucket = case(
+        (accounts.c.earliest_year <= _latest_year_for_age(120), "120+"),
+        (accounts.c.earliest_year <= _latest_year_for_age(90), "90"),
+        (accounts.c.earliest_year <= _latest_year_for_age(60), "60"),
+        (accounts.c.earliest_year <= _latest_year_for_age(30), "30"),
+        else_="CURRENT",
+    )
 
-    def _age_days(earliest_year) -> int:
-        try:
-            year = int(earliest_year)
-        except (ValueError, TypeError):
-            return 0
-        return max(0, (today - date(year, 2, 1)).days)
+    summary_columns = [
+        func.count(accounts.c.id).over().label("_total_matching"),
+        func.coalesce(func.sum(accounts.c.balance).over(), 0).label("_total_balance"),
+    ]
+    for bucket_name in ("CURRENT", "30", "60", "90", "120+"):
+        summary_columns.append(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (age_bucket == bucket_name, accounts.c.balance),
+                        else_=0,
+                    )
+                ).over(),
+                0,
+            ).label(f"_bucket_{bucket_name.replace('+', 'plus')}")
+        )
 
-    def _bucket(days: int) -> str:
-        if days >= 120:
-            return "120+"
-        if days >= 90:
-            return "90"
-        if days >= 60:
-            return "60"
-        if days >= 30:
-            return "30"
-        return "CURRENT"
+    rows = (
+        db_session.query(
+            accounts.c.id,
+            accounts.c.td_number,
+            accounts.c.owner_name,
+            accounts.c.location,
+            accounts.c.barangay,
+            accounts.c.total_due,
+            accounts.c.total_paid,
+            accounts.c.balance,
+            accounts.c.earliest_year,
+            accounts.c.years_billed,
+            *summary_columns,
+        )
+        .order_by(accounts.c.balance.desc(), accounts.c.id.asc())
+        .offset(safe_offset)
+        .limit(safe_limit)
+        .all()
+    )
 
     page = []
     for row in rows:
@@ -3219,11 +3274,21 @@ def get_collections_worklist(
             }
         )
 
-    total_matching = len(account_rows)
-    total_balance = sum(float(row.balance or 0) for row in account_rows)
     bucket_totals = {"CURRENT": 0.0, "30": 0.0, "60": 0.0, "90": 0.0, "120+": 0.0}
-    for row in account_rows:
-        bucket_totals[_bucket(_age_days(row.earliest_year))] += float(row.balance or 0)
+    if rows:
+        summary_row = rows[0]
+        total_matching = int(summary_row._total_matching or 0)
+        total_balance = float(summary_row._total_balance or 0)
+        bucket_totals = {
+            "CURRENT": float(summary_row._bucket_CURRENT or 0),
+            "30": float(summary_row._bucket_30 or 0),
+            "60": float(summary_row._bucket_60 or 0),
+            "90": float(summary_row._bucket_90 or 0),
+            "120+": float(summary_row._bucket_120plus or 0),
+        }
+    else:
+        total_matching = 0
+        total_balance = 0.0
 
     has_more = (safe_offset + safe_limit) < total_matching
     return {

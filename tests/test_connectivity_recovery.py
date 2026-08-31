@@ -3,6 +3,7 @@ import json
 import time
 from io import BytesIO
 import requests
+import pytest
 
 import api_clients.api_helper as api
 import api_clients.billing_service as client_billing
@@ -78,6 +79,45 @@ def test_repeated_connection_failures_transition_through_degraded(monkeypatch):
 
     assert api.get_connection_failure_count() == api.CONNECTION_FAILURE_THRESHOLD
     assert api.get_connection_status() == "OFFLINE"
+
+
+def test_read_timeout_marks_server_slow_without_declaring_offline(monkeypatch):
+    def slow_request(*args, **kwargs):
+        raise requests.exceptions.ReadTimeout("report still generating")
+
+    monkeypatch.setattr(api.requests, "request", slow_request)
+    api.set_connection_status("ONLINE")
+
+    for _ in range(api.CONNECTION_FAILURE_THRESHOLD + 1):
+        with pytest.raises(Exception) as exc_info:
+            api.api_request("GET", "/billing/collections", queue_offline=False)
+        assert "reachable" in str(exc_info.value)
+        assert "did not finish" in str(exc_info.value)
+
+    assert api.get_connection_status() == "DEGRADED"
+    assert api.get_connection_failure_count() == 0
+
+
+def test_file_read_timeout_is_not_reported_as_unreachable(monkeypatch):
+    def slow_request(*args, **kwargs):
+        raise requests.exceptions.ReadTimeout("preview still generating")
+
+    monkeypatch.setattr(api.requests, "request", slow_request)
+    api.set_connection_status("ONLINE")
+
+    with pytest.raises(Exception) as exc_info:
+        api.api_download_file(
+            "GET",
+            "/properties/4/notice-preview",
+            timeout=9,
+        )
+
+    message = str(exc_info.value)
+    assert "reachable" in message
+    assert "9 seconds" in message
+    assert "Cannot reach API server" not in message
+    assert api.get_connection_status() == "DEGRADED"
+    assert api.get_connection_failure_count() == 0
 
 
 def test_success_resets_transient_connection_failures(monkeypatch):
