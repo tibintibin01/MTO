@@ -28,10 +28,11 @@ WHAT IT DOES NOT DO:
   - It does not affect properties that are already fully paid
 """
 
+from collections import defaultdict
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-from backend.models import Property, PropertyBilling
+from backend.models import Property, PropertyAssessmentHistory, PropertyBilling
 from backend.services.assessment_value_service import (
     assessed_value_for_year,
     assessment_versions,
@@ -92,6 +93,8 @@ def sync_property_billing_years(
     db_session: Session,
     through_year: int = None,
     dry_run: bool = False,
+    history_rows=None,
+    existing_years=None,
 ) -> dict:
     """Create only the missing billing years for one active property account.
 
@@ -100,7 +103,11 @@ def sync_property_billing_years(
     are never overwritten.
     """
     target_year = int(through_year or philippine_today().year)
-    versions = assessment_versions(prop, db_session)
+    versions = assessment_versions(
+        prop,
+        db_session,
+        history_rows=history_rows,
+    )
     start_year = earliest_assessment_year(
         prop, db_session, versions=versions
     ) or _extract_start_year(prop)
@@ -116,12 +123,15 @@ def sync_property_billing_years(
         }
 
     start_year = max(2000, start_year)
-    existing_years = {
-        int(row[0])
-        for row in db_session.query(PropertyBilling.tax_year)
-        .filter(PropertyBilling.property_id == prop.id)
-        .all()
-    }
+    if existing_years is None:
+        existing_years = {
+            int(row[0])
+            for row in db_session.query(PropertyBilling.tax_year)
+            .filter(PropertyBilling.property_id == prop.id)
+            .all()
+        }
+    else:
+        existing_years = {int(year) for year in existing_years}
     created = 0
     skipped = 0
     errors = []
@@ -154,6 +164,7 @@ def sync_property_billing_years(
                     amount_paid=0,
                 )
             )
+        existing_years.add(year)
         created += 1
 
     return {
@@ -201,6 +212,41 @@ def sync_verified_duplicate_td_billings(
     return summary
 
 
+def _load_bulk_sync_context(db_session: Session):
+    """Load assessment histories and existing billing years in two queries.
+
+    The all-property sync previously repeated both lookups for every property,
+    producing more than 30,000 SELECTs on a typical production run. Grouping
+    the same read-only data in memory preserves the per-property rules while
+    keeping the query count constant as the registry grows.
+    """
+    history_by_property = defaultdict(list)
+    history_rows = (
+        db_session.query(PropertyAssessmentHistory)
+        .join(Property, Property.id == PropertyAssessmentHistory.property_id)
+        .filter(Property.deleted_at == None)
+        .order_by(
+            PropertyAssessmentHistory.property_id.asc(),
+            PropertyAssessmentHistory.id.asc(),
+        )
+        .all()
+    )
+    for row in history_rows:
+        history_by_property[int(row.property_id)].append(row)
+
+    existing_years_by_property = defaultdict(set)
+    billing_rows = (
+        db_session.query(PropertyBilling.property_id, PropertyBilling.tax_year)
+        .join(Property, Property.id == PropertyBilling.property_id)
+        .filter(Property.deleted_at == None)
+        .all()
+    )
+    for property_id, tax_year in billing_rows:
+        existing_years_by_property[int(property_id)].add(int(tax_year))
+
+    return history_by_property, existing_years_by_property
+
+
 def sync_billing_years(
     db_session: Session,
     dry_run: bool = False,
@@ -242,7 +288,12 @@ def sync_billing_years(
         .all()
     )
 
+    history_by_property, existing_years_by_property = _load_bulk_sync_context(
+        db_session
+    )
+
     total = len(properties)
+    progress_interval = max(1, (total + 99) // 100)
     mto_logger.info(
         f"Billing sync started: {total} properties to scan "
         f"({'DRY RUN' if dry_run else 'LIVE'})"
@@ -255,6 +306,8 @@ def sync_billing_years(
                 db_session,
                 through_year=current_year,
                 dry_run=dry_run,
+                history_rows=history_by_property.get(prop.id, ()),
+                existing_years=existing_years_by_property.get(prop.id, set()),
             )
             created += result["records_created"]
             skipped += result["records_skipped"]
@@ -262,7 +315,7 @@ def sync_billing_years(
                 f"Property {prop.td_number}: {message}" for message in result["errors"]
             )
 
-            # Commit in batches of 100 properties to avoid huge transactions
+            # Flush in batches while retaining one atomic commit for the run.
             if not dry_run and idx % 100 == 0:
                 db_session.flush()
 
@@ -271,8 +324,14 @@ def sync_billing_years(
             errors.append(err_msg)
             mto_logger.warning(f"Billing sync error — {err_msg}")
 
-        if progress_callback:
-            progress_callback(idx, total, f"Processing {prop.td_number}...")
+        if progress_callback and (
+            idx == 1 or idx == total or idx % progress_interval == 0
+        ):
+            progress_callback(
+                idx,
+                total,
+                f"Processing {prop.td_number}... ({idx}/{total})",
+            )
 
     if not dry_run and created > 0:
         try:

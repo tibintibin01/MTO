@@ -4,9 +4,11 @@ from sqlalchemy.orm import sessionmaker
 from backend.database import Base
 from backend.models import Property, PropertyBilling
 from backend.services.billing_sync_service import (
+    sync_billing_years,
     sync_property_billing_years,
     sync_verified_duplicate_td_billings,
 )
+from backend.services.tax_year_readiness_service import philippine_today
 
 
 def _session():
@@ -102,6 +104,53 @@ def test_verified_duplicate_repair_initializes_both_property_accounts():
         assert result["records_created"] == 2
         assert {row.property_id for row in rows} == {first.id, second.id}
         assert {row.tax_year for row in rows} == {2026}
+    finally:
+        db.close()
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+def test_all_property_sync_bulk_loads_context_and_throttles_progress():
+    engine, db = _session()
+    try:
+        current_year = philippine_today().year
+        properties = [
+            _property(
+                f"06-0099-{index:05d}",
+                f"OWNER {index}",
+                effectivity=f"{current_year}-01-01",
+            )
+            for index in range(1, 251)
+        ]
+        db.add_all(properties)
+        db.commit()
+
+        select_statements = []
+
+        def count_selects(_conn, _cursor, statement, _params, _context, _many):
+            if statement.lstrip().upper().startswith("SELECT"):
+                select_statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", count_selects)
+        progress_updates = []
+        try:
+            result = sync_billing_years(
+                db,
+                dry_run=True,
+                progress_callback=lambda current, total, message: progress_updates.append(
+                    (current, total, message)
+                ),
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", count_selects)
+
+        assert result["properties_scanned"] == 250
+        assert result["records_created"] == 250
+        assert result["records_skipped"] == 0
+        assert len(select_statements) <= 3
+        assert progress_updates[0][0] == 1
+        assert progress_updates[-1][0] == 250
+        assert len(progress_updates) <= 101
     finally:
         db.close()
         Base.metadata.drop_all(engine)
