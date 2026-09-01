@@ -65,6 +65,29 @@ def test_refresh_system_stats_counts_property_and_collections(db):
     assert stats["receipts_today"] == 1
 
 
+def test_month_to_date_excludes_future_dated_payments(db):
+    prop = db.query(Property).filter(Property.td_number == "06-0001-0001").one()
+    tomorrow_ph = datetime.now(timezone(timedelta(hours=8))) + timedelta(days=1)
+    db.add(
+        Payment(
+            property_id=prop.id,
+            amount=9_318.03,
+            or_number="OR-FUTURE-DATED",
+            tax_year=str(tomorrow_ph.year),
+            date_paid=tomorrow_ph.astimezone(timezone.utc),
+            posted_by="admin",
+        )
+    )
+    db.commit()
+
+    assert refresh_system_stats(db_session=db) is True
+
+    stats = {s.stat_key: float(s.stat_value) for s in db.query(SystemStats).all()}
+    assert stats["collections_today"] == 500.0
+    assert stats["receipts_today"] == 1
+    assert stats["collections_month"] == 500.0
+
+
 def test_get_dashboard_summary_refreshes_stale_cache(db):
     summary = get_dashboard_summary(db_session=db)
     assert summary["total_properties"] == 1

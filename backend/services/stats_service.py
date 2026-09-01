@@ -59,10 +59,11 @@ def refresh_system_stats(db_session: Session = None):
         _update_stat(db_session, "collections_today", float(today_coll or 0))
         _update_stat(db_session, "receipts_today", int(receipts_today or 0))
 
-        # 4. Collections Month (from 1st of current PH month)
+        # 4. Collections Month-to-Date (exclude future-dated payment records)
         month_start = datetime.combine(_month_start_ph(), time.min, tzinfo=_PH_TZ).astimezone(timezone.utc)
         month_coll = db_session.query(func.sum(Payment.amount)).filter(
             paid_at >= month_start,
+            paid_at <= day_end,
         ).scalar()
         _update_stat(db_session, "collections_month", float(month_coll or 0))
 
