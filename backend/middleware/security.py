@@ -69,6 +69,8 @@ _PATH_TIMEOUTS = {
     "/billing/bulk-soa-pdf":  120,
     # Cold-cache jurisdiction-wide aggregation may need more than the default.
     "/billing/collections":   90,
+    # Compliance list, summary, and impact preview scan all billed properties.
+    "/billing/compliant":     90,
 }
 
 _PROPERTY_DOCUMENT_SUFFIXES = (

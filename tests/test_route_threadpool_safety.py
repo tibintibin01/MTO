@@ -66,4 +66,6 @@ def test_property_document_routes_have_bounded_extended_timeout():
     assert request_timeout_for_path("/properties/4/notice-preview") == 90
     assert request_timeout_for_path("/properties/4") == 30
     assert request_timeout_for_path("/billing/collections") == 90
+    assert request_timeout_for_path("/billing/compliant") == 90
+    assert request_timeout_for_path("/billing/compliant/summary") == 90
     assert request_timeout_for_path("/health") == 30
