@@ -137,6 +137,7 @@ def log_action(user, action, db_session: Session = None):
 
 def get_dashboard_summary(db_session: Session = None):
     from backend.services.stats_service import get_cached_stat, refresh_system_stats, stats_are_stale
+    from backend.services.payment_service import get_recent_payments
 
     # Refresh when stats are missing/stale so dashboard cards stay accurate.
     if (
@@ -154,6 +155,11 @@ def get_dashboard_summary(db_session: Session = None):
         ),
         "collections_today": float(get_cached_stat("collections_today", db_session=db_session)),
         "collections_month": float(get_cached_stat("collections_month", db_session=db_session)),
+        # Keep the dashboard's headline totals and visible receipt rows in one
+        # database-backed response. Fetching Recent Collections separately
+        # allowed an independently running/stale API handler to return an empty
+        # list while the summary cards correctly reported today's receipt.
+        "recent_payments": get_recent_payments(limit=6, db_session=db_session),
     }
 
 

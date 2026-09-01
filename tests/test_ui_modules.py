@@ -338,6 +338,32 @@ class TestDashboardHome(unittest.TestCase):
         )
         self.assertIn("endpoint failed", args[3])
 
+    def test_dashboard_uses_recent_rows_from_summary_snapshot(self):
+        home = object.__new__(DashboardHomePage)
+        home.parent = MagicMock()
+        recent = [{"id": 9, "or_number": "OR-9", "amount": 397.42}]
+        home.callbacks = {
+            "get_summary": MagicMock(
+                return_value={"total_properties": 100, "recent_payments": recent}
+            ),
+            "get_trend": MagicMock(return_value=[]),
+            "get_recent": MagicMock(return_value=[]),
+        }
+        home._update_ui = MagicMock()
+        home._hide_loading = MagicMock()
+
+        with patch(
+            "ui.dashboard_home.system.get_system_stats", return_value={"pool": {}}
+        ):
+            home.refresh_data()
+
+        home.callbacks["get_recent"].assert_not_called()
+        scheduled_render = home.parent.after.call_args.args[1]
+        scheduled_render()
+        args = home._update_ui.call_args.args
+        self.assertEqual(args[2], recent)
+        self.assertIsNone(args[3])
+
 
 if __name__ == "__main__":
     unittest.main()

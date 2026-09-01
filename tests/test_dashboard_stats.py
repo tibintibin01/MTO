@@ -94,6 +94,8 @@ def test_get_dashboard_summary_refreshes_stale_cache(db):
     assert summary["collections_today"] == 500.0
     assert summary["collections_month"] == 500.0
     assert summary["receipts_today"] == 1
+    assert len(summary["recent_payments"]) == 1
+    assert summary["recent_payments"][0]["or_number"] == "OR-100"
     assert stats_are_stale(db) is False
 
 

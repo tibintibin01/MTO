@@ -599,10 +599,14 @@ class DashboardHomePage:
                 summary["infra_stats"] = None
 
             trend_rows = self.callbacks["get_trend"](6) or []
-            recent_rows = []
+            summary_recent = summary.get("recent_payments")
+            recent_rows = summary_recent if isinstance(summary_recent, list) else []
             recent_error = None
             get_recent = self.callbacks.get("get_recent")
-            if callable(get_recent):
+            # New servers return the rows in the same snapshot as the cards.
+            # Retain the separate endpoint only for compatibility with an older
+            # server that does not yet include ``recent_payments``.
+            if not isinstance(summary_recent, list) and callable(get_recent):
                 try:
                     recent_rows = get_recent(6) or []
                 except Exception as exc:
