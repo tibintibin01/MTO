@@ -1170,9 +1170,52 @@ def get_property_billing_history(
 ):
     safe_limit = max(1, int(limit))
 
+    # A property document normally contains only a few billing years. Aggregate
+    # its payment links once and join that result instead of executing four
+    # correlated payment subqueries for every billing row and every repeated
+    # balance expression in the SELECT.
+    allocation_totals = (
+        db_session.query(
+            PaymentBilling.billing_id.label("billing_id"),
+            func.count(PaymentBilling.id).label("linked_count"),
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("linked_paid"),
+            func.coalesce(func.sum(Payment.penalty), 0).label("linked_penalty"),
+            func.coalesce(func.sum(Payment.discount), 0).label("linked_discount"),
+        )
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .join(PropertyBilling, PropertyBilling.id == PaymentBilling.billing_id)
+    )
+    if property_id:
+        allocation_totals = allocation_totals.filter(
+            PropertyBilling.property_id == int(property_id)
+        )
+    allocation_totals = allocation_totals.group_by(
+        PaymentBilling.billing_id
+    ).subquery("property_allocation_totals")
+
+    linked_count = func.coalesce(allocation_totals.c.linked_count, 0)
+    effective_paid = case(
+        (linked_count > 0, func.coalesce(allocation_totals.c.linked_paid, 0)),
+        else_=func.coalesce(PropertyBilling.amount_paid, 0),
+    )
+    effective_penalty = case(
+        (linked_count > 0, func.coalesce(allocation_totals.c.linked_penalty, 0)),
+        else_=func.coalesce(PropertyBilling.penalty, 0),
+    )
+    effective_discount = case(
+        (linked_count > 0, func.coalesce(allocation_totals.c.linked_discount, 0)),
+        else_=func.coalesce(PropertyBilling.discount, 0),
+    )
     basic_rate_expr = func.coalesce(TaxPolicy.basic_rate, 0.0100)
     sef_rate_expr = func.coalesce(TaxPolicy.sef_rate, 0.0100)
-    current = _billing_current_amount_exprs(db_session, as_of_date)
+    current = _billing_current_amount_exprs_from_effective(
+        paid=effective_paid,
+        penalty=effective_penalty,
+        discount=effective_discount,
+        total_rate=basic_rate_expr + sef_rate_expr,
+        penalty_rate=func.coalesce(TaxPolicy.penalty_rate, 0.02),
+        as_of_date=as_of_date,
+    )
 
     query = (
         db_session.query(
@@ -1194,6 +1237,10 @@ def get_property_billing_history(
         )
         .join(Property, Property.id == PropertyBilling.property_id)
         .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .outerjoin(
+            allocation_totals,
+            allocation_totals.c.billing_id == PropertyBilling.id,
+        )
         .filter(
             Property.deleted_at == None,
             *_valid_property_billing_scope(db_session),
@@ -1591,9 +1638,49 @@ def _billing_effective_amount_exprs(db_session: Session):
     }
 
 
+def _billing_current_amount_exprs_from_effective(
+    *,
+    paid,
+    penalty,
+    discount,
+    total_rate,
+    penalty_rate,
+    as_of_date=None,
+):
+    """Build live balance expressions from already-resolved payment amounts."""
+    as_of = as_of_date or date.today()
+    raw_months = (int(as_of.year) - PropertyBilling.tax_year) * 12 + int(as_of.month)
+    months = case(
+        (raw_months < 0, 0),
+        (raw_months > MAX_PENALTY_MONTHS, MAX_PENALTY_MONTHS),
+        else_=raw_months,
+    )
+    tax_principal = PropertyBilling.assessed_value * total_rate
+    principal_credit = greatest(
+        paid + discount - penalty,
+        0,
+    )
+    remaining_principal = greatest(tax_principal - principal_credit, 0)
+    accrued_penalty = func.round(remaining_principal * penalty_rate * months, 2)
+    total_penalty = penalty + accrued_penalty
+    total_due = tax_principal + total_penalty - discount
+    balance = greatest(total_due - paid, 0)
+    return {
+        "paid": paid,
+        "penalty": penalty,
+        "discount": discount,
+        "tax_principal": tax_principal,
+        "remaining_principal": remaining_principal,
+        "accrued_penalty": accrued_penalty,
+        "total_penalty": total_penalty,
+        "total_due": total_due,
+        "balance": balance,
+        "penalty_months": months,
+    }
+
+
 def _billing_current_amount_exprs(db_session: Session, as_of_date=None):
     """SQL expressions for the live, as-of-date balance of each billing row."""
-    as_of = as_of_date or date.today()
     effective = _billing_effective_amount_exprs(db_session)
     total_rate = tax_rate_subquery(db_session, PropertyBilling.tax_year)
     penalty_rate = func.coalesce(
@@ -1603,32 +1690,14 @@ def _billing_current_amount_exprs(db_session: Session, as_of_date=None):
         .scalar_subquery(),
         0.02,
     )
-    raw_months = (int(as_of.year) - PropertyBilling.tax_year) * 12 + int(as_of.month)
-    months = case(
-        (raw_months < 0, 0),
-        (raw_months > MAX_PENALTY_MONTHS, MAX_PENALTY_MONTHS),
-        else_=raw_months,
+    return _billing_current_amount_exprs_from_effective(
+        paid=effective["paid"],
+        penalty=effective["penalty"],
+        discount=effective["discount"],
+        total_rate=total_rate,
+        penalty_rate=penalty_rate,
+        as_of_date=as_of_date,
     )
-    tax_principal = PropertyBilling.assessed_value * total_rate
-    principal_credit = greatest(
-        effective["paid"] + effective["discount"] - effective["penalty"],
-        0,
-    )
-    remaining_principal = greatest(tax_principal - principal_credit, 0)
-    accrued_penalty = func.round(remaining_principal * penalty_rate * months, 2)
-    total_penalty = effective["penalty"] + accrued_penalty
-    total_due = tax_principal + total_penalty - effective["discount"]
-    balance = greatest(total_due - effective["paid"], 0)
-    return {
-        **effective,
-        "tax_principal": tax_principal,
-        "remaining_principal": remaining_principal,
-        "accrued_penalty": accrued_penalty,
-        "total_penalty": total_penalty,
-        "total_due": total_due,
-        "balance": balance,
-        "penalty_months": months,
-    }
 
 
 def get_rpt_receivables_summary(report_year, db_session: Session = None):
@@ -3032,6 +3101,26 @@ def get_collections_worklist(
     safe_offset = max(0, int(offset))
     today = as_of_date or philippine_today()
 
+    exact_property_ids = None
+    normalized_search = str(search or "").strip().upper()
+    if normalized_search and re.fullmatch(
+        r"\d{2}-\d{4}-[A-Z0-9]+(?:-[A-Z0-9]+)*", normalized_search
+    ):
+        exact_property_ids = [
+            row[0]
+            for row in (
+                db_session.query(Property.id)
+                .filter(
+                    Property.deleted_at == None,
+                    or_(
+                        Property.td_number == normalized_search,
+                        Property.prev_td_number == normalized_search,
+                    ),
+                )
+                .all()
+            )
+        ]
+
     def _age_days(earliest_year) -> int:
         try:
             year = int(earliest_year)
@@ -3066,8 +3155,13 @@ def get_collections_worklist(
         )
         .join(Payment, Payment.id == PaymentBilling.payment_id)
         .group_by(PaymentBilling.billing_id)
-        .subquery()
     )
+    if exact_property_ids is not None:
+        allocation_totals = allocation_totals.join(
+            PropertyBilling,
+            PropertyBilling.id == PaymentBilling.billing_id,
+        ).filter(PropertyBilling.property_id.in_(exact_property_ids))
+    allocation_totals = allocation_totals.subquery()
 
     replacement_cutoffs = _replacement_cutoffs_subquery(db_session)
 
@@ -3158,17 +3252,10 @@ def get_collections_worklist(
 
     if search and str(search).strip():
         term = str(search).strip()
-        normalized_term = term.upper()
-        if re.fullmatch(r"\d{2}-\d{4}-[A-Z0-9]+(?:-[A-Z0-9]+)*", normalized_term):
+        if exact_property_ids is not None:
             # Exact TD searches are common at the collection counter. Preserve
-            # all verified duplicate accounts while allowing the indexed TD
-            # lookup to avoid a multi-column wildcard scan.
-            account_query = account_query.filter(
-                or_(
-                    Property.td_number == normalized_term,
-                    Property.prev_td_number == normalized_term,
-                )
-            )
+            # every duplicate while scoping allocation work to those accounts.
+            account_query = account_query.filter(Property.id.in_(exact_property_ids))
         else:
             like_term = f"%{term}%"
             account_query = account_query.filter(

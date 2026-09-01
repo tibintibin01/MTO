@@ -432,7 +432,7 @@ def get_analytics_dashboard(
 
 
 @router.get("/properties/{property_id}/computation-pdf", tags=["Financial"])
-async def generate_computation_pdf(
+def generate_computation_pdf(
     property_id: int,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
@@ -447,20 +447,14 @@ async def generate_computation_pdf(
             )
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        pdf_path = await asyncio.to_thread(
-            computation_gen.generate_delinquency_computation, details, base_dir
-        )
+        pdf_path = computation_gen.generate_delinquency_computation(details, base_dir)
         file_name = os.path.basename(pdf_path)
 
         if storage_service.enabled:
             s3_key = f"computations/{file_name}"
-            uploaded_key = await asyncio.to_thread(
-                storage_service.upload_file, pdf_path, s3_key
-            )
+            uploaded_key = storage_service.upload_file(pdf_path, s3_key)
             if uploaded_key:
-                presigned_url = await asyncio.to_thread(
-                    storage_service.generate_presigned_url, s3_key
-                )
+                presigned_url = storage_service.generate_presigned_url(s3_key)
                 if presigned_url:
                     try:
                         os.remove(pdf_path)
@@ -483,7 +477,7 @@ async def generate_computation_pdf(
 
 
 @router.get("/properties/{property_id}/tax-bill-pdf", tags=["Financial"])
-async def generate_tax_bill_pdf(
+def generate_tax_bill_pdf(
     property_id: int,
     tax_year: int = Query(..., ge=1900, le=2200),
     current_user: dict = Depends(get_current_user),
@@ -503,25 +497,14 @@ async def generate_tax_bill_pdf(
             )
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        pdf_path = await asyncio.to_thread(
-            tax_bill_gen.generate_tax_bill,
-            details,
-            base_dir,
-        )
+        pdf_path = tax_bill_gen.generate_tax_bill(details, base_dir)
         file_name = os.path.basename(pdf_path)
 
         if storage_service.enabled:
             s3_key = f"tax-bills/{file_name}"
-            uploaded_key = await asyncio.to_thread(
-                storage_service.upload_file,
-                pdf_path,
-                s3_key,
-            )
+            uploaded_key = storage_service.upload_file(pdf_path, s3_key)
             if uploaded_key:
-                presigned_url = await asyncio.to_thread(
-                    storage_service.generate_presigned_url,
-                    s3_key,
-                )
+                presigned_url = storage_service.generate_presigned_url(s3_key)
                 if presigned_url:
                     try:
                         os.remove(pdf_path)
@@ -555,7 +538,7 @@ async def generate_tax_bill_pdf(
 
 
 @router.get("/properties/{property_id}/statement-pdf", tags=["Financial"])
-async def generate_statement_pdf(
+def generate_statement_pdf(
     property_id: int,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
@@ -570,20 +553,14 @@ async def generate_statement_pdf(
             )
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        pdf_path = await asyncio.to_thread(
-            soa_gen.generate_statement_of_account, details, base_dir
-        )
+        pdf_path = soa_gen.generate_statement_of_account(details, base_dir)
         file_name = os.path.basename(pdf_path)
 
         if storage_service.enabled:
             s3_key = f"statements/{file_name}"
-            uploaded_key = await asyncio.to_thread(
-                storage_service.upload_file, pdf_path, s3_key
-            )
+            uploaded_key = storage_service.upload_file(pdf_path, s3_key)
             if uploaded_key:
-                presigned_url = await asyncio.to_thread(
-                    storage_service.generate_presigned_url, s3_key
-                )
+                presigned_url = storage_service.generate_presigned_url(s3_key)
                 if presigned_url:
                     try:
                         os.remove(pdf_path)
@@ -610,7 +587,7 @@ class BulkSOARequest(BaseModel):
 
 
 @router.post("/billing/bulk-soa-pdf", tags=["Financial"])
-async def generate_bulk_soa_pdf(
+def generate_bulk_soa_pdf(
     data: BulkSOARequest,
     current_user: dict = Depends(write_access),
     db_session: Session = Depends(get_db),
@@ -645,9 +622,7 @@ async def generate_bulk_soa_pdf(
 
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        pdf_path = await asyncio.to_thread(
-            soa_gen.bulk_generate_soa, statements, base_dir
-        )
+        pdf_path = soa_gen.bulk_generate_soa(statements, base_dir)
         file_name = os.path.basename(pdf_path)
 
         mto_logger.info(
@@ -657,13 +632,9 @@ async def generate_bulk_soa_pdf(
 
         if storage_service.enabled:
             s3_key = f"statements/{file_name}"
-            uploaded_key = await asyncio.to_thread(
-                storage_service.upload_file, pdf_path, s3_key
-            )
+            uploaded_key = storage_service.upload_file(pdf_path, s3_key)
             if uploaded_key:
-                presigned_url = await asyncio.to_thread(
-                    storage_service.generate_presigned_url, s3_key
-                )
+                presigned_url = storage_service.generate_presigned_url(s3_key)
                 if presigned_url:
                     try:
                         os.remove(pdf_path)
@@ -687,7 +658,7 @@ async def generate_bulk_soa_pdf(
 
 
 @router.get("/properties/{property_id}/notice-pdf", tags=["Financial"])
-async def generate_notice_pdf(
+def generate_notice_pdf(
     property_id: int,
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
@@ -702,20 +673,14 @@ async def generate_notice_pdf(
             )
 
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        pdf_path = await asyncio.to_thread(
-            notice_gen.generate_delinquency_notice, details, base_dir
-        )
+        pdf_path = notice_gen.generate_delinquency_notice(details, base_dir)
         file_name = os.path.basename(pdf_path)
 
         if storage_service.enabled:
             s3_key = f"notices/{file_name}"
-            uploaded_key = await asyncio.to_thread(
-                storage_service.upload_file, pdf_path, s3_key
-            )
+            uploaded_key = storage_service.upload_file(pdf_path, s3_key)
             if uploaded_key:
-                presigned_url = await asyncio.to_thread(
-                    storage_service.generate_presigned_url, s3_key
-                )
+                presigned_url = storage_service.generate_presigned_url(s3_key)
                 if presigned_url:
                     try:
                         os.remove(pdf_path)
