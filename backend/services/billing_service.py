@@ -1706,6 +1706,59 @@ def _billing_effective_amount_exprs(db_session: Session):
     }
 
 
+def _billing_allocation_totals_subquery(db_session: Session):
+    """Aggregate linked payment amounts once for municipality-wide reports.
+
+    ``_billing_effective_amount_exprs`` intentionally uses correlated lookups
+    because it is convenient for operations scoped to one billing row. A
+    compliance refresh, however, evaluates every billing in the municipality;
+    running those lookups once per row turns one report into hundreds of
+    thousands of nested queries on MariaDB. This materialized aggregate keeps
+    the same fallback rules while allowing the report to join the allocation
+    totals in one pass.
+    """
+    return (
+        db_session.query(
+            PaymentBilling.billing_id.label("billing_id"),
+            func.count(PaymentBilling.id).label("linked_count"),
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label(
+                "linked_paid"
+            ),
+            func.coalesce(func.sum(Payment.penalty), 0).label("linked_penalty"),
+            func.coalesce(func.sum(Payment.discount), 0).label("linked_discount"),
+        )
+        .join(Payment, Payment.id == PaymentBilling.payment_id)
+        .group_by(PaymentBilling.billing_id)
+        .subquery()
+    )
+
+
+def _billing_effective_amount_exprs_from_allocations(allocation_totals):
+    """Resolve cached-versus-linked amounts from a joined allocation aggregate."""
+    linked_count = func.coalesce(allocation_totals.c.linked_count, 0)
+    return {
+        "paid": case(
+            (linked_count > 0, func.coalesce(allocation_totals.c.linked_paid, 0)),
+            else_=PropertyBilling.amount_paid,
+        ),
+        "penalty": case(
+            (
+                linked_count > 0,
+                func.coalesce(allocation_totals.c.linked_penalty, 0),
+            ),
+            else_=PropertyBilling.penalty,
+        ),
+        "discount": case(
+            (
+                linked_count > 0,
+                func.coalesce(allocation_totals.c.linked_discount, 0),
+            ),
+            else_=PropertyBilling.discount,
+        ),
+        "linked_count": linked_count,
+    }
+
+
 def _billing_current_amount_exprs_from_effective(
     *,
     paid,
@@ -2621,14 +2674,12 @@ def _legacy_compliance_per_property(
     accounts while still treating a real one-cent shortage as unpaid.
     """
     selected_year = int(as_of_year)
-    rate_expr = func.coalesce(
-        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
-        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
-        .correlate(PropertyBilling)
-        .scalar_subquery(),
-        0.02,
+    allocation_totals = _billing_allocation_totals_subquery(db_session)
+    replacement_cutoffs = _replacement_cutoffs_subquery(db_session)
+    rate_expr = func.coalesce(TaxPolicy.basic_rate + TaxPolicy.sef_rate, 0.02)
+    effective = _billing_effective_amount_exprs_from_allocations(
+        allocation_totals
     )
-    effective = _billing_effective_amount_exprs(db_session)
     total_due_expr = func.sum(
         (PropertyBilling.assessed_value * rate_expr)
         + effective["penalty"]
@@ -2644,9 +2695,27 @@ def _legacy_compliance_per_property(
             func.count(PropertyBilling.id).label("years_covered"),
         )
         .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .outerjoin(
+            allocation_totals,
+            allocation_totals.c.billing_id == PropertyBilling.id,
+        )
+        .outerjoin(
+            replacement_cutoffs,
+            replacement_cutoffs.c.predecessor_id == Property.id,
+        )
         .filter(Property.deleted_at == None)
         .filter(PropertyBilling.tax_year <= selected_year)
-        .filter(*_compliance_property_scope(selected_year, db_session))
+        .filter(
+            or_(
+                _property_effectivity_year_expr(Property) == None,
+                _property_effectivity_year_expr(Property) <= selected_year,
+            ),
+            or_(
+                replacement_cutoffs.c.replacement_year == None,
+                replacement_cutoffs.c.replacement_year > selected_year,
+            ),
+        )
     )
     if assigned_barangays_only:
         query = query.filter(*_assigned_barangay_filters())
@@ -2803,19 +2872,17 @@ def _compliance_v2_per_property(
 ):
     """Build per-property totals after aggregating each tax year exactly once."""
     selected_year = int(as_of_year)
-    rate_expr = func.coalesce(
-        db_session.query(TaxPolicy.basic_rate + TaxPolicy.sef_rate)
-        .filter(TaxPolicy.tax_year == PropertyBilling.tax_year)
-        .correlate(PropertyBilling)
-        .scalar_subquery(),
-        0.02,
-    )
+    allocation_totals = _billing_allocation_totals_subquery(db_session)
+    replacement_cutoffs = _replacement_cutoffs_subquery(db_session)
+    rate_expr = func.coalesce(TaxPolicy.basic_rate + TaxPolicy.sef_rate, 0.02)
     due_expr = (
         PropertyBilling.assessed_value * rate_expr
         + PropertyBilling.penalty
         - PropertyBilling.discount
     )
-    paid_expr = _billing_effective_amount_exprs(db_session)["paid"]
+    paid_expr = _billing_effective_amount_exprs_from_allocations(
+        allocation_totals
+    )["paid"]
     per_year_query = (
         db_session.query(
             Property.id.label("property_id"),
@@ -2826,9 +2893,27 @@ def _compliance_v2_per_property(
             func.count(PropertyBilling.id).label("billing_rows"),
         )
         .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+        .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
+        .outerjoin(
+            allocation_totals,
+            allocation_totals.c.billing_id == PropertyBilling.id,
+        )
+        .outerjoin(
+            replacement_cutoffs,
+            replacement_cutoffs.c.predecessor_id == Property.id,
+        )
         .filter(Property.deleted_at == None)
         .filter(*_compliance_v2_billing_filters(selected_year))
-        .filter(*_compliance_property_scope(selected_year, db_session))
+        .filter(
+            or_(
+                _property_effectivity_year_expr(Property) == None,
+                _property_effectivity_year_expr(Property) <= selected_year,
+            ),
+            or_(
+                replacement_cutoffs.c.replacement_year == None,
+                replacement_cutoffs.c.replacement_year > selected_year,
+            ),
+        )
     )
     if assigned_barangays_only:
         per_year_query = per_year_query.filter(*_assigned_barangay_filters())
