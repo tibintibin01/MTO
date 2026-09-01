@@ -71,13 +71,30 @@ _PATH_TIMEOUTS = {
     "/billing/collections":   90,
 }
 
+_PROPERTY_DOCUMENT_SUFFIXES = (
+    "/computation-pdf",
+    "/tax-bill-pdf",
+    "/statement-pdf",
+    "/notice-pdf",
+    "/notice-preview",
+)
+_PROPERTY_DOCUMENT_TIMEOUT = 90
+
+
+def request_timeout_for_path(path: str) -> int:
+    if path.startswith("/properties/") and path.endswith(
+        _PROPERTY_DOCUMENT_SUFFIXES
+    ):
+        return _PROPERTY_DOCUMENT_TIMEOUT
+    for prefix, timeout in _PATH_TIMEOUTS.items():
+        if path.startswith(prefix):
+            return timeout
+    return _DEFAULT_TIMEOUT
+
+
 async def request_timeout_middleware(request: Request, call_next):
     path = request.url.path
-    timeout = _DEFAULT_TIMEOUT
-    for prefix, t in _PATH_TIMEOUTS.items():
-        if path.startswith(prefix):
-            timeout = t
-            break
+    timeout = request_timeout_for_path(path)
 
     try:
         return await asyncio.wait_for(call_next(request), timeout=timeout)

@@ -235,6 +235,70 @@ def test_exact_duplicate_td_search_keeps_property_accounts_separate(db):
     }
 
 
+def test_duplicate_td_statement_does_not_apply_ambiguous_legacy_successor(db):
+    first = _prop(db, "06-0012-00094", owner="FIRST OWNER")
+    second = _prop(db, "06-0012-00094", owner="SECOND OWNER")
+    first.duplicate_td_verified = True
+    second.duplicate_td_verified = True
+    _billing(db, first.id, 2025, assessed=47_900.0)
+    _billing(db, second.id, 2025, assessed=46_350.0)
+    db.add(
+        Property(
+            td_number="06-0012-99999",
+            prev_td_number="06-0012-00094",
+            owner_name="UNLINKED LEGACY SUCCESSOR",
+            barangay="POBLACION",
+            assessed_value=50_000.0,
+            effectivity_date="2025-01-01",
+        )
+    )
+    db.commit()
+
+    first_statement = get_property_statement_data(
+        first.id,
+        as_of_date=date(2026, 7, 1),
+        db_session=db,
+    )
+    second_statement = get_property_statement_data(
+        second.id,
+        as_of_date=date(2026, 7, 1),
+        db_session=db,
+    )
+
+    assert [row["tax_year"] for row in first_statement["billing_rows"]] == [2025]
+    assert [row["tax_year"] for row in second_statement["billing_rows"]] == [2025]
+
+
+def test_duplicate_td_statement_honors_explicit_successor_property_id(db):
+    first = _prop(db, "06-0012-00094", owner="FIRST OWNER")
+    second = _prop(db, "06-0012-00094", owner="SECOND OWNER")
+    _billing(db, first.id, 2024, assessed=47_900.0)
+    _billing(db, first.id, 2025, assessed=47_900.0)
+    _billing(db, second.id, 2025, assessed=46_350.0)
+    db.add(
+        Property(
+            td_number="06-0012-99999",
+            prev_td_number="06-0012-00094",
+            previous_property_id=first.id,
+            owner_name="EXPLICIT SUCCESSOR",
+            barangay="POBLACION",
+            assessed_value=50_000.0,
+            effectivity_date="2025-01-01",
+        )
+    )
+    db.commit()
+
+    first_statement = get_property_statement_data(
+        first.id, as_of_date=date(2026, 7, 1), db_session=db
+    )
+    second_statement = get_property_statement_data(
+        second.id, as_of_date=date(2026, 7, 1), db_session=db
+    )
+
+    assert [row["tax_year"] for row in first_statement["billing_rows"]] == [2024]
+    assert [row["tax_year"] for row in second_statement["billing_rows"]] == [2025]
+
+
 def test_worklist_adds_live_penalty_to_unpaid_balance(db):
     prop = _prop(db, "TD-LIVE-PENALTY")
     _billing(db, prop.id, 2024, assessed=100_000.0, paid=0.0)

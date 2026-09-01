@@ -1,6 +1,7 @@
 import inspect
 
 from backend.routes import billing, health, payments, properties
+from backend.middleware.security import request_timeout_for_path
 
 
 def test_database_heavy_routes_run_in_fastapi_threadpool():
@@ -55,3 +56,14 @@ def test_database_heavy_routes_run_in_fastapi_threadpool():
 
 def test_pdf_route_keeps_async_thread_offloading():
     assert inspect.iscoroutinefunction(payments.generate_receipt_pdf)
+
+
+def test_property_document_routes_have_bounded_extended_timeout():
+    assert request_timeout_for_path("/properties/4/computation-pdf") == 90
+    assert request_timeout_for_path("/properties/4/tax-bill-pdf") == 90
+    assert request_timeout_for_path("/properties/4/statement-pdf") == 90
+    assert request_timeout_for_path("/properties/4/notice-pdf") == 90
+    assert request_timeout_for_path("/properties/4/notice-preview") == 90
+    assert request_timeout_for_path("/properties/4") == 30
+    assert request_timeout_for_path("/billing/collections") == 90
+    assert request_timeout_for_path("/health") == 30

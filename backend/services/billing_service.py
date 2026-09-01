@@ -247,6 +247,68 @@ def _valid_property_billing_scope(db_session: Session):
     )
 
 
+def _valid_property_billing_scope_for_property(
+    property_id: int,
+    db_session: Session,
+):
+    """Resolve one property's valid billing window without a global TD scan.
+
+    The jurisdiction-wide scope builds a unique-parent map for every active
+    property. That is appropriate for reports, but wasteful for a PDF that
+    already identifies one property by its internal ID. Here we resolve only
+    the selected property's earliest successor year.
+    """
+    prop = (
+        db_session.query(Property)
+        .filter(Property.id == int(property_id), Property.deleted_at == None)
+        .first()
+    )
+    if not prop:
+        return (PropertyBilling.id == None,)
+
+    replacement = aliased(Property)
+    replacement_year = _property_effectivity_year_expr(replacement)
+    successor_filters = [replacement.previous_property_id == prop.id]
+
+    td_key = str(prop.td_number or "").strip().upper()
+    if td_key:
+        active_parent_count = (
+            db_session.query(func.count(Property.id))
+            .filter(
+                Property.deleted_at == None,
+                func.upper(func.trim(Property.td_number)) == td_key,
+            )
+            .scalar()
+        )
+        if int(active_parent_count or 0) == 1:
+            successor_filters.append(
+                and_(
+                    replacement.previous_property_id == None,
+                    func.upper(func.trim(replacement.prev_td_number)) == td_key,
+                )
+            )
+
+    replacement_cutoff = (
+        db_session.query(func.min(replacement_year))
+        .filter(
+            replacement.deleted_at == None,
+            replacement_year != None,
+            or_(*successor_filters),
+        )
+        .scalar()
+    )
+    scope = [
+        PropertyBilling.is_archived == False,
+        or_(
+            _property_effectivity_year_expr(Property) == None,
+            _property_effectivity_year_expr(Property) <= PropertyBilling.tax_year,
+        ),
+    ]
+    if replacement_cutoff is not None:
+        scope.append(PropertyBilling.tax_year < int(replacement_cutoff))
+    return tuple(scope)
+
+
 def _replacement_cutoffs_subquery(db_session: Session):
     """Return the first effective successor year for each previous TD.
 
@@ -1217,6 +1279,12 @@ def get_property_billing_history(
         as_of_date=as_of_date,
     )
 
+    billing_scope = (
+        _valid_property_billing_scope_for_property(property_id, db_session)
+        if property_id
+        else _valid_property_billing_scope(db_session)
+    )
+
     query = (
         db_session.query(
             PropertyBilling.tax_year,
@@ -1243,7 +1311,7 @@ def get_property_billing_history(
         )
         .filter(
             Property.deleted_at == None,
-            *_valid_property_billing_scope(db_session),
+            *billing_scope,
         )
     )
 
