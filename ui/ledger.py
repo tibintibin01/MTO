@@ -299,7 +299,6 @@ class LedgerPage:
             "total_paid",
             "posted_by",
             "remarks",
-            "pdf_copy",
         )
         self.column_labels = (
             tr("property.table.id"),
@@ -313,7 +312,6 @@ class LedgerPage:
             tr("ledger.table.total"),
             tr("ledger.table.posted"),
             "Remarks",
-            tr("ledger.table.status"),
         )
         self.tree = ttk.Treeview(t_frame, columns=self.cols, show="headings", style="Ledger.Treeview")
 
@@ -326,7 +324,6 @@ class LedgerPage:
         self.tree.column("total_paid", width=130)
         self.tree.column("posted_by", width=150)
         self.tree.column("remarks", width=220, anchor="w")
-        self.tree.column("pdf_copy", width=120)
 
         scrolly = ttk.Scrollbar(t_frame, orient="vertical", command=self.tree.yview, style="Ledger.Vertical.TScrollbar")
         self.tree.configure(yscrollcommand=scrolly.set)
@@ -544,13 +541,6 @@ class LedgerPage:
                     if len(r) > 18
                     else ("READY" if file_path else "NOT_GENERATED")
                 )
-                status_key = {
-                    "READY": "ledger.table.status_ready",
-                    "NOT_GENERATED": "ledger.table.status_not_generated",
-                }.get(status_code, "ledger.table.status_missing")
-                status = tr(status_key)
-                f_r.append(status)
-                
                 # Format Currencies
                 f_r[4] = format_curr(f_r[4]) # Basic
                 f_r[5] = format_curr(f_r[5]) # SEF

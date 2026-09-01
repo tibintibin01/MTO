@@ -168,13 +168,15 @@ class TestAssessmentRollFilters(unittest.TestCase):
 
 
 class TestLedgerColumns(unittest.TestCase):
-    def test_pdf_status_column_uses_stable_internal_identifier(self):
+    def test_pdf_status_is_internal_and_not_a_visible_column(self):
         setup_source = inspect.getsource(LedgerPage.setup_ui)
+        update_source = inspect.getsource(LedgerPage._update_ui)
 
-        self.assertIn('"pdf_copy"', setup_source)
-        self.assertIn('self.tree.column("pdf_copy"', setup_source)
-        self.assertNotIn('self.tree.column("File Status"', setup_source)
+        self.assertNotIn('"pdf_copy"', setup_source)
+        self.assertNotIn('ledger.table.status', setup_source)
         self.assertIn("self.column_labels", setup_source)
+        self.assertIn("self._ledger_receipt_statuses[item_id] = status_code", update_source)
+        self.assertNotIn("f_r.append(status)", update_source)
 
 
 class TestCompliantDashboardLabels(unittest.TestCase):
