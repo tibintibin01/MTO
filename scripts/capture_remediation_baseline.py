@@ -32,6 +32,13 @@ DEFAULT_REPORT_DIR = PROJECT_ROOT / "logs"
 PROTECTED_BACKUP_STATUSES = {"CLOUD_ONLY", "SYNCED"}
 SUCCESSFUL_BACKUP_HEALTH = {"OK", "SUCCESS"}
 
+# Running this file directly starts module discovery in scripts rather than the
+# repository root. Add the resolved root before database capture lazily imports
+# backend; this does not load configuration or secrets.
+project_root_text = str(PROJECT_ROOT)
+if project_root_text not in sys.path:
+    sys.path.insert(0, project_root_text)
+
 FINANCIAL_INVARIANTS = (
     "database.properties.total_count",
     "database.properties.active_count",

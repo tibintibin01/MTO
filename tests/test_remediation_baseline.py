@@ -1,9 +1,13 @@
+import subprocess
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from scripts.capture_remediation_baseline import (
+    PROJECT_ROOT,
     assess_database_readiness,
     collect_database_snapshot,
     compare_financial_invariants,
@@ -81,6 +85,25 @@ def _baseline_database_session(tmp_path):
             },
         )
     return Session(engine)
+
+
+def test_direct_script_bootstraps_project_root_for_backend_imports(tmp_path):
+    script = PROJECT_ROOT / "scripts" / "capture_remediation_baseline.py"
+    probe = (
+        "import importlib.util, runpy; "
+        f"runpy.run_path({str(script)!r}); "
+        "raise SystemExit(0 if importlib.util.find_spec('backend.database') else 1)"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=Path(tmp_path),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_database_snapshot_contains_aggregates_without_sensitive_rows(tmp_path):

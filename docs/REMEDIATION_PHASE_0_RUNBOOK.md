@@ -52,6 +52,10 @@ python scripts\capture_remediation_baseline.py --database --require-ready --outp
 `Database readiness: PASS` is required. A REVIEW result must be investigated;
 do not begin Phase 1.
 
+Direct script execution bootstraps the repository root before loading the
+server-only backend modules. The equivalent module command is
+python -m scripts.capture_remediation_baseline.
+
 The client PC must not run the database command unless it is intentionally
 configured as the API/database server. Source-only capture is safe on a client
 checkout.
