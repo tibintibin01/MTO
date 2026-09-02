@@ -44,6 +44,9 @@ jobs:
         pip install -r requirements.txt
         pip install -r dev-requirements.txt
 
+    - name: 🔐 Verify desktop/server trust boundary
+      run: python scripts/verify_desktop_trust_boundary.py
+
     - name: 📏 Lint changed Python files with Black
       shell: bash
       run: |

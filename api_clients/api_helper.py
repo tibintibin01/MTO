@@ -2,7 +2,7 @@ import json
 import requests
 from api_clients.offline_manager import manager
 import threading
-from utils.logger import mto_logger
+from api_clients.client_logger import mto_logger
 
 CONNECTION_STATUS = "ONLINE"  # ONLINE, DEGRADED, OFFLINE, SYNCING
 _CONNECTION_STATUS_LOCK = threading.Lock()
@@ -79,49 +79,28 @@ import tempfile
 from pathlib import Path
 
 # --- NETWORK CONFIGURATION ---
-# Default to localhost for development
-DEFAULT_SERVER_URL = "http://localhost:8001"
+# This file contains endpoint metadata only. Server/database credentials and
+# signing keys are intentionally unavailable to the desktop process.
+from api_clients.client_config import load_client_config
 
-BASE_URL = DEFAULT_SERVER_URL
-
-# Look for an external config file (useful for .exe deployment)
-import sys
-
-if getattr(sys, "frozen", False):
-    # Packaged environment — resolve relative to the folder containing the executable
-    CONFIG_PATH = Path(sys.executable).resolve().parent / "server_config.json"
-else:
-    # Development environment — resolve relative to the project root
-    CONFIG_PATH = Path("server_config.json")
-    if not CONFIG_PATH.exists():
-        CONFIG_PATH = Path(__file__).resolve().parent.parent / "server_config.json"
-
-if not CONFIG_PATH.exists() and getattr(sys, "frozen", False):
-    bundled_config = (
-        Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
-        / "server_config.json"
-    )
-    if bundled_config.exists():
-        CONFIG_PATH = bundled_config
-
-if CONFIG_PATH.exists():
-    try:
-        with open(CONFIG_PATH, "r") as f:
-            config_data = json.load(f)
-            BASE_URL = config_data.get("server_url", DEFAULT_SERVER_URL)
-            print(f"INFO: Connected to Production Server: {BASE_URL}")
-    except Exception as e:
-        print(
-            f"WARNING: Could not read server_config.json, falling back to {DEFAULT_SERVER_URL}: {e}"
-        )
-
+CLIENT_CONFIG = load_client_config()
+BASE_URL = CLIENT_CONFIG.server_url
 API_BASE_URL = BASE_URL
+CONFIG_PATH = CLIENT_CONFIG.source_path
+CERT_PATH = CLIENT_CONFIG.ca_certificate
 
-# --- SECURITY HARDENING: SSL CERTIFICATE PINNING ---
-# We point to the local cert.pem to eliminate MITM vulnerabilities
-# while still supporting our self-signed municipal certificates.
-_CURRENT_DIR = Path(__file__).resolve().parent
-CERT_PATH = _CURRENT_DIR.parent / "backend" / "certs" / "cert.pem"
+if CONFIG_PATH:
+    print(f"INFO: Connected to configured API server: {BASE_URL}")
+else:
+    print(f"INFO: No server_config.json found; using {BASE_URL}")
+
+
+def get_tls_verification():
+    """Return the configured CA path, or the legacy Phase-2 fallback."""
+    if CERT_PATH is not None and CERT_PATH.is_file():
+        return str(CERT_PATH)
+    return False
+
 
 _SESSION_TOKEN = None
 _TOKEN_REFRESH_LOCK = threading.Lock()
@@ -224,7 +203,7 @@ def _try_refresh(rejected_token=None) -> bool:
                 json={"refresh_token": _REFRESH_TOKEN},
                 headers={"X-Requested-With": "XMLHttpRequest"},
                 timeout=10,
-                verify=str(CERT_PATH) if CERT_PATH.exists() else False,
+                verify=get_tls_verification(),
             )
             if resp.status_code == 200:
                 new_token = resp.json().get("access_token")
@@ -326,11 +305,12 @@ def api_request(
         # 1. Telemetry: Generate Request ID and start timer
         set_request_id()
 
-        # 4. Final Security Check: Use pinned certificate instead of verify=False
-        # If cert file is missing, we fallback to False only if explicitly configured (for emergency debug)
-        verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
+        # Phase 2 will make certificate verification mandatory. Phase 1 keeps
+        # compatibility while moving the certificate path into non-secret
+        # desktop configuration.
+        verify_param = get_tls_verification()
         if not verify_param:
-            print("WARNING: SSL Certificate NOT FOUND. Falling back to insecure mode.")
+            print("WARNING: TLS certificate verification is not configured.")
 
         file_positions = _capture_file_positions(files)
         for attempt in range(2):
@@ -512,7 +492,7 @@ def api_download_file(method, endpoint, params=None, timeout=120):
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        verify_param = str(CERT_PATH) if CERT_PATH.exists() else False
+        verify_param = get_tls_verification()
 
         for attempt in range(2):
             request_token = _SESSION_TOKEN

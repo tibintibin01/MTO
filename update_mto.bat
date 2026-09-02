@@ -7,7 +7,7 @@ echo   Bayan ng Dipaculao, Aurora
 echo ================================================
 echo.
 
-echo [1/4] Pulling latest code from GitHub...
+echo [1/5] Pulling latest code from GitHub...
 cd /d C:\MTO
 
 REM Frontend installs/builds can rewrite tracked generated artifacts and block
@@ -32,7 +32,7 @@ if %errorlevel% neq 0 (
 echo Done.
 echo.
 
-echo [2/4] Stopping old services safely...
+echo [2/5] Stopping old services safely...
 set "MTO_API_TASK_INSTALLED="
 schtasks /Query /TN "MTO Treasury API" >nul 2>&1
 if %errorlevel% equ 0 (
@@ -48,7 +48,7 @@ if %errorlevel% neq 0 (
 echo Done.
 echo.
 
-echo [3/4] Installing/updating Python dependencies...
+echo [3/5] Installing/updating Python dependencies...
 call venv\Scripts\activate
 pip install -r requirements.txt -q
 if %errorlevel% neq 0 (
@@ -59,10 +59,20 @@ if %errorlevel% neq 0 (
 echo Done.
 echo.
 
+echo [4/5] Applying server database migrations...
+python -m migration_manager
+if %errorlevel% neq 0 (
+    echo ERROR: Database migration failed. Services were not restarted.
+    echo Review the error above and restore from the verified backup if required.
+    pause
+    exit /b 1
+)
+echo Done.
+echo.
 REM The public portal is hosted on Vercel. The optional LAN portal can still be
 REM started deliberately with run_system.bat, but this updater no longer builds
 REM or starts a redundant local Next.js process on port 3000.
-echo [4/4] Starting updated services...
+echo [5/5] Starting updated services...
 cd C:\MTO
 call venv\Scripts\activate
 if defined MTO_API_TASK_INSTALLED (

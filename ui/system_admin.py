@@ -810,16 +810,11 @@ class SystemAdminPage:
         if not os.path.exists(path):
             # Check if we are running on a remote client
             import urllib.parse
-            server_ip = "127.0.0.1"
-            try:
-                with open("server_config.json", "r") as config_file:
-                    import json
-                    cfg = json.load(config_file)
-                    server_url = cfg.get("server_url", "")
-                    parsed = urllib.parse.urlparse(server_url)
-                    server_ip = parsed.hostname or "127.0.0.1"
-            except Exception:
-                pass
+            from api_clients.client_config import load_client_config
+
+            server_url = load_client_config().server_url
+            parsed = urllib.parse.urlparse(server_url)
+            server_ip = parsed.hostname or "127.0.0.1"
 
             is_remote = server_ip not in ("localhost", "127.0.0.1", "::1")
 
