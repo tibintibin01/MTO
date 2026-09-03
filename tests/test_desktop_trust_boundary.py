@@ -53,6 +53,31 @@ def test_pyz_manifest_rejects_server_module(tmp_path):
     assert "backend.database" in errors[0]
 
 
+def test_pyz_manifest_rejects_server_credential_rotation_module(tmp_path):
+    manifest = tmp_path / "PYZ-00.toc"
+    manifest.write_text(
+        repr(
+            (
+                "PYZ-00.pyz",
+                [
+                    ("api_clients.api_helper", "safe.py", "PYMODULE"),
+                    (
+                        "scripts.rotate_server_credentials",
+                        "unsafe.py",
+                        "PYMODULE",
+                    ),
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_pyz_manifest(manifest)
+
+    assert errors
+    assert "scripts.rotate_server_credentials" in errors[0]
+
+
 def test_pyz_manifest_accepts_client_modules(tmp_path):
     manifest = tmp_path / "PYZ-00.toc"
     manifest.write_text(

@@ -106,6 +106,7 @@ a = Analysis(
         'migration_manager',
         'pymysql',
         'pytest',
+        'scripts.rotate_server_credentials',
         'sqlalchemy',
         'utils.config',
         'utils.db_compat',

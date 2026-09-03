@@ -33,6 +33,7 @@ FORBIDDEN_IMPORTS = frozenset(
         "dotenv",
         "migration_manager",
         "pymysql",
+        "scripts.rotate_server_credentials",
         "sqlalchemy",
         "utils.config",
         "utils.db_compat",

@@ -83,6 +83,58 @@ are separately approved.
    workstation's completion.
 9. Rotate database credentials and JWT signing keys only after every old client
    build has been removed. Rotation is a separately approved operational step.
+   Do not use `scripts\rotate_jwt_secret.py`; the legacy helper is disabled
+   because production secrets must never be displayed in a terminal.
+
+## Final server credential rotation
+
+Run this section on the API server only, after all old clients have been
+removed and after separate approval for the live rotation. The utility never
+prints a credential. It rotates the application database account, every
+MariaDB root host entry, and the JWT signing key as one recoverable operation.
+
+1. Run **Start Hybrid Backup** and require a current cloud sync, restore test
+   `SUCCESS`, and protected server/cloud storage.
+2. Stop the API and its recovery supervisor:
+
+   ```bat
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop_mto_runtime.ps1 -ProjectRoot C:\MTO
+   ```
+
+3. Activate the server virtual environment and run the read-only preflight:
+
+   ```bat
+   call venv\Scripts\activate
+   python -m scripts.rotate_server_credentials --preflight
+   ```
+
+4. Only after explicit live-rotation approval, start the operation and type the
+   exact confirmation phrase shown by the command:
+
+   ```bat
+   python -m scripts.rotate_server_credentials --apply
+   ```
+
+   The utility first stages replacement values in
+   `C:\ProgramData\MTO\secrets.json`, then changes MariaDB, validates the new
+   logins, revokes active refresh tokens, updates the server `.env` and vault,
+   removes stale secret aliases, and writes the privacy-safe report
+   `logs\remediation-phase-1-credential-rotation.json`. If interrupted, keep
+   the API stopped and rerun `--apply`; it resumes the staged rotation.
+
+5. Restart and wait for readiness:
+
+   ```bat
+   schtasks /Run /TN "MTO Treasury API"
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\wait_for_mto_api.ps1 -TimeoutSeconds 90
+   ```
+
+6. Confirm an old session is rejected, then sign in again and test property
+   search, Payment Ledger, duplicate-TD separation, and one PDF.
+7. Run **Start Hybrid Backup** again and require a new cloud timestamp and
+   restore test `SUCCESS` under the rotated credentials.
+
+Never restore a quarantined client `.env` or copy any server secret to a client.
 
 ## Rollback
 
