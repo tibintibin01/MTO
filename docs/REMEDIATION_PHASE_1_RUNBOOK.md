@@ -86,6 +86,58 @@ are separately approved.
    Do not use `scripts\rotate_jwt_secret.py`; the legacy helper is disabled
    because production secrets must never be displayed in a terminal.
 
+## Lost root credential recovery
+
+Use this server-only recovery only when
+`scripts.rotate_server_credentials --preflight` fails because every configured
+root credential is rejected, while the application database account still works
+and the MariaDB service identity matches the reviewed installation.
+
+1. Run **Start Hybrid Backup** and require a current cloud sync, restore test
+   `SUCCESS`, and protected server/cloud storage.
+2. Run the read-only recovery preflight while the normal MariaDB service is
+   running:
+
+   ```bat
+   python -m scripts.recover_mariadb_root --preflight
+   ```
+
+   It validates the exact `MariaDB` Windows service, MariaDB 10.6 binary,
+   defaults file, backup readiness, application login, and root-login failure.
+   It does not stage credentials or stop a service.
+
+3. After separate approval for the live recovery, stop the API and its recovery
+   supervisor:
+
+   ```bat
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\stop_mto_runtime.ps1 -ProjectRoot C:\MTO
+   ```
+
+4. Start the controlled recovery and type the exact confirmation phrase shown:
+
+   ```bat
+   python -m scripts.recover_mariadb_root --apply
+   ```
+
+   The utility first stages the full Phase 1 replacement secret set in the
+   protected machine vault. It then writes an ACL-restricted one-statement
+   MariaDB initialization file, stops the reviewed service, starts only the
+   exact reviewed server binary, changes only `root@localhost`, removes the
+   initialization file, performs a clean shutdown, and restores and validates
+   the normal service. It never enables `--skip-grant-tables` and never displays
+   a credential.
+
+5. Keep the API stopped. Continue immediately with the final server credential
+   rotation preflight and apply steps below. That resumable operation changes
+   every root host entry, the application database account, and the JWT key.
+
+If recovery stops safely, the generated replacement secrets remain protected in
+the vault for a resumable retry, and the utility attempts to restore the normal
+MariaDB service before returning. Keep the API stopped and inspect the
+privacy-safe error; do not use an improvised grant-table bypass or password-reset
+procedure. If recovery completed but only report writing failed, do not rerun
+recovery; continue with the credential-rotation preflight.
+
 ## Final server credential rotation
 
 Run this section on the API server only, after all old clients have been

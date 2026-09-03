@@ -94,3 +94,28 @@ def test_pyz_manifest_accepts_client_modules(tmp_path):
     )
 
     assert verify_pyz_manifest(manifest) == []
+
+
+def test_pyz_manifest_rejects_mariadb_root_recovery_module(tmp_path):
+    manifest = tmp_path / "PYZ-00.toc"
+    manifest.write_text(
+        repr(
+            (
+                "PYZ-00.pyz",
+                [
+                    ("api_clients.api_helper", "safe.py", "PYMODULE"),
+                    (
+                        "scripts.recover_mariadb_root",
+                        "unsafe.py",
+                        "PYMODULE",
+                    ),
+                ],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_pyz_manifest(manifest)
+
+    assert errors
+    assert "scripts.recover_mariadb_root" in errors[0]
