@@ -62,6 +62,12 @@ def test_untrusted_host_header_is_rejected():
     assert response.status_code == 400
 
 
+def test_trusted_host_header_is_case_insensitive():
+    response = client.get("/", headers={"Host": "TESTSERVER"})
+
+    assert response.status_code == 200
+
+
 def test_https_response_sets_hsts():
     secure_client = TestClient(app, base_url="https://testserver")
 

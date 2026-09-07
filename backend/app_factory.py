@@ -43,6 +43,20 @@ except ImportError:
     SENTRY_AVAILABLE = False
 
 
+class CaseInsensitiveTrustedHostMiddleware(TrustedHostMiddleware):
+    """Apply Starlette's host allowlist using DNS case-insensitive matching."""
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            normalized_scope = dict(scope)
+            normalized_scope["headers"] = [
+                (name, value.lower() if name.lower() == b"host" else value)
+                for name, value in scope.get("headers", [])
+            ]
+            scope = normalized_scope
+        await super().__call__(scope, receive, send)
+
+
 def _production(environment: Mapping[str, str]) -> bool:
     return environment.get("MTO_ENVIRONMENT", "development").lower() == "production"
 
@@ -287,7 +301,10 @@ def create_app() -> FastAPI:
         ],
     )
 
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=configured_trusted_hosts())
+    app.add_middleware(
+        CaseInsensitiveTrustedHostMiddleware,
+        allowed_hosts=configured_trusted_hosts(),
+    )
 
     # App Middlewares
     app.middleware("http")(maintenance_mode_middleware)
