@@ -73,7 +73,7 @@ Start-Sleep -Seconds 2
 
 $action = New-ScheduledTaskAction `
     -Execute $Python `
-    -Argument ('"{0}"' -f $Supervisor) `
+    -Argument "-m scripts.run_api_supervisor" `
     -WorkingDirectory $ProjectRoot
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $taskPrincipal = New-ScheduledTaskPrincipal `

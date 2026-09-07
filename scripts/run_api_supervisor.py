@@ -16,6 +16,8 @@ from urllib.request import Request, urlopen
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 LOG_PATH = PROJECT_ROOT / "logs" / "api_supervisor.log"
 LOCK_PATH = PROJECT_ROOT / "logs" / "api_supervisor.lock"
 MIN_STABLE_RUNTIME_SECONDS = 30
