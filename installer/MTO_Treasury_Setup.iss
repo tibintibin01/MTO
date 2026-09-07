@@ -31,7 +31,8 @@ Name: "{app}\logs"
 
 [Files]
 Source: "..\dist\Treasury.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\server_config.json"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+Source: "..\dist\server_config.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\certificates\mto-lan-ca.pem"; DestDir: "{app}\certificates"; Flags: ignoreversion
 Source: "default_config.json"; DestDir: "{app}"; DestName: "config.json"; Flags: ignoreversion onlyifdoesntexist
 Source: "..\MTO_Treasury_User_Manual.html"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 

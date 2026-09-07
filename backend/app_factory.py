@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 import os
 from contextlib import asynccontextmanager
+from typing import Mapping
+from urllib.parse import urlparse
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -33,9 +37,103 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 try:
     import sentry_sdk
+
     SENTRY_AVAILABLE = True
 except ImportError:
     SENTRY_AVAILABLE = False
+
+
+def _production(environment: Mapping[str, str]) -> bool:
+    return environment.get("MTO_ENVIRONMENT", "development").lower() == "production"
+
+
+def configured_cors_origins(
+    environment: Mapping[str, str] | None = None,
+) -> list[str]:
+    env = environment if environment is not None else os.environ
+    origins = ["https://mto-portal-dipaculao.vercel.app"]
+    if not _production(env):
+        origins.extend(
+            [
+                "https://localhost",
+                "https://127.0.0.1",
+                "https://localhost:8001",
+            ]
+        )
+    for variable in ("CORS_ORIGIN", "MTO_CORS_ORIGINS"):
+        for raw_origin in env.get(variable, "").split(","):
+            raw_origin = raw_origin.strip().rstrip("/")
+            if not raw_origin:
+                continue
+            parsed = urlparse(raw_origin)
+            if (
+                raw_origin == "*"
+                or parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username
+                or parsed.password
+                or parsed.query
+                or parsed.fragment
+                or parsed.path
+            ):
+                raise RuntimeError(f"Unsafe CORS origin in {variable}: {raw_origin!r}")
+            if parsed.scheme != "https" and (
+                _production(env) or parsed.hostname not in {"localhost", "127.0.0.1"}
+            ):
+                raise RuntimeError(
+                    f"Plaintext CORS origin is not permitted: {raw_origin!r}"
+                )
+            if raw_origin not in origins:
+                origins.append(raw_origin)
+    return origins
+
+
+def configured_trusted_hosts(
+    environment: Mapping[str, str] | None = None,
+) -> list[str]:
+    env = environment if environment is not None else os.environ
+    hosts: list[str] = []
+    sources = (
+        env.get("MTO_TRUSTED_HOSTS", ""),
+        env.get("MTO_TLS_SERVER_NAMES", ""),
+        env.get("VERCEL_URL", ""),
+        env.get("VERCEL_PROJECT_PRODUCTION_URL", ""),
+    )
+    for source in sources:
+        for raw_host in source.split(","):
+            raw_host = raw_host.strip().lower().rstrip(".")
+            if not raw_host:
+                continue
+            parsed = urlparse(raw_host if "://" in raw_host else f"//{raw_host}")
+            host = (parsed.hostname or "").lower().rstrip(".")
+            try:
+                parsed.port
+            except ValueError as exc:
+                raise RuntimeError(f"Unsafe trusted host: {raw_host!r}") from exc
+            if (
+                not host
+                or raw_host == "*"
+                or "*" in host
+                or parsed.username
+                or parsed.password
+                or parsed.query
+                or parsed.fragment
+                or parsed.path not in {"", "/"}
+                or (parsed.scheme and parsed.scheme not in {"http", "https"})
+                or (_production(env) and parsed.scheme == "http")
+            ):
+                raise RuntimeError(f"Unsafe trusted host: {raw_host!r}")
+            if host not in hosts:
+                hosts.append(host)
+    if not _production(env):
+        for development_host in ("localhost", "127.0.0.1", "testserver"):
+            if development_host not in hosts:
+                hosts.append(development_host)
+    if not hosts:
+        raise RuntimeError(
+            "Production requires MTO_TRUSTED_HOSTS or an approved hosting hostname."
+        )
+    return hosts
 
 
 @asynccontextmanager
@@ -53,24 +151,22 @@ async def lifespan(app: FastAPI):
     from backend.services.migration_service import (
         ensure_refresh_token_session_columns,
     )
+
     try:
         with SessionLocal() as db:
             ensure_refresh_token_session_columns(db)
         mto_logger.info("Authentication session schema verified on startup.")
     except Exception as e:
-        mto_logger.critical(
-            f"Authentication session schema verification failed: {e}"
-        )
-        raise RuntimeError(
-            "Authentication database schema is not ready"
-        ) from e
-    
+        mto_logger.critical(f"Authentication session schema verification failed: {e}")
+        raise RuntimeError("Authentication database schema is not ready") from e
+
     # Portfolios are an optional organizational feature. Create its two
     # association-only tables idempotently for installations whose updater does
     # not run Alembic, but never prevent the core revenue system from starting
     # if the configured DB account does not have DDL permission.
     try:
         from backend.services.portfolio_service import ensure_portfolio_schema
+
         with SessionLocal() as db:
             ensure_portfolio_schema(db)
         mto_logger.info("Property portfolio schema verified on startup.")
@@ -94,14 +190,13 @@ async def lifespan(app: FastAPI):
                     f"{result['records_created']} missing year(s)."
                 )
     except Exception as e:
-        mto_logger.warning(
-            f"Could not verify duplicate TD billing readiness: {e}"
-        )
+        mto_logger.warning(f"Could not verify duplicate TD billing readiness: {e}")
 
     # Refresh dashboard stats so the first page load shows real numbers.
     try:
         from backend.services.migration_service import ensure_payment_remarks_column
         from backend.services.stats_service import refresh_system_stats
+
         with SessionLocal() as db:
             ensure_payment_remarks_column(db)
             refresh_system_stats(db_session=db)
@@ -111,6 +206,7 @@ async def lifespan(app: FastAPI):
 
     # Start the background job worker thread
     from backend.services.job_service import start_worker
+
     start_worker()
     mto_logger.info("Background job worker started.")
 
@@ -120,6 +216,7 @@ async def lifespan(app: FastAPI):
     mto_logger.info("API Server shutting down — draining workers and closing DB pool.")
     try:
         from backend.database import engine
+
         engine.dispose()
         mto_logger.info("DB connection pool disposed cleanly.")
     except Exception as e:
@@ -149,7 +246,7 @@ def create_app() -> FastAPI:
             "name": "Proprietary",
         },
         docs_url="/docs",
-        redoc_url="/redoc"
+        redoc_url="/redoc",
     )
 
     # Rate Limiting Configuration
@@ -164,21 +261,7 @@ def create_app() -> FastAPI:
 
     # Register Middlewares (evaluated in reverse order of addition)
     # CORS Middleware (should be outer most/evaluated first for preflight requests)
-    origins = [
-        "http://localhost",
-        "http://127.0.0.1",
-        "http://localhost:8001",
-        "https://localhost:8001",
-        "http://localhost:3000",
-        "https://mto-portal-dipaculao.vercel.app",
-    ]
-
-    # Allow extra origins configured via .env or hosting provider variables.
-    for _origin_var in ("CORS_ORIGIN", "MTO_CORS_ORIGINS"):
-        for _extra_origin in os.getenv(_origin_var, "").split(","):
-            _extra_origin = _extra_origin.strip()
-            if _extra_origin and _extra_origin not in origins:
-                origins.append(_extra_origin)
+    origins = configured_cors_origins()
 
     app.add_middleware(
         CORSMiddleware,
@@ -190,6 +273,7 @@ def create_app() -> FastAPI:
             "Content-Type",
             "Accept",
             "X-CSRF-Token",
+            "X-Requested-With",
             "X-Idempotency-Key",
             "X-Request-ID",
             "X-Correlation-ID",
@@ -203,6 +287,8 @@ def create_app() -> FastAPI:
         ],
     )
 
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=configured_trusted_hosts())
+
     # App Middlewares
     app.middleware("http")(maintenance_mode_middleware)
     app.middleware("http")(observability_middleware)
@@ -212,7 +298,19 @@ def create_app() -> FastAPI:
     app.middleware("http")(request_timeout_middleware)
 
     # Import and Include Routers
-    from backend.routes import auth, users, properties, payments, billing, system, public, jobs, reports, portfolios
+    from backend.routes import (
+        auth,
+        users,
+        properties,
+        payments,
+        billing,
+        system,
+        public,
+        jobs,
+        reports,
+        portfolios,
+    )
+
     app.include_router(auth.router)
     app.include_router(users.router)
     app.include_router(properties.router)
@@ -234,9 +332,13 @@ def create_app() -> FastAPI:
     # Root endpoint
     @app.get("/")
     async def root():
-        return {"message": "Municipal Revenue System API is running", "status": "online"}
+        return {
+            "message": "Municipal Revenue System API is running",
+            "status": "online",
+        }
 
     return app
+
 
 # Instantiate the global application instance
 app = create_app()

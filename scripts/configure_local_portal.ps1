@@ -85,7 +85,7 @@ Set-EnvValues $backendEnvPath @{
 } 'Local public portal snapshot'
 
 Set-EnvValues $frontendEnvPath @{
-    NEXT_PUBLIC_API_URL = "http://${ServerIp}:8001"
+    NEXT_PUBLIC_API_URL = "https://${ServerIp}:8001"
     MTO_PORTAL_LOOKUP_SECRET = $lookupSecret
     MTO_PORTAL_SNAPSHOT_PATH = $snapshotPath
     MTO_PORTAL_MAX_SNAPSHOT_AGE_HOURS = '36'

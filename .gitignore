@@ -35,9 +35,13 @@ config.json
 server_config.json
 
 # TLS certificates — NEVER commit private keys to version control.
-# Generate fresh certs per environment: python backend/generate_certs.py
+# TLS material is provisioned per environment by scripts.provision_server_tls.
 backend/certs/*.pem
 backend/certs/*.key
+certificates/*.pem
+certificates/*.crt
+*.pfx
+*.p12
 
 # IDEs
 .vscode/

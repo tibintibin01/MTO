@@ -147,7 +147,7 @@ npm start
 
 ```bash
 # Backend health
-curl http://localhost:8001/healthz
+python -m scripts.check_api_readiness --timeout-seconds 90
 
 # Frontend health
 curl http://localhost:3000
@@ -156,7 +156,7 @@ curl http://localhost:3000
 redis-cli ping
 
 # Rate limiting (should use Redis)
-curl -I http://localhost:8001/api/v1/public/property/test
+curl --cacert C:/ProgramData/MTO/tls/mto-lan-ca.pem -I https://localhost:8001/api/v1/public/property/test
 # Check X-RateLimit-* headers
 ```
 
@@ -219,7 +219,7 @@ If deployment fails:
 
 ### 1. Identify Issue
 - Check logs: `tail -f logs/system.log logs/error.log`
-- Check health: `curl http://localhost:8001/healthz`
+- Check health: `python -m scripts.check_api_readiness --timeout-seconds 90`
 - Check Redis: `redis-cli ping`
 
 ### 2. Quick Fixes

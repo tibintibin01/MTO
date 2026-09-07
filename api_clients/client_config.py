@@ -1,6 +1,7 @@
 """Strict, non-secret configuration for the desktop API client."""
 
 from dataclasses import dataclass
+import os
 import json
 from pathlib import Path
 import sys
@@ -8,7 +9,7 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 
-DEFAULT_SERVER_URL = "http://localhost:8001"
+DEFAULT_SERVER_URL = "https://localhost:8001"
 _ALLOWED_KEYS = frozenset({"server_url", "ca_certificate", "client_version"})
 _SENSITIVE_KEY_MARKERS = (
     "secret",
@@ -35,6 +36,15 @@ class ClientConfig:
 
 
 def _candidate_paths() -> list[Path]:
+    override = os.getenv("MTO_CLIENT_CONFIG_PATH", "").strip()
+    if override:
+        return [Path(override).expanduser().resolve()]
+
+    # Server-side pytest processes must not accidentally consume a developer's
+    # ignored workstation config from the repository root.
+    if os.getenv("MTO_ENVIRONMENT", "").strip().lower() == "test":
+        return []
+
     if getattr(sys, "frozen", False):
         executable_dir = Path(sys.executable).resolve().parent
         bundled_dir = Path(getattr(sys, "_MEIPASS", executable_dir)).resolve()
@@ -83,9 +93,9 @@ def _validate_keys(data: dict[str, Any], source: Path) -> None:
 def _validate_server_url(value: Any, source: Path) -> str:
     server_url = str(value or DEFAULT_SERVER_URL).strip().rstrip("/")
     parsed = urlparse(server_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    if parsed.scheme != "https" or not parsed.hostname:
         raise ClientConfigurationError(
-            f"{source.name} server_url must be an http(s) URL with a hostname"
+            f"{source.name} server_url must be an HTTPS URL with a hostname"
         )
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ClientConfigurationError(
@@ -100,7 +110,16 @@ def _certificate_path(value: Any, source: Path) -> Optional[Path]:
     path = Path(str(value).strip())
     if not path.is_absolute():
         path = source.parent / path
-    return path.resolve()
+    resolved = path.resolve()
+    if not resolved.is_file():
+        raise ClientConfigurationError(
+            f"{source.name} trusted CA certificate was not found: {resolved}"
+        )
+    if resolved.suffix.lower() not in {".pem", ".crt", ".cer"}:
+        raise ClientConfigurationError(
+            f"{source.name} ca_certificate must reference a PEM or certificate file"
+        )
+    return resolved
 
 
 def load_client_config(path: Optional[Path] = None) -> ClientConfig:

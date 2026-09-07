@@ -13,13 +13,21 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
+from dotenv import load_dotenv
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOG_PATH = PROJECT_ROOT / "logs" / "api_supervisor.log"
 LOCK_PATH = PROJECT_ROOT / "logs" / "api_supervisor.lock"
 MIN_STABLE_RUNTIME_SECONDS = 30
+load_dotenv(PROJECT_ROOT / ".env")
+
+from scripts.tls_health import health_url, ssl_context_for_health_url
+
+
 INITIAL_RESTART_DELAY_SECONDS = 2
 MAX_RESTART_DELAY_SECONDS = 30
-HEALTH_URL = os.getenv("MTO_SUPERVISOR_HEALTH_URL", "http://127.0.0.1:8001/readyz")
+HEALTH_URL = health_url()
+HEALTH_SSL_CONTEXT = ssl_context_for_health_url(HEALTH_URL)
 HEALTH_CHECK_INTERVAL_SECONDS = 5
 HEALTH_CHECK_TIMEOUT_SECONDS = 2
 STARTUP_GRACE_SECONDS = 30
@@ -190,7 +198,11 @@ def _wait_for_child(child: subprocess.Popen) -> tuple[int, bool]:
 
         try:
             request = Request(HEALTH_URL, method="GET")
-            with urlopen(request, timeout=HEALTH_CHECK_TIMEOUT_SECONDS) as response:
+            with urlopen(
+                request,
+                timeout=HEALTH_CHECK_TIMEOUT_SECONDS,
+                context=HEALTH_SSL_CONTEXT,
+            ) as response:
                 if response.status >= 500:
                     raise HTTPError(
                         HEALTH_URL,
@@ -257,7 +269,11 @@ def run() -> int:
             child = None
 
         runtime = time.monotonic() - started_at
-        exit_reason = "was replaced after a health-check failure" if replaced_unhealthy else "exited"
+        exit_reason = (
+            "was replaced after a health-check failure"
+            if replaced_unhealthy
+            else "exited"
+        )
         _log(
             f"API child {exit_reason} with code {exit_code} after {runtime:.1f}s; "
             f"restarting in {restart_delay}s"

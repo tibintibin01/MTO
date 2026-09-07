@@ -25,11 +25,30 @@ def test_distribution_rejects_legacy_env_file(tmp_path):
 
 def test_distribution_accepts_executable_and_endpoint_config(tmp_path):
     (tmp_path / "Treasury.exe").write_bytes(b"desktop-binary")
+    certificates = tmp_path / "certificates"
+    certificates.mkdir()
+    (certificates / "mto-lan-ca.pem").write_text("public CA", encoding="utf-8")
     (tmp_path / "server_config.json").write_text(
-        '{"server_url":"http://127.0.0.1:8001"}', encoding="utf-8"
+        '{"server_url":"https://127.0.0.1:8001","ca_certificate":"certificates/mto-lan-ca.pem"}',
+        encoding="utf-8",
     )
 
     assert verify_distribution(tmp_path) == []
+
+
+def test_distribution_rejects_tls_private_key(tmp_path):
+    certificates = tmp_path / "certificates"
+    certificates.mkdir()
+    (certificates / "mto-lan-ca.pem").write_text("public CA", encoding="utf-8")
+    (certificates / "server-key.pem").write_text("private key", encoding="utf-8")
+    (tmp_path / "server_config.json").write_text(
+        '{"server_url":"https://127.0.0.1:8001","ca_certificate":"certificates/mto-lan-ca.pem"}',
+        encoding="utf-8",
+    )
+
+    errors = verify_distribution(tmp_path)
+
+    assert any("server-key.pem" in error for error in errors)
 
 
 def test_pyz_manifest_rejects_server_module(tmp_path):

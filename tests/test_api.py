@@ -49,11 +49,26 @@ def test_invalid_login():
 
 def test_cors_headers():
     """Verify that CORS protection is active."""
-    headers = {"Origin": "http://localhost", "X-Requested-With": "XMLHttpRequest"}
+    headers = {"Origin": "https://localhost", "X-Requested-With": "XMLHttpRequest"}
     response = client.get("/", headers=headers)
     assert response.status_code == 200
     # CORS headers are added by middleware, TestClient should see them
     assert "access-control-allow-origin" in response.headers
+
+
+def test_untrusted_host_header_is_rejected():
+    response = client.get("/", headers={"Host": "attacker.invalid"})
+
+    assert response.status_code == 400
+
+
+def test_https_response_sets_hsts():
+    secure_client = TestClient(app, base_url="https://testserver")
+
+    response = secure_client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["strict-transport-security"].startswith("max-age=")
 
 
 def test_backup_status_access_denied():

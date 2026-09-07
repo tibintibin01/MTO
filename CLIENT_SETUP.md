@@ -2,12 +2,17 @@
 
 This document outlines the **N-Tier API Architecture** setup for the modernized MTO Treasury System. Follow these steps to ensure a secure, high-performance connection between the Server and Client machines.
 
+> **Phase 2 security notice:** This older guide is retained for architecture
+> background only. Do not copy `.env`, Python, database credentials, or the
+> project tree to a client PC. Follow
+> [`docs/REMEDIATION_PHASE_2_RUNBOOK.md`](docs/REMEDIATION_PHASE_2_RUNBOOK.md)
+> for the approved HTTPS server and desktop package procedure.
 ---
 
 ## 🏗️ 1. ARCHITECTURE OVERVIEW
 Unlike the old monolithic setup, this system uses a **Centralized API Server**. 
 - **Server Machine:** Runs the MySQL Database AND the FastAPI Backend.
-- **Client Machine:** Runs the Desktop UI and connects to the Server via HTTP/REST.
+- **Client Machine:** Runs `Treasury.exe` and connects through authenticated HTTPS/REST.
 - **Security:** Clients do NOT connect to MySQL directly. All traffic is routed through the API for auditing and rate-limiting.
 
 ---
@@ -31,7 +36,7 @@ Unlike the old monolithic setup, this system uses a **Centralized API Server**.
    ```powershell
    .\run_server.bat
    ```
-3. The server will start on `http://0.0.0.0:8000` (or `8001`). Note the Server's IP address (e.g., `192.168.1.151`).
+3. The API binds its configured LAN interface using authenticated HTTPS on port `8001`.
 
 ### **C. Firewall Configuration**
 You must allow inbound traffic on the **API Port** (e.g., 8000). Run this as Admin:
@@ -50,7 +55,7 @@ New-NetFirewallRule -DisplayName "MTO API Server" -Direction Inbound -Protocol T
 4. Open the `.env` (or `api_config.json`) and point the **API_URL** to the Server's IP:
    ```env
    # Example for Client PC
-   MTO_API_URL=http://192.168.1.151:8000
+   See the external HTTPS `server_config.json` example in the Phase 2 runbook.
    ```
 
 ### **B. Launch the Interface**
@@ -65,7 +70,7 @@ Start the modernized UI:
 
 To verify that the Client can see the Server and the Database is healthy, visit the **Orchestration Beacon** in any browser:
 ```text
-http://[SERVER_IP]:8000/healthz
+python -m scripts.check_api_readiness --timeout-seconds 90
 ```
 
 **Expected JSON Response:**

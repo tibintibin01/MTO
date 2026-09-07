@@ -99,22 +99,13 @@ Register-ScheduledTask `
     -Force | Out-Null
 
 Start-ScheduledTask -TaskName $TaskName
-$ready = $false
-for ($attempt = 1; $attempt -le 30; $attempt++) {
-    Start-Sleep -Seconds 2
-    try {
-        $response = Invoke-WebRequest `
-            -Uri "http://127.0.0.1:8001/readyz" `
-            -UseBasicParsing `
-            -TimeoutSec 3
-        if ($response.StatusCode -eq 200) {
-            $ready = $true
-            break
-        }
-    }
-    catch {
-        # The supervisor may still be starting MariaDB connections and routes.
-    }
+Push-Location $ProjectRoot
+try {
+    & $Python -m scripts.check_api_readiness --timeout-seconds 90
+    $ready = $LASTEXITCODE -eq 0
+}
+finally {
+    Pop-Location
 }
 $task = Get-ScheduledTask -TaskName $TaskName
 $info = Get-ScheduledTaskInfo -TaskName $TaskName
@@ -126,5 +117,5 @@ if (-not $ready) {
 Write-Host "MTO API startup recovery installed successfully."
 Write-Host "Task state: $($task.State)"
 Write-Host "Last task result: $($info.LastTaskResult)"
-Write-Host "API readiness: ONLINE"
+Write-Host "API authenticated readiness: ONLINE"
 Write-Host "Supervisor log: $ProjectRoot\logs\api_supervisor.log"

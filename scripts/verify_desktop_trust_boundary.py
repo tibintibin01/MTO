@@ -30,6 +30,9 @@ FORBIDDEN_IMPORTS = frozenset(
         "boto3",
         "botocore",
         "database_hardening_tool",
+        "scripts.check_api_readiness",
+        "scripts.provision_server_tls",
+        "scripts.tls_health",
         "dotenv",
         "migration_manager",
         "pymysql",
@@ -193,8 +196,22 @@ def verify_distribution(path: Path) -> list[str]:
             lowered in FORBIDDEN_DISTRIBUTION_NAMES
             or lowered.endswith(".key")
             or "private_key" in lowered
+            or lowered.endswith("-key.pem")
+            or lowered.endswith("_key.pem")
         ):
             errors.append(f"forbidden sensitive build companion: {item}")
+
+    config_path = path / "server_config.json"
+    if not config_path.is_file():
+        errors.append(f"desktop endpoint configuration is missing: {config_path}")
+    else:
+        try:
+            from api_clients.client_config import load_client_config
+
+            load_client_config(config_path)
+        except ValueError as exc:
+            errors.append(f"unsafe desktop distribution configuration: {exc}")
+
     return errors
 
 

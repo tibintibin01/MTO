@@ -459,12 +459,13 @@
       A common local server setting looks like this:
     </p>
     <pre>{
-  "server_url": "http://localhost:8001"
+  "server_url": "https://&lt;SERVER_IP&gt;:8001",
+  "ca_certificate": "certificates/mto-lan-ca.pem"
 }</pre>
 
     <p>
       For office network deployment, replace <code>localhost</code> with the server
-      computer's IP address, for example <code>http://192.168.1.15:8001</code>.
+      computer's reserved IP address. It must match the server certificate exactly.
     </p>
   </section>
 
@@ -1153,13 +1154,13 @@ If Property Balance > 0, the property appears as delinquent.</pre>
           <td>Start the API server. Check <code>server_config.json</code>. Use <code>http://</code> unless HTTPS is configured.</td>
         </tr>
         <tr>
-          <td>Login fails with network error</td>
-          <td>Desktop app cannot connect to the backend.</td>
-          <td>Confirm server health at <code>http://localhost:8001/health</code> on the server PC.</td>
+          <td>Login fails with secure connection error</td>
+          <td>The HTTPS endpoint, public CA, server identity, or certificate validity is incorrect.</td>
+          <td>On the server, run <code>python -m scripts.check_api_readiness --timeout-seconds 90</code>. Confirm the client has only the public CA.</td>
         </tr>
         <tr>
-          <td>App says SECRET_KEY is missing</td>
-          <td><code>.env</code> is missing or not beside the EXE.</td>
+          <td>App says server configuration is missing</td>
+          <td><code>server_config.json</code> or its public CA file is missing beside the EXE.</td>
           <td>Copy the correct <code>.env</code> file beside <code>Treasury.exe</code>.</td>
         </tr>
         <tr>
@@ -1187,9 +1188,9 @@ If Property Balance > 0, the property appears as delinquent.</pre>
 
     <div class="callout ok">
       <strong>Basic Health Check</strong>
-      If the server is on the same machine, open a browser and visit
-      <code>http://localhost:8001/health</code>. A healthy server should return
-      an online status.
+      On the server, run <code>python -m scripts.check_api_readiness
+      --timeout-seconds 90</code>. A healthy server returns an authenticated
+      readiness pass without bypassing certificate verification.
     </div>
   </section>
 

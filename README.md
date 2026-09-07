@@ -37,8 +37,8 @@ pip install -r requirements.txt
 # Copy environment template and fill in values
 cp .env.template .env
 
-# Generate HTTPS certificates (required)
-python backend/generate_certs.py
+# Validate the authenticated TLS plan before the separately approved activation
+python -m scripts.provision_server_tls --preflight --server-name <STATIC_SERVER_IP> --server-name localhost --server-name 127.0.0.1
 
 # Start the Backend Server (Port 8001)
 python backend/main.py
@@ -58,7 +58,7 @@ docker compose up -d
 ```
 
 ## 🛡️ Security Features
-- **End-to-End Encryption:** Enforced HTTPS with self-signed certificate management
+- **Authenticated LAN Encryption:** Enforced HTTPS with an internal CA, hostname/IP validation, and fail-closed startup
 - **Role-Based Access Control (RBAC):** Granular permissions via signed JWT tokens
 - **CSRF Protection:** Double-submit cookie pattern on the web portal
 - **CORS Protection:** Whitelisted origins with explicit methods/headers

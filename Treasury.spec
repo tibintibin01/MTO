@@ -15,7 +15,6 @@ a = Analysis(
         ('clients/desktop/theme_manager.py', '.'),
         ('bagongpilipinas.png', '.'),
         ('office_logo.png', '.'),
-        ('server_config.json', '.'),
     ],
     hiddenimports=[
         'requests',
@@ -108,6 +107,9 @@ a = Analysis(
         'pytest',
         'scripts.recover_mariadb_root',
         'scripts.rotate_server_credentials',
+        'scripts.check_api_readiness',
+        'scripts.provision_server_tls',
+        'scripts.tls_health',
         'sqlalchemy',
         'utils.config',
         'utils.db_compat',

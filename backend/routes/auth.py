@@ -17,12 +17,11 @@ from utils.logger import mto_logger
 
 router = APIRouter(tags=["Auth"])
 
-# Cookies must be Secure (HTTPS-only) in production.
-# On a local office network running plain HTTP, Secure=True causes the browser
-# to silently drop the cookie, making login appear to fail.
-# Setting Secure=False for non-production allows HTTP deployments to work.
 _IS_PRODUCTION = os.getenv("MTO_ENVIRONMENT", "development").lower() == "production"
-_COOKIE_SECURE = _IS_PRODUCTION
+_TLS_REQUIRED = os.getenv("MTO_REQUIRE_TLS", "").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+_COOKIE_SECURE = _IS_PRODUCTION or _TLS_REQUIRED
 
 class Token(BaseModel):
     access_token: str

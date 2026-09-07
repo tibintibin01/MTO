@@ -1,14 +1,34 @@
 import websocket
+import ssl
 import threading
 import json
 from urllib.parse import urlencode
 
-from api_clients.api_helper import BASE_URL, get_token, is_token_expired
+from api_clients.api_helper import (
+    BASE_URL,
+    CERT_PATH,
+    get_token,
+    is_token_expired,
+)
+
+
+def websocket_ssl_options():
+    """Require normal certificate and hostname verification for WSS."""
+    options = {
+        "cert_reqs": ssl.CERT_REQUIRED,
+        "check_hostname": True,
+    }
+    if CERT_PATH is not None:
+        options["ca_certs"] = str(CERT_PATH)
+    return options
+
 
 class NotificationListener:
     def __init__(self, callbacks):
-        self.callbacks = callbacks  # Dict: on_open, on_close, on_notification, on_progress
-        self.ws_url = BASE_URL.replace("http://", "ws://").replace("https://", "wss://")
+        self.callbacks = (
+            callbacks  # Dict: on_open, on_close, on_notification, on_progress
+        )
+        self.ws_url = BASE_URL.replace("https://", "wss://", 1)
         self._stop_event = threading.Event()
         self._thread = None
         self._ws = None
@@ -50,7 +70,7 @@ class NotificationListener:
                     on_close=self._on_close,
                     on_open=self._on_open,
                 )
-                self._ws.run_forever()
+                self._ws.run_forever(sslopt=websocket_ssl_options())
             except Exception:
                 self._notify("on_close")
             finally:

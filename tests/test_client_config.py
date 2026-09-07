@@ -12,10 +12,14 @@ def _write(path: Path, payload) -> Path:
 
 
 def test_client_config_accepts_endpoint_metadata_only(tmp_path):
+    ca_path = tmp_path / "certificates" / "municipal-ca.pem"
+    ca_path.parent.mkdir()
+    ca_path.write_text("public-ca-placeholder", encoding="utf-8")
+
     config_path = _write(
         tmp_path / "server_config.json",
         {
-            "server_url": "http://192.0.2.10:8001/",
+            "server_url": "https://192.0.2.10:8001/",
             "ca_certificate": "certificates/municipal-ca.pem",
             "client_version": "2.1.0",
         },
@@ -23,7 +27,7 @@ def test_client_config_accepts_endpoint_metadata_only(tmp_path):
 
     config = load_client_config(config_path)
 
-    assert config.server_url == "http://192.0.2.10:8001"
+    assert config.server_url == "https://192.0.2.10:8001"
     assert (
         config.ca_certificate
         == (tmp_path / "certificates" / "municipal-ca.pem").resolve()
@@ -39,7 +43,7 @@ def test_client_config_accepts_endpoint_metadata_only(tmp_path):
 def test_client_config_rejects_sensitive_fields(tmp_path, field):
     config_path = _write(
         tmp_path / "server_config.json",
-        {"server_url": "http://127.0.0.1:8001", field: "do-not-package"},
+        {"server_url": "https://127.0.0.1:8001", field: "do-not-package"},
     )
 
     with pytest.raises(ClientConfigurationError, match="prohibited sensitive"):
@@ -49,7 +53,7 @@ def test_client_config_rejects_sensitive_fields(tmp_path, field):
 def test_client_config_rejects_unknown_fields(tmp_path):
     config_path = _write(
         tmp_path / "server_config.json",
-        {"server_url": "http://127.0.0.1:8001", "note": "legacy metadata"},
+        {"server_url": "https://127.0.0.1:8001", "note": "legacy metadata"},
     )
 
     with pytest.raises(ClientConfigurationError, match="unsupported field"):
@@ -61,11 +65,25 @@ def test_client_config_rejects_unknown_fields(tmp_path):
     [
         "mysql://db.internal/revenue",
         "http://user:password@127.0.0.1:8001",
-        "http://127.0.0.1:8001?token=secret",
+        "https://127.0.0.1:8001?token=secret",
+        "http://127.0.0.1:8001",
     ],
 )
 def test_client_config_rejects_non_api_or_credentialed_urls(tmp_path, url):
     config_path = _write(tmp_path / "server_config.json", {"server_url": url})
 
     with pytest.raises(ClientConfigurationError):
+        load_client_config(config_path)
+
+
+def test_client_config_rejects_missing_ca_file(tmp_path):
+    config_path = _write(
+        tmp_path / "server_config.json",
+        {
+            "server_url": "https://192.0.2.10:8001",
+            "ca_certificate": "certificates/missing.pem",
+        },
+    )
+
+    with pytest.raises(ClientConfigurationError, match="was not found"):
         load_client_config(config_path)

@@ -37,7 +37,7 @@ class SyncMonitor:
                         self._flush_queue(pending)
                         if api.get_connection_status() == "SYNCING":
                             api.record_connection_success()
-                else:
+                elif is_online is False:
                     api.record_connection_failure()
             except Exception as e:
                 # A monitor implementation error is not proof of an API outage.
@@ -56,6 +56,12 @@ class SyncMonitor:
                 verify=verify_param,
             )
             return response.status_code < 500
+        except requests.exceptions.SSLError as exc:
+            # A trust failure is a security/configuration incident, not proof
+            # that the server is offline. Do not flush or queue anything.
+            api.set_connection_status("DEGRADED")
+            mto_logger.error("API TLS verification failed: %s", exc)
+            return None
         except requests.exceptions.RequestException:
             return False
 

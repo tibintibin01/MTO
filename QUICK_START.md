@@ -71,7 +71,7 @@ python backend/main.py
 gunicorn backend.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8001
 ```
 
-Backend will be available at: `http://localhost:8001`
+Backend will be available at: `https://localhost:8001` after Phase 2 certificate activation.
 
 ---
 
@@ -100,9 +100,8 @@ Frontend will be available at: `http://localhost:3000`
 ## Verification Checklist
 
 ### Health Checks
-```bash
-# Backend health
-curl http://localhost:8001/healthz
+```bat
+python -m scripts.check_api_readiness --timeout-seconds 90
 # Should return: {"status":"healthy"}
 
 # Frontend health

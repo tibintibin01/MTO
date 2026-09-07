@@ -10,6 +10,8 @@ $IsccCandidates = @(
     "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
     "C:\Program Files\Inno Setup 6\ISCC.exe"
 )
+$DistConfig = Join-Path $Dist "server_config.json"
+$DistCa = Join-Path $Dist "certificates\mto-lan-ca.pem"
 
 foreach ($required in @(
     $BuildScript,
@@ -29,6 +31,10 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path $Exe)) {
 }
 
 $Iscc = $IsccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not (Test-Path -LiteralPath $DistConfig) -or -not (Test-Path -LiteralPath $DistCa)) {
+    throw "Authenticated TLS client configuration was not staged in dist."
+}
+
 if (-not $Iscc) {
     throw "Inno Setup 6 compiler was not found. Install Inno Setup, then run this script again."
 }

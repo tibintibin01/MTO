@@ -98,7 +98,7 @@ echo.
 
 echo ================================================
 echo   UPDATE COMPLETE! System is now running.
-echo   Backend:  http://localhost:8001
+echo   Backend:  https://localhost:8001 (authenticated TLS)
 echo   Public portal: hosted on Vercel
 echo   Local port 3000: not started by this updater
 echo ================================================

@@ -55,6 +55,7 @@ def test_successful_request_recovers_online_state_and_uses_short_connect_timeout
     assert result == {"ok": True}
     assert api.get_connection_status() == "ONLINE"
     assert captured["timeout"] == (api.DEFAULT_CONNECT_TIMEOUT, 19)
+    assert captured["verify"] is True
 
 
 def test_repeated_connection_failures_transition_through_degraded(monkeypatch):
@@ -79,6 +80,27 @@ def test_repeated_connection_failures_transition_through_degraded(monkeypatch):
 
     assert api.get_connection_failure_count() == api.CONNECTION_FAILURE_THRESHOLD
     assert api.get_connection_status() == "OFFLINE"
+
+
+def test_tls_verification_failure_is_not_treated_as_offline(monkeypatch):
+    def fail_request(*args, **kwargs):
+        raise requests.exceptions.SSLError("hostname mismatch")
+
+    monkeypatch.setattr(api.requests, "request", fail_request)
+    monkeypatch.setattr(
+        api.manager,
+        "queue_action",
+        lambda *_args, **_kwargs: pytest.fail("TLS failures must never be queued"),
+    )
+    api.set_connection_status("ONLINE")
+
+    with pytest.raises(Exception) as exc_info:
+        api.api_request("POST", "/payments", data={"amount": 100})
+
+    assert "Secure connection verification failed" in str(exc_info.value)
+    assert "untrusted, expired, or does not match" in str(exc_info.value)
+    assert api.get_connection_status() == "ONLINE"
+    assert api.get_connection_failure_count() == 0
 
 
 def test_read_timeout_marks_server_slow_without_declaring_offline(monkeypatch):
@@ -153,6 +175,21 @@ def test_health_probe_can_retry_immediately(monkeypatch):
     assert calls[0][0].endswith("/readyz")
     assert calls[0][1]["timeout"] == (2, 3)
     assert calls[0][1]["verify"] is not None
+
+
+def test_health_probe_tls_failure_does_not_declare_server_offline(monkeypatch):
+    def fail_get(*args, **kwargs):
+        raise requests.exceptions.SSLError("untrusted CA")
+
+    monkeypatch.setattr("api_clients.sync_monitor.requests.get", fail_get)
+    monitor = SyncMonitor(interval=10)
+    api.set_connection_status("ONLINE")
+
+    for _ in range(api.CONNECTION_FAILURE_THRESHOLD + 1):
+        assert monitor._check_connection() is None
+
+    assert api.get_connection_status() == "DEGRADED"
+    assert api.get_connection_failure_count() == 0
 
 
 def test_queue_flush_stops_after_first_connection_failure(monkeypatch):

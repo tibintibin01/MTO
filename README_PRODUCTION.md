@@ -142,7 +142,7 @@ npm start
 
 ### 6. Verify
 ```bash
-curl http://localhost:8001/healthz  # Backend
+python -m scripts.check_api_readiness --timeout-seconds 90  # Authenticated backend
 curl http://localhost:3000          # Frontend
 ```
 

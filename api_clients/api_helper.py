@@ -96,10 +96,18 @@ else:
 
 
 def get_tls_verification():
-    """Return the configured CA path, or the legacy Phase-2 fallback."""
-    if CERT_PATH is not None and CERT_PATH.is_file():
+    """Require certificate validation through the configured CA or OS trust store."""
+    if CERT_PATH is not None:
         return str(CERT_PATH)
-    return False
+    return True
+
+
+def _tls_error_message() -> str:
+    return (
+        "Secure connection verification failed. The API certificate is untrusted, "
+        "expired, or does not match the configured server address. Confirm the "
+        "HTTPS server_url and public ca_certificate in server_config.json."
+    )
 
 
 _SESSION_TOKEN = None
@@ -292,25 +300,16 @@ def api_request(
     mto_logger.info(f"API Request: {method} {endpoint}", method=method, url=url)
 
     try:
-        # If 'files' is provided, requests uses 'multipart/form-data'
-        # If 'data' is provided, it uses 'application/json'
-        # verify=False is used because we are using a self-signed certificate for local dev
-        import urllib3
+        # If 'files' is provided, requests uses 'multipart/form-data'.
+        # If 'data' is provided, it uses 'application/json'.
         import time
         from utils import set_request_id
         from utils.metrics import MetricsManager
 
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
         # 1. Telemetry: Generate Request ID and start timer
         set_request_id()
 
-        # Phase 2 will make certificate verification mandatory. Phase 1 keeps
-        # compatibility while moving the certificate path into non-secret
-        # desktop configuration.
         verify_param = get_tls_verification()
-        if not verify_param:
-            print("WARNING: TLS certificate verification is not configured.")
 
         file_positions = _capture_file_positions(files)
         for attempt in range(2):
@@ -376,6 +375,8 @@ def api_request(
         if response.content:
             return response.json()
         return True
+    except requests.exceptions.SSLError as e:
+        raise Exception(_tls_error_message()) from e
     except requests.exceptions.ReadTimeout as e:
         record_connection_slow()
         raise Exception(
@@ -488,10 +489,6 @@ def api_download_file(method, endpoint, params=None, timeout=120):
     headers["X-Requested-With"] = "XMLHttpRequest"
 
     try:
-        import urllib3
-
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
         verify_param = get_tls_verification()
 
         for attempt in range(2):
@@ -527,6 +524,8 @@ def api_download_file(method, endpoint, params=None, timeout=120):
 
         return save_stream_response_to_temp_file(response, default_suffix=".pdf")
 
+    except requests.exceptions.SSLError as e:
+        raise Exception(_tls_error_message()) from e
     except requests.exceptions.ReadTimeout as e:
         record_connection_slow()
         raise Exception(

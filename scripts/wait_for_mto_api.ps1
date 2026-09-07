@@ -1,29 +1,35 @@
 param(
     [ValidateRange(5, 300)]
     [int]$TimeoutSeconds = 90,
-    [string]$HealthUrl = "http://127.0.0.1:8001/readyz"
+    [string]$HealthUrl = "",
+    [string]$CaCertificate = ""
 )
 
 $ErrorActionPreference = "Stop"
-$deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-
-Write-Host "Waiting for the updated MTO API to become ready..."
-while ([DateTime]::UtcNow -lt $deadline) {
-    try {
-        $response = Invoke-WebRequest `
-            -Uri $HealthUrl `
-            -UseBasicParsing `
-            -TimeoutSec 3
-        if ($response.StatusCode -eq 200) {
-            Write-Host "MTO API readiness check passed."
-            exit 0
-        }
-    }
-    catch {
-        # Database connections and application routes may still be starting.
-    }
-    Start-Sleep -Seconds 2
+$projectRoot = Split-Path -Parent $PSScriptRoot
+$python = Join-Path $projectRoot "venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $python)) {
+    throw "Virtual-environment Python was not found at $python."
 }
 
-Write-Error "MTO API did not become ready within $TimeoutSeconds seconds."
-exit 1
+$arguments = @(
+    "-m",
+    "scripts.check_api_readiness",
+    "--timeout-seconds",
+    $TimeoutSeconds.ToString()
+)
+if (-not [string]::IsNullOrWhiteSpace($HealthUrl)) {
+    $arguments += @("--health-url", $HealthUrl)
+}
+if (-not [string]::IsNullOrWhiteSpace($CaCertificate)) {
+    $arguments += @("--ca-certificate", $CaCertificate)
+}
+
+Push-Location $projectRoot
+try {
+    & $python @arguments
+    exit $LASTEXITCODE
+}
+finally {
+    Pop-Location
+}
