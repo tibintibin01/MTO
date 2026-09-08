@@ -135,7 +135,9 @@ class MTOSettings(BaseSettings):
                     "python scripts/create_db_user.py"
                 )
             # Reject a blank or placeholder password.
-            db_pass = os.getenv("MTO_DB_PASSWORD", "").strip()
+            # BaseSettings reads the protected server .env without exporting
+            # its values into os.environ, so validate the resolved field.
+            db_pass = self.DB_PASSWORD.strip()
             if not db_pass or db_pass in (
                 "CHANGE_ME",
                 "your_secure_db_password",
