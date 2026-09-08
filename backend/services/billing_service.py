@@ -157,47 +157,26 @@ def _property_effectivity_year_expr(model):
 
 
 def _replacement_links_subquery(db_session: Session):
-    """Resolve successor-to-predecessor links by internal property ID.
+    """Resolve successors through the indexed predecessor relationship.
 
-    Legacy Previous-TD text is accepted only where exactly one active parent
-    has that TD. This keeps existing clean records compatible while refusing
-    to apply a successor to every member of a duplicated TD group.
+    The controlled duplicate-TD migration backfilled every unambiguous legacy
+    Previous TD reference, and all current writes resolve ``previous_property_id``.
+    Jurisdiction-wide financial reads must therefore use that authoritative,
+    indexed relationship instead of rebuilding a normalized TD map inside each
+    billing aggregate. Ambiguous duplicate groups remain safely unlinked until
+    an exact predecessor property is selected.
     """
     replacement = aliased(Property)
-    parent = aliased(Property)
-    parent_key = func.upper(func.trim(parent.td_number))
-    unique_parents = (
-        db_session.query(
-            parent_key.label("td_key"),
-            func.min(parent.id).label("property_id"),
-        )
-        .filter(parent.deleted_at == None)
-        .group_by(parent_key)
-        .having(func.count(parent.id) == 1)
-        .subquery()
-    )
     replacement_year = _property_effectivity_year_expr(replacement)
-    predecessor_id = func.coalesce(
-        replacement.previous_property_id,
-        unique_parents.c.property_id,
-    )
     return (
         db_session.query(
-            predecessor_id.label("predecessor_id"),
+            replacement.previous_property_id.label("predecessor_id"),
             replacement.id.label("successor_id"),
             replacement_year.label("replacement_year"),
         )
-        .outerjoin(
-            unique_parents,
-            and_(
-                replacement.previous_property_id == None,
-                func.upper(func.trim(replacement.prev_td_number))
-                == unique_parents.c.td_key,
-            ),
-        )
         .filter(
             replacement.deleted_at == None,
-            predecessor_id != None,
+            replacement.previous_property_id != None,
             replacement_year != None,
         )
         .subquery()
@@ -1251,9 +1230,9 @@ def get_property_billing_history(
         allocation_totals = allocation_totals.filter(
             PropertyBilling.property_id == int(property_id)
         )
-    allocation_totals = allocation_totals.group_by(
-        PaymentBilling.billing_id
-    ).subquery("property_allocation_totals")
+    allocation_totals = allocation_totals.group_by(PaymentBilling.billing_id).subquery(
+        "property_allocation_totals"
+    )
 
     linked_count = func.coalesce(allocation_totals.c.linked_count, 0)
     effective_paid = case(
@@ -1721,9 +1700,7 @@ def _billing_allocation_totals_subquery(db_session: Session):
         db_session.query(
             PaymentBilling.billing_id.label("billing_id"),
             func.count(PaymentBilling.id).label("linked_count"),
-            func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label(
-                "linked_paid"
-            ),
+            func.coalesce(func.sum(PaymentBilling.amount_paid), 0).label("linked_paid"),
             func.coalesce(func.sum(Payment.penalty), 0).label("linked_penalty"),
             func.coalesce(func.sum(Payment.discount), 0).label("linked_discount"),
         )
@@ -2677,9 +2654,7 @@ def _legacy_compliance_per_property(
     allocation_totals = _billing_allocation_totals_subquery(db_session)
     replacement_cutoffs = _replacement_cutoffs_subquery(db_session)
     rate_expr = func.coalesce(TaxPolicy.basic_rate + TaxPolicy.sef_rate, 0.02)
-    effective = _billing_effective_amount_exprs_from_allocations(
-        allocation_totals
-    )
+    effective = _billing_effective_amount_exprs_from_allocations(allocation_totals)
     total_due_expr = func.sum(
         (PropertyBilling.assessed_value * rate_expr)
         + effective["penalty"]
@@ -2880,9 +2855,9 @@ def _compliance_v2_per_property(
         + PropertyBilling.penalty
         - PropertyBilling.discount
     )
-    paid_expr = _billing_effective_amount_exprs_from_allocations(
-        allocation_totals
-    )["paid"]
+    paid_expr = _billing_effective_amount_exprs_from_allocations(allocation_totals)[
+        "paid"
+    ]
     per_year_query = (
         db_session.query(
             Property.id.label("property_id"),

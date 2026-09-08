@@ -155,12 +155,11 @@ def test_worklist_materializes_account_aggregates_once(db):
     _billing(db, second.id, 2023, assessed=200_000.0)
     db.commit()
 
-    select_count = 0
+    select_statements = []
 
     def count_selects(_conn, _cursor, statement, _parameters, _context, _many):
-        nonlocal select_count
         if statement.lstrip().upper().startswith("SELECT"):
-            select_count += 1
+            select_statements.append(statement)
 
     event.listen(db.get_bind(), "before_cursor_execute", count_selects)
     try:
@@ -172,7 +171,9 @@ def test_worklist_materializes_account_aggregates_once(db):
         event.remove(db.get_bind(), "before_cursor_execute", count_selects)
 
     assert result["summary"]["delinquent_count"] == 2
-    assert select_count == 1
+    assert len(select_statements) == 1
+    assert "upper(trim(" not in select_statements[0].lower()
+    assert "previous_property_id" in select_statements[0]
 
 
 def test_paginated_worklist_keeps_full_set_summary_in_one_query(db):
@@ -356,6 +357,7 @@ def test_replaced_td_keeps_only_pre_replacement_delinquency(db):
     )
     db.add_all([old, replacement])
     db.flush()
+    replacement.previous_property_id = old.id
     _billing(db, old.id, 2023, paid=2_000.0)
     _billing(db, old.id, 2024, paid=0.0)
     _billing(db, old.id, 2025, paid=0.0)  # Invalid stale row after replacement.
@@ -414,6 +416,7 @@ def test_replaced_td_with_paid_history_ignores_stale_later_billing(db):
     )
     db.add_all([old, replacement])
     db.flush()
+    replacement.previous_property_id = old.id
     _billing(db, old.id, 2023, paid=2_000.0)
     _billing(db, old.id, 2024, paid=2_000.0)
     _billing(db, old.id, 2025, paid=0.0)  # Must not revive the cancelled TD.

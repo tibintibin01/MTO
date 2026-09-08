@@ -82,17 +82,24 @@ from pathlib import Path
 # This file contains endpoint metadata only. Server/database credentials and
 # signing keys are intentionally unavailable to the desktop process.
 from api_clients.client_config import load_client_config
+from api_clients.network_transport import prefer_ipv4_for_url
 
 CLIENT_CONFIG = load_client_config()
 BASE_URL = CLIENT_CONFIG.server_url
 API_BASE_URL = BASE_URL
 CONFIG_PATH = CLIENT_CONFIG.source_path
 CERT_PATH = CLIENT_CONFIG.ca_certificate
+IPV4_FIRST_RESOLUTION_ENABLED = prefer_ipv4_for_url(BASE_URL)
 
 if CONFIG_PATH:
     print(f"INFO: Connected to configured API server: {BASE_URL}")
 else:
     print(f"INFO: No server_config.json found; using {BASE_URL}")
+if IPV4_FIRST_RESOLUTION_ENABLED:
+    mto_logger.info(
+        "IPv4-first address ordering enabled for the configured API hostname",
+        server_url=BASE_URL,
+    )
 
 
 def get_tls_verification():

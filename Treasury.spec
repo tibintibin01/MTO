@@ -56,6 +56,7 @@ a = Analysis(
         'api_clients.import_service',
         'api_clients.offline_manager',
         'api_clients.payment_service',
+        'api_clients.network_transport',
         'api_clients.portfolio_service',
         'api_clients.property_service',
         'api_clients.readiness_service',

@@ -677,6 +677,7 @@ def test_compliance_through_year_switches_to_effective_replacement(db):
     )
     db.add_all([old_prop, replacement])
     db.flush()
+    replacement.previous_property_id = old_prop.id
     db.add_all(
         [
             PropertyBilling(
