@@ -21,8 +21,8 @@ original response. Reusing the key with different data returns HTTP 409.
 - Payment and billing rows are locked while allocations change.
 - Allocations must equal the payment amount and may reference only the same
   property and matching tax year.
-- Unique database indexes reject duplicate receipt identities and duplicate
-  payment-to-billing links.
+- Unique database indexes reject same-property, same-OR, same-tax-year,
+  same-payment-date receipt identities and duplicate payment-to-billing links.
 - Migration activation fails closed if duplicate receipts, duplicate links,
   cross-property links, or unbalanced allocations already exist.
 

@@ -726,6 +726,9 @@ def format_tax_years(value):
 
 
 def normalize_date_input(value):
+    if isinstance(value, (datetime, date)):
+        return value.strftime("%Y-%m-%d")
+
     text = str(value or "").strip()
     if not text:
         return ""

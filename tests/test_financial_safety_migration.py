@@ -16,7 +16,8 @@ def migration_db():
             text(
                 "CREATE TABLE payments ("
                 "id INTEGER PRIMARY KEY, property_id INTEGER NOT NULL,"
-                "or_number TEXT, tax_year TEXT, amount NUMERIC NOT NULL)"
+                "or_number TEXT, tax_year TEXT, date_paid TEXT,"
+                "amount NUMERIC NOT NULL)"
             )
         )
         connection.execute(
@@ -44,8 +45,8 @@ def test_financial_invariant_preflight_passes_balanced_data(migration_db):
     migration_db.execute(
         text(
             "INSERT INTO payments VALUES "
-            "(1, 10, 'OR-1', '2026', 100),"
-            "(2, 20, 'OR-1', '2026', 75)"
+            "(1, 10, 'OR-1', '2026', '2026-01-02', 100),"
+            "(2, 20, 'OR-1', '2026', '2026-01-02', 75)"
         )
     )
     migration_db.execute(
@@ -67,9 +68,9 @@ def test_financial_invariant_preflight_reports_each_corruption_type(migration_db
     migration_db.execute(
         text(
             "INSERT INTO payments VALUES "
-            "(1, 10, 'OR-DUP', '2026', 100),"
-            "(2, 10, 'or-dup', '2026', 100),"
-            "(3, 30, 'OR-CROSS', '2026', 50)"
+            "(1, 10, 'OR-DUP', '2026', '2026-02-03', 100),"
+            "(2, 10, 'or-dup', '2026', '2026-02-03', 100),"
+            "(3, 30, 'OR-CROSS', '2026', '2026-02-03', 50)"
         )
     )
     migration_db.execute(
@@ -96,12 +97,14 @@ def test_duplicate_identity_check_matches_nullable_unique_index(migration_db):
     migration_db.execute(
         text(
             "INSERT INTO payments VALUES "
-            "(1, 10, '', '2026', 0),"
-            "(2, 10, '', '2026', 0),"
-            "(3, 20, NULL, '2026', 0),"
-            "(4, 20, NULL, '2026', 0),"
-            "(5, 30, 'OR-X', NULL, 0),"
-            "(6, 30, 'OR-X', NULL, 0)"
+            "(1, 10, '', '2026', '2026-03-04', 0),"
+            "(2, 10, '', '2026', '2026-03-04', 0),"
+            "(3, 20, NULL, '2026', '2026-03-04', 0),"
+            "(4, 20, NULL, '2026', '2026-03-04', 0),"
+            "(5, 30, 'OR-X', NULL, '2026-03-04', 0),"
+            "(6, 30, 'OR-X', NULL, '2026-03-04', 0),"
+            "(7, 40, 'OR-DATE', '2026', '2026-03-04', 0),"
+            "(8, 40, 'OR-DATE', '2026', '2026-03-05', 0)"
         )
     )
 

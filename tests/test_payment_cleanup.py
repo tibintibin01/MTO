@@ -3,12 +3,14 @@ from datetime import datetime
 
 import pytest
 from sqlalchemy import create_engine, event
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
 from backend.models import Payment, PaymentBilling, Property, PropertyBilling
 from backend.services.payment_service import (
     delete_payment_record,
+    find_duplicate_payment,
     get_payment_cleanup_candidates,
 )
 
@@ -62,6 +64,60 @@ def _property_with_billings(db):
     return prop, billing_2024, billing_2026
 
 
+def test_duplicate_payment_identity_includes_payment_date(db):
+    prop, _billing_2024, _billing_2026 = _property_with_billings(db)
+    existing = Payment(
+        property_id=prop.id,
+        date_paid=datetime(2026, 1, 15),
+        or_number="7818442",
+        tax_year="2026",
+        amount=100,
+    )
+    db.add(existing)
+    db.commit()
+
+    assert (
+        find_duplicate_payment(
+            prop.id,
+            "7818442",
+            datetime(2026, 1, 16),
+            "2026",
+            db_session=db,
+        )
+        is None
+    )
+    duplicate = find_duplicate_payment(
+        prop.id,
+        "7818442",
+        datetime(2026, 1, 15, 18, 30),
+        "2026",
+        db_session=db,
+    )
+    assert duplicate["payment_id"] == existing.id
+
+    different_date = Payment(
+        property_id=prop.id,
+        date_paid=datetime(2026, 1, 16),
+        or_number="7818442",
+        tax_year="2026",
+        amount=125,
+    )
+    db.add(different_date)
+    db.commit()
+
+    same_date = Payment(
+        property_id=prop.id,
+        date_paid=datetime(2026, 1, 15),
+        or_number="7818442",
+        tax_year="2026",
+        amount=150,
+    )
+    db.add(same_date)
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
 def test_cleanup_candidates_flag_visible_year_linked_to_wrong_billing_year(db):
     prop, _billing_2024, billing_2026 = _property_with_billings(db)
     payment = Payment(
@@ -75,12 +131,14 @@ def test_cleanup_candidates_flag_visible_year_linked_to_wrong_billing_year(db):
     )
     db.add(payment)
     db.flush()
-    db.add(PaymentBilling(
-        payment_id=payment.id,
-        billing_id=billing_2026.id,
-        tax_year=2026,
-        amount_paid=2204.56,
-    ))
+    db.add(
+        PaymentBilling(
+            payment_id=payment.id,
+            billing_id=billing_2026.id,
+            tax_year=2026,
+            amount_paid=2204.56,
+        )
+    )
     db.commit()
 
     result = get_payment_cleanup_candidates(year=2026, db_session=db)
@@ -103,12 +161,14 @@ def test_delete_payment_recalculates_linked_billing_even_with_quarter_tax_year_t
     )
     db.add(payment)
     db.flush()
-    db.add(PaymentBilling(
-        payment_id=payment.id,
-        billing_id=billing_2026.id,
-        tax_year=2026,
-        amount_paid=2204.56,
-    ))
+    db.add(
+        PaymentBilling(
+            payment_id=payment.id,
+            billing_id=billing_2026.id,
+            tax_year=2026,
+            amount_paid=2204.56,
+        )
+    )
     db.commit()
 
     delete_payment_record(
@@ -118,6 +178,11 @@ def test_delete_payment_recalculates_linked_billing_even_with_quarter_tax_year_t
         current_user={"username": "tester", "role": "admin"},
     )
 
-    refreshed = db.query(PropertyBilling).filter(PropertyBilling.id == billing_2026.id).one()
+    refreshed = (
+        db.query(PropertyBilling).filter(PropertyBilling.id == billing_2026.id).one()
+    )
     assert float(refreshed.amount_paid) == 0.0
-    assert db.query(PaymentBilling).filter(PaymentBilling.payment_id == payment.id).count() == 0
+    assert (
+        db.query(PaymentBilling).filter(PaymentBilling.payment_id == payment.id).count()
+        == 0
+    )

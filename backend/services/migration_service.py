@@ -380,10 +380,12 @@ def financial_invariant_violations(db_session: Session) -> dict[str, int]:
         "duplicate_payment_identity": (
             "SELECT COUNT(*) FROM ("
             " SELECT property_id, UPPER(TRIM(or_number)) AS or_key,"
-            "        UPPER(TRIM(tax_year)) AS year_key"
+            "        UPPER(TRIM(tax_year)) AS year_key, DATE(date_paid) AS paid_key"
             " FROM payments"
             " WHERE or_number IS NOT NULL AND tax_year IS NOT NULL"
-            " GROUP BY property_id, UPPER(TRIM(or_number)), UPPER(TRIM(tax_year))"
+            "   AND date_paid IS NOT NULL"
+            " GROUP BY property_id, UPPER(TRIM(or_number)),"
+            "          UPPER(TRIM(tax_year)), DATE(date_paid)"
             " HAVING COUNT(*) > 1"
             ") duplicate_receipts"
         ),
@@ -522,13 +524,24 @@ def ensure_financial_safety_schema(db_session: Session) -> None:
     if not _has_named_index(
         inspector,
         "payments",
-        "uq_payments_property_or_tax_year_text",
+        "uq_payments_property_or_tax_year_date",
     ):
         db_session.execute(
             text(
-                "CREATE UNIQUE INDEX uq_payments_property_or_tax_year_text "
-                "ON payments (property_id, or_number, tax_year)"
+                "CREATE UNIQUE INDEX uq_payments_property_or_tax_year_date "
+                "ON payments (property_id, or_number, tax_year, date_paid)"
             )
+        )
+    inspector = inspect(connection)
+    if _has_named_index(
+        inspector,
+        "payments",
+        "uq_payments_property_or_tax_year_text",
+    ):
+        # A short-lived Phase 3 build proposed a date-blind index. Install the
+        # corrected guard first, then remove the overly restrictive index.
+        db_session.execute(
+            text("DROP INDEX uq_payments_property_or_tax_year_text ON payments")
         )
     if not _has_named_index(
         inspector,

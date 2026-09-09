@@ -94,6 +94,16 @@ class Property(Base):
 
 class Payment(Base):
     __tablename__ = "payments"
+    __table_args__ = (
+        Index(
+            "uq_payments_property_or_tax_year_date",
+            "property_id",
+            "or_number",
+            "tax_year",
+            "date_paid",
+            unique=True,
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     property_id = Column(

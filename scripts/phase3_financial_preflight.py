@@ -31,9 +31,12 @@ REQUIRED_IDEMPOTENCY_COLUMNS = {
 }
 REQUIRED_INDEXES = {
     ("payment_billings", "uq_payment_billings_payment_billing"),
-    ("payments", "uq_payments_property_or_tax_year_text"),
+    ("payments", "uq_payments_property_or_tax_year_date"),
     ("idempotency_keys", "ix_idempotency_keys_user_id"),
     ("idempotency_keys", "ix_idempotency_keys_state"),
+}
+OBSOLETE_INDEXES = {
+    ("payments", "uq_payments_property_or_tax_year_text"),
 }
 
 
@@ -71,6 +74,12 @@ def capture_preflight():
                 inspector, table_name
             ):
                 missing_indexes.append(f"{table_name}.{index_name}")
+        obsolete_indexes = []
+        for table_name, index_name in sorted(OBSOLETE_INDEXES):
+            if inspector.has_table(table_name) and index_name in _index_names(
+                inspector, table_name
+            ):
+                obsolete_indexes.append(f"{table_name}.{index_name}")
         migration_applied = bool(
             session.execute(
                 text("SELECT COUNT(*) FROM system_migrations WHERE id = :id"),
@@ -84,6 +93,7 @@ def capture_preflight():
         and has_idempotency_table
         and not (REQUIRED_IDEMPOTENCY_COLUMNS - columns)
         and not missing_indexes
+        and not obsolete_indexes
     )
     return {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -97,6 +107,7 @@ def capture_preflight():
                 REQUIRED_IDEMPOTENCY_COLUMNS - columns
             ),
             "missing_indexes": missing_indexes,
+            "obsolete_indexes": obsolete_indexes,
             "active": schema_active,
         },
     }

@@ -117,14 +117,19 @@ def _payment_remarks_expr(db_session: Session = None):
 def find_duplicate_payment(
     property_id,
     or_number,
+    or_date,
     tax_year_text,
     exclude_payment_id=None,
     db_session: Session = None,
 ):
+    or_text = str(or_number or "").strip()
+    date_text = normalize_date_input(or_date)
     normalized_years = format_tax_years(tax_year_text)
-    if not property_id or not or_number or not normalized_years:
+    if not property_id or not or_text or not date_text or not normalized_years:
         return None
 
+    date_start = datetime.strptime(date_text, "%Y-%m-%d")
+    date_end = date_start + timedelta(days=1)
     query = db_session.query(
         Payment.id.label("payment_id"),
         Payment.or_number,
@@ -133,7 +138,9 @@ def find_duplicate_payment(
         Payment.date_paid,
     ).filter(
         Payment.property_id == property_id,
-        Payment.or_number == or_number,
+        Payment.or_number == or_text,
+        Payment.date_paid >= date_start,
+        Payment.date_paid < date_end,
         func.coalesce(Payment.tax_year, "") == normalized_years,
     )
     if exclude_payment_id:
@@ -1007,13 +1014,15 @@ def update_payment_record(
     duplicate = find_duplicate_payment(
         payment.property_id,
         or_number,
+        date_paid,
         tax_year_text,
         exclude_payment_id=payment.id,
         db_session=db_session,
     )
     if duplicate:
         raise Exception(
-            f"Another payment already uses OR {or_number} for tax year {tax_year_text}."
+            f"Another payment already uses OR {or_number} for tax year "
+            f"{tax_year_text} on {date_text}."
         )
 
     old_or = payment.or_number
