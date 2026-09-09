@@ -14,7 +14,11 @@ from backend.models import (
     AuditLog,
     TaxPolicy,
 )
-from backend.services.auth_service import get_username, get_user_role, require_permission
+from backend.services.auth_service import (
+    get_username,
+    get_user_role,
+    require_permission,
+)
 import backend.services.billing_service as billing
 import backend.services.payment_service as payment
 from backend.services.assessment_value_service import (
@@ -102,7 +106,10 @@ def verified_duplicate_td_feature_enabled() -> bool:
     """Return whether controlled duplicate creation is activated on this API."""
     value = secrets.get("MTO_ENABLE_VERIFIED_DUPLICATE_TD", default="0")
     return str(value or "").strip().lower() in {
-        "1", "true", "yes", "on",
+        "1",
+        "true",
+        "yes",
+        "on",
     }
 
 
@@ -176,13 +183,12 @@ def _replacement_parent_ids_subquery(db_session, as_of_year):
         .subquery()
     )
     effective = _assessment_effective_by_year(replacement, int(as_of_year))
-    explicit = (
-        db_session.query(replacement.previous_property_id.label("property_id"))
-        .filter(
-            replacement.deleted_at == None,
-            replacement.previous_property_id != None,
-            effective,
-        )
+    explicit = db_session.query(
+        replacement.previous_property_id.label("property_id")
+    ).filter(
+        replacement.deleted_at == None,
+        replacement.previous_property_id != None,
+        effective,
     )
     legacy = (
         db_session.query(unique_parents.c.property_id.label("property_id"))
@@ -351,9 +357,7 @@ def search_properties(
 
     if as_of_year:
         as_of = int(as_of_year)
-        replaced_property_ids = _replacement_parent_ids_subquery(
-            db_session, as_of
-        )
+        replaced_property_ids = _replacement_parent_ids_subquery(db_session, as_of)
         query = query.filter(_assessment_effective_by_year(Property, as_of))
         query = query.filter(~Property.id.in_(replaced_property_ids))
     elif year_start or year_end:
@@ -727,9 +731,7 @@ def resolve_payment_property_for_tax_year(
     )
 
 
-def resolve_payment_target(
-    td_number, tax_year, db_session: Session, property_id=None
-):
+def resolve_payment_target(td_number, tax_year, db_session: Session, property_id=None):
     target = resolve_payment_property_for_tax_year(
         td_number, tax_year, db_session, property_id=property_id
     )
@@ -782,7 +784,13 @@ def _payment_only_payload(prop, data, user=None):
     return payload
 
 
-def save_property(data, editing_id=None, user=None, db_session: Session = None):
+def save_property(
+    data,
+    editing_id=None,
+    user=None,
+    db_session: Session = None,
+    transaction_hook=None,
+):
     """
     Main orchestrator for saving or updating a property using ORM.
     """
@@ -853,10 +861,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                     _payment_only_payload(target_prop, data, user=user),
                     db_session,
                 )
-                db_session.commit()
-                if payment_posted:
-                    _refresh_dashboard_stats_after_payment(db_session)
-                return {
+                result = {
                     "ok": True,
                     "property_id": target_prop.id,
                     "td_number": target_prop.td_number,
@@ -868,6 +873,12 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                     "billing_sync": {"updated": 0, "years": []},
                     "prior_assessment_sync": {"updated": 0, "years": []},
                 }
+                if transaction_hook:
+                    transaction_hook(result)
+                db_session.commit()
+                if payment_posted:
+                    _refresh_dashboard_stats_after_payment(db_session)
+                return result
 
             # Conflict Detection
             client_version = data.get("version", 0)
@@ -911,9 +922,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
         authorizing_duplicate = bool(duplicates and not unchanged_verified_group)
         approval_reason = sanitize_string(data.get("Duplicate TD Reason"))
         approval_reference = sanitize_string(data.get("Assessor Reference"))
-        approval_confirmation = _normalized_td(
-            data.get("Duplicate TD Confirmation")
-        )
+        approval_confirmation = _normalized_td(data.get("Duplicate TD Confirmation"))
         approval_time = datetime.now(timezone.utc)
         approval_user = get_username(user)
         duplicate_marker_changes = []
@@ -1040,9 +1049,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                             "property accounts. Select the exact Previous Property record."
                         ),
                     )
-                predecessor = (
-                    predecessor_matches[0] if predecessor_matches else None
-                )
+                predecessor = predecessor_matches[0] if predecessor_matches else None
             if predecessor and predecessor.id == prop.id:
                 raise HTTPException(
                     status_code=422,
@@ -1095,8 +1102,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
 
         for existing, marker_before in duplicate_marker_changes:
             marker_after = {
-                c.name: getattr(existing, c.name)
-                for c in existing.__table__.columns
+                c.name: getattr(existing, c.name) for c in existing.__table__.columns
             }
             log_data_change(
                 user["id"] if user else 0,
@@ -1271,6 +1277,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             from backend.services.billing_sync_service import (
                 sync_property_billing_years,
             )
+
             db_session.flush()
 
             targets = [prop]
@@ -1287,16 +1294,7 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
                 billing_year_sync["errors"].extend(result["errors"])
                 billing_year_sync["property_ids"].append(target.id)
 
-        db_session.commit()
-
-        # The payment and its billing allocation are already committed. Refresh
-        # the dashboard cache afterward so manual receipt entry is visible on
-        # the next Dashboard load. A statistics failure must never roll back or
-        # report failure for a payment that was successfully saved.
-        if payment_posted:
-            _refresh_dashboard_stats_after_payment(db_session)
-
-        return {
+        result = {
             "ok": True,
             "property_id": prop.id,
             "new_version": prop.version,
@@ -1306,6 +1304,18 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             "billing_year_sync": billing_year_sync,
             "prior_assessment_sync": prior_sync,
         }
+        if transaction_hook:
+            transaction_hook(result)
+        db_session.commit()
+
+        # The payment and its billing allocation are already committed. Refresh
+        # the dashboard cache afterward so manual receipt entry is visible on
+        # the next Dashboard load. A statistics failure must never roll back or
+        # report failure for a payment that was successfully saved.
+        if payment_posted:
+            _refresh_dashboard_stats_after_payment(db_session)
+
+        return result
 
     except Exception as e:
         db_session.rollback()
@@ -1315,6 +1325,14 @@ def save_property(data, editing_id=None, user=None, db_session: Session = None):
             raise HTTPException(
                 status_code=409,
                 detail="TD Number is already used by another property.",
+            )
+        if isinstance(e, IntegrityError) and "uq_payments" in str(e):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This Official Receipt is already recorded for the selected "
+                    "property and tax year."
+                ),
             )
         raise HTTPException(status_code=500, detail=f"Save failed: {str(e)}")
     finally:

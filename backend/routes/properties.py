@@ -6,11 +6,35 @@ from fastapi.encoders import jsonable_encoder
 
 import backend.services.property_service as prop_svc
 import backend.services.billing_service as bill_svc
-from backend.deps import get_current_user, write_access, admin_only, limiter, user_limiter, get_db, Session
+from backend.deps import (
+    get_current_user,
+    write_access,
+    admin_only,
+    limiter,
+    user_limiter,
+    get_db,
+    Session,
+)
 from backend.schemas import PropertySaveSchema, BulkUpdateBarangaySchema
+from backend.services.idempotency_service import begin_financial_operation
 from utils.logger import mto_logger
 
 router = APIRouter(prefix="/properties", tags=["Properties"])
+
+
+def _has_financial_payload(payload):
+    return bool(
+        str(payload.get("OR Number") or "").strip()
+        or str(payload.get("Amount Paid") or "").strip()
+    )
+
+
+def _replayed_response(claim):
+    return JSONResponse(
+        status_code=claim.replay_status_code,
+        content=jsonable_encoder(claim.replay_body),
+        headers={"X-Idempotency-Replayed": "true"},
+    )
 
 
 @router.get("/duplicate-td-policy")
@@ -20,7 +44,9 @@ def duplicate_td_policy(current_user: dict = Depends(get_current_user)):
     pilot_td = prop_svc.verified_duplicate_td_pilot_td()
     return {
         "enabled": enabled,
-        "rollout_mode": "disabled" if not enabled else ("pilot" if pilot_td else "expanded"),
+        "rollout_mode": (
+            "disabled" if not enabled else ("pilot" if pilot_td else "expanded")
+        ),
         "pilot_td": pilot_td,
         "admin_authorized": str(current_user.get("role") or "").lower() == "admin",
         "requirements": [
@@ -30,6 +56,7 @@ def duplicate_td_policy(current_user: dict = Depends(get_current_user)):
             "Explicit TD confirmation",
         ],
     }
+
 
 @router.get("")
 def list_properties(
@@ -42,7 +69,7 @@ def list_properties(
     as_of_year: Optional[int] = None,
     barangay: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
-    db_session: Session = Depends(get_db)
+    db_session: Session = Depends(get_db),
 ):
     results = prop_svc.search_properties(
         search,
@@ -53,32 +80,44 @@ def list_properties(
         year_end=year_end,
         as_of_year=as_of_year,
         barangay=barangay,
-        db_session=db_session
+        db_session=db_session,
     )
-    
+
     has_more = len(results) > limit
     items = results[:limit]
     next_cursor = items[-1][0] if has_more and items else None
-    
+
     return {
         "items": items,
         "next_cursor": next_cursor,
         "has_more": has_more,
-        "count": len(items)
+        "count": len(items),
     }
 
+
 @router.get("/unspecified")
-def get_unspecified_properties(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_unspecified_properties(
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
     return prop_svc.get_unspecified_properties(db_session=db_session)
 
+
 @router.get("/{property_id}/history")
-def get_property_history(property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def get_property_history(
+    property_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
     from backend.models import PropertyAssessmentHistory
-    
-    rows = db_session.query(PropertyAssessmentHistory).filter(
-        PropertyAssessmentHistory.property_id == property_id
-    ).order_by(PropertyAssessmentHistory.created_at.desc()).all()
-    
+
+    rows = (
+        db_session.query(PropertyAssessmentHistory)
+        .filter(PropertyAssessmentHistory.property_id == property_id)
+        .order_by(PropertyAssessmentHistory.created_at.desc())
+        .all()
+    )
+
     return [
         {
             "id": r.id,
@@ -88,13 +127,21 @@ def get_property_history(property_id: int, current_user: dict = Depends(get_curr
             "tax_year": r.tax_year,
             "changed_by": r.changed_by,
             "change_reason": r.change_reason,
-            "date": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if hasattr(r.created_at, "strftime") else str(r.created_at)
+            "date": (
+                r.created_at.strftime("%Y-%m-%d %H:%M:%S")
+                if hasattr(r.created_at, "strftime")
+                else str(r.created_at)
+            ),
         }
         for r in rows
     ]
 
+
 @router.get("/barangays")
-def list_barangays(current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)):
+def list_barangays(
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
     return prop_svc.get_barangays(db_session=db_session)
 
 
@@ -143,6 +190,7 @@ def resolve_payment_target(
         )
     return result
 
+
 @router.get("/delinquent")
 def get_delinquent_accounts(
     limit: int = 50,
@@ -150,48 +198,63 @@ def get_delinquent_accounts(
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
-    return bill_svc.get_delinquent_accounts(limit=limit, cursor=cursor, db_session=db_session)
+    return bill_svc.get_delinquent_accounts(
+        limit=limit, cursor=cursor, db_session=db_session
+    )
+
 
 @router.get("/deleted", dependencies=[Depends(admin_only)])
 def list_deleted_properties(
     limit: int = 50,
     cursor: Optional[int] = None,
     current_user: dict = Depends(get_current_user),
-    db_session: Session = Depends(get_db)
+    db_session: Session = Depends(get_db),
 ):
-    return prop_svc.get_deleted_properties(limit=limit, cursor=cursor, db_session=db_session)
+    return prop_svc.get_deleted_properties(
+        limit=limit, cursor=cursor, db_session=db_session
+    )
+
 
 @router.post("/{property_id}/restore", dependencies=[Depends(admin_only)])
 def restore_property(
-    property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    property_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     prop_svc.restore_property(property_id, current_user, db_session=db_session)
     return {"status": "restored"}
 
+
 @router.delete("/{property_id}/purge", dependencies=[Depends(admin_only)])
 def purge_property(
-    property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    property_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     prop_svc.purge_property(property_id, current_user, db_session=db_session)
     return {"status": "purged"}
 
+
 @router.get("/{property_id}")
 def get_property(
-    property_id: int, current_user: dict = Depends(get_current_user), db_session: Session = Depends(get_db)
+    property_id: int,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
 ):
     prop = prop_svc.get_property_by_id(property_id, db_session=db_session)
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
     return prop
 
+
 @router.post("")
 @limiter.limit("15/minute")
 @user_limiter.limit("15/minute")
 def create_property(
     request: Request,
-    data: PropertySaveSchema, 
+    data: PropertySaveSchema,
     current_user: dict = Depends(write_access),
-    db_session: Session = Depends(get_db)
+    db_session: Session = Depends(get_db),
 ):
     payload = data.model_dump(by_alias=True, exclude_unset=True)
     if not payload.get("Tax Year") and payload.get("Effectivity Date"):
@@ -203,10 +266,29 @@ def create_property(
     elif not payload.get("Tax Year"):
         payload["Tax Year"] = str(datetime.now(timezone.utc).year)
 
-    res = prop_svc.save_property(payload, user=current_user, db_session=db_session)
+    claim = None
+    if _has_financial_payload(payload):
+        claim = begin_financial_operation(
+            db_session=db_session,
+            idempotency_key=request.headers.get("X-Idempotency-Key"),
+            current_user=current_user,
+            method=request.method,
+            path=request.url.path,
+            payload=payload,
+        )
+        if claim.replayed:
+            return _replayed_response(claim)
+
+    res = prop_svc.save_property(
+        payload,
+        user=current_user,
+        db_session=db_session,
+        transaction_hook=claim.complete if claim else None,
+    )
     if not res:
         raise HTTPException(status_code=400, detail="Failed to create property")
     return res
+
 
 @router.put("/{property_id}")
 @limiter.limit("20/minute")
@@ -216,7 +298,7 @@ def update_property(
     property_id: int,
     data: PropertySaveSchema,
     current_user: dict = Depends(write_access),
-    db_session: Session = Depends(get_db)
+    db_session: Session = Depends(get_db),
 ):
     payload = data.model_dump(by_alias=True, exclude_unset=True)
     if not payload.get("Tax Year") and payload.get("Effectivity Date"):
@@ -225,7 +307,26 @@ def update_property(
             payload["Tax Year"] = str(eff_date)[:4]
 
     try:
-        res = prop_svc.save_property(payload, editing_id=property_id, user=current_user, db_session=db_session)
+        claim = None
+        if _has_financial_payload(payload):
+            claim = begin_financial_operation(
+                db_session=db_session,
+                idempotency_key=request.headers.get("X-Idempotency-Key"),
+                current_user=current_user,
+                method=request.method,
+                path=request.url.path,
+                payload=payload,
+            )
+            if claim.replayed:
+                return _replayed_response(claim)
+
+        res = prop_svc.save_property(
+            payload,
+            editing_id=property_id,
+            user=current_user,
+            db_session=db_session,
+            transaction_hook=claim.complete if claim else None,
+        )
         if not res:
             raise HTTPException(status_code=400, detail="Failed to update property")
         return res
@@ -235,32 +336,50 @@ def update_property(
         if getattr(e, "is_sync_conflict", False):
             return JSONResponse(
                 status_code=status.HTTP_409_CONFLICT,
-                content=jsonable_encoder({
-                    "detail": "This property was changed after you opened it. Please reload the record and try again.",
-                    "server_data": getattr(e, "server_data", {}),
-                    "client_data": payload
-                })
+                content=jsonable_encoder(
+                    {
+                        "detail": "This property was changed after you opened it. Please reload the record and try again.",
+                        "server_data": getattr(e, "server_data", {}),
+                        "client_data": payload,
+                    }
+                ),
             )
         error_type = f"{type(e).__module__}.{type(e).__name__}"
         mto_logger.error(f"Property Update Failed ({error_type}): {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal Server Error [{error_type}]: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Internal Server Error [{error_type}]: {str(e)}"
+        )
+
 
 @router.delete("/{property_id}")
 def delete_property(
-    property_id: int, request: Request, current_user: dict = Depends(write_access), db_session: Session = Depends(get_db)
+    property_id: int,
+    request: Request,
+    current_user: dict = Depends(write_access),
+    db_session: Session = Depends(get_db),
 ):
     ip = request.client.host
-    res = prop_svc.soft_delete_property(property_id, user=current_user, ip_address=ip, db_session=db_session)
+    res = prop_svc.soft_delete_property(
+        property_id, user=current_user, ip_address=ip, db_session=db_session
+    )
     if not res:
         raise HTTPException(status_code=400, detail="Failed to delete property")
     return {"status": "deleted", **res}
 
+
 @router.post("/bulk-update-barangay")
-def bulk_update_barangay(data: BulkUpdateBarangaySchema, current_user: dict = Depends(write_access), db_session: Session = Depends(get_db)):
+def bulk_update_barangay(
+    data: BulkUpdateBarangaySchema,
+    current_user: dict = Depends(write_access),
+    db_session: Session = Depends(get_db),
+):
     ids = data.ids
     new_brgy = data.barangay
-    count = prop_svc.bulk_update_barangay(ids, new_brgy, user=current_user, db_session=db_session)
+    count = prop_svc.bulk_update_barangay(
+        ids, new_brgy, user=current_user, db_session=db_session
+    )
     return {"updated": count}
+
 
 def _clean_dossier_data(obj):
     if obj is None:
@@ -270,19 +389,17 @@ def _clean_dossier_data(obj):
             key: (
                 float(value)
                 if hasattr(value, "to_integral_value")
-                else str(value)
-                if hasattr(value, "strftime")
-                else value
+                else str(value) if hasattr(value, "strftime") else value
             )
             for key, value in obj.items()
         }
     if isinstance(obj, (list, tuple)):
         return [
-            float(value)
-            if hasattr(value, "to_integral_value")
-            else str(value)
-            if hasattr(value, "strftime")
-            else value
+            (
+                float(value)
+                if hasattr(value, "to_integral_value")
+                else str(value) if hasattr(value, "strftime") else value
+            )
             for value in obj
         ]
     return obj
@@ -356,9 +473,9 @@ def _build_property_dossier(raw_prop, db_session: Session):
             "old_values": log.old_values,
             "new_values": log.new_values,
             "ip_address": log.ip_address,
-            "timestamp": log.timestamp.strftime("%Y-%m-%d %H:%M:%S")
-            if log.timestamp
-            else "",
+            "timestamp": (
+                log.timestamp.strftime("%Y-%m-%d %H:%M:%S") if log.timestamp else ""
+            ),
         }
         for log in raw_logs
     ]
@@ -377,9 +494,9 @@ def _build_property_dossier(raw_prop, db_session: Session):
             "tax_year": row.tax_year,
             "changed_by": row.changed_by,
             "change_reason": row.change_reason,
-            "date": row.created_at.strftime("%Y-%m-%d %H:%M:%S")
-            if row.created_at
-            else "",
+            "date": (
+                row.created_at.strftime("%Y-%m-%d %H:%M:%S") if row.created_at else ""
+            ),
         }
         for row in raw_history
     ]

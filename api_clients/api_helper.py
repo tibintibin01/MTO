@@ -299,9 +299,10 @@ def api_request(
     # CSRF Protection: Include custom header for all state-changing requests
     headers["X-Requested-With"] = "XMLHttpRequest"
 
-    # Idempotency: attach key for POST/PUT so the server can detect duplicate
-    # submissions from double-clicks or network retries.
-    if method in ("POST", "PUT", "PATCH") and idempotency_key:
+    # Attach the caller's stable key to every mutation, including DELETE.
+    # Financial routes reject missing keys instead of guessing whether a
+    # disconnected request was saved.
+    if method in ("POST", "PUT", "PATCH", "DELETE") and idempotency_key:
         headers["X-Idempotency-Key"] = idempotency_key
 
     mto_logger.info(f"API Request: {method} {endpoint}", method=method, url=url)
@@ -397,41 +398,23 @@ def api_request(
     ) as e:
         record_connection_failure()
 
-        # Multipart uploads cannot be replayed by the offline queue because it
-        # persists JSON payloads only, not the uploaded file bytes. Queuing one
-        # would create a permanent "pending sync" item with no file to send.
-        if files is not None:
-            raise Exception(
-                "Connection lost during file upload. File uploads cannot be "
-                "queued for offline sync. Reconnect to the server, reselect "
-                "the file, and try again."
-            ) from e
-
-        if not queue_offline:
+        if method == "GET" and queue_offline:
+            cached = manager.get_cached_data(f"{method}:{endpoint}:{params}")
+            if cached is not None:
+                return cached
+            raise Exception("Offline: No cached data available for this request.")
+        if method == "GET":
             raise Exception(
                 f"Cannot reach API server at {BASE_URL}. "
                 "Start the API server and verify server_config.json."
-            )
+            ) from e
 
-        # OFFLINE HANDLING
-        if method == "GET":
-            cached = manager.get_cached_data(f"{method}:{endpoint}:{params}")
-            if cached:
-                return cached
-            raise Exception("Offline: No cached data available for this request.")
-
-        elif method in ["POST", "PUT", "DELETE"]:
-            # Queue for later sync
-            success = manager.queue_action(method, endpoint, data)
-            if success:
-                return {
-                    "status": "queued",
-                    "message": "Connection lost. Action queued for sync.",
-                    "offline": True,
-                }
-            raise Exception("Offline: Failed to queue action.")
-
-        raise Exception(f"Connection lost and no offline handler for {method}")
+        action = "upload" if files is not None else "change"
+        raise Exception(
+            f"Connection lost before the server confirmed this {action}. "
+            "Nothing was queued or reported as saved. Reconnect, verify the "
+            "current record, and retry."
+        ) from e
 
     except requests.exceptions.RequestException as e:
         # Provide a more descriptive error message

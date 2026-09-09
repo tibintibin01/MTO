@@ -27,6 +27,7 @@ from backend.services.billing_service import (
     get_total_due,
     repair_billing_assessed_value_snapshots,
     repair_payment_billing_allocations,
+    sync_payment_billings,
     sync_existing_billing_assessed_value,
 )
 from backend.services.property_service import get_receivables_by_barangay
@@ -1391,3 +1392,94 @@ def test_reconciliation_overpaid_uses_linked_penalty(db):
     assert summary["equation_variance"] == pytest.approx(0.0)
     assert metrics["assessor"]["current_year_penalty"] == pytest.approx(24.0)
     assert metrics["assessor"]["current_year_net_collectible"] == pytest.approx(624.0)
+
+
+def _phase3_allocation_records(db):
+    first = Property(
+        td_number="TD-PHASE3-FIRST",
+        owner_name="First Owner",
+        assessed_value=10_000,
+    )
+    second = Property(
+        td_number="TD-PHASE3-SECOND",
+        owner_name="Second Owner",
+        assessed_value=10_000,
+    )
+    db.add_all([first, second])
+    db.flush()
+    first_billing = PropertyBilling(
+        property_id=first.id,
+        tax_year=2026,
+        assessed_value=10_000,
+    )
+    second_billing = PropertyBilling(
+        property_id=second.id,
+        tax_year=2026,
+        assessed_value=10_000,
+    )
+    payment = Payment(
+        property_id=first.id,
+        amount=100,
+        or_number="PHASE3-OR",
+        tax_year="2026",
+        date_paid=datetime(2026, 1, 2),
+    )
+    db.add_all([first_billing, second_billing, payment])
+    db.flush()
+    return payment, first_billing, second_billing
+
+
+def test_allocation_rejects_cross_property_billing(db):
+    payment, _first_billing, second_billing = _phase3_allocation_records(db)
+
+    with pytest.raises(ValueError, match="another property's billing"):
+        sync_payment_billings(
+            payment.id,
+            [
+                {
+                    "billing_id": second_billing.id,
+                    "tax_year": 2026,
+                    "applied_amount": 100,
+                }
+            ],
+            db_session=db,
+        )
+
+    assert db.query(PaymentBilling).count() == 0
+
+
+def test_allocation_rejects_unbalanced_total(db):
+    payment, first_billing, _second_billing = _phase3_allocation_records(db)
+
+    with pytest.raises(ValueError, match="full payment amount"):
+        sync_payment_billings(
+            payment.id,
+            [
+                {
+                    "billing_id": first_billing.id,
+                    "tax_year": 2026,
+                    "applied_amount": 99.99,
+                }
+            ],
+            db_session=db,
+        )
+
+    assert db.query(PaymentBilling).count() == 0
+
+
+def test_allocation_rejects_duplicate_billing_target(db):
+    payment, first_billing, _second_billing = _phase3_allocation_records(db)
+    duplicate = {
+        "billing_id": first_billing.id,
+        "tax_year": 2026,
+        "applied_amount": 50,
+    }
+
+    with pytest.raises(ValueError, match="more than once"):
+        sync_payment_billings(
+            payment.id,
+            [duplicate, dict(duplicate)],
+            db_session=db,
+        )
+
+    assert db.query(PaymentBilling).count() == 0

@@ -569,12 +569,17 @@ class AnalyticsDashboardPage:
                 ).grid(row=0, column=column, sticky="ew", padx=8, pady=6)
 
     def _render_status(self, quality):
-        pending = int(offline_manager.get_queue_count() or 0)
+        quarantined = int(offline_manager.get_quarantined_count() or 0)
         future_count = int(quality.get("future_dated_payments", 0) or 0)
 
         self.sync_status.configure(
-            text="Queue clear" if pending == 0 else f"{pending} pending item{'s' if pending != 1 else ''}",
-            text_color=self.GREEN if pending == 0 else self.AMBER,
+            text=(
+                "Offline writes disabled"
+                if quarantined == 0
+                else f"Review {quarantined} blocked legacy item"
+                f"{'s' if quarantined != 1 else ''}"
+            ),
+            text_color=self.GREEN if quarantined == 0 else self.AMBER,
         )
         self.date_status.configure(
             text=(

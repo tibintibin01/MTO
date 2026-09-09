@@ -204,6 +204,11 @@ MIGRATIONS = [
         "handler": "ensure_verified_duplicate_td_schema",
         "sql": "",
     },
+    {
+        "id": "phase3_financial_transaction_safety_v1",
+        "handler": "ensure_financial_safety_schema",
+        "sql": "",
+    },
 ]
 
 
@@ -369,6 +374,185 @@ def ensure_verified_duplicate_td_schema(db_session: Session) -> None:
         )
 
 
+def financial_invariant_violations(db_session: Session) -> dict[str, int]:
+    """Return corruption counts that must be zero before constraints are added."""
+    checks = {
+        "duplicate_payment_identity": (
+            "SELECT COUNT(*) FROM ("
+            " SELECT property_id, UPPER(TRIM(or_number)) AS or_key,"
+            "        UPPER(TRIM(tax_year)) AS year_key"
+            " FROM payments"
+            " WHERE or_number IS NOT NULL AND tax_year IS NOT NULL"
+            " GROUP BY property_id, UPPER(TRIM(or_number)), UPPER(TRIM(tax_year))"
+            " HAVING COUNT(*) > 1"
+            ") duplicate_receipts"
+        ),
+        "duplicate_payment_allocations": (
+            "SELECT COUNT(*) FROM ("
+            " SELECT payment_id, billing_id"
+            " FROM payment_billings"
+            " GROUP BY payment_id, billing_id"
+            " HAVING COUNT(*) > 1"
+            ") duplicate_allocations"
+        ),
+        "cross_property_allocations": (
+            "SELECT COUNT(*)"
+            " FROM payment_billings link"
+            " JOIN payments payment ON payment.id = link.payment_id"
+            " JOIN property_billings billing ON billing.id = link.billing_id"
+            " WHERE payment.property_id <> billing.property_id"
+        ),
+        "unbalanced_payment_allocations": (
+            "SELECT COUNT(*) FROM ("
+            " SELECT payment.id"
+            " FROM payments payment"
+            " LEFT JOIN payment_billings link ON link.payment_id = payment.id"
+            " GROUP BY payment.id, payment.amount"
+            " HAVING ABS(payment.amount - COALESCE(SUM(link.amount_paid), 0)) > 0.005"
+            ") unbalanced_payments"
+        ),
+    }
+    return {
+        name: int(db_session.execute(text(statement)).scalar() or 0)
+        for name, statement in checks.items()
+    }
+
+
+def _has_named_index(inspector, table_name, index_name):
+    names = {
+        item.get("name")
+        for item in inspector.get_indexes(table_name)
+        if item.get("name")
+    }
+    names.update(
+        item.get("name")
+        for item in inspector.get_unique_constraints(table_name)
+        if item.get("name")
+    )
+    return index_name in names
+
+
+def ensure_financial_safety_schema(db_session: Session) -> None:
+    """Fail closed on corrupt financial links, then install Phase 3 guards."""
+    connection = db_session.connection()
+    if connection.dialect.name not in {"mysql", "mariadb"}:
+        raise RuntimeError("Phase 3 financial safety migration requires MariaDB/MySQL.")
+
+    inspector = inspect(connection)
+    required_tables = {"payments", "property_billings", "payment_billings"}
+    missing_tables = sorted(
+        table_name
+        for table_name in required_tables
+        if not inspector.has_table(table_name)
+    )
+    if missing_tables:
+        raise RuntimeError(
+            "Phase 3 financial tables are missing: " + ", ".join(missing_tables)
+        )
+
+    violations = financial_invariant_violations(db_session)
+    nonzero = {name: count for name, count in violations.items() if count}
+    if nonzero:
+        details = ", ".join(
+            f"{name}={count}" for name, count in sorted(nonzero.items())
+        )
+        raise RuntimeError(
+            "Phase 3 preflight found financial invariant violations; "
+            f"repair and verify them before activation: {details}"
+        )
+
+    db_session.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS idempotency_keys ("
+            " id INT AUTO_INCREMENT PRIMARY KEY,"
+            " `key` VARCHAR(200) NOT NULL,"
+            " user_id VARCHAR(64) NULL,"
+            " request_hash VARCHAR(64) NULL,"
+            " method VARCHAR(10) NOT NULL,"
+            " path VARCHAR(255) NOT NULL,"
+            " state VARCHAR(20) NOT NULL DEFAULT 'COMPLETED',"
+            " status_code INT NOT NULL DEFAULT 200,"
+            " response_body TEXT NULL,"
+            " created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,"
+            " updated_at DATETIME NULL,"
+            " expires_at DATETIME NOT NULL,"
+            " UNIQUE KEY uq_idempotency_keys_key (`key`)"
+            ")"
+        )
+    )
+
+    inspector = inspect(connection)
+    idempotency_columns = {
+        column["name"] for column in inspector.get_columns("idempotency_keys")
+    }
+    additions = {
+        "user_id": "VARCHAR(64) NULL",
+        "request_hash": "VARCHAR(64) NULL",
+        "state": "VARCHAR(20) NOT NULL DEFAULT 'COMPLETED'",
+        "updated_at": "DATETIME NULL",
+    }
+    for column_name, definition in additions.items():
+        if column_name not in idempotency_columns:
+            db_session.execute(
+                text(
+                    f"ALTER TABLE idempotency_keys ADD COLUMN "
+                    f"{column_name} {definition}"
+                )
+            )
+
+    db_session.execute(
+        text(
+            "UPDATE idempotency_keys SET state = 'COMPLETED' "
+            "WHERE state IS NULL OR TRIM(state) = ''"
+        )
+    )
+
+    inspector = inspect(connection)
+    if not _has_named_index(
+        inspector,
+        "payment_billings",
+        "uq_payment_billings_payment_billing",
+    ):
+        db_session.execute(
+            text(
+                "CREATE UNIQUE INDEX uq_payment_billings_payment_billing "
+                "ON payment_billings (payment_id, billing_id)"
+            )
+        )
+    if not _has_named_index(
+        inspector,
+        "payments",
+        "uq_payments_property_or_tax_year_text",
+    ):
+        db_session.execute(
+            text(
+                "CREATE UNIQUE INDEX uq_payments_property_or_tax_year_text "
+                "ON payments (property_id, or_number, tax_year)"
+            )
+        )
+    if not _has_named_index(
+        inspector,
+        "idempotency_keys",
+        "ix_idempotency_keys_user_id",
+    ):
+        db_session.execute(
+            text(
+                "CREATE INDEX ix_idempotency_keys_user_id "
+                "ON idempotency_keys (user_id)"
+            )
+        )
+    if not _has_named_index(
+        inspector,
+        "idempotency_keys",
+        "ix_idempotency_keys_state",
+    ):
+        db_session.execute(
+            text(
+                "CREATE INDEX ix_idempotency_keys_state " "ON idempotency_keys (state)"
+            )
+        )
+
+
 def run_migrations(db_session: Session) -> int:
     """Checks and applies all pending database migrations."""
     print("--- DATABASE MIGRATION ENGINE ---")
@@ -397,8 +581,12 @@ def run_migrations(db_session: Session) -> int:
         if m_id not in applied_ids:
             print(f"Applying Migration: [{m_id}]...")
             try:
-                if m.get("handler") == "ensure_verified_duplicate_td_schema":
+                handler_name = m.get("handler")
+                if handler_name == "ensure_verified_duplicate_td_schema":
                     ensure_verified_duplicate_td_schema(db_session)
+                    statements = []
+                elif handler_name == "ensure_financial_safety_schema":
+                    ensure_financial_safety_schema(db_session)
                     statements = []
                 else:
                     statements = None

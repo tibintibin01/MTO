@@ -1,5 +1,6 @@
 import os
 import threading
+import uuid
 import customtkinter as ctk
 from tkinter import messagebox, ttk
 import tkinter as tk
@@ -108,14 +109,17 @@ class PropertyAccountSelectionDialog(ctk.CTkToplevel):
                 anchor="w" if column in ("Owner", "Classification") else "center",
             )
         for match in matches:
-            lot_block = " / ".join(
-                value
-                for value in (
-                    str(match.get("lot_number") or "").strip(),
-                    str(match.get("block_number") or "").strip(),
+            lot_block = (
+                " / ".join(
+                    value
+                    for value in (
+                        str(match.get("lot_number") or "").strip(),
+                        str(match.get("block_number") or "").strip(),
+                    )
+                    if value
                 )
-                if value
-            ) or "—"
+                or "—"
+            )
             self.tree.insert(
                 "",
                 "end",
@@ -172,9 +176,7 @@ class PropertyAccountSelectionDialog(ctk.CTkToplevel):
         self.geometry(f"{width}x{height}+{x}+{y}")
 
     def _on_selection(self, _event=None):
-        self.open_btn.configure(
-            state="normal" if self.tree.selection() else "disabled"
-        )
+        self.open_btn.configure(state="normal" if self.tree.selection() else "disabled")
 
     def _confirm(self):
         selection = self.tree.selection()
@@ -198,43 +200,121 @@ class LedgerPage:
         self._ledger_property_contexts = {}
         self._ledger_receipt_statuses = {}
         self._active_property_context = None
+        self._delete_idempotency_keys = {}
         self.setup_ui()
 
     def setup_ui(self):
         self.container = ctk.CTkFrame(self.parent, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=20, pady=20)
         colors = {
-            "panel": "#111827", "panel_alt": "#0f172a", "border": "#334155",
-            "muted": "#94a3b8", "text": "#f8fafc", "blue": "#0284c7",
-            "blue_hover": "#0369a1", "green": "#059669", "green_hover": "#047857",
-            "amber": "#d97706", "amber_hover": "#b45309", "red": "#dc2626",
+            "panel": "#111827",
+            "panel_alt": "#0f172a",
+            "border": "#334155",
+            "muted": "#94a3b8",
+            "text": "#f8fafc",
+            "blue": "#0284c7",
+            "blue_hover": "#0369a1",
+            "green": "#059669",
+            "green_hover": "#047857",
+            "amber": "#d97706",
+            "amber_hover": "#b45309",
+            "red": "#dc2626",
         }
 
         header = ctk.CTkFrame(self.container, fg_color="transparent")
         header.pack(fill="x", pady=(0, 14))
-        ctk.CTkLabel(header, text=tr("ledger.title"), font=("Inter", 25, "bold"), text_color=colors["text"]).pack(anchor="w")
-        ctk.CTkLabel(header, text=tr("ledger.subtitle"), font=("Inter", 11), text_color=colors["muted"]).pack(anchor="w", pady=(2, 0))
+        ctk.CTkLabel(
+            header,
+            text=tr("ledger.title"),
+            font=("Inter", 25, "bold"),
+            text_color=colors["text"],
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            header,
+            text=tr("ledger.subtitle"),
+            font=("Inter", 11),
+            text_color=colors["muted"],
+        ).pack(anchor="w", pady=(2, 0))
 
-        toolbar = ctk.CTkFrame(self.container, fg_color=colors["panel"], corner_radius=8, border_width=1, border_color=colors["border"])
+        toolbar = ctk.CTkFrame(
+            self.container,
+            fg_color=colors["panel"],
+            corner_radius=8,
+            border_width=1,
+            border_color=colors["border"],
+        )
         toolbar.pack(fill="x", pady=(0, 12))
         lookup = ctk.CTkFrame(toolbar, fg_color="transparent")
         lookup.pack(side="left", padx=12, pady=11)
-        ctk.CTkLabel(lookup, text="FIND LEDGER", font=("Inter", 10, "bold"), text_color=colors["muted"]).pack(side="left", padx=(0, 8))
-        self.search_ent = ctk.CTkEntry(lookup, placeholder_text=tr("ledger.search_placeholder"), width=400, height=36, font=("Inter", 11), fg_color=colors["panel_alt"], border_color=colors["border"])
+        ctk.CTkLabel(
+            lookup,
+            text="FIND LEDGER",
+            font=("Inter", 10, "bold"),
+            text_color=colors["muted"],
+        ).pack(side="left", padx=(0, 8))
+        self.search_ent = ctk.CTkEntry(
+            lookup,
+            placeholder_text=tr("ledger.search_placeholder"),
+            width=400,
+            height=36,
+            font=("Inter", 11),
+            fg_color=colors["panel_alt"],
+            border_color=colors["border"],
+        )
         self.search_ent.pack(side="left")
         self.search_ent.bind("<Return>", lambda e: self.load_ledger())
         self.search_ent.bind("<KP_Enter>", lambda e: self.load_ledger())
-        self.search_btn = ctk.CTkButton(lookup, text=tr("ledger.btn_fetch").upper(), command=self.load_ledger, width=125, height=36, font=("Inter", 10, "bold"), fg_color=colors["blue"], hover_color=colors["blue_hover"], corner_radius=6)
+        self.search_btn = ctk.CTkButton(
+            lookup,
+            text=tr("ledger.btn_fetch").upper(),
+            command=self.load_ledger,
+            width=125,
+            height=36,
+            font=("Inter", 10, "bold"),
+            fg_color=colors["blue"],
+            hover_color=colors["blue_hover"],
+            corner_radius=6,
+        )
         self.search_btn.pack(side="left", padx=(7, 0))
         if auth.has_permission(self.user, "payment_post"):
-            self.add_payment_btn = ctk.CTkButton(lookup, text="ADD PAYMENT", command=self.add_payment, width=125, height=36, font=("Inter", 10, "bold"), fg_color=colors["green"], hover_color=colors["green_hover"], corner_radius=6)
+            self.add_payment_btn = ctk.CTkButton(
+                lookup,
+                text="ADD PAYMENT",
+                command=self.add_payment,
+                width=125,
+                height=36,
+                font=("Inter", 10, "bold"),
+                fg_color=colors["green"],
+                hover_color=colors["green_hover"],
+                corner_radius=6,
+            )
             self.add_payment_btn.pack(side="left", padx=(8, 0))
 
         tools = ctk.CTkFrame(toolbar, fg_color="transparent")
         tools.pack(side="right", padx=12, pady=11)
-        self.import_btn = ctk.CTkButton(tools, text=tr("property.btn_import").upper(), command=self.open_import_wizard, font=("Inter", 10, "bold"), fg_color="#334155", hover_color="#475569", width=112, height=36, corner_radius=6)
+        self.import_btn = ctk.CTkButton(
+            tools,
+            text=tr("property.btn_import").upper(),
+            command=self.open_import_wizard,
+            font=("Inter", 10, "bold"),
+            fg_color="#334155",
+            hover_color="#475569",
+            width=112,
+            height=36,
+            corner_radius=6,
+        )
         self.import_btn.pack(side="left", padx=(0, 7))
-        self.export_btn = ctk.CTkButton(tools, text=tr("ledger.btn_export").upper(), command=self.do_export, font=("Inter", 10, "bold"), fg_color=colors["amber"], hover_color=colors["amber_hover"], width=112, height=36, corner_radius=6)
+        self.export_btn = ctk.CTkButton(
+            tools,
+            text=tr("ledger.btn_export").upper(),
+            command=self.do_export,
+            font=("Inter", 10, "bold"),
+            fg_color=colors["amber"],
+            hover_color=colors["amber_hover"],
+            width=112,
+            height=36,
+            corner_radius=6,
+        )
         self.export_btn.pack(side="left")
 
         selected_bar = ctk.CTkFrame(
@@ -263,27 +343,103 @@ class LedgerPage:
             anchor="w",
         )
         self.property_context_lbl.pack(fill="x", anchor="w", pady=(2, 0))
-        self.view_btn = ctk.CTkButton(selected_bar, text=tr("ledger.btn_view").upper(), command=self.open_receipt, font=("Inter", 10, "bold"), fg_color=colors["blue"], hover_color=colors["blue_hover"], width=118, height=32, corner_radius=6, state="disabled")
+        self.view_btn = ctk.CTkButton(
+            selected_bar,
+            text=tr("ledger.btn_view").upper(),
+            command=self.open_receipt,
+            font=("Inter", 10, "bold"),
+            fg_color=colors["blue"],
+            hover_color=colors["blue_hover"],
+            width=118,
+            height=32,
+            corner_radius=6,
+            state="disabled",
+        )
         self.view_btn.pack(side="right", padx=(0, 12), pady=10)
         if auth.has_permission(self.user, "receipt_generate"):
-            self.regen_btn = ctk.CTkButton(selected_bar, text=tr("ledger.btn_regen").upper(), command=self.regenerate_receipt, font=("Inter", 10, "bold"), fg_color=colors["green"], hover_color=colors["green_hover"], width=118, height=32, corner_radius=6, state="disabled")
+            self.regen_btn = ctk.CTkButton(
+                selected_bar,
+                text=tr("ledger.btn_regen").upper(),
+                command=self.regenerate_receipt,
+                font=("Inter", 10, "bold"),
+                fg_color=colors["green"],
+                hover_color=colors["green_hover"],
+                width=118,
+                height=32,
+                corner_radius=6,
+                state="disabled",
+            )
             self.regen_btn.pack(side="right", padx=(0, 7))
         if auth.has_permission(self.user, "payment_post"):
-            self.edit_btn = ctk.CTkButton(selected_bar, text="EDIT", command=self.edit_payment, font=("Inter", 10, "bold"), fg_color="#475569", hover_color="#64748b", width=92, height=32, corner_radius=6, state="disabled")
+            self.edit_btn = ctk.CTkButton(
+                selected_bar,
+                text="EDIT",
+                command=self.edit_payment,
+                font=("Inter", 10, "bold"),
+                fg_color="#475569",
+                hover_color="#64748b",
+                width=92,
+                height=32,
+                corner_radius=6,
+                state="disabled",
+            )
             self.edit_btn.pack(side="right", padx=(0, 7))
         if auth.has_permission(self.user, "payment_delete"):
-            self.del_btn = ctk.CTkButton(selected_bar, text="DELETE", command=self.delete_payment, font=("Inter", 10, "bold"), fg_color=colors["red"], hover_color="#b91c1c", width=92, height=32, corner_radius=6, state="disabled")
+            self.del_btn = ctk.CTkButton(
+                selected_bar,
+                text="DELETE",
+                command=self.delete_payment,
+                font=("Inter", 10, "bold"),
+                fg_color=colors["red"],
+                hover_color="#b91c1c",
+                width=92,
+                height=32,
+                corner_radius=6,
+                state="disabled",
+            )
             self.del_btn.pack(side="right", padx=(0, 7))
 
-        t_frame = ctk.CTkFrame(self.container, fg_color=colors["panel_alt"], corner_radius=8, border_width=1, border_color=colors["border"])
+        t_frame = ctk.CTkFrame(
+            self.container,
+            fg_color=colors["panel_alt"],
+            corner_radius=8,
+            border_width=1,
+            border_color=colors["border"],
+        )
         t_frame.pack(fill="both", expand=True)
 
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("Ledger.Treeview", rowheight=34, font=("Inter", 11), background="#0f172a", fieldbackground="#0f172a", foreground="#e2e8f0", borderwidth=0)
-        style.configure("Ledger.Treeview.Heading", font=("Inter", 10, "bold"), background="#334155", foreground="#f8fafc", borderwidth=0, relief="flat", padding=(8, 8))
-        style.map("Ledger.Treeview", background=[("selected", colors["blue"])], foreground=[("selected", "#ffffff")])
-        style.configure("Ledger.Vertical.TScrollbar", background="#475569", troughcolor="#0f172a", bordercolor="#0f172a", arrowcolor="#cbd5e1")
+        style.configure(
+            "Ledger.Treeview",
+            rowheight=34,
+            font=("Inter", 11),
+            background="#0f172a",
+            fieldbackground="#0f172a",
+            foreground="#e2e8f0",
+            borderwidth=0,
+        )
+        style.configure(
+            "Ledger.Treeview.Heading",
+            font=("Inter", 10, "bold"),
+            background="#334155",
+            foreground="#f8fafc",
+            borderwidth=0,
+            relief="flat",
+            padding=(8, 8),
+        )
+        style.map(
+            "Ledger.Treeview",
+            background=[("selected", colors["blue"])],
+            foreground=[("selected", "#ffffff")],
+        )
+        style.configure(
+            "Ledger.Vertical.TScrollbar",
+            background="#475569",
+            troughcolor="#0f172a",
+            bordercolor="#0f172a",
+            arrowcolor="#cbd5e1",
+        )
 
         # Use stable internal identifiers. Translated text is display-only;
         # using it as a Treeview column ID made label changes crash the page.
@@ -313,7 +469,9 @@ class LedgerPage:
             tr("ledger.table.posted"),
             "Remarks",
         )
-        self.tree = ttk.Treeview(t_frame, columns=self.cols, show="headings", style="Ledger.Treeview")
+        self.tree = ttk.Treeview(
+            t_frame, columns=self.cols, show="headings", style="Ledger.Treeview"
+        )
 
         for col, label in zip(self.cols, self.column_labels):
             self.tree.heading(col, text=label.upper())
@@ -325,21 +483,42 @@ class LedgerPage:
         self.tree.column("posted_by", width=150)
         self.tree.column("remarks", width=220, anchor="w")
 
-        scrolly = ttk.Scrollbar(t_frame, orient="vertical", command=self.tree.yview, style="Ledger.Vertical.TScrollbar")
+        scrolly = ttk.Scrollbar(
+            t_frame,
+            orient="vertical",
+            command=self.tree.yview,
+            style="Ledger.Vertical.TScrollbar",
+        )
         self.tree.configure(yscrollcommand=scrolly.set)
-        self.tree.tag_configure('oddrow', background="#162032", foreground="#e2e8f0")
-        self.tree.tag_configure('evenrow', background="#1e293b", foreground="#e2e8f0")
+        self.tree.tag_configure("oddrow", background="#162032", foreground="#e2e8f0")
+        self.tree.tag_configure("evenrow", background="#1e293b", foreground="#e2e8f0")
         scrolly.pack(side="right", fill="y", pady=1, padx=(0, 1))
         self.tree.pack(side="left", fill="both", expand=True, padx=1, pady=1)
-        
+
         self.tree.bind("<<TreeviewSelect>>", self.on_selection_change)
         self.tree.bind("<Double-1>", lambda e: self.open_receipt())
 
-        self.footer = ctk.CTkFrame(self.container, height=58, fg_color=colors["panel"], corner_radius=8, border_width=1, border_color=colors["border"])
+        self.footer = ctk.CTkFrame(
+            self.container,
+            height=58,
+            fg_color=colors["panel"],
+            corner_radius=8,
+            border_width=1,
+            border_color=colors["border"],
+        )
         self.footer.pack(fill="x", pady=(12, 0))
-        ctk.CTkLabel(self.footer, text="PAYMENT HISTORY TOTAL", font=("Inter", 9, "bold"), text_color=colors["muted"]).pack(side="left", padx=18, pady=14)
-        self.total_lbl = ctk.CTkLabel(self.footer, text=tr("ledger.footer.total").replace("{value}", "₱ 0.00"), 
-                                      font=("Inter", 17, "bold"), text_color="#34d399")
+        ctk.CTkLabel(
+            self.footer,
+            text="PAYMENT HISTORY TOTAL",
+            font=("Inter", 9, "bold"),
+            text_color=colors["muted"],
+        ).pack(side="left", padx=18, pady=14)
+        self.total_lbl = ctk.CTkLabel(
+            self.footer,
+            text=tr("ledger.footer.total").replace("{value}", "₱ 0.00"),
+            font=("Inter", 17, "bold"),
+            text_color="#34d399",
+        )
         self.total_lbl.pack(side="right", padx=18, pady=14)
 
     def on_selection_change(self, event=None):
@@ -348,7 +527,9 @@ class LedgerPage:
         self.view_btn.configure(state=state)
         if hasattr(self, "regen_btn"):
             regen_state = (
-                state if auth.has_permission(self.user, "receipt_generate") else "disabled"
+                state
+                if auth.has_permission(self.user, "receipt_generate")
+                else "disabled"
             )
             self.regen_btn.configure(state=regen_state)
         if hasattr(self, "edit_btn"):
@@ -376,7 +557,9 @@ class LedgerPage:
 
         if context.get("multiple"):
             count = context.get("count", 0)
-            self.property_owner_lbl.configure(text="PROPERTY ACCOUNT  |  Multiple properties found")
+            self.property_owner_lbl.configure(
+                text="PROPERTY ACCOUNT  |  Multiple properties found"
+            )
             self.property_context_lbl.configure(
                 text=f"{count} property accounts match this search. Select a payment row to confirm its owner."
             )
@@ -418,16 +601,29 @@ class LedgerPage:
     def load_ledger(self):
         term = self.search_ent.get().strip()
         if not term:
-            ErrorDialog(self.parent.winfo_toplevel(), tr("ledger.errors.input_req"), tr("ledger.errors.input_req_msg"))
+            ErrorDialog(
+                self.parent.winfo_toplevel(),
+                tr("ledger.errors.input_req"),
+                tr("ledger.errors.input_req_msg"),
+            )
             return
 
-        if self.is_loading: return
+        if self.is_loading:
+            return
         self.is_loading = True
         self.search_btn.configure(state="disabled")
-        
-        self.overlay = LoadingOverlay(self.container, tr("ledger.loading_msg") if "ledger.loading_msg" in tr("ledger") else "Fetching Records...")
 
-        for r in self.tree.get_children(): self.tree.delete(r)
+        self.overlay = LoadingOverlay(
+            self.container,
+            (
+                tr("ledger.loading_msg")
+                if "ledger.loading_msg" in tr("ledger")
+                else "Fetching Records..."
+            ),
+        )
+
+        for r in self.tree.get_children():
+            self.tree.delete(r)
 
         def worker():
             try:
@@ -462,11 +658,15 @@ class LedgerPage:
                     lambda: self._update_ui(rows, term, fallback_context),
                 )
             except Exception as e:
-                self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
+                self.container.after(
+                    0, lambda err=e: messagebox.showerror("Error", str(err))
+                )
             finally:
                 self.is_loading = False
                 self.container.after(0, lambda: self.overlay.hide())
-                self.container.after(0, lambda: self.search_btn.configure(state="normal"))
+                self.container.after(
+                    0, lambda: self.search_btn.configure(state="normal")
+                )
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -500,9 +700,7 @@ class LedgerPage:
 
         def worker():
             try:
-                rows = payment.get_unified_payment_history(
-                    property_id=match["id"]
-                )
+                rows = payment.get_unified_payment_history(property_id=match["id"])
                 self.container.after(
                     0,
                     lambda: self._update_ui(
@@ -542,14 +740,14 @@ class LedgerPage:
                     else ("READY" if file_path else "NOT_GENERATED")
                 )
                 # Format Currencies
-                f_r[4] = format_curr(f_r[4]) # Basic
-                f_r[5] = format_curr(f_r[5]) # SEF
-                f_r[6] = format_curr(f_r[6]) # Penalty
-                f_r[7] = format_curr(f_r[7]) # Discount
-                f_r[8] = format_curr(f_r[8]) # Total
+                f_r[4] = format_curr(f_r[4])  # Basic
+                f_r[5] = format_curr(f_r[5])  # SEF
+                f_r[6] = format_curr(f_r[6])  # Penalty
+                f_r[7] = format_curr(f_r[7])  # Discount
+                f_r[8] = format_curr(f_r[8])  # Total
                 f_r[10] = str(f_r[10] or "")
-                
-                tag = 'evenrow' if i % 2 == 0 else 'oddrow'
+
+                tag = "evenrow" if i % 2 == 0 else "oddrow"
                 item_id = self.tree.insert("", "end", values=f_r, tags=(tag,))
                 self._ledger_receipt_statuses[item_id] = status_code
                 if len(r) > 15:
@@ -561,20 +759,24 @@ class LedgerPage:
                         "barangay": r[16] if len(r) > 16 else "",
                         "kind_of_property": r[17] if len(r) > 17 else "",
                     }
-                try: grand_total += float(r[8])
-                except: pass
-            self.total_lbl.configure(text=tr("ledger.footer.total").replace("{value}", f"₱ {grand_total:,.2f}"))
+                try:
+                    grand_total += float(r[8])
+                except:
+                    pass
+            self.total_lbl.configure(
+                text=tr("ledger.footer.total").replace(
+                    "{value}", f"₱ {grand_total:,.2f}"
+                )
+            )
             contexts_by_property = {
                 context["property_id"]: context
                 for context in self._ledger_property_contexts.values()
             }
             if len(contexts_by_property) == 1:
                 only_context = next(iter(contexts_by_property.values()))
-                if (
-                    fallback_context
-                    and fallback_context.get("property_id")
-                    == only_context.get("property_id")
-                ):
+                if fallback_context and fallback_context.get(
+                    "property_id"
+                ) == only_context.get("property_id"):
                     self._active_property_context = fallback_context
                 else:
                     self._active_property_context = only_context
@@ -587,13 +789,16 @@ class LedgerPage:
             # A valid property can have no payment history yet. Preserve its
             # identity so the ledger and Add Payment modal stay connected.
             self._active_property_context = fallback_context
-            self.total_lbl.configure(text=tr("ledger.footer.total").replace("{value}", "₱ 0.00"))
+            self.total_lbl.configure(
+                text=tr("ledger.footer.total").replace("{value}", "₱ 0.00")
+            )
         self._show_property_context(self._active_property_context)
         self.on_selection_change()
 
     def open_receipt(self):
         sel = self.tree.selection()
-        if not sel: return
+        if not sel:
+            return
 
         item_id = sel[0]
         pay_id = self.tree.item(item_id)["values"][0]
@@ -634,11 +839,12 @@ class LedgerPage:
 
     def regenerate_receipt(self):
         sel = self.tree.selection()
-        if not sel: return
-        
+        if not sel:
+            return
+
         pay_id = self.tree.item(sel[0])["values"][0]
         overlay = LoadingOverlay(self.container, "Generating current PDF copy...")
-        
+
         def worker():
             try:
                 # Ask the backend to generate the PDF and download it locally
@@ -650,10 +856,14 @@ class LedgerPage:
                     self.user,
                     f"Regenerated payment-record PDF for payment ID {pay_id}",
                 )
-                self.container.after(0, lambda: [self.load_ledger(), os.startfile(new_path)])
+                self.container.after(
+                    0, lambda: [self.load_ledger(), os.startfile(new_path)]
+                )
             except Exception as e:
                 err_msg = str(e)
-                self.container.after(0, lambda: messagebox.showerror("Generation Error", err_msg))
+                self.container.after(
+                    0, lambda: messagebox.showerror("Generation Error", err_msg)
+                )
             finally:
                 self.container.after(0, lambda: overlay.hide())
 
@@ -661,6 +871,7 @@ class LedgerPage:
 
     def open_import_wizard(self):
         from ui.import_wizard import ImportWizardModal
+
         ImportWizardModal(self.container.winfo_toplevel(), mode="payments")
 
     def add_payment(self):
@@ -720,9 +931,14 @@ class LedgerPage:
                         ),
                     )
                 else:
-                    self.container.after(0, lambda msg=message: messagebox.showwarning("Add Payment", msg))
+                    self.container.after(
+                        0,
+                        lambda msg=message: messagebox.showwarning("Add Payment", msg),
+                    )
             except Exception as e:
-                self.container.after(0, lambda err=e: messagebox.showerror("Add Payment", str(err)))
+                self.container.after(
+                    0, lambda err=e: messagebox.showerror("Add Payment", str(err))
+                )
             finally:
                 self.container.after(0, lambda: overlay.hide())
 
@@ -779,8 +995,8 @@ class LedgerPage:
             "td_number": row[1] if len(row) > 1 else None,
             "owner_name": row[2] if len(row) > 2 else None,
             "kind_of_property": row[7] if len(row) > 7 else None,
-            "barangay": row[22] if len(row) > 22 else (
-                row[6] if len(row) > 6 else None
+            "barangay": (
+                row[22] if len(row) > 22 else (row[6] if len(row) > 6 else None)
             ),
         }
 
@@ -804,19 +1020,26 @@ class LedgerPage:
             (20, "former TD number"),
         ):
             matches = [
-                row for row in items
+                row
+                for row in items
                 if len(row) > field_index
                 and self._normalize_identifier(row[field_index]) == clean_term
             ]
             if len(matches) == 1:
                 return matches[0], None
             if len(matches) > 1:
-                return None, f"Multiple properties share this {field_name}. Please verify the property record first."
+                return (
+                    None,
+                    f"Multiple properties share this {field_name}. Please verify the property record first.",
+                )
 
         if len(items) == 1:
             return items[0], None
 
-        return None, "Multiple properties matched. Please search the exact TD number or former TD number, then try Add Payment again."
+        return (
+            None,
+            "Multiple properties matched. Please search the exact TD number or former TD number, then try Add Payment again.",
+        )
 
     def _normalize_identifier(self, value):
         return str(value or "").strip().replace(" ", "-").upper()
@@ -826,6 +1049,7 @@ class LedgerPage:
             self._active_property_context = context
             self._show_property_context(context)
         from ui.property import PropertyEditModal
+
         PropertyEditModal(
             self.container.winfo_toplevel(),
             "Add Payment",
@@ -839,11 +1063,13 @@ class LedgerPage:
         data = []
         for child in self.tree.get_children():
             data.append(self.tree.item(child)["values"])
-            
+
         if not data:
-            messagebox.showwarning("Export", "No data to export. Please search for a record first.")
+            messagebox.showwarning(
+                "Export", "No data to export. Please search for a record first."
+            )
             return
-            
+
         export_data_to_excel(data, self.column_labels, filename_prefix="LedgerExport")
 
     def edit_payment(self):
@@ -856,35 +1082,55 @@ class LedgerPage:
         def worker():
             try:
                 details = payment.get_payment_receipt_details(pay_id)
-                self.container.after(0, lambda: PaymentEditModal(
-                    self.container.winfo_toplevel(),
-                    pay_id,
-                    details,
-                    self.load_ledger,
-                ))
+                self.container.after(
+                    0,
+                    lambda: PaymentEditModal(
+                        self.container.winfo_toplevel(),
+                        pay_id,
+                        details,
+                        self.load_ledger,
+                    ),
+                )
             except Exception as e:
-                self.container.after(0, lambda err=e: messagebox.showerror("Edit Payment", str(err)))
+                self.container.after(
+                    0, lambda err=e: messagebox.showerror("Edit Payment", str(err))
+                )
             finally:
                 self.container.after(0, lambda: overlay.hide())
 
         threading.Thread(target=worker, daemon=True).start()
+
     def delete_payment(self):
         sel = self.tree.selection()
-        if not sel: return
-        
+        if not sel:
+            return
+
         item = self.tree.item(sel[0])
         pay_id = item["values"][0]
         or_no = item["values"][2]
-        
-        if not messagebox.askyesno("Delete Payment", f"Are you sure you want to permanently delete payment OR {or_no}?\n\nThis will reverse its impact on the corresponding billing balances.", icon="warning"):
+
+        if not messagebox.askyesno(
+            "Delete Payment",
+            f"Are you sure you want to permanently delete payment OR {or_no}?\n\nThis will reverse its impact on the corresponding billing balances.",
+            icon="warning",
+        ):
             return
-            
+
         overlay = LoadingOverlay(self.container, "Deleting Payment...")
-        
+        operation_key = self._delete_idempotency_keys.setdefault(
+            int(pay_id), str(uuid.uuid4())
+        )
+
         def worker():
             try:
-                res = payment.delete_payment(pay_id)
-                self.container.after(0, lambda: messagebox.showinfo("Success", res.get("message", "Payment deleted.")))
+                res = payment.delete_payment(pay_id, operation_key)
+                self._delete_idempotency_keys.pop(int(pay_id), None)
+                self.container.after(
+                    0,
+                    lambda: messagebox.showinfo(
+                        "Success", res.get("message", "Payment deleted.")
+                    ),
+                )
                 self.container.after(0, self.load_ledger)
             except Exception as e:
                 err_msg = str(e)
@@ -894,12 +1140,14 @@ class LedgerPage:
 
         threading.Thread(target=worker, daemon=True).start()
 
+
 class PaymentEditModal(ctk.CTkToplevel):
     def __init__(self, parent, payment_id, details, callback):
         super().__init__(parent)
         self.payment_id = payment_id
         self.details = details or {}
         self.callback = callback
+        self._idempotency_key = str(uuid.uuid4())
         self.title("Edit Payment")
         self._modal_width = 500
         self._modal_height = 640
@@ -911,8 +1159,12 @@ class PaymentEditModal(ctk.CTkToplevel):
         self.configure(fg_color="#0f172a")
         self._build_ui()
         self.update_idletasks()
-        x = parent.winfo_rootx() + max(0, (parent.winfo_width() - self._modal_width) // 2)
-        y = parent.winfo_rooty() + max(0, (parent.winfo_height() - self._modal_height) // 2)
+        x = parent.winfo_rootx() + max(
+            0, (parent.winfo_width() - self._modal_width) // 2
+        )
+        y = parent.winfo_rooty() + max(
+            0, (parent.winfo_height() - self._modal_height) // 2
+        )
         self.geometry(f"+{x}+{y}")
 
     def _date_text(self, value):
@@ -937,9 +1189,21 @@ class PaymentEditModal(ctk.CTkToplevel):
 
         header = ctk.CTkFrame(body, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 8))
-        ctk.CTkLabel(header, text="Edit Payment", font=("Segoe UI", 20, "bold"), text_color="white").pack(anchor="w")
+        ctk.CTkLabel(
+            header,
+            text="Edit Payment",
+            font=("Segoe UI", 20, "bold"),
+            text_color="white",
+        ).pack(anchor="w")
         title = f"{self.details.get('td_number', '')}  |  {self.details.get('owner_name', '')}"
-        ctk.CTkLabel(header, text=title, font=("Segoe UI", 11), text_color="#94a3b8", wraplength=430, justify="left").pack(anchor="w", pady=(4, 0))
+        ctk.CTkLabel(
+            header,
+            text=title,
+            font=("Segoe UI", 11),
+            text_color="#94a3b8",
+            wraplength=430,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 0))
 
         content = ctk.CTkScrollableFrame(
             body,
@@ -951,7 +1215,9 @@ class PaymentEditModal(ctk.CTkToplevel):
         content.grid_columnconfigure(0, weight=1)
 
         self.vars = {
-            "date_paid": tk.StringVar(value=self._date_text(self.details.get("date_paid"))),
+            "date_paid": tk.StringVar(
+                value=self._date_text(self.details.get("date_paid"))
+            ),
             "or_number": tk.StringVar(value=str(self.details.get("or_number") or "")),
             "tax_year": tk.StringVar(value=str(self.details.get("tax_year") or "")),
             "penalty": tk.StringVar(value=self._money_text("penalty")),
@@ -971,19 +1237,53 @@ class PaymentEditModal(ctk.CTkToplevel):
         )
         self._field_entries = []
         for label, key, placeholder in fields:
-            ctk.CTkLabel(content, text=label.upper(), font=("Segoe UI", 10, "bold"), text_color="#94a3b8").pack(anchor="w", fill="x")
-            ent = ctk.CTkEntry(content, textvariable=self.vars[key], placeholder_text=placeholder, height=36, fg_color="#1f2937", border_color="#475569", text_color="white")
+            ctk.CTkLabel(
+                content,
+                text=label.upper(),
+                font=("Segoe UI", 10, "bold"),
+                text_color="#94a3b8",
+            ).pack(anchor="w", fill="x")
+            ent = ctk.CTkEntry(
+                content,
+                textvariable=self.vars[key],
+                placeholder_text=placeholder,
+                height=36,
+                fg_color="#1f2937",
+                border_color="#475569",
+                text_color="white",
+            )
             ent.pack(fill="x", pady=(4, 12))
             self._field_entries.append(ent)
 
         hint = "Changing this record recalculates the linked billing balance. Regenerate the receipt after saving if the PDF should reflect the correction."
-        ctk.CTkLabel(content, text=hint, font=("Segoe UI", 10), text_color="#fbbf24", wraplength=430, justify="left").pack(anchor="w", fill="x", pady=(0, 8))
+        ctk.CTkLabel(
+            content,
+            text=hint,
+            font=("Segoe UI", 10),
+            text_color="#fbbf24",
+            wraplength=430,
+            justify="left",
+        ).pack(anchor="w", fill="x", pady=(0, 8))
 
         footer = ctk.CTkFrame(body, fg_color="#111827")
         footer.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 18))
         footer.grid_columnconfigure(1, weight=1)
-        ctk.CTkButton(footer, text="CANCEL", command=self.destroy, fg_color="#64748b", width=120, height=36).grid(row=0, column=0, sticky="w")
-        self.save_btn = ctk.CTkButton(footer, text="SAVE CHANGES", command=self.save, fg_color=ModernTheme.SUCCESS, width=160, height=36)
+        ctk.CTkButton(
+            footer,
+            text="CANCEL",
+            command=self.destroy,
+            fg_color="#64748b",
+            width=120,
+            height=36,
+        ).grid(row=0, column=0, sticky="w")
+        self.save_btn = ctk.CTkButton(
+            footer,
+            text="SAVE CHANGES",
+            command=self.save,
+            fg_color=ModernTheme.SUCCESS,
+            width=160,
+            height=36,
+        )
         self.save_btn.grid(row=0, column=2, sticky="e")
         self.save_btn.bind("<Return>", lambda _e: self.save())
         self.save_btn.bind("<KP_Enter>", lambda _e: self.save())
@@ -996,8 +1296,12 @@ class PaymentEditModal(ctk.CTkToplevel):
         for entry in self._field_entries:
             for widget in (entry, getattr(entry, "_entry", None)):
                 if widget:
-                    widget.bind("<Return>", lambda _e, w=entry: self._focus_next_entry(w))
-                    widget.bind("<KP_Enter>", lambda _e, w=entry: self._focus_next_entry(w))
+                    widget.bind(
+                        "<Return>", lambda _e, w=entry: self._focus_next_entry(w)
+                    )
+                    widget.bind(
+                        "<KP_Enter>", lambda _e, w=entry: self._focus_next_entry(w)
+                    )
 
     def _focus_next_entry(self, current):
         try:
@@ -1028,25 +1332,60 @@ class PaymentEditModal(ctk.CTkToplevel):
                 "remarks": self.vars["remarks"].get().strip(),
             }
         except ValueError:
-            messagebox.showerror("Invalid Amount", "Penalty, discount, and total paid must be valid numbers.", parent=self)
+            messagebox.showerror(
+                "Invalid Amount",
+                "Penalty, discount, and total paid must be valid numbers.",
+                parent=self,
+            )
             return
 
-        missing = [label for label, key in (("OR Date", "date_paid"), ("OR Number", "or_number"), ("Tax Year", "tax_year")) if not data[key]]
+        missing = [
+            label
+            for label, key in (
+                ("OR Date", "date_paid"),
+                ("OR Number", "or_number"),
+                ("Tax Year", "tax_year"),
+            )
+            if not data[key]
+        ]
         if missing:
-            messagebox.showerror("Missing Details", f"Please fill in: {', '.join(missing)}.", parent=self)
+            messagebox.showerror(
+                "Missing Details", f"Please fill in: {', '.join(missing)}.", parent=self
+            )
             return
 
         self.save_btn.configure(state="disabled", text="SAVING...")
 
         def worker():
             try:
-                res = payment.update_payment(self.payment_id, data)
-                self.after(0, lambda: messagebox.showinfo("Payment Updated", res.get("message", "Payment updated successfully."), parent=self))
+                res = payment.update_payment(
+                    self.payment_id,
+                    data,
+                    self._idempotency_key,
+                )
+                self.after(
+                    0,
+                    lambda: messagebox.showinfo(
+                        "Payment Updated",
+                        res.get("message", "Payment updated successfully."),
+                        parent=self,
+                    ),
+                )
                 if self.callback:
                     self.after(0, self.callback)
                 self.after(0, self.destroy)
             except Exception as e:
-                self.after(0, lambda err=e: messagebox.showerror("Edit Payment", str(err), parent=self))
-                self.after(0, lambda: self.save_btn.configure(state="normal", text="SAVE CHANGES"))
+                self.after(
+                    0,
+                    lambda err=e: messagebox.showerror(
+                        "Edit Payment", str(err), parent=self
+                    ),
+                )
+                self.after(
+                    0,
+                    lambda: self.save_btn.configure(
+                        state="normal", text="SAVE CHANGES"
+                    ),
+                )
 
         threading.Thread(target=worker, daemon=True).start()

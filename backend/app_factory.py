@@ -20,7 +20,6 @@ from backend.middleware.security import (
     request_body_size_middleware,
     request_timeout_middleware,
 )
-from backend.middleware.idempotency import idempotency_middleware
 from backend.middleware.observability import (
     observability_middleware,
     maintenance_mode_middleware,
@@ -309,7 +308,6 @@ def create_app() -> FastAPI:
     # App Middlewares
     app.middleware("http")(maintenance_mode_middleware)
     app.middleware("http")(observability_middleware)
-    app.middleware("http")(idempotency_middleware)
     app.middleware("http")(request_body_size_middleware)
     app.middleware("http")(security_headers_middleware)
     app.middleware("http")(request_timeout_middleware)

@@ -844,30 +844,106 @@ def sync_payment_billings(payment_id, billing_rows, db_session: Session = None):
     if not payment_id:
         return
 
-    # 1. Clear existing links
+    payment = (
+        db_session.query(Payment)
+        .filter(Payment.id == payment_id)
+        .with_for_update()
+        .first()
+    )
+    if not payment:
+        raise ValueError("Payment allocation target does not exist.")
+
+    submitted = []
+    submitted_ids = set()
+    for source_row in billing_rows:
+        billing_id = source_row.get("billing_id")
+        if not billing_id:
+            continue
+        applied_amount = Decimal(
+            str(
+                source_row.get("applied_amount", source_row.get("total_amount", 0)) or 0
+            )
+        ).quantize(MONEY, rounding=ROUND_HALF_UP)
+        if applied_amount <= Decimal("0.00"):
+            continue
+        billing_id = int(billing_id)
+        if billing_id in submitted_ids:
+            raise ValueError(
+                "A payment cannot allocate to the same billing row more than once."
+            )
+        submitted_ids.add(billing_id)
+        submitted.append((source_row, billing_id, applied_amount))
+
+    expected_total = Decimal(str(payment.amount or 0)).quantize(
+        MONEY, rounding=ROUND_HALF_UP
+    )
+    allocated_total = sum((row[2] for row in submitted), Decimal("0.00")).quantize(
+        MONEY, rounding=ROUND_HALF_UP
+    )
+    if allocated_total != expected_total:
+        raise ValueError(
+            "Payment allocations must equal the full payment amount "
+            f"({allocated_total} allocated; {expected_total} required)."
+        )
+
+    billings_by_id = {}
+    if submitted_ids:
+        locked_billings = (
+            db_session.query(PropertyBilling)
+            .filter(PropertyBilling.id.in_(submitted_ids))
+            .with_for_update()
+            .all()
+        )
+        billings_by_id = {row.id: row for row in locked_billings}
+    if len(billings_by_id) != len(submitted_ids):
+        raise ValueError("One or more payment allocation billings do not exist.")
+
+    payment_years = {
+        int(year)
+        for year in normalize_tax_years(payment.tax_year)
+        if str(year).isdigit()
+    }
+    for source_row, billing_id, _applied_amount in submitted:
+        billing = billings_by_id[billing_id]
+        if billing.property_id != payment.property_id:
+            raise ValueError(
+                "A payment cannot be allocated to another property's billing."
+            )
+        source_year = int(source_row.get("tax_year"))
+        if source_year != int(billing.tax_year):
+            raise ValueError(
+                "Payment allocation tax year does not match its billing row."
+            )
+        if payment_years and source_year not in payment_years:
+            raise ValueError(
+                "Payment allocation tax year is not included in the payment."
+            )
+
+    existing_links = (
+        db_session.query(PaymentBilling)
+        .filter(PaymentBilling.payment_id == payment_id)
+        .with_for_update()
+        .all()
+    )
+    affected_billing_ids = [
+        link.billing_id for link in existing_links if link.billing_id
+    ]
+
+    # Replace all links only after every submitted allocation has passed the
+    # amount, ownership, year, and uniqueness checks.
     db_session.query(PaymentBilling).filter(
         PaymentBilling.payment_id == payment_id
     ).delete()
 
-    affected_billing_ids = []
-    for billing_row in billing_rows:
-        if not billing_row.get("billing_id"):
-            continue
-
-        applied_amount = float(
-            billing_row.get("applied_amount", billing_row.get("total_amount", 0)) or 0
-        )
-        if applied_amount <= 0:
-            continue
-
+    for billing_row, billing_id, applied_amount in submitted:
         link = PaymentBilling(
             payment_id=payment_id,
-            billing_id=billing_row["billing_id"],
+            billing_id=billing_id,
             tax_year=billing_row["tax_year"],
             amount_paid=applied_amount,
         )
         db_session.add(link)
-        affected_billing_ids.append(billing_row["billing_id"])
+        affected_billing_ids.append(billing_id)
 
     db_session.flush()
     recalculate_billing_balances(affected_billing_ids, db_session=db_session)

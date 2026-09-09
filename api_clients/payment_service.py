@@ -84,12 +84,22 @@ def update_receipt_history(history_id, file_path, user_name):
         "POST", f"/payments/receipt-history/{history_id}/update", data=data
     )
 
-def update_payment(payment_id, data):
-    return api_request("PUT", f"/payments/{payment_id}", data=data)
+
+def update_payment(payment_id, data, idempotency_key):
+    return api_request(
+        "PUT",
+        f"/payments/{payment_id}",
+        data=data,
+        idempotency_key=idempotency_key,
+    )
 
 
-def delete_payment(payment_id):
-    return api_request("DELETE", f"/payments/{payment_id}")
+def delete_payment(payment_id, idempotency_key):
+    return api_request(
+        "DELETE",
+        f"/payments/{payment_id}",
+        idempotency_key=idempotency_key,
+    )
 
 
 def generate_receipt_pdf(payment_id) -> str:
@@ -98,6 +108,7 @@ def generate_receipt_pdf(payment_id) -> str:
     Returns the local path to the downloaded PDF.
     """
     from api_clients.api_helper import api_download_file
+
     return api_download_file("POST", f"/payments/{payment_id}/receipt-pdf")
 
 
@@ -110,22 +121,32 @@ def get_receipt_pdf(payment_id) -> str:
 
 def batch_delete_preview(or_numbers: list):
     """Preview which payments match the given OR numbers before deleting."""
-    return api_request("POST", "/payments/batch-delete/preview",
-                       data={"or_numbers": or_numbers})
+    return api_request(
+        "POST", "/payments/batch-delete/preview", data={"or_numbers": or_numbers}
+    )
 
 
 def batch_delete_preview_by_ids(payment_ids: list):
     """Preview payments by exact Payment IDs — safer for targeting specific duplicates."""
-    return api_request("POST", "/payments/batch-delete/preview-by-ids",
-                       data={"payment_ids": payment_ids})
+    return api_request(
+        "POST",
+        "/payments/batch-delete/preview-by-ids",
+        data={"payment_ids": payment_ids},
+    )
+
 
 def get_cleanup_candidates(year=2026, limit=500):
     """Load suspicious payment rows for review before cleanup/re-import."""
-    return api_request("GET", "/payments/cleanup-candidates",
-                       params={"year": year, "limit": limit})
+    return api_request(
+        "GET", "/payments/cleanup-candidates", params={"year": year, "limit": limit}
+    )
 
 
-def batch_delete_commit(payment_ids: list):
+def batch_delete_commit(payment_ids: list, idempotency_key):
     """Delete the confirmed payment IDs and reverse their billing balances."""
-    return api_request("POST", "/payments/batch-delete/commit",
-                       data={"payment_ids": payment_ids})
+    return api_request(
+        "POST",
+        "/payments/batch-delete/commit",
+        data={"payment_ids": payment_ids},
+        idempotency_key=idempotency_key,
+    )

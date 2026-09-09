@@ -319,9 +319,9 @@ def get_recent_payments(limit=8, db_session: Session = None):
     actual collection.
     """
     safe_limit = max(1, min(int(limit), 50))
-    effective_paid_at = func.coalesce(
-        Payment.date_paid, Payment.created_at
-    ).label("date_paid")
+    effective_paid_at = func.coalesce(Payment.date_paid, Payment.created_at).label(
+        "date_paid"
+    )
     effective_posted_at = func.coalesce(Payment.created_at, Payment.date_paid)
     rows = (
         db_session.query(
@@ -658,7 +658,9 @@ def get_operational_analytics(year=None, barangay=None, db_session: Session = No
     }
 
 
-def get_unified_payment_history(term=None, property_id=None, db_session: Session = None):
+def get_unified_payment_history(
+    term=None, property_id=None, db_session: Session = None
+):
     """
     Unified query for the Integrated Ledger & Receipt History.
     Returns payment details combined with receipt audit info using SQLAlchemy.
@@ -873,7 +875,12 @@ def save_receipt_record(
 ):
     from datetime import datetime, timezone
 
-    payment = db_session.query(Payment).filter(Payment.id == payment_id).first()
+    payment = (
+        db_session.query(Payment)
+        .filter(Payment.id == payment_id)
+        .with_for_update()
+        .first()
+    )
     if not payment:
         raise ValueError("Payment record not found.")
     if int(payment.property_id) != int(property_id):
@@ -927,7 +934,12 @@ def save_receipt_record(
 
 @require_permission("payment_post")
 def update_payment_record(
-    payment_id, data, user_name, db_session: Session = None, **kwargs
+    payment_id,
+    data,
+    user_name,
+    db_session: Session = None,
+    transaction_hook=None,
+    **kwargs,
 ):
     """Update a single payment row and keep PropertyBilling totals in sync."""
     from datetime import datetime
@@ -950,6 +962,7 @@ def update_payment_record(
     links = (
         db_session.query(PaymentBilling)
         .filter(PaymentBilling.payment_id == payment.id)
+        .with_for_update()
         .all()
     )
     if len(links) > 1:
@@ -1095,6 +1108,9 @@ def update_payment_record(
             f"Edited Payment OR {old_or} -> {or_number} (Amount: {old_amount} -> {amount}).",
             db_session=db_session,
         )
+        result = {"success": True, "message": "Payment updated successfully."}
+        if transaction_hook:
+            transaction_hook(result)
         db_session.commit()
     except Exception:
         db_session.rollback()
@@ -1109,7 +1125,7 @@ def update_payment_record(
 
         log_error_to_file("Stats refresh failed after payment edit", stats_err)
 
-    return {"success": True, "message": "Payment updated successfully."}
+    return result
 
 
 def _extract_single_year(value):
@@ -1365,7 +1381,15 @@ def get_payment_cleanup_candidates(year=None, limit=500, db_session: Session = N
 
 
 @require_permission("payment_delete")
-def delete_payment_record(payment_id, user_name, db_session: Session = None, **kwargs):
+def delete_payment_record(
+    payment_id,
+    user_name,
+    db_session: Session = None,
+    transaction_hook=None,
+    commit=True,
+    refresh_stats=True,
+    **kwargs,
+):
     """
     Deletes a payment record and reverses its impact on the corresponding PropertyBilling.
     The billing reversal, payment deletion, and audit log are committed atomically.
@@ -1374,7 +1398,12 @@ def delete_payment_record(payment_id, user_name, db_session: Session = None, **k
     from backend.services.system_service import log_action
 
     # 1. Fetch Payment
-    payment = db_session.query(Payment).filter(Payment.id == payment_id).first()
+    payment = (
+        db_session.query(Payment)
+        .filter(Payment.id == payment_id)
+        .with_for_update()
+        .first()
+    )
     if not payment:
         raise Exception("Payment record not found.")
 
@@ -1386,6 +1415,7 @@ def delete_payment_record(payment_id, user_name, db_session: Session = None, **k
     links = (
         db_session.query(PaymentBilling)
         .filter(PaymentBilling.payment_id == payment.id)
+        .with_for_update()
         .all()
     )
     billing_ids = [link.billing_id for link in links if link.billing_id]
@@ -1435,21 +1465,28 @@ def delete_payment_record(payment_id, user_name, db_session: Session = None, **k
             db_session=db_session,
         )
 
-        # 5. Single atomic commit: billing reversal + deletion + audit
-        db_session.commit()
+        result = {"success": True, "message": "Payment deleted successfully."}
+        if transaction_hook:
+            transaction_hook(result)
+
+        # 5. Single atomic commit: billing reversal + deletion + audit. Batch
+        # callers stage every deletion and commit the entire selection once.
+        if commit:
+            db_session.commit()
 
     except Exception:
         db_session.rollback()
         raise
 
     # 6. Refresh stats outside the transaction — a failure here is non-fatal
-    try:
-        from backend.services.stats_service import refresh_system_stats
+    if commit and refresh_stats:
+        try:
+            from backend.services.stats_service import refresh_system_stats
 
-        refresh_system_stats(db_session=db_session)
-    except Exception as stats_err:
-        from utils import log_error_to_file
+            refresh_system_stats(db_session=db_session)
+        except Exception as stats_err:
+            from utils import log_error_to_file
 
-        log_error_to_file("Stats refresh failed after payment deletion", stats_err)
+            log_error_to_file("Stats refresh failed after payment deletion", stats_err)
 
-    return {"success": True, "message": "Payment deleted successfully."}
+    return result

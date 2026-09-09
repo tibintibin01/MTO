@@ -9,6 +9,7 @@ Desktop clients must never import or execute this module.
 
 from backend.database import SessionLocal
 from backend.services.migration_service import (
+    ensure_financial_safety_schema,
     ensure_payment_remarks_column,
     ensure_refresh_token_session_columns,
     run_migrations as _run_migrations_service,
@@ -22,6 +23,7 @@ def run_migrations() -> int:
         applied = _run_migrations_service(db_session=session)
         ensure_refresh_token_session_columns(session)
         ensure_payment_remarks_column(session)
+        ensure_financial_safety_schema(session)
         ensure_portfolio_schema(session)
         session.commit()
     print("Server schema compatibility checks passed.")

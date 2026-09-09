@@ -1,8 +1,9 @@
 import os
 import asyncio
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from backend.deps import get_current_user, write_access, get_db, Session
 from backend.schemas import ReceiptRecordSchema, RecentPaymentSchema
@@ -10,9 +11,18 @@ from backend.models import Payment, Property
 import backend.services.payment_service as pay_svc
 from backend.generators import receipt_gen
 from backend.services.storage_service import storage_service
+from backend.services.idempotency_service import begin_financial_operation
 from utils.logger import mto_logger
 
 router = APIRouter(prefix="/payments", tags=["Financial"])
+
+
+def _replayed_response(claim):
+    return JSONResponse(
+        status_code=claim.replay_status_code,
+        content=jsonable_encoder(claim.replay_body),
+        headers={"X-Idempotency-Replayed": "true"},
+    )
 
 
 class PaymentUpdateRequest(BaseModel):
@@ -239,12 +249,28 @@ async def view_receipt_pdf(
 def update_payment(
     payment_id: int,
     data: PaymentUpdateRequest,
+    request: Request,
     current_user: dict = Depends(write_access),
     db_session: Session = Depends(get_db),
 ):
+    payload = data.model_dump()
+    claim = begin_financial_operation(
+        db_session=db_session,
+        idempotency_key=request.headers.get("X-Idempotency-Key"),
+        current_user=current_user,
+        method=request.method,
+        path=request.url.path,
+        payload=payload,
+    )
+    if claim.replayed:
+        return _replayed_response(claim)
     try:
         return pay_svc.update_payment_record(
-            payment_id, data.model_dump(), current_user, db_session=db_session
+            payment_id,
+            payload,
+            current_user,
+            db_session=db_session,
+            transaction_hook=claim.complete,
         )
     except Exception as e:
         mto_logger.error(f"Payment update failed for id={payment_id}: {e}")
@@ -254,12 +280,26 @@ def update_payment(
 @router.delete("/{payment_id}")
 def delete_payment(
     payment_id: int,
+    request: Request,
     current_user: dict = Depends(write_access),
     db_session: Session = Depends(get_db),
 ):
+    claim = begin_financial_operation(
+        db_session=db_session,
+        idempotency_key=request.headers.get("X-Idempotency-Key"),
+        current_user=current_user,
+        method=request.method,
+        path=request.url.path,
+        payload={"payment_id": payment_id},
+    )
+    if claim.replayed:
+        return _replayed_response(claim)
     try:
         return pay_svc.delete_payment_record(
-            payment_id, current_user, db_session=db_session
+            payment_id,
+            current_user,
+            db_session=db_session,
+            transaction_hook=claim.complete,
         )
     except Exception as e:
         mto_logger.error(f"Payment deletion failed for id={payment_id}: {e}")
@@ -416,6 +456,7 @@ def batch_delete_preview_by_ids(
 @router.post("/batch-delete/commit")
 def batch_delete_commit(
     data: BatchDeleteCommitRequest,
+    request: Request,
     current_user: dict = Depends(write_access),
     db_session: Session = Depends(get_db),
 ):
@@ -427,27 +468,59 @@ def batch_delete_commit(
     if not data.payment_ids:
         raise HTTPException(status_code=400, detail="payment_ids list is required.")
 
-    payment_ids = [int(i) for i in data.payment_ids][:500]
+    payment_ids = list(dict.fromkeys(int(i) for i in data.payment_ids))[:500]
+    payload = {"payment_ids": payment_ids}
+    claim = begin_financial_operation(
+        db_session=db_session,
+        idempotency_key=request.headers.get("X-Idempotency-Key"),
+        current_user=current_user,
+        method=request.method,
+        path=request.url.path,
+        payload=payload,
+    )
+    if claim.replayed:
+        return _replayed_response(claim)
 
-    deleted = 0
-    failed = []
-
-    for pid in payment_ids:
-        try:
+    try:
+        for pid in payment_ids:
             pay_svc.delete_payment_record(
-                pid, current_user, db_session=db_session, current_user=current_user
+                pid,
+                current_user,
+                db_session=db_session,
+                commit=False,
+                refresh_stats=False,
             )
-            deleted += 1
-        except Exception as e:
-            failed.append({"payment_id": pid, "reason": str(e)[:120]})
+        result = {
+            "deleted": len(payment_ids),
+            "failed_count": 0,
+            "failed": [],
+        }
+        claim.complete(result)
+        db_session.commit()
+    except Exception as exc:
+        db_session.rollback()
+        mto_logger.error(f"Atomic batch delete failed: {exc}")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No payments were deleted because at least one selected record "
+                "could not be processed."
+            ),
+        ) from exc
+
+    try:
+        from backend.services.stats_service import refresh_system_stats
+
+        refresh_system_stats(db_session=db_session)
+    except Exception as stats_err:
+        from utils import log_error_to_file
+
+        log_error_to_file(
+            "Stats refresh failed after batch payment deletion", stats_err
+        )
 
     mto_logger.info(
-        f"Batch delete: {deleted} deleted, {len(failed)} failed",
+        f"Atomic batch delete: {len(payment_ids)} deleted",
         user=current_user.get("username"),
     )
-
-    return {
-        "deleted": deleted,
-        "failed_count": len(failed),
-        "failed": failed[:20],
-    }
+    return result

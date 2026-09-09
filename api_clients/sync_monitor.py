@@ -29,14 +29,7 @@ class SyncMonitor:
 
                 if is_online:
                     api.record_connection_success()
-
-                    # Flush queue if online
-                    pending = manager.get_pending_actions()
-                    if pending:
-                        api.set_connection_status("SYNCING")
-                        self._flush_queue(pending)
-                        if api.get_connection_status() == "SYNCING":
-                            api.record_connection_success()
+                    manager.quarantine_pending_actions()
                 elif is_online is False:
                     api.record_connection_failure()
             except Exception as e:
@@ -66,56 +59,8 @@ class SyncMonitor:
             return False
 
     def _flush_queue(self, pending):
-        """Attempts to push all pending actions to the server."""
-        for action in pending:
-            try:
-                # Use raw api_request (which now enforces SSL)
-                response = api.api_request(
-                    action["method"],
-                    action["endpoint"],
-                    data=action["payload"],
-                    queue_offline=False,
-                )
-
-                # If success, remove from local DB
-                manager.mark_as_synced(action["id"])
-                mto_logger.info(
-                    f"SYNC SUCCESS: {action['method']} {action['endpoint']}",
-                    action_id=action["id"],
-                )
-            except Exception as e:
-                # 409 Conflict Handling (Version Mismatch)
-                if "409" in str(e):
-                    mto_logger.warning(
-                        f"SYNC CONFLICT detected for {action['id']}",
-                        action_id=action["id"],
-                    )
-
-                    # Extract server snapshot (Simulation for now)
-                    server_snapshot = {
-                        "error": "Conflict",
-                        "hint": "Field mismatch detected on server",
-                    }
-
-                    manager.mark_as_conflict(action["id"], server_snapshot)
-
-                    if self.on_conflict:
-                        # Signal the coordinator to show UI
-                        self.on_conflict(
-                            action["id"], action["payload"], server_snapshot
-                        )
-                    continue
-
-                mto_logger.error(
-                    f"SYNC FAILED for {action['id']}",
-                    error=str(e),
-                    action_id=action["id"],
-                )
-                # A connection failure already updates the shared status in
-                # api_request. Stop immediately instead of timing out once for
-                # every queued action while the server is unavailable.
-                if api.get_connection_status() in {"DEGRADED", "OFFLINE"}:
-                    break
+        """Never replay mutations; quarantine evidence from older builds."""
+        manager.quarantine_pending_actions()
 
 
 # Global monitor

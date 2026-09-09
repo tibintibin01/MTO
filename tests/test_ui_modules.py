@@ -77,15 +77,17 @@ class TestStatusBar(unittest.TestCase):
 
         with (
             patch("ui.status_bar.api.get_connection_status", return_value="OFFLINE"),
-            patch("ui.status_bar.manager.get_queue_count", return_value=2),
+            patch("ui.status_bar.manager.get_quarantined_count", return_value=2),
         ):
             bar.update_status()
 
         bar.status_dot.configure.assert_called_once_with(text_color="#e74c3c")
         bar.status_lbl.configure.assert_called_once_with(
-            text="OFFLINE MODE (LOCAL SAVE ACTIVE)"
+            text="OFFLINE - READ-ONLY CACHE ONLY"
         )
-        bar.queue_lbl.configure.assert_called_once_with(text="PENDING SYNC: 2 ITEMS")
+        bar.queue_lbl.configure.assert_called_once_with(
+            text="REVIEW REQUIRED: 2 BLOCKED LEGACY ITEMS"
+        )
         bar.after.assert_not_called()
 
 
@@ -173,9 +175,11 @@ class TestLedgerColumns(unittest.TestCase):
         update_source = inspect.getsource(LedgerPage._update_ui)
 
         self.assertNotIn('"pdf_copy"', setup_source)
-        self.assertNotIn('ledger.table.status', setup_source)
+        self.assertNotIn("ledger.table.status", setup_source)
         self.assertIn("self.column_labels", setup_source)
-        self.assertIn("self._ledger_receipt_statuses[item_id] = status_code", update_source)
+        self.assertIn(
+            "self._ledger_receipt_statuses[item_id] = status_code", update_source
+        )
         self.assertNotIn("f_r.append(status)", update_source)
 
 

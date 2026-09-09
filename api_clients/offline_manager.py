@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
 import sqlite3
 import json
-import os
 from datetime import datetime
 
 import threading
-import time
 from api_clients.client_logger import mto_logger
 
 
@@ -33,7 +31,8 @@ class OfflineManager:
                 )
             """
             )
-            # Table for queuing POST/PUT actions (Payments, Edits)
+            # Retain the legacy table only as forensic evidence. Phase 3 never
+            # inserts or replays financial mutations from this local database.
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS sync_queue (
@@ -47,6 +46,14 @@ class OfflineManager:
                     last_error TEXT
                 )
             """
+            )
+            conn.execute(
+                """
+                UPDATE sync_queue
+                SET status = 'BLOCKED_LEGACY',
+                    last_error = 'Automatic replay disabled by Phase 3 financial safety'
+                WHERE status = 'PENDING'
+                """
             )
             conn.commit()
 
@@ -87,40 +94,73 @@ class OfflineManager:
             return None
 
     def queue_action(self, method, endpoint, payload):
-        """Saves a pending write action to the queue."""
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "INSERT INTO sync_queue (method, endpoint, payload, timestamp) VALUES (?, ?, ?, ?)",
-                    (method, endpoint, json.dumps(payload), datetime.now()),
-                )
-                conn.commit()
-            self._refresh_queue_count()
-            self._notify_change()
-            return True
-        except:
-            return False
+        """Reject offline writes; callers must never report local success."""
+        mto_logger.warning(
+            "Offline mutation queue is disabled; action was not stored",
+            method=method,
+            endpoint=endpoint,
+        )
+        return False
 
     def get_pending_actions(self, include_conflicts=False):
-        """Retrieves actions waiting for synchronization."""
-        try:
-            query = "SELECT id, method, endpoint, payload FROM sync_queue WHERE status = 'PENDING' ORDER BY id ASC"
-            if include_conflicts:
-                query = "SELECT id, method, endpoint, payload FROM sync_queue ORDER BY id ASC"
+        """Return no replayable actions; legacy rows remain quarantined."""
+        return []
 
+    def get_quarantined_actions(self):
+        """Return legacy queue evidence for administrator review only."""
+        try:
             with sqlite3.connect(self.db_path) as conn:
-                rows = conn.execute(query).fetchall()
+                rows = conn.execute(
+                    """
+                    SELECT id, method, endpoint, payload, status, timestamp
+                    FROM sync_queue
+                    WHERE status <> 'SYNCED'
+                    ORDER BY id ASC
+                    """
+                ).fetchall()
                 return [
                     {
                         "id": r[0],
                         "method": r[1],
                         "endpoint": r[2],
                         "payload": json.loads(r[3]),
+                        "status": r[4],
+                        "timestamp": r[5],
                     }
                     for r in rows
                 ]
         except:
             return []
+
+    def quarantine_pending_actions(self):
+        """Defensively block pending rows created by an older client build."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                result = conn.execute(
+                    """
+                    UPDATE sync_queue
+                    SET status = 'BLOCKED_LEGACY',
+                        last_error = 'Automatic replay disabled by Phase 3 financial safety'
+                    WHERE status = 'PENDING'
+                    """
+                )
+                conn.commit()
+            self._refresh_queue_count()
+            self._notify_change()
+            return int(result.rowcount or 0)
+        except Exception:
+            return 0
+
+    def get_quarantined_count(self):
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                return int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM sync_queue WHERE status <> 'SYNCED'"
+                    ).fetchone()[0]
+                )
+        except Exception:
+            return 0
 
     def mark_as_synced(self, action_id):
         """Removes or marks an action as successfully synchronized."""
@@ -177,19 +217,9 @@ class OfflineManager:
             self._queue_count = count
 
     def start_sync_worker(self, api_request_fn):
-        """Starts the background sync thread."""
-        if self._sync_thread and self._sync_thread.is_alive():
-            return
-
-        self._stop_event.clear()
-        self._sync_thread = threading.Thread(
-            target=self._sync_worker_loop,
-            args=(api_request_fn,),
-            daemon=True,
-            name="OfflineSyncWorker",
-        )
-        self._sync_thread.start()
-        mto_logger.info("Offline Sync Worker started.")
+        """Compatibility no-op: mutation replay is permanently disabled."""
+        self.quarantine_pending_actions()
+        mto_logger.info("Offline mutation replay remains disabled.")
 
     def stop_sync_worker(self):
         self._stop_event.set()
@@ -197,53 +227,8 @@ class OfflineManager:
             self._sync_thread.join(timeout=2)
 
     def _sync_worker_loop(self, api_request_fn):
-        """Internal loop that attempts to drain the queue when online."""
-        while not self._stop_event.is_set():
-            pending = self.get_pending_actions()
-            if pending:
-                self._is_syncing = True
-                self._notify_change()
-
-                # Attempt to sync each item
-                for action in pending:
-                    if self._stop_event.is_set():
-                        break
-
-                    try:
-                        # Attempt real API call
-                        # Note: we use api_request_fn which handles tokens/errors
-                        res = api_request_fn(
-                            action["method"], action["endpoint"], data=action["payload"]
-                        )
-                        self.mark_as_synced(action["id"])
-                        mto_logger.info(
-                            f"Sync Success: {action['method']} {action['endpoint']}"
-                        )
-                    except Exception as e:
-                        err = str(e)
-                        if "Status 409" in err or "Conflict" in err or "412" in err:
-                            self.mark_as_conflict(action["id"], None)
-                            mto_logger.warning(f"Sync Conflict: {action['endpoint']}")
-                        elif (
-                            "Offline" in err
-                            or "Connection" in err
-                            or "Status 502" in err
-                        ):
-                            # Still offline, stop draining for now
-                            mto_logger.info("Still offline, pausing sync worker.")
-                            break
-                        else:
-                            self.mark_as_failed(action["id"], err)
-                            mto_logger.error(
-                                f"Sync Failed: {action['endpoint']} - {err}"
-                            )
-                            break  # Pause on unknown errors to prevent infinite loops
-
-                self._is_syncing = False
-                self._notify_change()
-
-            # Wait before next check
-            self._stop_event.wait(30)  # Check every 30 seconds
+        """Compatibility no-op retained for older imports."""
+        self.quarantine_pending_actions()
 
 
 # Global instance

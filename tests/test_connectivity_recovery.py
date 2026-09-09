@@ -1,5 +1,6 @@
 import base64
 import json
+import sqlite3
 import time
 from io import BytesIO
 import requests
@@ -56,6 +57,25 @@ def test_successful_request_recovers_online_state_and_uses_short_connect_timeout
     assert api.get_connection_status() == "ONLINE"
     assert captured["timeout"] == (api.DEFAULT_CONNECT_TIMEOUT, 19)
     assert captured["verify"] is True
+
+
+def test_delete_request_carries_stable_idempotency_key(monkeypatch):
+    captured = {}
+    operation_key = "7ba529c1-cc0d-4ed4-b021-56f27c889718"
+
+    def fake_request(*args, **kwargs):
+        captured.update(kwargs)
+        return _Response()
+
+    monkeypatch.setattr(api.requests, "request", fake_request)
+
+    api.api_request(
+        "DELETE",
+        "/payments/42",
+        idempotency_key=operation_key,
+    )
+
+    assert captured["headers"]["X-Idempotency-Key"] == operation_key
 
 
 def test_repeated_connection_failures_transition_through_degraded(monkeypatch):
@@ -192,7 +212,7 @@ def test_health_probe_tls_failure_does_not_declare_server_offline(monkeypatch):
     assert api.get_connection_failure_count() == 0
 
 
-def test_queue_flush_stops_after_first_connection_failure(monkeypatch):
+def test_queue_flush_never_replays_legacy_mutations(monkeypatch):
     calls = []
 
     def fail_request(*args, **kwargs):
@@ -210,19 +230,32 @@ def test_queue_flush_stops_after_first_connection_failure(monkeypatch):
     api.set_connection_status("ONLINE")
     monitor._flush_queue(pending)
 
-    assert len(calls) == 1
+    assert calls == []
 
 
-def test_offline_queue_count_is_updated_without_requerying(tmp_path):
-    manager = OfflineManager(str(tmp_path / "offline.db"))
+def test_offline_writes_are_rejected_and_legacy_rows_are_quarantined(tmp_path):
+    offline_db = tmp_path / "offline.db"
+    manager = OfflineManager(str(offline_db))
 
     assert manager.get_queue_count() == 0
-    assert manager.queue_action("POST", "/payments", {"amount": 100}) is True
-    assert manager.get_queue_count() == 1
-
-    action = manager.get_pending_actions()[0]
-    manager.mark_as_synced(action["id"])
+    assert manager.queue_action("POST", "/payments", {"amount": 100}) is False
     assert manager.get_queue_count() == 0
+    assert manager.get_pending_actions() == []
+
+    with sqlite3.connect(offline_db) as connection:
+        connection.execute(
+            """
+            INSERT INTO sync_queue (method, endpoint, payload, timestamp, status)
+            VALUES ('POST', '/payments', '{"amount":100}', CURRENT_TIMESTAMP, 'PENDING')
+            """
+        )
+        connection.commit()
+
+    assert manager.quarantine_pending_actions() == 1
+    assert manager.get_pending_actions() == []
+    quarantined = manager.get_quarantined_actions()
+    assert len(quarantined) == 1
+    assert quarantined[0]["status"] == "BLOCKED_LEGACY"
 
 
 def test_failed_file_upload_is_not_added_to_offline_queue(monkeypatch):
@@ -249,11 +282,11 @@ def test_failed_file_upload_is_not_added_to_offline_queue(monkeypatch):
         raise AssertionError("Expected an API connection failure")
 
     assert queued_actions == []
-    assert "File uploads cannot be queued" in message
-    assert "reselect the file" in message
+    assert "Nothing was queued or reported as saved" in message
+    assert "verify the current record" in message
 
 
-def test_failed_json_write_remains_eligible_for_offline_queue(monkeypatch):
+def test_failed_json_write_is_never_queued_or_reported_as_saved(monkeypatch):
     def fail_request(*args, **kwargs):
         raise requests.exceptions.ConnectionError("server unavailable")
 
@@ -265,10 +298,11 @@ def test_failed_json_write_remains_eligible_for_offline_queue(monkeypatch):
         lambda *args: queued_actions.append(args) or True,
     )
 
-    result = api.api_request("POST", "/payments", data={"amount": 100})
+    with pytest.raises(Exception) as exc_info:
+        api.api_request("POST", "/payments", data={"amount": 100})
 
-    assert result["status"] == "queued"
-    assert queued_actions == [("POST", "/payments", {"amount": 100})]
+    assert queued_actions == []
+    assert "Nothing was queued or reported as saved" in str(exc_info.value)
 
 
 def test_token_expiration_check_honors_refresh_leeway():

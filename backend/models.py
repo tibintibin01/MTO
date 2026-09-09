@@ -1,8 +1,23 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, DECIMAL, Boolean, DateTime, ForeignKey, Text, TIMESTAMP, Index, func, SmallInteger
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    DECIMAL,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Text,
+    TIMESTAMP,
+    Index,
+    UniqueConstraint,
+    func,
+    SmallInteger,
+)
 
 from sqlalchemy.orm import relationship
 from .database import Base
+
 
 class User(Base):
     __tablename__ = "users"
@@ -21,6 +36,7 @@ class User(Base):
     # timestamp can be immediately invalidated — even within their 1-hour window.
     password_changed_at = Column(DateTime, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+
 
 class Property(Base):
     __tablename__ = "properties"
@@ -65,7 +81,9 @@ class Property(Base):
 
     payments = relationship("Payment", back_populates="property")
     billings = relationship("PropertyBilling", back_populates="property")
-    assessment_history = relationship("PropertyAssessmentHistory", back_populates="property")
+    assessment_history = relationship(
+        "PropertyAssessmentHistory", back_populates="property"
+    )
     previous_property = relationship(
         "Property",
         remote_side=[id],
@@ -73,11 +91,17 @@ class Property(Base):
         uselist=False,
     )
 
+
 class Payment(Base):
     __tablename__ = "payments"
 
     id = Column(Integer, primary_key=True, index=True)
-    property_id = Column(Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False, index=True)
+    property_id = Column(
+        Integer,
+        ForeignKey("properties.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     amount = Column(DECIMAL(14, 2), nullable=False, default=0.00)
     penalty = Column(DECIMAL(14, 2), default=0.00)
     discount = Column(DECIMAL(14, 2), default=0.00)
@@ -89,13 +113,18 @@ class Payment(Base):
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     property = relationship("Property", back_populates="payments")
-    billings = relationship("PaymentBilling", back_populates="payment", cascade="all, delete-orphan")
+    billings = relationship(
+        "PaymentBilling", back_populates="payment", cascade="all, delete-orphan"
+    )
+
 
 class PropertyBilling(Base):
     __tablename__ = "property_billings"
 
     id = Column(Integer, primary_key=True, index=True)
-    property_id = Column(Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False)
+    property_id = Column(
+        Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False
+    )
     tax_year = Column(SmallInteger, nullable=False)
     assessed_value = Column(DECIMAL(14, 2), nullable=False, default=0.00)
     penalty = Column(DECIMAL(14, 2), nullable=False, default=0.00)
@@ -103,21 +132,42 @@ class PropertyBilling(Base):
     amount_paid = Column(DECIMAL(14, 2), nullable=False, default=0.00)
     is_archived = Column(Boolean, nullable=False, default=False)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+    updated_at = Column(
+        TIMESTAMP,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )
 
     # Composite unique index constraint: billing reconciliation filters by (property_id, tax_year) and duplicates are forbidden
     __table_args__ = (
-        Index("ix_property_billings_property_id_tax_year", "property_id", "tax_year", unique=True),
+        Index(
+            "ix_property_billings_property_id_tax_year",
+            "property_id",
+            "tax_year",
+            unique=True,
+        ),
     )
 
     property = relationship("Property", back_populates="billings")
 
+
 class PaymentBilling(Base):
     __tablename__ = "payment_billings"
+    __table_args__ = (
+        UniqueConstraint(
+            "payment_id",
+            "billing_id",
+            name="uq_payment_billings_payment_billing",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    payment_id = Column(Integer, ForeignKey("payments.id", ondelete="CASCADE"), nullable=False)
-    billing_id = Column(Integer, ForeignKey("property_billings.id", ondelete="RESTRICT"), nullable=False)
+    payment_id = Column(
+        Integer, ForeignKey("payments.id", ondelete="CASCADE"), nullable=False
+    )
+    billing_id = Column(
+        Integer, ForeignKey("property_billings.id", ondelete="RESTRICT"), nullable=False
+    )
     tax_year = Column(SmallInteger, nullable=False)
     amount_paid = Column(DECIMAL(14, 2), nullable=False, default=0.00)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
@@ -125,11 +175,14 @@ class PaymentBilling(Base):
     payment = relationship("Payment", back_populates="billings")
     billing = relationship("PropertyBilling")
 
+
 class PropertyAssessmentHistory(Base):
     __tablename__ = "property_assessment_history"
 
     id = Column(Integer, primary_key=True, index=True)
-    property_id = Column(Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False)
+    property_id = Column(
+        Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False
+    )
     td_number = Column(String(100))
     assessed_value = Column(DECIMAL(14, 2))
     tax_year = Column(String(100))
@@ -139,6 +192,7 @@ class PropertyAssessmentHistory(Base):
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
 
     property = relationship("Property", back_populates="assessment_history")
+
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
@@ -165,7 +219,9 @@ class ReceiptHistory(Base):
     __tablename__ = "receipt_history"
 
     id = Column(Integer, primary_key=True, index=True)
-    property_id = Column(Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False)
+    property_id = Column(
+        Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False
+    )
     payment_id = Column(Integer, nullable=True, index=True)
     td_number = Column(String(255))
     owner_name = Column(String(255))
@@ -178,15 +234,17 @@ class ReceiptHistory(Base):
     status = Column(String(50), default="PDF READY")
 
 
-
 class SystemStats(Base):
     __tablename__ = "system_stats"
 
     id = Column(Integer, primary_key=True, index=True)
     stat_key = Column(String(100), unique=True, index=True)
     stat_value = Column(DECIMAL(18, 2), default=0.00)
-    last_updated = Column(DateTime, onupdate=func.now(), server_default=func.current_timestamp())
-    metadata_json = Column(Text, nullable=True) # For complex stats
+    last_updated = Column(
+        DateTime, onupdate=func.now(), server_default=func.current_timestamp()
+    )
+    metadata_json = Column(Text, nullable=True)  # For complex stats
+
 
 class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
@@ -200,7 +258,9 @@ class RefreshToken(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
     token = Column(String(512), unique=True, nullable=False, index=True)
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
@@ -214,29 +274,32 @@ class RefreshToken(Base):
 
 class IdempotencyKey(Base):
     """
-    Stores idempotency keys for payment and property-save operations.
+    Stores transaction-bound claims for financial mutations.
 
-    When a POST/PUT request arrives with an X-Idempotency-Key header, the
-    server checks this table. If the key exists and hasn't expired, the
-    cached response is returned immediately without re-executing the handler.
-    This prevents duplicate payments from double-clicks or network retries.
-
-    Keys expire after 24 hours — long enough to cover any realistic retry
-    window, short enough to not grow the table indefinitely.
+    Each UUID v4 is scoped to the authenticated user and fingerprinted against
+    the HTTP operation and canonical request data. The claim, business change,
+    and replayable response commit together, so a failed transaction cannot
+    leave a false success record and a retry cannot duplicate the mutation.
     """
+
     __tablename__ = "idempotency_keys"
 
     id = Column(Integer, primary_key=True, index=True)
-    # Composite key format: "{uuid}:{user_id}:{sha256_hex}"
-    # Max length: 36 (uuid) + 1 + 20 (user_id) + 1 + 64 (sha256) = 122 chars.
-    # Using 200 to give headroom without wasting space.
+    # V2 identity format: "v2:{authenticated_user_id}:{uuid4}". The request
+    # fingerprint is deliberately separate so key reuse with different data
+    # can be rejected instead of treated as a new operation.
     key = Column(String(200), unique=True, nullable=False, index=True)
+    user_id = Column(String(64), nullable=True, index=True)
+    request_hash = Column(String(64), nullable=True)
     method = Column(String(10), nullable=False)
     path = Column(String(255), nullable=False)
+    state = Column(String(20), nullable=False, default="COMPLETED", index=True)
     status_code = Column(Integer, nullable=False, default=200)
     response_body = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=False)
+
 
 class BackupHistory(Base):
     __tablename__ = "backup_history"
@@ -248,7 +311,9 @@ class BackupHistory(Base):
     status = Column(String(50), default="PENDING")
     health = Column(String(255), default="UNKNOWN")
     user_name = Column(String(255), nullable=True)
-    timestamp = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    timestamp = Column(
+        DateTime, nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
 
 
 class Job(Base):
@@ -276,20 +341,21 @@ class Job(Base):
         PENDING → RUNNING → COMPLETED
                           → FAILED
     """
+
     __tablename__ = "jobs"
     __table_args__ = (
         Index("ix_jobs_status_type_created", "status", "job_type", "created_at"),
         Index("ix_jobs_status_started", "status", "started_at"),
     )
 
-    id = Column(String(36), primary_key=True)          # UUID
+    id = Column(String(36), primary_key=True)  # UUID
     job_type = Column(String(50), nullable=False, index=True)
     status = Column(String(20), nullable=False, default="PENDING", index=True)
     submitted_by = Column(String(150), nullable=False)
-    payload = Column(Text(length=16777215), nullable=True)              # JSON input params
-    result = Column(Text, nullable=True)               # JSON output / file path
-    error = Column(Text, nullable=True)                # Error message on failure
-    progress = Column(Integer, default=0)              # 0–100
+    payload = Column(Text(length=16777215), nullable=True)  # JSON input params
+    result = Column(Text, nullable=True)  # JSON output / file path
+    error = Column(Text, nullable=True)  # Error message on failure
+    progress = Column(Integer, default=0)  # 0–100
     progress_message = Column(String(255), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     started_at = Column(DateTime, nullable=True)
@@ -304,6 +370,7 @@ class TaxPolicy(Base):
     sef_rate   = 1.0% (0.0100)
     penalty_rate = 2.0% per month of delay (0.0200)
     """
+
     __tablename__ = "tax_policies"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -312,7 +379,9 @@ class TaxPolicy(Base):
     sef_rate = Column(DECIMAL(6, 4), nullable=False, default=0.0100)
     penalty_rate = Column(DECIMAL(6, 4), nullable=False, default=0.0200)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.now())
+    updated_at = Column(
+        TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.now()
+    )
 
 
 class ORSequence(Base):
@@ -321,6 +390,7 @@ class ORSequence(Base):
     Used with row-level locks (SELECT ... FOR UPDATE) to guarantee atomic
     serial generation of receipt numbers across concurrent cashier sessions.
     """
+
     __tablename__ = "or_sequences"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -349,6 +419,7 @@ class RetentionPolicy(Base):
     is_active = False disables the policy without deleting it, so the
     schedule is preserved for audit trail purposes.
     """
+
     __tablename__ = "retention_policies"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -359,8 +430,11 @@ class RetentionPolicy(Base):
     legal_basis = Column(String(255), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
-    updated_at = Column(TIMESTAMP, server_default=func.current_timestamp(),
-                        onupdate=func.current_timestamp())
+    updated_at = Column(
+        TIMESTAMP,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+    )
 
 
 class RetentionLog(Base):
@@ -370,18 +444,26 @@ class RetentionLog(Base):
     Records what was archived/purged, when, by whom (system or admin),
     and how many records were affected. Required for COA and NPC audits.
     """
+
     __tablename__ = "retention_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    policy_id = Column(Integer, ForeignKey("retention_policies.id", ondelete="RESTRICT"),
-                       nullable=False, index=True)
+    policy_id = Column(
+        Integer,
+        ForeignKey("retention_policies.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     data_type = Column(String(100), nullable=False)
-    action = Column(String(20), nullable=False)          # ARCHIVE | PURGE | DRY_RUN
+    action = Column(String(20), nullable=False)  # ARCHIVE | PURGE | DRY_RUN
     records_affected = Column(Integer, nullable=False, default=0)
-    cutoff_date = Column(DateTime, nullable=False)       # Records older than this were processed
-    executed_by = Column(String(150), nullable=False)    # username or "system"
+    cutoff_date = Column(
+        DateTime, nullable=False
+    )  # Records older than this were processed
+    executed_by = Column(String(150), nullable=False)  # username or "system"
     notes = Column(Text, nullable=True)
     executed_at = Column(DateTime, nullable=False)
+
 
 class BankDeposit(Base):
     __tablename__ = "bank_deposits"
@@ -410,10 +492,16 @@ class RateLimitBlock(Base):
 # --- SECURE GOVERNMENT COMPLIANCE: AUDIT LOG IMMUTABILITY ---
 from sqlalchemy import event
 
+
 @event.listens_for(AuditLog, "before_update")
 def prevent_audit_log_update(mapper, connection, target):
-    raise ValueError("Security Violation: Audit logs are strictly immutable (append-only) and cannot be updated.")
+    raise ValueError(
+        "Security Violation: Audit logs are strictly immutable (append-only) and cannot be updated."
+    )
+
 
 @event.listens_for(AuditLog, "before_delete")
 def prevent_audit_log_delete(mapper, connection, target):
-    raise ValueError("Security Violation: Audit logs are strictly immutable (append-only) and cannot be deleted.")
+    raise ValueError(
+        "Security Violation: Audit logs are strictly immutable (append-only) and cannot be deleted."
+    )
