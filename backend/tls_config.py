@@ -44,8 +44,13 @@ class CertificateIdentity:
     not_valid_after: datetime
 
 
+def _is_windows() -> bool:
+    """Isolate platform detection so tests never mutate the shared os module."""
+    return os.name == "nt"
+
+
 def _default_tls_directory(environment: Mapping[str, str]) -> Path:
-    if os.name == "nt":
+    if _is_windows():
         program_data = environment.get("PROGRAMDATA", "C:/ProgramData")
         return Path(program_data) / "MTO" / "tls"
     return Path("/var/lib/mto/tls")
@@ -115,7 +120,7 @@ def load_server_tls_config(
         )
 
     if required:
-        if os.name == "nt":
+        if _is_windows():
             protected_root = (
                 Path(env.get("PROGRAMDATA", "C:/ProgramData")) / "MTO"
             ).resolve()
@@ -325,7 +330,7 @@ def validate_server_tls_config(
             + ", ".join(missing)
         )
 
-    if os.name != "nt" and config.private_key_file.stat().st_mode & 0o077:
+    if not _is_windows() and config.private_key_file.stat().st_mode & 0o077:
         raise TLSConfigurationError(
             "TLS private key permissions are too broad; expected owner-only access."
         )

@@ -31,7 +31,8 @@ def _production_env(tmp_path):
     }
 
 
-def test_production_health_defaults_to_authenticated_https(tmp_path):
+def test_production_health_defaults_to_authenticated_https(monkeypatch, tmp_path):
+    monkeypatch.setattr("backend.tls_config._is_windows", lambda: True)
     env = _production_env(tmp_path)
 
     target = health_url(env)
@@ -44,7 +45,8 @@ def test_production_health_defaults_to_authenticated_https(tmp_path):
     assert context.minimum_version == ssl.TLSVersion.TLSv1_2
 
 
-def test_production_rejects_plaintext_health_override(tmp_path):
+def test_production_rejects_plaintext_health_override(monkeypatch, tmp_path):
+    monkeypatch.setattr("backend.tls_config._is_windows", lambda: True)
     env = _production_env(tmp_path)
     env["MTO_SUPERVISOR_HEALTH_URL"] = "http://127.0.0.1:8001/readyz"
 
@@ -52,7 +54,8 @@ def test_production_rejects_plaintext_health_override(tmp_path):
         health_url(env)
 
 
-def test_https_health_requires_public_ca(tmp_path):
+def test_https_health_requires_public_ca(monkeypatch, tmp_path):
+    monkeypatch.setattr("backend.tls_config._is_windows", lambda: True)
     env = _production_env(tmp_path)
     env["MTO_TLS_CA_FILE"] = str(
         tmp_path / "ProgramData" / "MTO" / "tls" / "missing.pem"
@@ -73,7 +76,7 @@ def test_provisioning_rejects_wildcard_identity():
 
 
 def test_provisioning_rejects_unprotected_key_directory(monkeypatch, tmp_path):
-    monkeypatch.setattr("scripts.provision_server_tls.os.name", "nt")
+    monkeypatch.setattr("scripts.provision_server_tls._is_windows", lambda: True)
     monkeypatch.setenv("PROGRAMDATA", str(tmp_path / "ProgramData"))
 
     with pytest.raises(ValueError, match="protected server path"):

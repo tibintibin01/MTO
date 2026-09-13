@@ -19,7 +19,6 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -30,7 +29,6 @@ from backend.tls_config import (  # noqa: E402
     validate_server_tls_config,
 )
 from scripts.configure_r2_backup import _harden_directory, _harden_file  # noqa: E402
-
 
 CONFIRMATION = "PROVISION PHASE 2 AUTHENTICATED TLS"
 
@@ -43,15 +41,20 @@ class CertificateBundle:
     server_private_key: bytes
 
 
+def _is_windows() -> bool:
+    """Isolate platform detection so tests never mutate the shared os module."""
+    return os.name == "nt"
+
+
 def default_tls_directory() -> Path:
-    if os.name == "nt":
+    if _is_windows():
         return Path(os.getenv("PROGRAMDATA", "C:/ProgramData")) / "MTO" / "tls"
     return Path("/var/lib/mto/tls")
 
 
 def validate_tls_directory(directory: Path) -> Path:
     resolved = directory.expanduser().resolve()
-    if os.name == "nt":
+    if _is_windows():
         protected_root = (
             Path(os.getenv("PROGRAMDATA", "C:/ProgramData")) / "MTO"
         ).resolve()
@@ -67,7 +70,7 @@ def validate_tls_directory(directory: Path) -> Path:
 
 
 def running_as_administrator() -> bool:
-    if os.name != "nt":
+    if not _is_windows():
         return os.geteuid() == 0
     try:
         import ctypes

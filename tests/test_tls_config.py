@@ -11,7 +11,6 @@ from backend.tls_config import (
 )
 from scripts.provision_server_tls import create_certificate_bundle
 
-
 NAMES = ("192.0.2.10", "localhost", "127.0.0.1")
 
 
@@ -26,7 +25,9 @@ def tls_material(tmp_path):
     )
     (tls_dir / "mto-lan-ca.pem").write_bytes(bundle.ca_certificate)
     (tls_dir / "server-cert.pem").write_bytes(bundle.server_certificate)
-    (tls_dir / "server-key.pem").write_bytes(bundle.server_private_key)
+    private_key = tls_dir / "server-key.pem"
+    private_key.write_bytes(bundle.server_private_key)
+    private_key.chmod(0o600)
     config = ServerTLSConfig(
         enabled=True,
         required=True,
@@ -94,7 +95,17 @@ def test_expired_server_certificate_fails(tls_material):
         )
 
 
-def test_production_cannot_disable_tls(tmp_path):
+def test_posix_rejects_broad_private_key_permissions(monkeypatch, tls_material):
+    config, _bundle = tls_material
+    monkeypatch.setattr("backend.tls_config._is_windows", lambda: False)
+    config.private_key_file.chmod(0o644)
+
+    with pytest.raises(TLSConfigurationError, match="permissions are too broad"):
+        validate_server_tls_config(config)
+
+
+def test_production_cannot_disable_tls(monkeypatch, tmp_path):
+    monkeypatch.setattr("backend.tls_config._is_windows", lambda: True)
     tls_dir = tmp_path / "ProgramData" / "MTO" / "tls"
     env = {
         "MTO_ENVIRONMENT": "production",
@@ -112,7 +123,10 @@ def test_production_cannot_disable_tls(tmp_path):
         validate_server_tls_config(config)
 
 
-def test_required_tls_rejects_private_key_outside_protected_directory(tmp_path):
+def test_required_tls_rejects_private_key_outside_protected_directory(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr("backend.tls_config._is_windows", lambda: True)
     tls_dir = tmp_path / "ProgramData" / "MTO" / "tls"
     env = {
         "MTO_ENVIRONMENT": "production",
@@ -136,11 +150,24 @@ def test_required_tls_rejects_unspecified_identity(tmp_path):
         )
 
 
-def test_production_rejects_tls_directory_outside_program_data(tmp_path):
+def test_production_rejects_tls_directory_outside_program_data(monkeypatch, tmp_path):
+    monkeypatch.setattr("backend.tls_config._is_windows", lambda: True)
     env = {
         "MTO_ENVIRONMENT": "production",
         "PROGRAMDATA": str(tmp_path / "ProgramData"),
         "MTO_TLS_DIR": str(tmp_path / "Desktop" / "tls"),
+        "MTO_TLS_SERVER_NAMES": ",".join(NAMES),
+    }
+
+    with pytest.raises(TLSConfigurationError, match="protected server path"):
+        load_server_tls_config(env)
+
+
+def test_posix_production_rejects_tls_directory_outside_var_lib(monkeypatch, tmp_path):
+    monkeypatch.setattr("backend.tls_config._is_windows", lambda: False)
+    env = {
+        "MTO_ENVIRONMENT": "production",
+        "MTO_TLS_DIR": str(tmp_path / "tls"),
         "MTO_TLS_SERVER_NAMES": ",".join(NAMES),
     }
 
