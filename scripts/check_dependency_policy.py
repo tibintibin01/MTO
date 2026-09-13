@@ -40,6 +40,8 @@ FORBIDDEN_FRONTEND = {"next-pwa", "workbox-webpack-plugin"}
 LOCK_LINE = re.compile(r"^([A-Za-z0-9_.-]+)==([^\s\\]+)")
 ACTION_USE = re.compile(r"\buses:\s*([^\s#]+)")
 IMMUTABLE_ACTION_REF = re.compile(r"[^@\s]+@[0-9a-f]{40}")
+UNIVERSAL_LOCK_TOKEN = "--universal"
+WINDOWS_ONLY_PACKAGES = {"pywin32"}
 
 
 def finding(code: str, path: Path, detail: str) -> dict[str, str]:
@@ -128,6 +130,35 @@ def parse_hash_lock(path: Path) -> tuple[dict[str, str], list[dict[str, str]]]:
     return packages, findings
 
 
+def validate_lock_portability(path: Path) -> list[dict[str, str]]:
+    """Require universal locks and platform guards for Windows-only packages."""
+    findings: list[dict[str, str]] = []
+    text = path.read_text(encoding="utf-8")
+    header = "\n".join(text.splitlines()[:5])
+    if UNIVERSAL_LOCK_TOKEN not in header:
+        findings.append(
+            finding(
+                "LOCK_NOT_UNIVERSAL",
+                path,
+                "regenerate with uv pip compile --universal",
+            )
+        )
+
+    for package in sorted(WINDOWS_ONLY_PACKAGES):
+        package_line = re.search(
+            rf"^{re.escape(package)}==[^\r\n]+$", text, flags=re.MULTILINE
+        )
+        if package_line and "sys_platform == 'win32'" not in package_line.group(0):
+            findings.append(
+                finding(
+                    "WINDOWS_ONLY_LOCK_MARKER_MISSING",
+                    path,
+                    f"{package} must be guarded by sys_platform == 'win32'",
+                )
+            )
+    return findings
+
+
 def _check_minimums(
     packages: dict[str, str], minimums: dict[str, str], path: Path, ecosystem: str
 ) -> list[dict[str, str]]:
@@ -207,6 +238,8 @@ def validate_repository(
     dev_lock, dev_lock_findings = parse_hash_lock(dev_lock_path)
     findings.extend(runtime_lock_findings)
     findings.extend(dev_lock_findings)
+    findings.extend(validate_lock_portability(runtime_lock_path))
+    findings.extend(validate_lock_portability(dev_lock_path))
     for name, version in runtime.items():
         if runtime_lock.get(name) != version:
             findings.append(
@@ -337,6 +370,10 @@ def validate_repository(
         / ".github"
         / "workflows"
         / "ci.yml": [
+            "dependency-portability",
+            "os: [ubuntu-latest, windows-latest]",
+            "pip install --dry-run --require-hashes -r requirements.lock",
+            "pip install --dry-run --require-hashes -r dev-requirements.lock",
             "dev-requirements.lock",
             "pip-audit -r requirements.lock",
             "npm audit --audit-level=moderate",

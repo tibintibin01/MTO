@@ -36,8 +36,8 @@ Regenerate Python locks only in a reviewed dependency change:
 
 ```powershell
 python -m pip install uv==0.12.12
-uv pip compile requirements.txt --generate-hashes --python-version 3.11 --output-file requirements.lock
-uv pip compile requirements.txt dev-requirements.txt --generate-hashes --python-version 3.11 --output-file dev-requirements.lock
+uv pip compile requirements.txt --generate-hashes --universal --python-version 3.11 --output-file requirements.lock
+uv pip compile requirements.txt dev-requirements.txt --generate-hashes --universal --python-version 3.11 --output-file dev-requirements.lock
 python -m scripts.check_dependency_policy
 python -m pip_audit -r requirements.lock --progress-spinner off
 python -m pip_audit -r dev-requirements.lock --progress-spinner off
@@ -58,17 +58,25 @@ npm run build
 Do not activate this phase until it is committed, pushed, pulled by the server,
 and separately approved. On the server, before stopping the API:
 
+First confirm that GitHub CI is green for the exact server commit. The blocking
+CI gates audit both Python locks and resolve both locks on Windows and Linux.
+The production server deliberately does not install the development-only
+`pip-audit` tool.
+
 ```bat
 cd /d C:\mto
 call venv\Scripts\activate
 python -m scripts.check_dependency_policy --output logs\remediation-phase-4-dependencies.json
-python -m pip_audit -r requirements.lock --progress-spinner off
 python -m pip install --dry-run --require-hashes -r requirements.lock
 python -m scripts.phase3_financial_preflight --require-active --output logs\remediation-phase-4-financial-preflight.json
+python -m scripts.capture_remediation_baseline --database --require-ready --output logs\remediation-phase-4-before.json
 ```
 
-Required result: policy `PASS`, no known runtime vulnerabilities, hash-locked
-dry run succeeds, and all Phase 3 financial invariants remain zero.
+Required result: the exact commit's CI is green, policy `PASS`, both CI audits
+report no known vulnerabilities, the server's hash-locked dry run succeeds,
+all Phase 3 financial invariants remain zero, and database readiness is `PASS`.
+If readiness reports an old backup, run a fresh hybrid backup and isolated
+restore verification before activation.
 
 ## Activation and acceptance
 
