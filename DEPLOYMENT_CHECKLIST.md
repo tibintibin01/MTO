@@ -115,7 +115,7 @@ mysql -u mto_app -p property_system -e "SHOW INDEX FROM audit_logs WHERE Key_nam
 
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 
 # Run tests
 pytest tests/ --ignore=tests/test_ui_modules.py --ignore=tests/load
@@ -132,7 +132,7 @@ python backend/main.py
 cd frontend
 
 # Install dependencies
-npm install
+npm ci
 
 # Build
 npm run build

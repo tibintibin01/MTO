@@ -9,7 +9,7 @@ The system consists of three components:
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | **Backend API** | FastAPI (Python 3.11+) | REST API, business logic, PDF generation, job queue |
-| **Web Portal** | Next.js 14 (React 18, TypeScript) | Public taxpayer lookup + admin dashboard (PWA) |
+| **Web Portal** | Next.js 16 (React 19, TypeScript) | Public taxpayer lookup + admin dashboard (PWA) |
 | **Desktop Client** | CustomTkinter (Python) | Full-featured cashier/admin workstation |
 
 **Database:** MariaDB 10.11 (production) / SQLite (tests)
@@ -21,7 +21,7 @@ See [docs/architecture.md](docs/architecture.md) for the full component diagram.
 ## 🚀 Quick Start (Local Development)
 
 ### Prerequisites
-- Python 3.9+
+- Python 3.11+
 - Node.js 20+ (for the web portal)
 - MariaDB/MySQL (or XAMPP on Windows)
 
@@ -32,7 +32,7 @@ python -m venv venv
 source venv/Scripts/activate  # Windows: venv\Scripts\activate
 
 # Install dependencies
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 
 # Copy environment template and fill in values
 cp .env.template .env
@@ -47,7 +47,7 @@ python backend/main.py
 ### Frontend Setup
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev    # Development server on port 3000
 ```
 

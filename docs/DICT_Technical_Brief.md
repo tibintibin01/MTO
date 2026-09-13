@@ -34,7 +34,7 @@ This initiative supports the national government's thrust toward **digital gover
 
 | Component | Technology |
 |---|---|
-| **Frontend** | Next.js 14 (React) — static site generation + server-side rendering |
+| **Frontend** | Next.js 16 (React 19) — static site generation + server-side rendering |
 | **Backend API** | FastAPI (Python 3.11) — RESTful API |
 | **Database** | MariaDB 10.6 — hosted on municipal server |
 | **Authentication** | JWT (JSON Web Tokens) with refresh token rotation |

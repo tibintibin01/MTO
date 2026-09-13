@@ -23,18 +23,17 @@ Those errors must be burned down module by module; making all 368 changes in
 the compliance rollout would create an unsafe and unreviewable operational
 change.
 
-The 2026-07-22 `pip-audit` run reports 51 advisories across 10 installed
-packages. Dependency auditing remains visible in CI but advisory until the
-upgrade work below is completed. This is not acceptance of the risk.
+The 2026-07-22 `pip-audit` run reported 51 advisories across 10 installed
+packages. The Phase 4 source remediation supersedes that dependency baseline:
+both SHA-256-locked Python graphs and the npm lock report zero known
+vulnerabilities as of the final 2026-09-14 review, and dependency audits now
+block CI. See
+`docs/REMEDIATION_PHASE_4_RUNBOOK.md` for activation and rollback controls.
 
-## Required dependency-remediation phase
+## Required Phase 4 operational acceptance
 
-1. Create a dependency-only branch and restore a recent production backup into
-   an isolated staging database.
-2. Upgrade one compatible dependency family at a time (FastAPI/Starlette,
-   authentication/cryptography, upload handling, HTTP, and image processing).
-3. Run the full backend suite, authentication and upload tests, backup/restore
-   verification, frontend build, desktop smoke tests, and a staging soak.
-4. Rebuild and sign `Treasury.exe`, then deploy to one pilot workstation.
-5. Make `pip-audit` blocking only after the advisory list reaches zero or every
-   remaining advisory has a documented, time-bounded exception.
+The source upgrade and blocking audit gates are implemented. Phase 4 is not
+operationally accepted until the runbook's separate server activation is
+approved and completes a fresh backup/restore attestation, hash-locked server
+install, financial preflight, secure desktop rebuild, pilot workstation smoke
+test, and staging soak.

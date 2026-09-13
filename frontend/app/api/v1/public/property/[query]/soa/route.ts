@@ -215,8 +215,9 @@ function html(data: any): string {
 </html>`;
 }
 
-export async function GET(request: NextRequest, { params }: { params: { query: string } }) {
-  const query = decodeURIComponent(params.query || "").trim();
+export async function GET(request: NextRequest, { params }: { params: Promise<{ query: string }> }) {
+  const { query: rawQuery } = await params;
+  const query = decodeURIComponent(rawQuery || "").trim();
   if (!QUERY_PATTERN.test(query)) {
     return new Response("Invalid query format.", { status: 400, headers: { "Cache-Control": "no-store" } });
   }

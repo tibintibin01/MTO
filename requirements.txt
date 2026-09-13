@@ -1,28 +1,28 @@
-fastapi==0.104.1
-uvicorn==0.24.0
-pydantic==2.5.2
-pydantic-settings==2.1.0
+fastapi==0.141.1
+uvicorn==0.52.4
+pydantic==2.13.5
+pydantic-settings==2.15.0
 sqlalchemy==2.0.23
-alembic>=1.13.0
-pymysql==1.1.0
-python-dotenv==1.0.0
+alembic==1.19.2
+pymysql==1.2.0
+python-dotenv==1.2.3
 # Replaced python-jose (unmaintained, CVEs) with PyJWT + cryptography.
 # PyJWT is actively maintained, has no known CVEs, and the API is nearly
 # identical — jwt.encode/decode with the same HS256 algorithm.
-PyJWT==2.8.0
-cryptography==41.0.7
+PyJWT==2.13.0
+cryptography==50.0.1
 bcrypt==4.2.1
 slowapi==0.1.8
-sentry-sdk[fastapi]==1.35.0
-python-multipart==0.0.6
-requests==2.31.0
+sentry-sdk[fastapi]==2.69.1
+python-multipart==0.0.32
+requests==2.34.2
 pandas==2.1.3
 openpyxl==3.1.2
 reportlab==4.0.7
-pillow==10.1.0
+pillow==12.3.0
 matplotlib==3.10.9
 customtkinter==5.2.2
 prometheus-client==0.19.0
-websocket-client>=1.8.0
-websockets>=12.0
+websocket-client==1.9.2
+websockets==17.1
 boto3==1.34.0

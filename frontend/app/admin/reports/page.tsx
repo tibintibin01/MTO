@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Landmark,
   Clock,
@@ -68,6 +69,7 @@ const EXPORT_REPORTS = [
 ];
 
 export default function ReportsHub() {
+  const router = useRouter();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -81,7 +83,7 @@ export default function ReportsHub() {
         headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
         body: JSON.stringify({ report_type: reportType, month: "All", year: "All" }),
       });
-      if (res.status === 401) { window.location.href = "/admin/login"; return; }
+      if (res.status === 401) { router.push("/admin/login"); return; }
       if (!res.ok) throw new Error("Export failed.");
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);

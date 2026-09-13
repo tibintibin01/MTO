@@ -13,7 +13,7 @@ cd /d C:\MTO
 REM Frontend installs/builds can rewrite tracked generated artifacts and block
 REM the next pull. Restore only these known-safe files before updating. This
 REM never touches MariaDB, backups, .env, server_config.json, or office records.
-for %%F in (frontend/package-lock.json frontend/public/sw.js frontend/public/workbox-6747d6ad.js) do (
+for %%F in (frontend/package-lock.json) do (
     git diff --quiet -- "%%F"
     if errorlevel 1 (
         echo Local generated-file drift detected: %%F
@@ -50,7 +50,7 @@ echo.
 
 echo [3/5] Installing/updating Python dependencies...
 call venv\Scripts\activate
-pip install -r requirements.txt -q
+python -m pip install --require-hashes -r requirements.lock -q
 if %errorlevel% neq 0 (
     echo ERROR: Python dependency update failed. Services were not restarted.
     pause

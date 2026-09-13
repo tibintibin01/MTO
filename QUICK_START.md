@@ -62,7 +62,7 @@ alembic current  # Should show: b2c3d4e5f6a1
 
 ```bash
 # Install dependencies (first time only)
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.lock
 
 # Start server
 python backend/main.py
@@ -81,7 +81,7 @@ Backend will be available at: `https://localhost:8001` after Phase 2 certificate
 cd frontend
 
 # Install dependencies (first time only)
-npm install
+npm ci
 
 # Build
 npm run build

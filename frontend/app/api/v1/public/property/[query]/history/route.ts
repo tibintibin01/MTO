@@ -11,8 +11,9 @@ function json(status: number, body: any) {
   return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export async function GET(request: NextRequest, { params }: { params: { query: string } }) {
-  const query = decodeURIComponent(params.query || "").trim();
+export async function GET(request: NextRequest, { params }: { params: Promise<{ query: string }> }) {
+  const { query: rawQuery } = await params;
+  const query = decodeURIComponent(rawQuery || "").trim();
   if (!QUERY_PATTERN.test(query)) return json(400, { detail: "Invalid query format." });
   const accountKey = (request.nextUrl.searchParams.get("account") || "").trim().toLowerCase();
   if (accountKey && !ACCOUNT_KEY_PATTERN.test(accountKey)) {

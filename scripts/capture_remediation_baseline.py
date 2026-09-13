@@ -26,7 +26,6 @@ from typing import Any, Iterable, Mapping
 
 from sqlalchemy import inspect, text
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REPORT_DIR = PROJECT_ROOT / "logs"
 PROTECTED_BACKUP_STATUSES = {"CLOUD_ONLY", "SYNCED"}
@@ -110,6 +109,9 @@ def _manifest_hashes() -> dict[str, str]:
     candidates = (
         "pyproject.toml",
         "requirements.txt",
+        "requirements.lock",
+        "dev-requirements.txt",
+        "dev-requirements.lock",
         "frontend/package.json",
         "frontend/package-lock.json",
     )

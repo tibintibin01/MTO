@@ -6,6 +6,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.phase4-venv/
+.phase4-test-temp/
 venv/
 ENV/
 env/
@@ -21,6 +23,9 @@ out/
 build/
 dist/
 frontend/.mto-built-tree
+frontend/public/sw.js
+frontend/public/swe-worker-*.js
+frontend/public/workbox-*.js
 
 # Offline cloud-backup recovery keys must never enter source control
 mto_backup_recovery_key*.txt

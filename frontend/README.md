@@ -6,11 +6,12 @@ This is the public-facing side of the MTO Treasury Management System. It allows 
 - **PWA Ready**: Installable on Android/iOS via "Add to Home Screen".
 - **Responsive Design**: Works perfectly on mobile, tablet, and desktop.
 - **Real-time Sync**: Proxies requests to the FastAPI backend.
-- **Offline Support**: Basic property data is cached for field work.
+- **Safe Offline Support**: Only the offline shell is available; property,
+  payment, authentication, and admin data always require the live server.
 
 ## Setup
 1. `cd frontend`
-2. `npm install`
+2. `npm ci`
 3. `npm run dev`
 
 ## PWA Icons
@@ -25,5 +26,5 @@ convert assets/official/logo.png -resize 512x512 frontend/public/icons/icon-512x
 Or use any image editor to export the logo at those two sizes into `frontend/public/icons/`.
 
 ## Architecture
-Built with Next.js 14 (App Router), Tailwind CSS, and `next-pwa`.
+Built with Next.js 16 (App Router), React 19, Tailwind CSS, and Serwist.
 It communicates with the backend via `/api/v1/` rewrites defined in `next.config.js`.

@@ -25,7 +25,7 @@ help:
 	@echo "  make migrate  - Run database migrations (Alembic upgrade head)"
 
 install:
-	$(PIP) install -r requirements.txt -r dev-requirements.txt
+	$(PIP) install --require-hashes -r dev-requirements.lock
 
 dev:
 	$(PYTHON) backend/main.py

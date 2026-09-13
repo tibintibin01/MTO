@@ -49,13 +49,16 @@ New-NetFirewallRule -DisplayName "MTO API Server" -Direction Inbound -Protocol T
 ## 💻 3. CLIENT MACHINE SETUP (Workstation)
 
 ### **A. Environment Configuration**
-1. Copy the project folder to the Client PC.
-2. Ensure Python 3.14+ is installed.
-3. Run `install_packages.bat` to setup dependencies.
-4. Open the `.env` (or `api_config.json`) and point the **API_URL** to the Server's IP:
-   ```env
-   # Example for Client PC
-   See the external HTTPS `server_config.json` example in the Phase 2 runbook.
+1. Do not copy the source tree, `.env`, Python environment, or database credentials to a client PC.
+2. Deploy the secured `Treasury.exe` package produced by the Phase 2 build procedure.
+3. Install only the public LAN CA and endpoint-only `server_config.json` described in the Phase 2 runbook.
+4. Point `server_config.json` to the authenticated HTTPS server name:
+   ```json
+   {
+     "server_url": "https://<MTO-SERVER-NAME>:8001",
+     "ca_certificate": "certificates/mto-lan-ca.pem",
+     "client_version": "2.1.0"
+   }
    ```
 
 ### **B. Launch the Interface**

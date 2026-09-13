@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
+requires = ["setuptools==84.0.0", "wheel==0.48.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,34 +7,14 @@ name = "mto-treasury"
 version = "1.0.0"
 description = "Municipal Treasury Office System"
 readme = "README.md"
-requires-python = ">=3.9"
-dependencies = [
-    "fastapi==0.104.1",
-    "uvicorn==0.24.0",
-    "pydantic==2.5.2",
-    "sqlalchemy==2.0.23",
-    "pymysql==1.1.0",
-    "python-dotenv==1.0.0",
-    "PyJWT==2.8.0",
-    "cryptography==41.0.7",
-    "bcrypt==4.2.1",
-    "slowapi==0.1.8",
-    "sentry-sdk[fastapi]==1.35.0",
-    "python-multipart==0.0.6",
-    "requests==2.31.0",
-    "pandas==2.1.3",
-    "openpyxl==3.1.2",
-    "reportlab==4.0.7",
-    "pillow==11.2.1",
-    "matplotlib==3.10.9",
-    "customtkinter==5.2.2",
-    "websocket-client>=1.8.0",
-    "websockets>=12.0",
-    "alembic>=1.13.0"
-]
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
 
 [tool.setuptools]
 py-modules = ["migration_manager", "database_hardening_tool"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -52,6 +32,9 @@ env = [
 ]
 
 [tool.black]
+# Production and CI run Python 3.11. An explicit target keeps formatting
+# deterministic as newer Black releases add parsers for later Python versions.
+target-version = ["py311"]
 # These legacy modules predate Black and would produce a very large
 # formatting-only diff if touched. Keep the exemption narrow while their real
 # runtime/static-analysis defects are repaired independently.

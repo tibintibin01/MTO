@@ -48,11 +48,13 @@ const BORDER: Record<ToastLevel, string> = {
 };
 
 function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: (id: string) => void }) {
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     timerRef.current = setTimeout(() => onDismiss(toast.id), 4000);
-    return () => clearTimeout(timerRef.current);
+    return () => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+    };
   }, [toast.id, onDismiss]);
 
   return (
