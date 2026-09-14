@@ -35,13 +35,16 @@ EXACT_FRONTEND_MINIMUMS = {
     "react-dom": "19.2.8",
     "serwist": "9.5.12",
 }
+EXACT_DEVELOPMENT_TOOLS = {
+    "pyinstaller": "6.22.3",
+}
 FORBIDDEN_PYTHON = {"python-jose"}
 FORBIDDEN_FRONTEND = {"next-pwa", "workbox-webpack-plugin"}
 LOCK_LINE = re.compile(r"^([A-Za-z0-9_.-]+)==([^\s\\]+)")
 ACTION_USE = re.compile(r"\buses:\s*([^\s#]+)")
 IMMUTABLE_ACTION_REF = re.compile(r"[^@\s]+@[0-9a-f]{40}")
 UNIVERSAL_LOCK_TOKEN = "--universal"
-WINDOWS_ONLY_PACKAGES = {"pywin32"}
+WINDOWS_ONLY_PACKAGES = {"pefile", "pywin32", "pywin32-ctypes"}
 
 
 def finding(code: str, path: Path, detail: str) -> dict[str, str]:
@@ -186,6 +189,27 @@ def _check_minimums(
     return findings
 
 
+def _check_exact_versions(
+    packages: dict[str, str], expected: dict[str, str], path: Path, ecosystem: str
+) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    for name, required_version in expected.items():
+        actual = packages.get(name)
+        if actual is None:
+            findings.append(
+                finding(f"{ecosystem}_REQUIRED_PACKAGE_MISSING", path, name)
+            )
+        elif actual != required_version:
+            findings.append(
+                finding(
+                    f"{ecosystem}_VERSION_MISMATCH",
+                    path,
+                    f"{name}: required={required_version}, actual={actual}",
+                )
+            )
+    return findings
+
+
 def validate_workflow_action_pins(
     root: Path,
 ) -> tuple[list[dict[str, str]], int]:
@@ -230,6 +254,11 @@ def validate_repository(
     findings.extend(dev_findings)
     findings.extend(
         _check_minimums(runtime, EXACT_RUNTIME_MINIMUMS, runtime_path, "PYTHON")
+    )
+    findings.extend(
+        _check_exact_versions(
+            dev, EXACT_DEVELOPMENT_TOOLS, dev_path, "PYTHON_BUILD_TOOL"
+        )
     )
     for forbidden in sorted(FORBIDDEN_PYTHON & runtime.keys()):
         findings.append(finding("PYTHON_FORBIDDEN_PACKAGE", runtime_path, forbidden))
@@ -366,6 +395,13 @@ def validate_repository(
     required_text = {
         root / "update_mto.bat": ["--require-hashes -r requirements.lock"],
         root / "Dockerfile": ["--require-hashes", "requirements.lock"],
+        root
+        / "build_pyinstaller.ps1": [
+            "[string]$PythonPath",
+            "dev-requirements.txt",
+            "from importlib.metadata import version",
+            "-m pip check",
+        ],
         root
         / ".github"
         / "workflows"

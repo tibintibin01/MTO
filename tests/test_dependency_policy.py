@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from scripts.check_dependency_policy import (
+    EXACT_DEVELOPMENT_TOOLS,
     PROJECT_ROOT,
     parse_direct_requirements,
     parse_hash_lock,
@@ -16,6 +17,15 @@ def test_repository_dependency_policy_passes():
     assert findings == []
     assert counts["runtime_direct"] > 0
     assert counts["frontend_locked"] > counts["frontend_direct"]
+
+
+def test_desktop_packager_is_an_exact_reviewed_direct_dependency():
+    packages, findings = parse_direct_requirements(
+        PROJECT_ROOT / "dev-requirements.txt"
+    )
+
+    assert findings == []
+    assert packages["pyinstaller"] == EXACT_DEVELOPMENT_TOOLS["pyinstaller"]
 
 
 def test_unpinned_python_dependency_is_rejected(tmp_path: Path):

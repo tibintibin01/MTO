@@ -24,7 +24,8 @@ the dependency policy rejects mutable tags or branches.
 ## Dependency ownership
 
 - `requirements.txt`: exactly pinned direct runtime dependencies.
-- `dev-requirements.txt`: exactly pinned direct test and security tooling.
+- `dev-requirements.txt`: exactly pinned direct test, security, and desktop
+  packaging tooling.
 - `requirements.lock`: generated runtime graph with SHA-256 artifact hashes.
 - `dev-requirements.lock`: generated runtime plus development graph with hashes.
 - `frontend/package.json`: exactly pinned direct npm dependencies.
@@ -42,6 +43,23 @@ python -m scripts.check_dependency_policy
 python -m pip_audit -r requirements.lock --progress-spinner off
 python -m pip_audit -r dev-requirements.lock --progress-spinner off
 ```
+
+## Secure desktop build toolchain
+
+Never build the production executable with an unreviewed global or legacy
+environment. Install the universal development lock into a dedicated build
+environment, then explicitly pass that interpreter to the build script:
+
+```powershell
+python -m venv .phase4-build-venv
+.\.phase4-build-venv\Scripts\python.exe -m pip install --require-hashes -r dev-requirements.lock
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_pyinstaller.ps1 -PythonPath .\.phase4-build-venv\Scripts\python.exe
+```
+
+The build fails closed if PyInstaller is missing, differs from its reviewed
+exact pin, has inconsistent dependencies, or violates the desktop TLS trust
+boundary. Keep `server_config.json` and the public client CA external to the
+executable; never copy a server or CA private key into the client distribution.
 
 Regenerate the npm lock only after reviewing `package.json`:
 

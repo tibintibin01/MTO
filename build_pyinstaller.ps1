@@ -1,19 +1,49 @@
+param(
+    [string]$PythonPath = ""
+)
+
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Python = Join-Path $Root "venv\Scripts\python.exe"
+if ([string]::IsNullOrWhiteSpace($PythonPath)) {
+    $Python = Join-Path $Root "venv\Scripts\python.exe"
+} else {
+    $Python = (Resolve-Path -LiteralPath $PythonPath -ErrorAction Stop).Path
+}
 $Spec = Join-Path $Root "Treasury.spec"
 $Verifier = Join-Path $Root "scripts\verify_desktop_trust_boundary.py"
+$DevRequirements = Join-Path $Root "dev-requirements.txt"
 $Dist = Join-Path $Root "dist"
 $Exe = Join-Path $Dist "Treasury.exe"
 $PyzManifest = Join-Path $Root "build\Treasury\PYZ-00.toc"
 $Config = Join-Path $Root "server_config.json"
 $PublicCa = Join-Path $Root "certificates\mto-lan-ca.pem"
 
-foreach ($required in @($Python, $Spec, $Verifier, $Config, $PublicCa)) {
+foreach ($required in @($Python, $Spec, $Verifier, $DevRequirements, $Config, $PublicCa)) {
     if (-not (Test-Path $required)) {
         throw "Required desktop build input is missing: $required"
     }
+}
+
+$pyInstallerPins = @(
+    Select-String -LiteralPath $DevRequirements -Pattern '^pyinstaller==([0-9A-Za-z.+-]+)$'
+)
+if ($pyInstallerPins.Count -ne 1) {
+    throw "dev-requirements.txt must contain exactly one exact PyInstaller pin."
+}
+$expectedPyInstaller = $pyInstallerPins[0].Matches[0].Groups[1].Value
+$installedVersionOutput = & $Python -c "from importlib.metadata import version; print(version('pyinstaller'))"
+if ($LASTEXITCODE -ne 0) {
+    throw "The selected Python interpreter does not contain the pinned PyInstaller build tool."
+}
+$installedPyInstaller = [string]($installedVersionOutput | Select-Object -Last 1)
+if ($installedPyInstaller.Trim() -ne $expectedPyInstaller) {
+    throw "PyInstaller version mismatch: expected $expectedPyInstaller, found $($installedPyInstaller.Trim())."
+}
+
+& $Python -m pip check
+if ($LASTEXITCODE -ne 0) {
+    throw "The selected desktop build environment has inconsistent dependencies."
 }
 
 & $Python $Verifier --require-config
