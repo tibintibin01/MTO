@@ -214,6 +214,11 @@ MIGRATIONS = [
         "handler": "ensure_audit_integrity_schema",
         "sql": "",
     },
+    {
+        "id": "phase5_audit_timestamp_precision_recovery_v1",
+        "handler": "ensure_audit_timestamp_precision_recovery",
+        "sql": "",
+    },
 ]
 
 
@@ -747,6 +752,8 @@ def ensure_audit_integrity_schema(db_session: Session) -> None:
 def require_audit_integrity_schema(db_session: Session) -> None:
     """Fail server startup when the Phase 5 schema or chain is invalid."""
     from backend.services.audit_integrity_service import (
+        AUDIT_TIMESTAMP_REQUIRED_PRECISION,
+        audit_timestamp_storage_status,
         audit_chain_schema_status,
         verify_audit_chain,
     )
@@ -755,6 +762,15 @@ def require_audit_integrity_schema(db_session: Session) -> None:
     if not status["active"]:
         missing = ", ".join(status["missing_columns"]) or "chain state table"
         raise RuntimeError(f"Phase 5 audit integrity schema is incomplete: {missing}")
+    timestamp_storage = audit_timestamp_storage_status(db_session)
+    if (
+        timestamp_storage["database_dialect"] in {"mysql", "mariadb"}
+        and timestamp_storage["datetime_precision"]
+        != AUDIT_TIMESTAMP_REQUIRED_PRECISION
+    ):
+        raise RuntimeError(
+            "Phase 5 audit timestamp storage must use MariaDB DATETIME(6)."
+        )
     verification = verify_audit_chain(db_session)
     if verification["status"] != "verified":
         raise RuntimeError(
@@ -800,6 +816,13 @@ def run_migrations(db_session: Session) -> int:
                     statements = []
                 elif handler_name == "ensure_audit_integrity_schema":
                     ensure_audit_integrity_schema(db_session)
+                    statements = []
+                elif handler_name == "ensure_audit_timestamp_precision_recovery":
+                    from backend.services.audit_integrity_service import (
+                        ensure_audit_timestamp_precision_recovery,
+                    )
+
+                    ensure_audit_timestamp_precision_recovery(db_session)
                     statements = []
                 else:
                     statements = None

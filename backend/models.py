@@ -16,7 +16,14 @@ from sqlalchemy import (
 )
 
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.mysql import DATETIME as MySQLDateTime
 from .database import Base
+
+AUDIT_TIMESTAMP_TYPE = (
+    DateTime()
+    .with_variant(MySQLDateTime(fsp=6), "mysql")
+    .with_variant(MySQLDateTime(fsp=6), "mariadb")
+)
 
 
 class User(Base):
@@ -216,7 +223,7 @@ class AuditLog(Base):
     old_values = Column(Text, nullable=True)
     new_values = Column(Text, nullable=True)
     ip_address = Column(String(45), nullable=True)
-    timestamp = Column(DateTime, nullable=False)
+    timestamp = Column(AUDIT_TIMESTAMP_TYPE, nullable=False)
     event_uuid = Column(String(36), nullable=True)
     previous_hash = Column(String(64), nullable=True)
     current_hash = Column(String(64), nullable=True)
@@ -246,8 +253,8 @@ class AuditChainState(Base):
     legacy_event_count = Column(Integer, nullable=False, default=0)
     legacy_head_audit_id = Column(Integer, nullable=True)
     legacy_head_hash = Column(String(64), nullable=True)
-    initialized_at = Column(DateTime, nullable=False)
-    updated_at = Column(DateTime, nullable=False)
+    initialized_at = Column(AUDIT_TIMESTAMP_TYPE, nullable=False)
+    updated_at = Column(AUDIT_TIMESTAMP_TYPE, nullable=False)
 
 
 class ReceiptHistory(Base):

@@ -20,6 +20,8 @@ MIGRATION_ID = "phase5_audit_integrity_observability_v1"
 def capture_preflight() -> dict:
     from backend.database import SessionLocal
     from backend.services.audit_integrity_service import (
+        AUDIT_TIMESTAMP_REQUIRED_PRECISION,
+        audit_timestamp_storage_status,
         audit_chain_schema_status,
         verify_audit_chain,
     )
@@ -30,6 +32,7 @@ def capture_preflight() -> dict:
 
     with SessionLocal() as session:
         schema = audit_chain_schema_status(session)
+        timestamp_storage = audit_timestamp_storage_status(session)
         audit_count = int(
             session.execute(text("SELECT COUNT(*) FROM audit_logs")).scalar() or 0
         )
@@ -64,6 +67,8 @@ def capture_preflight() -> dict:
         "schema": {
             **schema,
             "migration_applied": migration_applied,
+            "timestamp_precision": timestamp_storage["datetime_precision"],
+            "required_timestamp_precision": AUDIT_TIMESTAMP_REQUIRED_PRECISION,
         },
         "audit": verification,
         "backup": {
@@ -108,6 +113,7 @@ def main() -> int:
         "- Phase 5 schema: "
         + ("ACTIVE" if report["schema"]["active"] else "NOT YET ACTIVE")
     )
+    print("- Audit timestamp precision: " f"{report['schema']['timestamp_precision']}")
     print(f"- Audit chain: {str(report['audit']['status']).upper()}")
     print(
         "- Backup readiness: "
@@ -127,6 +133,13 @@ def main() -> int:
     if args.require_active and report["audit"]["status"] != "verified":
         print("PHASE 5 PREFLIGHT BLOCKED: required audit schema is not active.")
         return 4
+    if (
+        args.require_active
+        and report["schema"]["timestamp_precision"]
+        != report["schema"]["required_timestamp_precision"]
+    ):
+        print("PHASE 5 PREFLIGHT BLOCKED: audit timestamps require DATETIME(6).")
+        return 6
     if (
         args.require_live_event
         and int(report["audit"].get("live_event_count") or 0) < 1

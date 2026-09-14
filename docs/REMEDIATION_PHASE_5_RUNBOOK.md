@@ -77,6 +77,42 @@ process, then verify:
 9. Rerun the Phase 5 preflight with `--require-active --require-live-event`;
    it must remain verified and report at least one live Phase 5 event.
 
+## Timestamp-precision incident recovery
+
+MariaDB `DATETIME(0)` cannot store the microseconds used by the Phase 5 hash
+payload. If the first live events fail only with `CURRENT_HASH_MISMATCH`, keep
+the API stopped and use the dedicated recovery utility. Do not run the generic
+updater or `migration_manager` for this incident; automatic migration refuses
+to rewrite evidence without the recovery utility's explicit confirmation.
+
+Run the read-only preflight first:
+
+```bat
+python -m scripts.phase5_audit_timestamp_recovery --preflight --output logs\remediation-phase-5-audit-timestamp-preflight.json
+```
+
+The preflight must report only timestamp-hash failures, one cryptographically
+recoverable timestamp for every affected live event, backup readiness `PASS`,
+and the API stopped. After separate live-recovery approval, run:
+
+```bat
+python -m scripts.phase5_audit_timestamp_recovery --apply --output logs\remediation-phase-5-audit-timestamp-recovery.json
+```
+
+The apply operation creates and restore-verifies a fresh server-and-cloud
+hybrid backup before changing the schema. It upgrades the audit timestamp and
+chain-state timestamps to `DATETIME(6)`, restores only timestamps whose exact
+microseconds reproduce the original hashes, and records migration
+`phase5_audit_timestamp_precision_recovery_v1`. It never changes an event UUID,
+previous hash, current hash, action, user, old/new snapshot, or other
+non-timestamp field. The restored timestamp is the unique value that reproduces
+the event's original hash.
+
+Before restarting the API, rerun the Phase 5 preflight and financial baseline
+comparison. Required results are audit chain `VERIFIED`, timestamp precision
+`6`, at least one live Phase 5 event, backup readiness `PASS`, and financial
+invariant comparison `PASS`.
+
 ## Incident and rollback rule
 
 If verification fails, stop the API immediately and preserve the Phase 5 report,

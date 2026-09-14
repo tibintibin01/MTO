@@ -11,7 +11,11 @@ def _report(live_event_count):
             "live_event_count": live_event_count,
             "status": "verified",
         },
-        "schema": {"active": True},
+        "schema": {
+            "active": True,
+            "timestamp_precision": 6,
+            "required_timestamp_precision": 6,
+        },
         "readiness_issues": [],
     }
 
@@ -40,3 +44,16 @@ def test_pilot_gate_accepts_a_verified_chain_with_a_live_event(
     )
 
     assert preflight.main() == 0
+
+
+def test_active_gate_rejects_second_precision_audit_timestamps(monkeypatch):
+    report = _report(1)
+    report["schema"]["timestamp_precision"] = 0
+    monkeypatch.setattr(preflight, "capture_preflight", lambda: report)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["phase5-preflight", "--require-active"],
+    )
+
+    assert preflight.main() == 6
