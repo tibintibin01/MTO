@@ -44,6 +44,11 @@ def test_server_migration_entrypoint_runs_all_compatibility_checks(monkeypatch):
     )
     monkeypatch.setattr(
         migration_manager,
+        "require_audit_integrity_schema",
+        lambda db_session: calls.append(("audit", db_session)),
+    )
+    monkeypatch.setattr(
+        migration_manager,
         "ensure_portfolio_schema",
         lambda db_session: calls.append(("portfolio", db_session)),
     )
@@ -54,6 +59,7 @@ def test_server_migration_entrypoint_runs_all_compatibility_checks(monkeypatch):
         "refresh",
         "remarks",
         "financial",
+        "audit",
         "portfolio",
     ]
     assert all(call_session is session for _name, call_session in calls)

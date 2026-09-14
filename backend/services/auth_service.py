@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from backend.models import User, RefreshToken, AuditLog
+from backend.models import User, RefreshToken
 from sqlalchemy.orm import Session
 from utils import log_error_to_file, hash_password, verify_password, needs_rehash
 from datetime import datetime, timedelta, timezone
@@ -446,18 +446,18 @@ def create_user(username, full_name, password, role, admin_user, db_session: Ses
         db_session.add(new_user)
         db_session.flush()
 
-        # 5. Audit log staged in the same transaction — user + audit commit atomically
-        import json
+        # 5. User and sealed audit event commit atomically.
+        from backend.services.history_service import log_data_change
 
-        audit_log = AuditLog(
+        log_data_change(
+            user_id=admin_user.get("id") if isinstance(admin_user, dict) else None,
             username=get_username(admin_user),
-            action=f"Created new user: {username} ({full_name})",
+            action="CREATE_USER",
             table_name="users",
             record_id=new_user.id,
-            new_values=json.dumps({"username": username, "role": role}),
-            timestamp=datetime.now(timezone.utc),
+            after={"username": username, "role": role},
+            db_session=db_session,
         )
-        db_session.add(audit_log)
         db_session.commit()
         return new_user.id
 

@@ -15,6 +15,7 @@ import secrets
 import hashlib
 import base64
 import binascii
+import re
 
 # --- SECURITY CONSTANTS ---
 # Legacy scheme kept for migration detection only — new hashes use bcrypt.
@@ -25,13 +26,14 @@ PASSWORD_ITERATIONS = 200000
 # --- CONFIGURATION MANAGEMENT ---
 class ConfigManager:
     """Handles local persistence of user settings and UI state."""
+
     _config_file = "config.json"
     _defaults = {
         "appearance_mode": "dark",
         "language": "en",
         "toast_duration": 3000,
         "auto_refresh_interval": 30,
-        "sidebar_collapsed": False
+        "sidebar_collapsed": False,
     }
     _config = {}
 
@@ -57,18 +59,22 @@ class ConfigManager:
 
     @classmethod
     def get(cls, key: str, default: Any = None) -> Any:
-        if not cls._config: cls.load()
+        if not cls._config:
+            cls.load()
         return cls._config.get(key, default)
 
     @classmethod
     def set(cls, key: str, value: Any):
-        if not cls._config: cls.load()
+        if not cls._config:
+            cls.load()
         cls._config[key] = value
         cls.save()
+
 
 # --- FEATURE TOGGLES ---
 class FeatureManager:
     """Manages system feature flags via environment variables."""
+
     _defaults = {
         "BULK_IMPORT": True,
         "DELINQUENCY_NOTICES": False,
@@ -82,29 +88,50 @@ class FeatureManager:
         env_key = f"MTO_ENABLE_{feature_name.upper()}"
         if feature_name.upper() == "MAINTENANCE_MODE":
             env_key = "MTO_MAINTENANCE_MODE"
-            
+
         val = os.getenv(env_key)
         if val is None:
             return cls._defaults.get(feature_name.upper(), False)
         return str(val).lower() in ("1", "true", "yes", "on")
 
+
 def is_feature_enabled(feature_name: str) -> bool:
     """Helper to check if a feature is enabled."""
     return FeatureManager.is_enabled(feature_name)
 
-# --- OBSERVABILITY CONTEXT ---
-_request_id_ctx_var: ContextVar[Optional[str]] = ContextVar("request_id", default="SYSTEM")
 
-def set_request_id(request_id: str = None):
-    _request_id_ctx_var.set(request_id or str(uuid.uuid4()))
+# --- OBSERVABILITY CONTEXT ---
+_request_id_ctx_var: ContextVar[Optional[str]] = ContextVar(
+    "request_id", default="SYSTEM"
+)
+
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$")
+
+
+def sanitize_request_id(request_id: Any = None) -> str:
+    """Accept only bounded, log-safe request IDs from untrusted clients."""
+    if isinstance(request_id, str):
+        candidate = request_id.strip()
+        if _REQUEST_ID_PATTERN.fullmatch(candidate):
+            return candidate
+    return str(uuid.uuid4())
+
+
+def set_request_id(request_id: str = None) -> str:
+    safe_request_id = sanitize_request_id(request_id)
+    _request_id_ctx_var.set(safe_request_id)
+    return safe_request_id
+
 
 def get_request_id():
     return _request_id_ctx_var.get()
+
 
 class ContextFilter(logging.Filter):
     def filter(self, record):
         record.request_id = get_request_id()
         return True
+
 
 class JSONFormatter(logging.Formatter):
     def format(self, record):
@@ -119,19 +146,24 @@ class JSONFormatter(logging.Formatter):
             log_record["traceback"] = self.formatException(record.exc_info)
         return json.dumps(log_record)
 
+
 def format_date_for_db(date_str: Optional[str]) -> Optional[str]:
-    if not date_str: return None
+    if not date_str:
+        return None
     date_str = date_str.replace("/", "-").strip()
     try:
         return datetime.strptime(date_str, "%m-%d-%Y").strftime("%Y-%m-%d")
     except ValueError:
-        try: return datetime.strptime(date_str, "%Y-%m-%d").strftime("%Y-%m-%d")
-        except ValueError as e: 
+        try:
+            return datetime.strptime(date_str, "%Y-%m-%d").strftime("%Y-%m-%d")
+        except ValueError as e:
             log_error_to_file(f"Date format warning for db: {date_str}", error=e)
             return date_str
 
+
 def format_date_for_display(date_val: Any) -> str:
-    if not date_val: return ""
+    if not date_val:
+        return ""
     try:
         if isinstance(date_val, str):
             return datetime.strptime(date_val, "%Y-%m-%d").strftime("%m-%d-%Y")
@@ -140,20 +172,25 @@ def format_date_for_display(date_val: Any) -> str:
         log_error_to_file(f"Date display format warning: {date_val}", error=e)
         return str(date_val)
 
+
 def format_curr(val: Any) -> str:
-    try: return "{:,.2f}".format(float(val)) if val else "0.00"
-    except (ValueError, TypeError) as e: 
+    try:
+        return "{:,.2f}".format(float(val)) if val else "0.00"
+    except (ValueError, TypeError) as e:
         log_error_to_file(f"Currency format warning: {val}", error=e)
         return "0.00"
 
+
 def clean_num(val: Any) -> float:
-    try: 
-        if pd.isna(val) or val == "": return 0.0
+    try:
+        if pd.isna(val) or val == "":
+            return 0.0
         s = str(val).replace(",", "").replace("â‚±", "").strip()
         return float(s) if s else 0.0
-    except (ValueError, TypeError) as e: 
+    except (ValueError, TypeError) as e:
         log_error_to_file(f"Number clean warning: {val}", error=e)
         return 0.0
+
 
 # Path Configuration
 # Updated for package structure (moves up one level to project root)
@@ -166,25 +203,38 @@ ERROR_LOG_PATH = os.path.join(LOGS_DIR, "system.log")
 sys_logger = logging.getLogger("MTOSystem")
 sys_logger.setLevel(logging.INFO)
 try:
-    handler = RotatingFileHandler(ERROR_LOG_PATH, maxBytes=5*1024*1024, backupCount=5, encoding="utf-8")
+    handler = RotatingFileHandler(
+        ERROR_LOG_PATH, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
+    )
     handler.addFilter(ContextFilter())
-    handler.setFormatter(JSONFormatter(datefmt='%Y-%m-%d %H:%M:%S'))
+    handler.setFormatter(JSONFormatter(datefmt="%Y-%m-%d %H:%M:%S"))
     sys_logger.addHandler(handler)
 except PermissionError as exc:
     # A locked log file should not prevent the API server from starting.
-    sys_logger.warning("Could not open system.log; continuing with console logging only: %s", exc)
+    sys_logger.warning(
+        "Could not open system.log; continuing with console logging only: %s", exc
+    )
 
 # Also log to console for development visibility
 console = logging.StreamHandler()
 console.addFilter(ContextFilter())
-console.setFormatter(logging.Formatter('[%(asctime)s] [%(request_id)s] %(levelname)s: %(message)s'))
+console.setFormatter(
+    logging.Formatter("[%(asctime)s] [%(request_id)s] %(levelname)s: %(message)s")
+)
 sys_logger.addHandler(console)
+
 
 def log_critical_event(event_type: str, message: str, user: str = "SYSTEM"):
     """Logs a critical event for monitoring and alerting tools."""
     sys_logger.critical(f"EVENT_TYPE={event_type} | USER={user} | MESSAGE={message}")
 
-def log_error_to_file(context: str, error: Optional[Exception] = None, extra: Optional[Any] = None, traceback_text: Optional[str] = None) -> Optional[str]:
+
+def log_error_to_file(
+    context: str,
+    error: Optional[Exception] = None,
+    extra: Optional[Any] = None,
+    traceback_text: Optional[str] = None,
+) -> Optional[str]:
     """Professional wrapper for the system logger to maintain compatibility."""
     try:
         msg = context
@@ -192,7 +242,7 @@ def log_error_to_file(context: str, error: Optional[Exception] = None, extra: Op
             msg += f" | Error: {error}"
         if extra:
             msg += f" | Details: {extra}"
-        
+
         if traceback_text:
             msg += f"\nTraceback:\n{traceback_text}"
         elif error:
@@ -207,6 +257,7 @@ def log_error_to_file(context: str, error: Optional[Exception] = None, extra: Op
     except Exception as log_e:
         print(f"CRITICAL: Logging failed (Shadow Check): {log_e}")
         return None
+
 
 class LocalizationManager:
     _instance = None
@@ -249,45 +300,51 @@ class LocalizationManager:
         self._current_locale = locale
         self._load_strings()
 
+
 def tr(key, default=None):
     """Global helper for translation."""
     return LocalizationManager().get(key, default)
 
+
 def export_data_to_excel(data, columns, filename_prefix="Export"):
     """
-    General purpose export tool. 
+    General purpose export tool.
     data: List of lists/tuples representing rows.
     columns: List of column headers.
     """
     try:
         from tkinter import filedialog, messagebox
         import pandas as pd
-        
+
         # Ask user for save location
-        default_name = f"{filename_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        default_name = (
+            f"{filename_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        )
         save_path = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel files", "*.xlsx"), ("CSV files", "*.csv")],
-            initialfile=default_name
+            initialfile=default_name,
         )
-        
+
         if not save_path:
             return None
 
         df = pd.DataFrame(data, columns=columns)
-        
+
         if save_path.endswith(".csv"):
             df.to_csv(save_path, index=False)
         else:
             df.to_excel(save_path, index=False)
-            
+
         messagebox.showinfo("Success", f"Data exported successfully to:\n{save_path}")
         return save_path
     except Exception as e:
         log_error_to_file("Failed to export data", e)
         from tkinter import messagebox
+
         messagebox.showerror("Export Error", f"Failed to export data: {str(e)}")
         return None
+
 
 # --- SECURITY UTILITIES ---
 # Single authoritative password hashing implementation for the entire project.
@@ -313,6 +370,7 @@ def hash_password(password: str) -> str:
     if password is None:
         raise ValueError("Password is required.")
     import bcrypt as _bcrypt
+
     secret = _prepare_bcrypt_secret(str(password))
     return _bcrypt.hashpw(secret, _bcrypt.gensalt(rounds=12)).decode("utf-8")
 
@@ -333,6 +391,7 @@ def verify_password(password: str, stored_value: str) -> bool:
     if stored_text.startswith("$2b$") or stored_text.startswith("$2a$"):
         try:
             import bcrypt as _bcrypt
+
             secret = _prepare_bcrypt_secret(str(password))
             return _bcrypt.checkpw(secret, stored_text.encode("utf-8"))
         except Exception:
@@ -392,4 +451,3 @@ def needs_rehash(stored_value: str) -> bool:
     upgraded to bcrypt on the next successful login.
     """
     return str(stored_value).startswith(f"{PASSWORD_SCHEME}$")
-

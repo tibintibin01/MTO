@@ -30,6 +30,7 @@ from backend.exception_handlers import (
     rate_limit_handler,
     validation_exception_handler,
     http_exception_handler,
+    unhandled_exception_handler,
 )
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -271,6 +272,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+    app.add_exception_handler(Exception, unhandled_exception_handler)
 
     # Register Middlewares (evaluated in reverse order of addition)
     # CORS Middleware (should be outer most/evaluated first for preflight requests)

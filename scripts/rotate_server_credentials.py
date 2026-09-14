@@ -34,7 +34,6 @@ from typing import Any, Callable, Mapping
 import pymysql
 from dotenv import dotenv_values
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -45,7 +44,6 @@ from scripts.configure_r2_backup import (  # noqa: E402
     _read_vault,
 )
 from utils.secrets_vault import resolve_secrets_vault_path  # noqa: E402
-
 
 CONFIRMATION = "ROTATE PHASE 1 SERVER CREDENTIALS"
 ROTATION_STATE_KEY = "MTO_CREDENTIAL_ROTATION_STATE"
@@ -394,6 +392,16 @@ def _validate_database_login(
 def _revoke_sessions_and_audit(
     settings: ServerDatabaseSettings, rotation: RotationSecrets
 ) -> int:
+    from backend.services.audit_integrity_service import (
+        AUDIT_CHAIN_ORIGIN_LIVE,
+        AUDIT_CHAIN_STATE_ID,
+        AUDIT_CHAIN_VERSION,
+        calculate_audit_hash,
+        canonical_audit_payload,
+        canonical_snapshot,
+        normalize_event_time,
+    )
+
     connection = _connect(
         settings,
         user=settings.user,
@@ -409,23 +417,72 @@ def _revoke_sessions_and_audit(
             )
             revoked = int(cursor.rowcount)
             cursor.execute(
+                "SELECT head_audit_id, head_hash FROM audit_chain_state "
+                "WHERE id=%s FOR UPDATE",
+                (AUDIT_CHAIN_STATE_ID,),
+            )
+            state = cursor.fetchone()
+            if not state:
+                raise RotationError(
+                    "Phase 5 audit chain is not active; run server migrations first."
+                )
+            cursor.execute("SELECT MAX(id) FROM audit_logs")
+            latest_id = cursor.fetchone()[0]
+            if latest_id != state[0]:
+                raise RotationError(
+                    "Audit chain head mismatch; credential rotation was not finalized."
+                )
+
+            event_uuid = str(uuid.uuid4())
+            event_time = normalize_event_time()
+            new_values = canonical_snapshot(
+                {
+                    "rotation_id": rotation.rotation_id,
+                    "sessions_revoked": revoked,
+                }
+            )
+            payload = canonical_audit_payload(
+                event_uuid=event_uuid,
+                user_id=None,
+                username="SYSTEM",
+                action="PHASE1_SERVER_CREDENTIAL_ROTATION",
+                table_name="system_security",
+                record_id=None,
+                old_values=None,
+                new_values=new_values,
+                ip_address="127.0.0.1",
+                timestamp=event_time,
+                chain_version=AUDIT_CHAIN_VERSION,
+                chain_origin=AUDIT_CHAIN_ORIGIN_LIVE,
+                compensates_audit_id=None,
+            )
+            current_hash = calculate_audit_hash(state[1], payload)
+            cursor.execute(
                 "INSERT INTO audit_logs "
                 "(user_id, username, action, table_name, record_id, old_values, "
-                "new_values, ip_address, timestamp) "
-                "VALUES (NULL, %s, %s, %s, NULL, NULL, %s, %s, NOW())",
+                "new_values, ip_address, timestamp, event_uuid, previous_hash, "
+                "current_hash, chain_version, chain_origin, compensates_audit_id) "
+                "VALUES (NULL, %s, %s, %s, NULL, NULL, %s, %s, %s, %s, %s, "
+                "%s, %s, %s, NULL)",
                 (
                     "SYSTEM",
                     "PHASE1_SERVER_CREDENTIAL_ROTATION",
                     "system_security",
-                    json.dumps(
-                        {
-                            "rotation_id": rotation.rotation_id,
-                            "sessions_revoked": revoked,
-                        },
-                        sort_keys=True,
-                    ),
+                    new_values,
                     "127.0.0.1",
+                    event_time,
+                    event_uuid,
+                    state[1],
+                    current_hash,
+                    AUDIT_CHAIN_VERSION,
+                    AUDIT_CHAIN_ORIGIN_LIVE,
                 ),
+            )
+            audit_id = int(cursor.lastrowid)
+            cursor.execute(
+                "UPDATE audit_chain_state SET head_audit_id=%s, head_hash=%s, "
+                "updated_at=%s WHERE id=%s",
+                (audit_id, current_hash, event_time, AUDIT_CHAIN_STATE_ID),
             )
         connection.commit()
         return revoked

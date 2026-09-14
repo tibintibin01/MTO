@@ -9,10 +9,27 @@ import os
 from typing import List, Optional, Union
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, BackgroundTasks
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    UploadFile,
+    File,
+    BackgroundTasks,
+)
 from pydantic import BaseModel
 
-from backend.deps import get_current_user, admin_only, write_access, read_only, limiter, user_limiter, get_db, Session
+from backend.deps import (
+    get_current_user,
+    admin_only,
+    write_access,
+    read_only,
+    limiter,
+    user_limiter,
+    get_db,
+    Session,
+)
 from backend.schemas import LogActionSchema
 from utils.logger import mto_logger
 
@@ -23,14 +40,14 @@ class RestoreRequest(BaseModel):
     file_path: str
 
 
-
-
 class PortalPublishRequest(BaseModel):
     dry_run: bool = False
+
 
 # ---------------------------------------------------------------------------
 # Backup
 # ---------------------------------------------------------------------------
+
 
 @router.post("/system/backup/trigger")
 @limiter.limit("3/minute")
@@ -41,9 +58,13 @@ async def trigger_backup(
 ):
     """Queues a hybrid backup job. Returns job_id immediately."""
     from backend.services.job_service import submit_job
+
     job_id = submit_job(job_type="backup", submitted_by=current_user["username"])
-    return {"status": "backup_started", "job_id": job_id,
-            "message": "Backup queued. Poll /jobs/{job_id} for progress."}
+    return {
+        "status": "backup_started",
+        "job_id": job_id,
+        "message": "Backup queued. Poll /jobs/{job_id} for progress.",
+    }
 
 
 @router.post("/system/portal-snapshot/preview", dependencies=[Depends(admin_only)])
@@ -53,6 +74,7 @@ async def preview_portal_snapshot(
 ):
     """Generates and saves a sanitized portal snapshot without uploading it."""
     from backend.services.portal_publish_service import publish_portal_snapshot
+
     return publish_portal_snapshot(db_session=db_session, dry_run=True)
 
 
@@ -63,7 +85,10 @@ async def publish_portal_snapshot(
     db_session: Session = Depends(get_db),
 ):
     """One-way publish of sanitized read-only data for the public web portal."""
-    from backend.services.portal_publish_service import publish_portal_snapshot as _publish
+    from backend.services.portal_publish_service import (
+        publish_portal_snapshot as _publish,
+    )
+
     return _publish(db_session=db_session, dry_run=request.dry_run)
 
 
@@ -73,6 +98,7 @@ async def get_backup_health(
     db_session: Session = Depends(get_db),
 ):
     from backend.services.backup_service import get_backup_status
+
     return get_backup_status(db_session=db_session)
 
 
@@ -81,18 +107,29 @@ async def get_backup_schedule(current_user: dict = Depends(get_current_user)):
     """Returns the configured automatic backup schedule and next run time."""
     from utils.config import config as _cfg
 
-    schedule    = _cfg.BACKUP_SCHEDULE.strip().lower()
-    hour        = _cfg.BACKUP_SCHEDULE_HOUR
-    minute      = _cfg.BACKUP_SCHEDULE_MINUTE
+    schedule = _cfg.BACKUP_SCHEDULE.strip().lower()
+    hour = _cfg.BACKUP_SCHEDULE_HOUR
+    minute = _cfg.BACKUP_SCHEDULE_MINUTE
     day_of_week = _cfg.BACKUP_SCHEDULE_DAY_OF_WEEK
-    day_names   = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    day_names = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ]
 
     if schedule == "disabled":
-        return {"schedule": "disabled",
-                "description": "Automatic backups are disabled.",
-                "next_run": None}
+        return {
+            "schedule": "disabled",
+            "description": "Automatic backups are disabled.",
+            "next_run": None,
+        }
 
     from datetime import timedelta
+
     now = datetime.now()
 
     if schedule == "daily":
@@ -103,25 +140,35 @@ async def get_backup_schedule(current_user: dict = Depends(get_current_user)):
     elif schedule == "weekly":
         days_ahead = (day_of_week - now.weekday()) % 7
         candidate = (now + timedelta(days=days_ahead)).replace(
-            hour=hour, minute=minute, second=0, microsecond=0)
+            hour=hour, minute=minute, second=0, microsecond=0
+        )
         if candidate <= now:
             candidate += timedelta(weeks=1)
         description = f"Weekly on {day_names[day_of_week]} at {hour:02d}:{minute:02d}"
     else:
-        return {"schedule": schedule, "description": f"Unknown schedule: {schedule!r}", "next_run": None}
+        return {
+            "schedule": schedule,
+            "description": f"Unknown schedule: {schedule!r}",
+            "next_run": None,
+        }
 
     return {
-        "schedule": schedule, "description": description,
+        "schedule": schedule,
+        "description": description,
         "next_run": candidate.strftime("%Y-%m-%d %H:%M:%S"),
         "next_run_in_hours": round((candidate - now).total_seconds() / 3600, 1),
-        "scheduled_hour": hour, "scheduled_minute": minute,
-        "scheduled_day_of_week": day_names[day_of_week] if schedule == "weekly" else None,
+        "scheduled_hour": hour,
+        "scheduled_minute": minute,
+        "scheduled_day_of_week": (
+            day_names[day_of_week] if schedule == "weekly" else None
+        ),
     }
 
 
 # ---------------------------------------------------------------------------
 # Restore
 # ---------------------------------------------------------------------------
+
 
 @router.post("/system/restore", dependencies=[Depends(admin_only)])
 async def restore_system_backup(
@@ -131,6 +178,7 @@ async def restore_system_backup(
     from backend.services.system_service import restore_database
     from backend.services.backup_service import BACKUP_BASE_DIR
     import traceback
+
     try:
         file_path = request.file_path.replace("\\", "/").strip()
 
@@ -138,12 +186,13 @@ async def restore_system_backup(
         # Without this, an admin could read arbitrary files on the server via
         # path traversal (e.g. "../../etc/passwd" fed to mysql stdin).
         import os
+
         resolved = os.path.realpath(file_path)
         allowed_base = os.path.realpath(BACKUP_BASE_DIR)
         if not resolved.startswith(allowed_base + os.sep) and resolved != allowed_base:
             raise HTTPException(
                 status_code=400,
-                detail=f"Restore path must be inside the backup directory ({BACKUP_BASE_DIR})."
+                detail=f"Restore path must be inside the backup directory ({BACKUP_BASE_DIR}).",
             )
 
         result = restore_database(file_path)
@@ -154,16 +203,23 @@ async def restore_system_backup(
         error_detail = traceback.format_exc()
         try:
             with open("logs/restore_debug.log", "a") as f:
-                f.write(f"\n[{datetime.now(timezone.utc)}] RESTORE FAILURE\n"
-                        f"File: {request.file_path}\nError: {str(e)}\n{error_detail}\n" + "-" * 40 + "\n")
+                f.write(
+                    f"\n[{datetime.now(timezone.utc)}] RESTORE FAILURE\n"
+                    f"File: {request.file_path}\nError: {str(e)}\n{error_detail}\n"
+                    + "-" * 40
+                    + "\n"
+                )
         except OSError:
             pass
-        raise HTTPException(status_code=500, detail="Restore operation failed. Check server logs.")
+        raise HTTPException(
+            status_code=500, detail="Restore operation failed. Check server logs."
+        )
 
 
 # ---------------------------------------------------------------------------
 # Bulk Import
 # ---------------------------------------------------------------------------
+
 
 @router.post("/system/import/validate", dependencies=[Depends(write_access)])
 async def validate_bulk_import(
@@ -173,23 +229,30 @@ async def validate_bulk_import(
     db_session: Session = Depends(get_db),
 ):
     from utils import is_feature_enabled
+
     if not is_feature_enabled("BULK_IMPORT"):
-        raise HTTPException(status_code=403, detail="Bulk Import feature is currently disabled.")
+        raise HTTPException(
+            status_code=403, detail="Bulk Import feature is currently disabled."
+        )
     content = await file.read()
     ext = os.path.splitext(file.filename)[1]
     mode = request.query_params.get("mode", "property")
     if mode == "assessment":
         from backend.services.import_service import validate_assessment_import
+
         res = validate_assessment_import(content, ext, db_session=db_session)
     elif mode == "payments":
         from backend.services.import_service import validate_payment_import
+
         res = validate_payment_import(content, ext, db_session=db_session)
     else:
         from backend.services.import_service import validate_property_import
+
         res = validate_property_import(content, ext, db_session=db_session)
 
     if isinstance(res, dict) and res.get("success") and "data" in res:
         from backend.services.import_service import save_import_cache
+
         token = save_import_cache(res["data"])
         if token:
             res["validation_token"] = token
@@ -205,30 +268,49 @@ async def commit_bulk_import(
     db_session: Session = Depends(get_db),
 ):
     from utils import is_feature_enabled
+
     if not is_feature_enabled("BULK_IMPORT"):
-        raise HTTPException(status_code=403, detail="Bulk Import feature is currently disabled.")
+        raise HTTPException(
+            status_code=403, detail="Bulk Import feature is currently disabled."
+        )
     mode = request.query_params.get("mode", "property")
 
     if isinstance(data, dict):
         token = data.get("validation_token") or data.get("cache_token")
         if not token:
-            raise HTTPException(status_code=400, detail="Missing validation_token in request body.")
+            raise HTTPException(
+                status_code=400, detail="Missing validation_token in request body."
+            )
         from backend.services.import_service import load_import_cache
+
         payload = load_import_cache(token)
         if payload is None:
-            raise HTTPException(status_code=400, detail="Invalid, expired, or missing import validation token.")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid, expired, or missing import validation token.",
+            )
     else:
-        payload = [d.model_dump(exclude_unset=True) if hasattr(d, "model_dump") else d for d in data]
+        payload = [
+            d.model_dump(exclude_unset=True) if hasattr(d, "model_dump") else d
+            for d in data
+        ]
 
     if mode == "assessment":
         from backend.services.import_service import commit_assessment_import
+
         res = commit_assessment_import(payload, current_user, db_session=db_session)
         msg = f"{res['inserted']} inserted, {res['updated']} updated"
         if res.get("failed", 0):
             msg += f", {res['failed']} failed"
-        return {"status": "success", "imported": res["inserted"] + res["updated"], "message": msg, "details": res}
+        return {
+            "status": "success",
+            "imported": res["inserted"] + res["updated"],
+            "message": msg,
+            "details": res,
+        }
     if mode == "payments":
         from backend.services.import_service import commit_payment_import
+
         res = commit_payment_import(payload, current_user, db_session=db_session)
         msg = f"{res['inserted']} payment(s) imported"
         if res.get("skipped"):
@@ -241,6 +323,7 @@ async def commit_bulk_import(
             "details": res,
         }
     from backend.services.import_service import commit_property_import
+
     count = commit_property_import(payload, current_user, db_session=db_session)
     return {"status": "success", "imported": count}
 
@@ -249,6 +332,7 @@ async def commit_bulk_import(
 # Audit Logs
 # ---------------------------------------------------------------------------
 
+
 @router.post("/system/logs")
 async def log_system_action(
     log: LogActionSchema,
@@ -256,6 +340,7 @@ async def log_system_action(
     db_session: Session = Depends(get_db),
 ):
     import backend.services.system_service as sys_svc
+
     sys_svc.log_action(current_user, log.action, db_session=db_session)
     db_session.commit()
     return {"status": "logged"}
@@ -267,6 +352,7 @@ async def get_audit_stats(
     db_session: Session = Depends(get_db),
 ):
     import backend.services.system_service as sys_svc
+
     return sys_svc.get_audit_stats(db_session=db_session)
 
 
@@ -282,9 +368,15 @@ async def list_audit_logs(
     db_session: Session = Depends(get_db),
 ):
     import backend.services.system_service as sys_svc
+
     results = sys_svc.get_audit_logs(
-        username=username, search=search, date_from=date_from, date_to=date_to,
-        limit=limit + 1, cursor=cursor, db_session=db_session,
+        username=username,
+        search=search,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit + 1,
+        cursor=cursor,
+        db_session=db_session,
     )
     has_more = len(results) > limit
     items = results[:limit]
@@ -298,7 +390,19 @@ async def list_audit_users(
     db_session: Session = Depends(get_db),
 ):
     import backend.services.system_service as sys_svc
+
     return sys_svc.get_distinct_log_users(db_session=db_session)
+
+
+@router.get("/system/audit-integrity", dependencies=[Depends(admin_only)])
+async def get_audit_integrity(
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """Run a complete, privacy-safe verification of the audit hash chain."""
+    from backend.services.audit_integrity_service import verify_audit_chain
+
+    return verify_audit_chain(db_session)
 
 
 @router.get("/system/logs", dependencies=[Depends(admin_only)])
@@ -308,6 +412,7 @@ async def get_system_logs(
 ):
     try:
         from utils import ERROR_LOG_PATH
+
         if not os.path.exists(ERROR_LOG_PATH):
             return {"logs": "Log file not found."}
         with open(ERROR_LOG_PATH, "r", encoding="utf-8") as f:
@@ -321,12 +426,14 @@ async def get_system_logs(
 # Retention Policies
 # ---------------------------------------------------------------------------
 
+
 @router.get("/system/retention/policies", dependencies=[Depends(admin_only)])
 async def list_retention_policies(
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
     from backend.services.retention_service import get_all_policies
+
     return get_all_policies(db_session=db_session)
 
 
@@ -338,6 +445,7 @@ async def list_retention_logs(
     db_session: Session = Depends(get_db),
 ):
     from backend.services.retention_service import get_retention_logs
+
     return get_retention_logs(limit=limit, cursor=cursor, db_session=db_session)
 
 
@@ -349,17 +457,31 @@ async def run_retention_policy(
     db_session: Session = Depends(get_db),
 ):
     from backend.services.job_service import submit_job
-    mto_logger.info("Retention policy run requested", user=current_user.get("username"),
-                    dry_run=dry_run, data_type=data_type)
-    job_id = submit_job(job_type="retention_run", submitted_by=current_user["username"],
-                        payload={"dry_run": dry_run, "data_type": data_type}, db_session=db_session)
-    return {"job_id": job_id, "status": "queued", "dry_run": dry_run,
-            "message": f"{'DRY RUN — ' if dry_run else ''}Retention policy queued."}
+
+    mto_logger.info(
+        "Retention policy run requested",
+        user=current_user.get("username"),
+        dry_run=dry_run,
+        data_type=data_type,
+    )
+    job_id = submit_job(
+        job_type="retention_run",
+        submitted_by=current_user["username"],
+        payload={"dry_run": dry_run, "data_type": data_type},
+        db_session=db_session,
+    )
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "dry_run": dry_run,
+        "message": f"{'DRY RUN — ' if dry_run else ''}Retention policy queued.",
+    }
 
 
 # ---------------------------------------------------------------------------
 # Server Restart
 # ---------------------------------------------------------------------------
+
 
 @router.post("/system/restart", dependencies=[Depends(admin_only)])
 async def restart_server(
@@ -385,19 +507,23 @@ async def restart_server(
 
     async def _do_restart():
         import asyncio
+
         await asyncio.sleep(2)
         mto_logger.info("Server process exiting for restart...")
         os._exit(0)
 
     background_tasks.add_task(_do_restart)
-    return {"status": "restarting",
-            "message": "Server will restart in ~2 seconds. Reconnect after 5–10 seconds.",
-            "requested_by": current_user.get("username")}
+    return {
+        "status": "restarting",
+        "message": "Server will restart in ~2 seconds. Reconnect after 5–10 seconds.",
+        "requested_by": current_user.get("username"),
+    }
 
 
 # ---------------------------------------------------------------------------
 # Penalty Accrual — manual trigger for admins
 # ---------------------------------------------------------------------------
+
 
 @router.post("/system/accrue-penalties", dependencies=[Depends(admin_only)])
 async def trigger_penalty_accrual(

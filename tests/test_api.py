@@ -13,8 +13,8 @@ def test_health_check():
     assert "message" in response.json()
 
 
-def test_deep_healthz():
-    """Verify the enterprise deep health probe is active and responsive."""
+def test_public_healthz_is_a_minimal_readiness_probe():
+    """Public probes must not expose component, vault, or filesystem details."""
 
     class HealthyTestDatabase:
         def execute(self, statement):
@@ -28,13 +28,15 @@ def test_deep_healthz():
         response = client.get("/healthz")
         assert response.status_code == 200
         json_data = response.json()
-        assert json_data["status"] == "healthy"
-        assert json_data["database"] == "connected"
-        assert "cache" in json_data
-        assert "storage" in json_data
-        assert "vault" in json_data
+        assert json_data == {"status": "ready"}
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+def test_detailed_health_requires_an_admin_session():
+    response = client.get("/api/v1/system/health")
+
+    assert response.status_code in {401, 403}
 
 
 def test_invalid_login():

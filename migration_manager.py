@@ -12,6 +12,7 @@ from backend.services.migration_service import (
     ensure_financial_safety_schema,
     ensure_payment_remarks_column,
     ensure_refresh_token_session_columns,
+    require_audit_integrity_schema,
     run_migrations as _run_migrations_service,
 )
 from backend.services.portfolio_service import ensure_portfolio_schema
@@ -24,6 +25,7 @@ def run_migrations() -> int:
         ensure_refresh_token_session_columns(session)
         ensure_payment_remarks_column(session)
         ensure_financial_safety_schema(session)
+        require_audit_integrity_schema(session)
         ensure_portfolio_schema(session)
         session.commit()
     print("Server schema compatibility checks passed.")

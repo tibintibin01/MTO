@@ -11,7 +11,6 @@ from backend.models import (
     PropertyAssessmentHistory,
     PropertyBilling,
     Payment,
-    AuditLog,
     TaxPolicy,
 )
 from backend.services.auth_service import (
@@ -31,7 +30,6 @@ from backend.services.assessment_value_service import (
 from fastapi import HTTPException
 from utils.sanitizer import sanitize_string
 from utils.secrets_manager import secrets
-
 
 # ---------------------------------------------------------------------------
 # Tax rate helpers for Python-side calculations (search result formatting).
@@ -1477,26 +1475,19 @@ def soft_delete_property(
     prop.deleted_at = datetime.now(timezone.utc)
 
     if user:
-        audit = AuditLog(
+        from backend.services.history_service import log_data_change
+
+        log_data_change(
             user_id=user.get("id"),
             username=user.get("username", "unknown"),
             action="SOFT_DELETE",
             table_name="properties",
             record_id=property_id,
-            old_values=json.dumps(old_data, default=str),
-            new_values=json.dumps(
-                {
-                    "deleted_at": (
-                        prop.deleted_at.isoformat()
-                        if hasattr(prop.deleted_at, "isoformat")
-                        else str(prop.deleted_at)
-                    )
-                }
-            ),
+            before=old_data,
+            after={"deleted_at": prop.deleted_at},
             ip_address=ip_address,
-            timestamp=datetime.now(timezone.utc),
+            db_session=db_session,
         )
-        db_session.add(audit)
 
     deleted_at = prop.deleted_at
     db_session.commit()
@@ -1553,19 +1544,18 @@ def restore_property(property_id, user=None, db_session: Session = None):
     prop.deleted_at = None
 
     if user:
-        from datetime import datetime, timezone
+        from backend.services.history_service import log_data_change
 
-        audit = AuditLog(
+        log_data_change(
             user_id=user.get("id"),
             username=user.get("username", "unknown"),
             action="RESTORE",
             table_name="properties",
             record_id=property_id,
-            old_values=str({"deleted_at": "deleted"}),
-            new_values=str({"deleted_at": None}),
-            timestamp=datetime.now(timezone.utc),
+            before={"deleted_at": "deleted"},
+            after={"deleted_at": None},
+            db_session=db_session,
         )
-        db_session.add(audit)
 
     db_session.commit()
     return 1

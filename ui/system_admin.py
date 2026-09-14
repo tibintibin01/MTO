@@ -1401,9 +1401,12 @@ class SystemAdminPage:
             verified_dup_count = result.get("verified_duplicate_td_count", 0)
             dup_pay_count = result.get("duplicate_payment_count", 0)
             shadow_count  = result.get("shadow_duplicate_count", 0)
+            audit_chain   = result.get("audit_chain", {})
+            audit_chain_status = str(audit_chain.get("status", "inactive")).lower()
+            audit_chain_issue = 0 if audit_chain_status == "verified" else 1
             # Shadow duplicates are a review subset of format issues, not
             # additional records. Do not count them twice in the headline.
-            total_issues  = fmt_count + dup_td_count + dup_pay_count
+            total_issues  = fmt_count + dup_td_count + dup_pay_count + audit_chain_issue
 
             # ── Result window ─────────────────────────────────────────────
             win = ctk.CTkToplevel(self.container)
@@ -1447,6 +1450,12 @@ class SystemAdminPage:
             badge(badges, "Verified Duplicates", verified_dup_count, "#0f766e")
             badge(badges, "Duplicate Payments", dup_pay_count, "#8e44ad" if dup_pay_count else "#27ae60")
             badge(badges, "Shadow Duplicates",  shadow_count,  "#c0392b" if shadow_count  else "#27ae60")
+            badge(
+                badges,
+                "Audit Trail Issues",
+                audit_chain_issue,
+                "#27ae60" if audit_chain_issue == 0 else "#c0392b",
+            )
 
             if total_issues == 0 and verified_dup_count == 0:
                 ctk.CTkLabel(

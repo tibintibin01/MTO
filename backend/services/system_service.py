@@ -46,21 +46,21 @@ def backup_database(destination_path):
         dest_dir = os.path.dirname(destination_path)
         if dest_dir:
             os.makedirs(dest_dir, exist_ok=True)
-            
+
         with open(destination_path, "w", encoding="utf-8") as f:
             cmd = [
-                dump_path, 
-                f"-u{db_user}", 
+                dump_path,
+                f"-u{db_user}",
                 f"-h{db_host}",
                 f"-P{db_port}",
                 "--single-transaction",
-                db_name
+                db_name,
             ]
             # Pass password via environment variable, not command line
             env = dict(os.environ)
             if db_pass:
                 env["MYSQL_PWD"] = db_pass
-            
+
             subprocess.run(cmd, stdout=f, check=True, timeout=300, env=env)
         return True
     except Exception as e:
@@ -82,20 +82,15 @@ def restore_database(sql_file_path):
     backups_dir = os.path.join(os.path.dirname(sql_file_path), "pre_restore_backups")
     os.makedirs(backups_dir, exist_ok=True)
     safety_backup = os.path.join(
-        backups_dir, f"PRE_RESTORE_{datetime.now(timezone.utc).strftime('%Y-%m-%d_%H-%M-%S')}.sql"
+        backups_dir,
+        f"PRE_RESTORE_{datetime.now(timezone.utc).strftime('%Y-%m-%d_%H-%M-%S')}.sql",
     )
     if not backup_database(safety_backup):
         raise RuntimeError(
             "Could not create the automatic safety backup. Restore cancelled."
         )
 
-    cmd = [
-        mysql_path, 
-        f"-u{db_user}", 
-        f"-h{db_host}",
-        f"-P{db_port}",
-        db_name
-    ]
+    cmd = [mysql_path, f"-u{db_user}", f"-h{db_host}", f"-P{db_port}", db_name]
     # Pass the password via MYSQL_PWD environment variable instead of the
     # command line. Command-line passwords are visible in the process list.
     env = dict(os.environ)
@@ -106,13 +101,13 @@ def restore_database(sql_file_path):
         # Proceed with restore without explicit close (handled by process isolation)
         with open(sql_file_path, "r", encoding="utf-8", errors="ignore") as source:
             result = subprocess.run(
-                cmd, 
-                stdin=source, 
-                check=True, 
-                capture_output=True, 
+                cmd,
+                stdin=source,
+                check=True,
+                capture_output=True,
                 text=True,
                 timeout=600,
-                env=env
+                env=env,
             )
             print(f"Restore Output: {result.stdout}")
     except subprocess.CalledProcessError as cpe:
@@ -126,17 +121,25 @@ def restore_database(sql_file_path):
 
 
 def log_action(user, action, db_session: Session = None):
-    log = AuditLog(
+    from backend.services.history_service import log_data_change
+
+    log_data_change(
+        user_id=user.get("id") if isinstance(user, dict) else None,
         username=get_username(user),
         action=action,
-        timestamp=datetime.now(timezone.utc)
+        table_name="system_events",
+        record_id=None,
+        db_session=db_session,
     )
-    db_session.add(log)
     # Intentionally no commit here — callers own the transaction boundary.
 
 
 def get_dashboard_summary(db_session: Session = None):
-    from backend.services.stats_service import get_cached_stat, refresh_system_stats, stats_are_stale
+    from backend.services.stats_service import (
+        get_cached_stat,
+        refresh_system_stats,
+        stats_are_stale,
+    )
     from backend.services.payment_service import get_recent_payments
 
     # Refresh when stats are missing/stale so dashboard cards stay accurate.
@@ -148,13 +151,21 @@ def get_dashboard_summary(db_session: Session = None):
         refresh_system_stats(db_session=db_session)
 
     summary = {
-        "total_properties": int(get_cached_stat("total_properties", db_session=db_session)),
-        "unpaid_properties": int(get_cached_stat("unpaid_properties", db_session=db_session)),
+        "total_properties": int(
+            get_cached_stat("total_properties", db_session=db_session)
+        ),
+        "unpaid_properties": int(
+            get_cached_stat("unpaid_properties", db_session=db_session)
+        ),
         "receipts_today": int(
             get_cached_stat("receipts_today", db_session=db_session) or 0
         ),
-        "collections_today": float(get_cached_stat("collections_today", db_session=db_session)),
-        "collections_month": float(get_cached_stat("collections_month", db_session=db_session)),
+        "collections_today": float(
+            get_cached_stat("collections_today", db_session=db_session)
+        ),
+        "collections_month": float(
+            get_cached_stat("collections_month", db_session=db_session)
+        ),
         # Keep the dashboard's headline totals and visible receipt rows in one
         # database-backed response. Fetching Recent Collections separately
         # allowed an independently running/stale API handler to return an empty
@@ -162,24 +173,28 @@ def get_dashboard_summary(db_session: Session = None):
         "recent_payments": get_recent_payments(limit=6, db_session=db_session),
     }
 
-
     return summary
 
 
+def get_report_summary(
+    selected_month="All", selected_year="All", db_session: Session = None
+):
+    query = (
+        db_session.query(
+            func.coalesce(func.sum(Payment.amount), 0),
+            func.count(Payment.id),
+            func.count(func.distinct(Payment.property_id)),
+            func.max(Payment.date_paid),
+        )
+        .join(Property, Property.id == Payment.property_id)
+        .filter(Property.deleted_at == None)
+    )
 
-def get_report_summary(selected_month="All", selected_year="All", db_session: Session = None):
-    query = db_session.query(
-        func.coalesce(func.sum(Payment.amount), 0),
-        func.count(Payment.id),
-        func.count(func.distinct(Payment.property_id)),
-        func.max(Payment.date_paid)
-    ).join(Property, Property.id == Payment.property_id).filter(Property.deleted_at == None)
-    
     if selected_month != "All":
         query = query.filter(month_of(Payment.date_paid) == int(selected_month))
     if selected_year != "All":
         query = query.filter(year_of(Payment.date_paid) == int(selected_year))
-        
+
     row = query.first()
     return {
         "total_amount": float(row[0] or 0),
@@ -191,16 +206,21 @@ def get_report_summary(selected_month="All", selected_year="All", db_session: Se
 
 def get_audit_stats(db_session: Session = None):
     from utils.db_compat import today
+
     today_date = today()
     week_ago = days_ago(7)
 
     total = db_session.query(func.count(AuditLog.id)).scalar()
-    today_count = db_session.query(func.count(AuditLog.id)).filter(
-        cast(AuditLog.timestamp, Date) == today_date
-    ).scalar()
-    active_users = db_session.query(func.count(func.distinct(AuditLog.username))).filter(
-        AuditLog.timestamp >= week_ago
-    ).scalar()
+    today_count = (
+        db_session.query(func.count(AuditLog.id))
+        .filter(cast(AuditLog.timestamp, Date) == today_date)
+        .scalar()
+    )
+    active_users = (
+        db_session.query(func.count(func.distinct(AuditLog.username)))
+        .filter(AuditLog.timestamp >= week_ago)
+        .scalar()
+    )
 
     return {
         "total": int(total or 0),
@@ -209,34 +229,46 @@ def get_audit_stats(db_session: Session = None):
     }
 
 
-def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit=100, cursor=None, db_session: Session = None):
+def get_audit_logs(
+    username=None,
+    search="",
+    date_from=None,
+    date_to=None,
+    limit=100,
+    cursor=None,
+    db_session: Session = None,
+):
     query = db_session.query(AuditLog)
-    
+
     if username and username != "ALL":
         query = query.filter(AuditLog.username == username)
-        
+
     if search:
         like_search = f"%{search}%"
-        query = query.filter(or_(
-            AuditLog.action.like(like_search),
-            AuditLog.table_name.like(like_search),
-            func.cast(AuditLog.record_id, func.CHAR).like(like_search)
-        ))
-        
+        query = query.filter(
+            or_(
+                AuditLog.action.like(like_search),
+                AuditLog.table_name.like(like_search),
+                func.cast(AuditLog.record_id, func.CHAR).like(like_search),
+            )
+        )
+
     if date_from:
         query = query.filter(cast(AuditLog.timestamp, Date) >= date_from)
     if date_to:
         query = query.filter(cast(AuditLog.timestamp, Date) <= date_to)
-        
+
     if cursor:
         query = query.filter(AuditLog.id < int(cursor))
-        
+
     rows = query.order_by(AuditLog.id.desc()).limit(int(limit)).all()
-    
+
     return [
         {
             "id": r.id,
-            "timestamp": r.timestamp.strftime("%Y-%m-%d %H:%M:%S") if r.timestamp else "",
+            "timestamp": (
+                r.timestamp.strftime("%Y-%m-%d %H:%M:%S") if r.timestamp else ""
+            ),
             "username": r.username,
             "action": r.action,
             "table_name": r.table_name,
@@ -250,26 +282,32 @@ def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit
 
 
 def get_distinct_log_users(db_session: Session = None):
-    results = db_session.query(AuditLog.username).filter(
-        AuditLog.username != None, 
-        func.trim(AuditLog.username) != ''
-    ).distinct().order_by(AuditLog.username.asc()).all()
+    results = (
+        db_session.query(AuditLog.username)
+        .filter(AuditLog.username != None, func.trim(AuditLog.username) != "")
+        .distinct()
+        .order_by(AuditLog.username.asc())
+        .all()
+    )
     return [str(r[0]) for r in results if r[0]]
 
 
 def archive_audit_logs(days=365, db_session: Session = None):
     cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
-    results = db_session.query(AuditLog.timestamp, AuditLog.username, AuditLog.action).filter(
-        AuditLog.timestamp < cutoff
-    ).order_by(AuditLog.timestamp.asc()).all()
+    results = (
+        db_session.query(AuditLog.timestamp, AuditLog.username, AuditLog.action)
+        .filter(AuditLog.timestamp < cutoff)
+        .order_by(AuditLog.timestamp.asc())
+        .all()
+    )
     return results or []
 
 
 def delete_old_audit_logs(db_session: Session, days: int = 365):
-    cutoff = datetime.now(timezone.utc) - timedelta(days=int(days))
-    count = db_session.query(AuditLog).filter(AuditLog.timestamp < cutoff).delete()
-    db_session.commit()
-    return count
+    raise RuntimeError(
+        "Audit logs are append-only and cannot be deleted. Use verified backup "
+        "retention for long-term archival."
+    )
 
 
 def get_system_stats(db_session: Session = None):
@@ -278,14 +316,14 @@ def get_system_stats(db_session: Session = None):
     """
     from backend.database import engine
     from backend.models import RefreshToken
-    
+
     # 1. Pool Stats
     pool = engine.pool
     pool_data = {
         "active": pool.checkedout(),
         "idle": pool.size() - pool.checkedout(),
-        "overflow": max(0, pool.overflow()) if hasattr(pool, 'overflow') else 0,
-        "size": pool.size()
+        "overflow": max(0, pool.overflow()) if hasattr(pool, "overflow") else 0,
+        "size": pool.size(),
     }
 
     # 2. Cache Stats — read from the live CacheManager singleton
@@ -300,27 +338,43 @@ def get_system_stats(db_session: Session = None):
                 cache_data = {
                     "items": redis_keys,
                     "hit_rate": round(
-                        info.get("keyspace_hits", 0) /
-                        max(1, info.get("keyspace_hits", 0) + info.get("keyspace_misses", 0)) * 100,
-                        1
+                        info.get("keyspace_hits", 0)
+                        / max(
+                            1,
+                            info.get("keyspace_hits", 0)
+                            + info.get("keyspace_misses", 0),
+                        )
+                        * 100,
+                        1,
                     ),
                     "provider": _cache.engine,
                     "memory_used": info.get("used_memory_human", "N/A"),
-                    "namespaces": len(set(
-                        k.split(":")[1] for k in (_cache._redis_client.keys("mto:*") or [])
-                        if isinstance(k, (str, bytes)) and b":" in (k if isinstance(k, bytes) else k.encode())
-                    )),
+                    "namespaces": len(
+                        set(
+                            k.split(":")[1]
+                            for k in (_cache._redis_client.keys("mto:*") or [])
+                            if isinstance(k, (str, bytes))
+                            and b":" in (k if isinstance(k, bytes) else k.encode())
+                        )
+                    ),
                 }
             except Exception:
-                cache_data = {"items": 0, "hit_rate": 0.0, "provider": _cache.engine, "namespaces": 0}
+                cache_data = {
+                    "items": 0,
+                    "hit_rate": 0.0,
+                    "provider": _cache.engine,
+                    "namespaces": 0,
+                }
         else:
             # In-memory mode — count live (non-expired) items across all namespaces
             import time as _time
+
             live_items = 0
             namespaces = list(_cache._memory_cache.keys())
             for ns, entries in _cache._memory_cache.items():
                 live_items += sum(
-                    1 for _, (_, exp) in entries.items()
+                    1
+                    for _, (_, exp) in entries.items()
                     if exp is None or exp > _time.time()
                 )
             cache_data = {
@@ -330,22 +384,38 @@ def get_system_stats(db_session: Session = None):
                 "namespaces": len(namespaces),
             }
     except Exception:
-        cache_data = {"items": 0, "hit_rate": 0.0, "provider": "Unknown", "namespaces": 0}
+        cache_data = {
+            "items": 0,
+            "hit_rate": 0.0,
+            "provider": "Unknown",
+            "namespaces": 0,
+        }
 
     # 3. Security & Integrity
     total_logs = db_session.query(func.count(AuditLog.id)).scalar()
-    active_sessions = db_session.query(func.count(RefreshToken.id)).filter(
-        RefreshToken.is_revoked == False,
-        RefreshToken.expires_at > datetime.now(timezone.utc)
-    ).scalar()
-    
-    integrity_ok = total_logs is not None
+    active_sessions = (
+        db_session.query(func.count(RefreshToken.id))
+        .filter(
+            RefreshToken.is_revoked == False,
+            RefreshToken.expires_at > datetime.now(timezone.utc),
+        )
+        .scalar()
+    )
+
+    from backend.services.audit_integrity_service import verify_audit_chain_cached
+
+    audit_integrity = verify_audit_chain_cached(db_session)
+    integrity_ok = audit_integrity.get("status") == "verified"
 
     security_data = {
         "total_logs": total_logs,
         "integrity_ok": integrity_ok,
+        "audit_chain_status": audit_integrity.get("status", "unknown"),
+        "audit_chain_failures": int(audit_integrity.get("failure_count", 0)),
         "active_sessions": active_sessions,
-        "active_lockouts": db_session.query(func.count(User.id)).filter(User.lockout_until > datetime.now(timezone.utc)).scalar()
+        "active_lockouts": db_session.query(func.count(User.id))
+        .filter(User.lockout_until > datetime.now(timezone.utc))
+        .scalar(),
     }
 
     # 4. API Performance — read from the live Prometheus metrics that the
@@ -379,9 +449,21 @@ def get_system_stats(db_session: Session = None):
         )
         error_requests = client_error_requests + server_error_requests
 
-        error_rate = round((error_requests / total_requests * 100), 2) if total_requests > 0 else 0.0
-        client_error_rate = round((client_error_requests / total_requests * 100), 2) if total_requests > 0 else 0.0
-        server_error_rate = round((server_error_requests / total_requests * 100), 2) if total_requests > 0 else 0.0
+        error_rate = (
+            round((error_requests / total_requests * 100), 2)
+            if total_requests > 0
+            else 0.0
+        )
+        client_error_rate = (
+            round((client_error_requests / total_requests * 100), 2)
+            if total_requests > 0
+            else 0.0
+        )
+        server_error_rate = (
+            round((server_error_requests / total_requests * 100), 2)
+            if total_requests > 0
+            else 0.0
+        )
 
         # Average latency from histogram sum/count
         latency_sum = sum(
@@ -396,10 +478,14 @@ def get_system_stats(db_session: Session = None):
             for sample in metric.samples
             if sample.name.endswith("_count")
         )
-        avg_latency_ms = round((latency_sum / latency_count) * 1000, 2) if latency_count > 0 else 0.0
+        avg_latency_ms = (
+            round((latency_sum / latency_count) * 1000, 2) if latency_count > 0 else 0.0
+        )
 
         # Requests per minute since server start
-        uptime_minutes = max(1, (datetime.now(timezone.utc) - _SERVER_START_TIME).total_seconds() / 60)
+        uptime_minutes = max(
+            1, (datetime.now(timezone.utc) - _SERVER_START_TIME).total_seconds() / 60
+        )
         rpm = round(total_requests / uptime_minutes, 1)
 
     except Exception:
@@ -416,8 +502,12 @@ def get_system_stats(db_session: Session = None):
         "error_rate": error_rate,
         "client_error_rate": client_error_rate,
         "server_error_rate": server_error_rate,
-        "client_error_requests": int(client_error_requests) if "client_error_requests" in locals() else 0,
-        "server_error_requests": int(server_error_requests) if "server_error_requests" in locals() else 0,
+        "client_error_requests": (
+            int(client_error_requests) if "client_error_requests" in locals() else 0
+        ),
+        "server_error_requests": (
+            int(server_error_requests) if "server_error_requests" in locals() else 0
+        ),
         "rpm": rpm,
         "total_requests": int(total_requests) if "total_requests" in locals() else 0,
     }

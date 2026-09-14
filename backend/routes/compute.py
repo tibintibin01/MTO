@@ -183,13 +183,24 @@ async def global_search(
 
 
 @router.post("/api/v1/system/undo")
-async def undo_last_system_action(current_user: dict = Depends(get_current_user)):
-    """Reverses the last critical action (UPDATE/DELETE) performed by the current user."""
+async def undo_last_system_action(
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """Create a compensating property action while preserving original history."""
     from backend.services.history_service import undo_last_action
 
-    success, message = undo_last_action(current_user["id"])
+    success, message = undo_last_action(current_user["id"], db_session=db_session)
     if not success:
         raise HTTPException(status_code=400, detail=message)
+    try:
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="The compensating action could not be committed.",
+        )
     await manager.broadcast(
         {
             "type": "NOTIFICATION",

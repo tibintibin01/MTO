@@ -217,12 +217,37 @@ class AuditLog(Base):
     new_values = Column(Text, nullable=True)
     ip_address = Column(String(45), nullable=True)
     timestamp = Column(DateTime, nullable=False)
+    event_uuid = Column(String(36), nullable=True)
+    previous_hash = Column(String(64), nullable=True)
+    current_hash = Column(String(64), nullable=True)
+    chain_version = Column(SmallInteger, nullable=True)
+    chain_origin = Column(String(32), nullable=True)
+    compensates_audit_id = Column(Integer, nullable=True)
 
     __table_args__ = (
+        UniqueConstraint("event_uuid", name="uq_audit_logs_event_uuid"),
         Index("ix_audit_logs_username_timestamp", "username", timestamp.desc()),
         Index("ix_audit_logs_timestamp", timestamp.desc()),
         Index("ix_audit_logs_table_record", "table_name", "record_id"),
+        Index("ix_audit_logs_current_hash", "current_hash"),
+        Index("ix_audit_logs_compensates", "compensates_audit_id"),
     )
+
+
+class AuditChainState(Base):
+    """Singleton head record used to serialize append-only audit writers."""
+
+    __tablename__ = "audit_chain_state"
+
+    id = Column(SmallInteger, primary_key=True)
+    head_audit_id = Column(Integer, nullable=True)
+    head_hash = Column(String(64), nullable=False)
+    chain_version = Column(SmallInteger, nullable=False, default=1)
+    legacy_event_count = Column(Integer, nullable=False, default=0)
+    legacy_head_audit_id = Column(Integer, nullable=True)
+    legacy_head_hash = Column(String(64), nullable=True)
+    initialized_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)
 
 
 class ReceiptHistory(Base):

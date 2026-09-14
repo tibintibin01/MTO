@@ -1,188 +1,199 @@
 # -*- coding: utf-8 -*-
+"""Central audit logging and compensating-action support."""
+
 import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from sqlalchemy.orm import Session
+
 from backend.models import AuditLog, Property
-from backend.database import SessionLocal
-
-
-def _make_json_serializable(value: Any) -> Any:
-    """Convert Decimal and other non-serializable types to JSON-compatible types."""
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, (datetime, date)):
-        return value.isoformat()
-    if isinstance(value, dict):
-        return {k: _make_json_serializable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_make_json_serializable(v) for v in value]
-    return value
-
-
-def _calculate_audit_hash(prev_hash: str, data: str) -> str:
-    import hashlib
-
-    combined = f"{prev_hash or ''}{data}".encode("utf-8")
-    return hashlib.sha256(combined).hexdigest()
+from backend.services.audit_integrity_service import (
+    append_audit_event,
+    canonical_snapshot,
+)
 
 
 def log_data_change(
-    user_id: int,
-    table_name: str,
-    record_id: int,
+    user_id: Optional[int],
+    table_name: Optional[str],
+    record_id: Optional[int],
     action: str,
     before: Optional[Dict] = None,
     after: Optional[Dict] = None,
     db_session: Session = None,
     username: str = "unknown",
     ip_address: str = None,
+    compensates_audit_id: Optional[int] = None,
 ):
-    """
-    Records a detailed audit trail including before/after state snapshots.
-    Uses hash-chaining for security. The caller owns the transaction: this
-    function flushes the audit record but never commits independently.
-    """
+    """Append one sealed audit record inside the caller-owned transaction."""
     if db_session is None:
         raise ValueError("db_session is required for audit logging.")
 
-    # Calculate Delta
-    diff_before = {}
-    diff_after = {}
+    diff_before = before
+    diff_after = after
     if action == "UPDATE" and before and after:
-        for k in set(before.keys()) | set(after.keys()):
-            if before.get(k) != after.get(k):
-                diff_before[k] = before.get(k)
-                diff_after[k] = after.get(k)
-    else:
-        diff_before, diff_after = before, after
-
-    def clean(d):
-        if not d:
-            return d
-        proc = _make_json_serializable(d)
-        return {
-            k: (v[:2000] + "... [TRUNC]" if isinstance(v, str) and len(v) > 2000 else v)
-            for k, v in proc.items()
+        changed_keys = {
+            key for key in set(before) | set(after) if before.get(key) != after.get(key)
         }
-
-    before_json = json.dumps(clean(diff_before)) if diff_before else None
-    after_json = json.dumps(clean(diff_after)) if diff_after else None
+        diff_before = {key: before.get(key) for key in changed_keys}
+        diff_after = {key: after.get(key) for key in changed_keys}
 
     try:
-        # Serialize concurrent writers where the database supports row locks.
-        latest_log = (
-            db_session.query(AuditLog)
-            .order_by(AuditLog.id.desc())
-            .with_for_update()
-            .first()
-        )
-        prev_hash = (
-            getattr(latest_log, "current_hash", None) if latest_log else "INITIAL_SEED"
-        )
-
-        event_time = datetime.now(timezone.utc)
-
-        # Combine all data for current hash
-        current_data = f"{user_id}{table_name}{record_id}{action}{before_json}{after_json}{event_time.isoformat()}"
-        cur_hash = _calculate_audit_hash(prev_hash, current_data)
-
-        log_data = dict(
+        append_audit_event(
+            db_session=db_session,
             user_id=user_id,
-            username=username,
+            username=username or "unknown",
             table_name=table_name,
             record_id=record_id,
             action=action,
-            old_values=before_json,
-            new_values=after_json,
+            old_values=canonical_snapshot(diff_before) if diff_before else None,
+            new_values=canonical_snapshot(diff_after) if diff_after else None,
             ip_address=ip_address,
-            timestamp=event_time,
+            compensates_audit_id=compensates_audit_id,
         )
-        if hasattr(AuditLog, "previous_hash"):
-            log_data["previous_hash"] = prev_hash
-        if hasattr(AuditLog, "current_hash"):
-            log_data["current_hash"] = cur_hash
-
-        log = AuditLog(**log_data)
-        db_session.add(log)
-        db_session.flush()
         return True
-    except Exception as e:
+    except Exception as exc:
         from utils.logger import mto_logger
 
         mto_logger.error(
-            f"CRITICAL: Failed to write audit log — action={action}, "
-            f"table={table_name}, record_id={record_id}, user={username}: {e}"
+            "CRITICAL: Failed to append sealed audit event",
+            action=action,
+            table_name=table_name,
+            record_id=record_id,
+            username=username,
+            error_type=type(exc).__name__,
         )
-        raise RuntimeError("Failed to write audit log.") from e
+        raise RuntimeError("Failed to write audit log.") from exc
+
+
+_PROPERTY_UNDO_FIELDS = {
+    "owner_name",
+    "payor_name",
+    "lot_number",
+    "block_number",
+    "area",
+    "location",
+    "barangay",
+    "kind_of_property",
+    "accountable_officer",
+    "assessed_value",
+    "penalty",
+    "discount",
+    "pin",
+    "prev_td_number",
+    "previous_property_id",
+    "effectivity_date",
+    "archived",
+    "is_deleted",
+    "deleted_at",
+}
+_DECIMAL_FIELDS = {"assessed_value", "penalty", "discount"}
+_DATE_FIELDS = {"effectivity_date"}
+_DATETIME_FIELDS = {"deleted_at"}
+
+
+def _restore_value(field_name: str, value: Any) -> Any:
+    if value is None:
+        return None
+    if field_name in _DECIMAL_FIELDS:
+        return Decimal(str(value))
+    if field_name in _DATE_FIELDS and isinstance(value, str):
+        return date.fromisoformat(value[:10])
+    if field_name in _DATETIME_FIELDS and isinstance(value, str):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    return value
 
 
 def undo_last_action(user_id: int, db_session: Session = None):
-    """
-    Reverses the last action performed by the user by restoring the 'before' state.
-    """
-    # 1. Find the last reversible action
-    log = (
-        db_session.query(AuditLog)
-        .filter(AuditLog.user_id == user_id, AuditLog.action.in_(["UPDATE", "DELETE"]))
-        .order_by(AuditLog.timestamp.desc())
-        .first()
-    )
+    """Apply a compensating property event without altering audit history."""
+    if db_session is None:
+        raise ValueError("db_session is required for undo.")
 
+    candidates = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.user_id == user_id,
+            AuditLog.action.in_(["UPDATE", "DELETE", "SOFT_DELETE"]),
+        )
+        .order_by(AuditLog.id.desc())
+        .limit(25)
+        .all()
+    )
+    log = next(
+        (
+            candidate
+            for candidate in candidates
+            if not db_session.query(AuditLog.id)
+            .filter(AuditLog.compensates_audit_id == candidate.id)
+            .first()
+        ),
+        None,
+    )
     if not log:
         return False, "No reversible actions found."
-
-    if not log.before_value:
-        return (
-            False,
-            f"Action '{log.action}' on {log.table_name} cannot be undone (no state snapshot).",
-        )
-
-    before_data = json.loads(log.before_value)
-    table = log.table_name
-    rec_id = log.record_id
-    action = log.action
+    if log.table_name != "properties" or not log.old_values:
+        return False, "The latest action does not have a supported property snapshot."
 
     try:
-        if action == "DELETE":
-            if table == "properties":
-                prop = db_session.query(Property).filter(Property.id == rec_id).first()
-                if prop:
-                    prop.deleted_at = None
-                    prop.updated_at = datetime.now(timezone.utc)
-            else:
-                return False, f"Undo not supported for deletion on table {table}"
+        before_data = json.loads(log.old_values)
+    except (TypeError, json.JSONDecodeError):
+        return False, "The stored snapshot cannot be safely restored."
+    if not isinstance(before_data, dict):
+        return False, "The stored snapshot cannot be safely restored."
 
-        elif action == "UPDATE":
-            if table == "properties":
-                prop = db_session.query(Property).filter(Property.id == rec_id).first()
-                if prop:
-                    for k, v in before_data.items():
-                        db_col = k.lower().replace(" ", "_")
-                        if hasattr(prop, db_col):
-                            if k in ("assessed_value", "penalty", "discount"):
-                                v = Decimal(str(v)) if v is not None else None
-                            setattr(prop, db_col, v)
-                    prop.updated_at = datetime.now(timezone.utc)
-            else:
-                return False, f"Undo update not yet supported for {table}"
+    prop = (
+        db_session.query(Property)
+        .filter(Property.id == log.record_id)
+        .with_for_update()
+        .one_or_none()
+    )
+    if prop is None:
+        return False, "The property record no longer exists."
 
-        # Log the UNDO action itself
-        undo_log = AuditLog(
+    restore_fields = {
+        key: value
+        for key, value in before_data.items()
+        if key in _PROPERTY_UNDO_FIELDS and hasattr(prop, key)
+    }
+    if log.action in {"DELETE", "SOFT_DELETE"}:
+        restore_fields = {"deleted_at": before_data.get("deleted_at")}
+    if not restore_fields:
+        return False, "The stored snapshot has no safely reversible fields."
+
+    current_values = {key: getattr(prop, key) for key in restore_fields}
+    restored_values = {}
+    try:
+        for key, value in restore_fields.items():
+            restored = _restore_value(key, value)
+            setattr(prop, key, restored)
+            restored_values[key] = restored
+        if hasattr(prop, "updated_at"):
+            prop.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db_session.flush()
+        log_data_change(
             user_id=user_id,
-            table_name=table,
-            record_id=rec_id,
-            action=f"UNDO_{action}",
-            timestamp=datetime.now(timezone.utc),
+            username=log.username,
+            table_name="properties",
+            record_id=log.record_id,
+            action=f"UNDO_{log.action}",
+            before=current_values,
+            after=restored_values,
+            compensates_audit_id=log.id,
+            db_session=db_session,
         )
-        db_session.add(undo_log)
-
-        # Delete the original log so we don't undo the same thing twice in a row
-        db_session.delete(log)
-        db_session.commit()
-        return True, f"Successfully reversed {action} on {table}."
-
-    except Exception as e:
+        return True, f"Successfully reversed {log.action} on properties."
+    except Exception as exc:
         db_session.rollback()
-        return False, f"Undo failed: {str(e)}"
+        from utils.logger import mto_logger
+
+        mto_logger.error(
+            "Compensating property action failed",
+            audit_id=log.id,
+            error_type=type(exc).__name__,
+        )
+        return False, "Undo failed. No change was committed."

@@ -209,6 +209,11 @@ MIGRATIONS = [
         "handler": "ensure_financial_safety_schema",
         "sql": "",
     },
+    {
+        "id": "phase5_audit_integrity_observability_v1",
+        "handler": "ensure_audit_integrity_schema",
+        "sql": "",
+    },
 ]
 
 
@@ -566,6 +571,198 @@ def ensure_financial_safety_schema(db_session: Session) -> None:
         )
 
 
+def ensure_audit_integrity_schema(db_session: Session) -> None:
+    """Install Phase 5 columns and seal the preserved legacy audit history."""
+    from backend.services.audit_integrity_service import (
+        AUDIT_CHAIN_ORIGIN_LEGACY,
+        AUDIT_CHAIN_STATE_ID,
+        AUDIT_CHAIN_VERSION,
+        AUDIT_GENESIS_HASH,
+        calculate_audit_hash,
+        canonical_audit_payload,
+        deterministic_legacy_event_uuid,
+        normalize_event_time,
+    )
+
+    connection = db_session.connection()
+    if connection.dialect.name not in {"mysql", "mariadb"}:
+        raise RuntimeError("Phase 5 audit integrity migration requires MariaDB/MySQL.")
+
+    inspector = inspect(connection)
+    if not inspector.has_table("audit_logs"):
+        raise RuntimeError("Required audit_logs table is missing.")
+
+    additions = {
+        "event_uuid": "CHAR(36) NULL",
+        "previous_hash": "CHAR(64) NULL",
+        "current_hash": "CHAR(64) NULL",
+        "chain_version": "SMALLINT NULL",
+        "chain_origin": "VARCHAR(32) NULL",
+        "compensates_audit_id": "INT NULL",
+    }
+    existing_columns = {
+        column["name"] for column in inspector.get_columns("audit_logs")
+    }
+    for column_name, definition in additions.items():
+        if column_name not in existing_columns:
+            db_session.execute(
+                text(f"ALTER TABLE audit_logs ADD COLUMN {column_name} {definition}")
+            )
+
+    db_session.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS audit_chain_state ("
+            " id SMALLINT PRIMARY KEY,"
+            " head_audit_id INT NULL,"
+            " head_hash CHAR(64) NOT NULL,"
+            " chain_version SMALLINT NOT NULL,"
+            " legacy_event_count INT NOT NULL DEFAULT 0,"
+            " legacy_head_audit_id INT NULL,"
+            " legacy_head_hash CHAR(64) NULL,"
+            " initialized_at DATETIME NOT NULL,"
+            " updated_at DATETIME NOT NULL"
+            ")"
+        )
+    )
+
+    rows = (
+        db_session.execute(
+            text(
+                "SELECT id, user_id, username, action, table_name, record_id,"
+                " old_values, new_values, ip_address, timestamp, event_uuid,"
+                " chain_version, chain_origin, compensates_audit_id"
+                " FROM audit_logs ORDER BY id ASC"
+            )
+        )
+        .mappings()
+        .all()
+    )
+
+    previous_hash = AUDIT_GENESIS_HASH
+    legacy_count = 0
+    legacy_head_id = None
+    legacy_head_hash = None
+    updates = []
+    for row in rows:
+        event_uuid = row["event_uuid"] or deterministic_legacy_event_uuid(row["id"])
+        chain_version = int(row["chain_version"] or AUDIT_CHAIN_VERSION)
+        chain_origin = row["chain_origin"] or AUDIT_CHAIN_ORIGIN_LEGACY
+        timestamp = normalize_event_time(row["timestamp"])
+        payload = canonical_audit_payload(
+            event_uuid=event_uuid,
+            user_id=row["user_id"],
+            username=row["username"] or "unknown",
+            action=row["action"],
+            table_name=row["table_name"],
+            record_id=row["record_id"],
+            old_values=row["old_values"],
+            new_values=row["new_values"],
+            ip_address=row["ip_address"],
+            timestamp=timestamp,
+            chain_version=chain_version,
+            chain_origin=chain_origin,
+            compensates_audit_id=row["compensates_audit_id"],
+        )
+        current_hash = calculate_audit_hash(previous_hash, payload)
+        updates.append(
+            {
+                "audit_id": row["id"],
+                "event_uuid": event_uuid,
+                "previous_hash": previous_hash,
+                "current_hash": current_hash,
+                "chain_version": chain_version,
+                "chain_origin": chain_origin,
+            }
+        )
+        previous_hash = current_hash
+        if chain_origin == AUDIT_CHAIN_ORIGIN_LEGACY:
+            legacy_count += 1
+            legacy_head_id = row["id"]
+            legacy_head_hash = current_hash
+
+    if updates:
+        db_session.execute(
+            text(
+                "UPDATE audit_logs SET event_uuid=:event_uuid,"
+                " previous_hash=:previous_hash, current_hash=:current_hash,"
+                " chain_version=:chain_version, chain_origin=:chain_origin"
+                " WHERE id=:audit_id"
+            ),
+            updates,
+        )
+
+    now = normalize_event_time()
+    head_id = rows[-1]["id"] if rows else None
+    db_session.execute(
+        text(
+            "INSERT INTO audit_chain_state"
+            " (id, head_audit_id, head_hash, chain_version, legacy_event_count,"
+            " legacy_head_audit_id, legacy_head_hash, initialized_at, updated_at)"
+            " VALUES (:id, :head_id, :head_hash, :chain_version, :legacy_count,"
+            " :legacy_head_id, :legacy_head_hash, :now, :now)"
+            " ON DUPLICATE KEY UPDATE head_audit_id=VALUES(head_audit_id),"
+            " head_hash=VALUES(head_hash), chain_version=VALUES(chain_version),"
+            " legacy_event_count=VALUES(legacy_event_count),"
+            " legacy_head_audit_id=VALUES(legacy_head_audit_id),"
+            " legacy_head_hash=VALUES(legacy_head_hash), updated_at=VALUES(updated_at)"
+        ),
+        {
+            "id": AUDIT_CHAIN_STATE_ID,
+            "head_id": head_id,
+            "head_hash": previous_hash,
+            "chain_version": AUDIT_CHAIN_VERSION,
+            "legacy_count": legacy_count,
+            "legacy_head_id": legacy_head_id,
+            "legacy_head_hash": legacy_head_hash,
+            "now": now,
+        },
+    )
+
+    inspector = inspect(connection)
+    if not _has_named_index(inspector, "audit_logs", "uq_audit_logs_event_uuid"):
+        db_session.execute(
+            text(
+                "CREATE UNIQUE INDEX uq_audit_logs_event_uuid "
+                "ON audit_logs (event_uuid)"
+            )
+        )
+    inspector = inspect(connection)
+    if not _has_named_index(inspector, "audit_logs", "ix_audit_logs_current_hash"):
+        db_session.execute(
+            text(
+                "CREATE INDEX ix_audit_logs_current_hash "
+                "ON audit_logs (current_hash)"
+            )
+        )
+    inspector = inspect(connection)
+    if not _has_named_index(inspector, "audit_logs", "ix_audit_logs_compensates"):
+        db_session.execute(
+            text(
+                "CREATE INDEX ix_audit_logs_compensates "
+                "ON audit_logs (compensates_audit_id)"
+            )
+        )
+
+
+def require_audit_integrity_schema(db_session: Session) -> None:
+    """Fail server startup when the Phase 5 schema or chain is invalid."""
+    from backend.services.audit_integrity_service import (
+        audit_chain_schema_status,
+        verify_audit_chain,
+    )
+
+    status = audit_chain_schema_status(db_session)
+    if not status["active"]:
+        missing = ", ".join(status["missing_columns"]) or "chain state table"
+        raise RuntimeError(f"Phase 5 audit integrity schema is incomplete: {missing}")
+    verification = verify_audit_chain(db_session)
+    if verification["status"] != "verified":
+        raise RuntimeError(
+            "Phase 5 audit chain verification failed; keep the API stopped and "
+            "preserve the database for incident review."
+        )
+
+
 def run_migrations(db_session: Session) -> int:
     """Checks and applies all pending database migrations."""
     print("--- DATABASE MIGRATION ENGINE ---")
@@ -600,6 +797,9 @@ def run_migrations(db_session: Session) -> int:
                     statements = []
                 elif handler_name == "ensure_financial_safety_schema":
                     ensure_financial_safety_schema(db_session)
+                    statements = []
+                elif handler_name == "ensure_audit_integrity_schema":
+                    ensure_audit_integrity_schema(db_session)
                     statements = []
                 else:
                     statements = None
