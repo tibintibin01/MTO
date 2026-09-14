@@ -72,8 +72,13 @@ def test_admin_can_revoke_another_workstation_session():
     db = MagicMock()
     row = _session(63)
     db.query.return_value.filter.return_value.first.return_value = row
+    transaction_order = []
+    db.commit.side_effect = lambda: transaction_order.append("commit")
 
-    with patch("backend.services.history_service.log_data_change") as audit:
+    with patch(
+        "backend.services.history_service.log_data_change",
+        side_effect=lambda **_kwargs: transaction_order.append("audit"),
+    ) as audit:
         user_id = auth_service.revoke_managed_session(
             row.id,
             {"id": 1, "username": "kevin", "session_id": 10},
@@ -85,6 +90,7 @@ def test_admin_can_revoke_another_workstation_session():
     assert row.revoked_at is not None
     db.commit.assert_called_once()
     audit.assert_called_once()
+    assert transaction_order == ["audit", "commit"]
 
 
 def test_revoke_others_preserves_current_session_for_same_user():
@@ -98,8 +104,13 @@ def test_revoke_others_preserves_current_session_for_same_user():
     db.query.return_value.filter.return_value = active_query
     active_query.filter.return_value = other_query
     other_query.all.return_value = [other_a, other_b]
+    transaction_order = []
+    db.commit.side_effect = lambda: transaction_order.append("commit")
 
-    with patch("backend.services.history_service.log_data_change") as audit:
+    with patch(
+        "backend.services.history_service.log_data_change",
+        side_effect=lambda **_kwargs: transaction_order.append("audit"),
+    ) as audit:
         count = auth_service.revoke_other_user_sessions(
             current.user_id,
             {
@@ -117,3 +128,24 @@ def test_revoke_others_preserves_current_session_for_same_user():
     active_query.filter.assert_called_once()
     db.commit.assert_called_once()
     audit.assert_called_once()
+    assert transaction_order == ["audit", "commit"]
+
+
+def test_session_revocation_rolls_back_when_audit_append_fails():
+    db = MagicMock()
+    row = _session(81)
+    db.query.return_value.filter.return_value.first.return_value = row
+
+    with patch(
+        "backend.services.history_service.log_data_change",
+        side_effect=RuntimeError("audit unavailable"),
+    ):
+        with pytest.raises(RuntimeError, match="audit unavailable"):
+            auth_service.revoke_managed_session(
+                row.id,
+                {"id": 1, "username": "kevin", "session_id": 10},
+                db,
+            )
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()

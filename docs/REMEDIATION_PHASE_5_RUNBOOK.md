@@ -74,7 +74,8 @@ process, then verify:
 6. Confirm `/readyz` returns only `{"status":"ready"}`.
 7. Confirm an unauthenticated request to `/api/v1/system/health` is rejected.
 8. Generate one document/PDF and reopen the desktop application.
-9. Rerun the Phase 5 preflight with `--require-active`; it must remain verified.
+9. Rerun the Phase 5 preflight with `--require-active --require-live-event`;
+   it must remain verified and report at least one live Phase 5 event.
 
 ## Incident and rollback rule
 

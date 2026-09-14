@@ -368,21 +368,25 @@ def revoke_managed_session(session_id: int, current_user: dict, db_session: Sess
     if row.id == current_user.get("session_id"):
         raise ValueError("Use Log Out to close your current session.")
     if not row.is_revoked:
-        row.is_revoked = True
-        row.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        db_session.commit()
-        from backend.services.history_service import log_data_change
+        try:
+            row.is_revoked = True
+            row.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            from backend.services.history_service import log_data_change
 
-        log_data_change(
-            user_id=current_user.get("id", 0),
-            username=get_username(current_user),
-            table_name="refresh_tokens",
-            record_id=row.id,
-            action="REVOKE_SESSION",
-            before={"user_id": row.user_id, "is_revoked": False},
-            after={"user_id": row.user_id, "is_revoked": True},
-            db_session=db_session,
-        )
+            log_data_change(
+                user_id=current_user.get("id", 0),
+                username=get_username(current_user),
+                table_name="refresh_tokens",
+                record_id=row.id,
+                action="REVOKE_SESSION",
+                before={"user_id": row.user_id, "is_revoked": False},
+                after={"user_id": row.user_id, "is_revoked": True},
+                db_session=db_session,
+            )
+            db_session.commit()
+        except Exception:
+            db_session.rollback()
+            raise
     return row.user_id
 
 
@@ -396,23 +400,27 @@ def revoke_other_user_sessions(user_id: int, current_user: dict, db_session: Ses
     if int(user_id) == int(current_user.get("id")) and current_user.get("session_id"):
         query = query.filter(RefreshToken.id != current_user["session_id"])
     rows = query.all()
-    for row in rows:
-        row.is_revoked = True
-        row.revoked_at = now
-    db_session.commit()
     if rows:
-        from backend.services.history_service import log_data_change
+        try:
+            for row in rows:
+                row.is_revoked = True
+                row.revoked_at = now
+            from backend.services.history_service import log_data_change
 
-        log_data_change(
-            user_id=current_user.get("id", 0),
-            username=get_username(current_user),
-            table_name="refresh_tokens",
-            record_id=user_id,
-            action="REVOKE_OTHER_SESSIONS",
-            before={"active_sessions": len(rows)},
-            after={"active_sessions": 0},
-            db_session=db_session,
-        )
+            log_data_change(
+                user_id=current_user.get("id", 0),
+                username=get_username(current_user),
+                table_name="refresh_tokens",
+                record_id=user_id,
+                action="REVOKE_OTHER_SESSIONS",
+                before={"active_sessions": len(rows)},
+                after={"active_sessions": 0},
+                db_session=db_session,
+            )
+            db_session.commit()
+        except Exception:
+            db_session.rollback()
+            raise
     return len(rows)
 
 

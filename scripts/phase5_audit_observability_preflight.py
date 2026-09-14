@@ -87,6 +87,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require-ready", action="store_true")
     parser.add_argument("--require-active", action="store_true")
+    parser.add_argument("--require-live-event", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -101,6 +102,8 @@ def main() -> int:
 
     print("PHASE 5 AUDIT INTEGRITY AND OBSERVABILITY PREFLIGHT")
     print(f"- Existing audit events: {report['audit']['event_count']}")
+    print(f"- Sealed legacy events: {report['audit']['legacy_event_count']}")
+    print(f"- Live Phase 5 events: {report['audit']['live_event_count']}")
     print(
         "- Phase 5 schema: "
         + ("ACTIVE" if report["schema"]["active"] else "NOT YET ACTIVE")
@@ -124,6 +127,12 @@ def main() -> int:
     if args.require_active and report["audit"]["status"] != "verified":
         print("PHASE 5 PREFLIGHT BLOCKED: required audit schema is not active.")
         return 4
+    if (
+        args.require_live_event
+        and int(report["audit"].get("live_event_count") or 0) < 1
+    ):
+        print("PHASE 5 PREFLIGHT BLOCKED: no live Phase 5 audit event was found.")
+        return 5
     print("PHASE 5 PREFLIGHT PASSED")
     return 0
 
