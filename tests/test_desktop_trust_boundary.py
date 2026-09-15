@@ -51,6 +51,22 @@ def test_distribution_rejects_tls_private_key(tmp_path):
     assert any("server-key.pem" in error for error in errors)
 
 
+def test_distribution_rejects_pkcs12_private_key_bundle(tmp_path):
+    certificates = tmp_path / "certificates"
+    certificates.mkdir()
+    (certificates / "mto-lan-ca.pem").write_text("public CA", encoding="utf-8")
+    (certificates / "client-identity.p12").write_bytes(b"private key bundle")
+    (tmp_path / "server_config.json").write_text(
+        '{"server_url":"https://127.0.0.1:8001",'
+        '"ca_certificate":"certificates/mto-lan-ca.pem"}',
+        encoding="utf-8",
+    )
+
+    errors = verify_distribution(tmp_path)
+
+    assert any("client-identity.p12" in error for error in errors)
+
+
 def test_pyz_manifest_rejects_server_module(tmp_path):
     manifest = tmp_path / "PYZ-00.toc"
     manifest.write_text(

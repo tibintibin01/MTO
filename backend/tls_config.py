@@ -156,6 +156,19 @@ def _utc(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
+def _certificate_validity(
+    certificate: x509.Certificate,
+) -> tuple[datetime, datetime]:
+    """Return timezone-aware validity without deprecated cryptography accessors."""
+    try:
+        not_valid_before = certificate.not_valid_before_utc
+        not_valid_after = certificate.not_valid_after_utc
+    except AttributeError:  # pragma: no cover - older supported cryptography only
+        not_valid_before = _utc(certificate.not_valid_before)
+        not_valid_after = _utc(certificate.not_valid_after)
+    return _utc(not_valid_before), _utc(not_valid_after)
+
+
 def _read_certificate(path: Path, label: str) -> x509.Certificate:
     try:
         return x509.load_pem_x509_certificate(path.read_bytes())
@@ -251,9 +264,8 @@ def validate_server_tls_config(
         (ca_certificate, "MTO LAN CA certificate"),
         (certificate, "TLS server certificate"),
     ):
-        if current_time < _utc(item.not_valid_before) or current_time >= _utc(
-            item.not_valid_after
-        ):
+        not_valid_before, not_valid_after = _certificate_validity(item)
+        if current_time < not_valid_before or current_time >= not_valid_after:
             raise TLSConfigurationError(f"{label} is not currently valid.")
 
     try:
@@ -340,5 +352,5 @@ def validate_server_tls_config(
     return CertificateIdentity(
         fingerprint_sha256=certificate.fingerprint(hashes.SHA256()).hex(),
         server_names=certificate_names,
-        not_valid_after=_utc(certificate.not_valid_after),
+        not_valid_after=_certificate_validity(certificate)[1],
     )

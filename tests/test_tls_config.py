@@ -1,7 +1,9 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+import warnings
 
 import pytest
+from cryptography.utils import CryptographyDeprecationWarning
 
 from backend.tls_config import (
     ServerTLSConfig,
@@ -43,7 +45,9 @@ def tls_material(tmp_path):
 def test_valid_ca_signed_server_identity_passes(tls_material):
     config, _bundle = tls_material
 
-    identity = validate_server_tls_config(config)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CryptographyDeprecationWarning)
+        identity = validate_server_tls_config(config)
 
     assert identity is not None
     assert set(NAMES).issubset(identity.server_names)

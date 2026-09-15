@@ -8,7 +8,6 @@ from pathlib import Path
 import sys
 from typing import Iterable
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -195,6 +194,7 @@ def verify_distribution(path: Path) -> list[str]:
         if (
             lowered in FORBIDDEN_DISTRIBUTION_NAMES
             or lowered.endswith(".key")
+            or item.suffix.lower() in {".p12", ".pfx"}
             or "private_key" in lowered
             or lowered.endswith("-key.pem")
             or lowered.endswith("_key.pem")

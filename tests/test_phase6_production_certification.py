@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,10 +20,18 @@ def _patch_pass_components(monkeypatch):
     monkeypatch.setattr(
         certification,
         "capture_desktop_boundary",
-        lambda _distribution: _pass_component(),
+        lambda _distribution: {
+            **_pass_component(),
+            "public_ca_sha256": "a" * 64,
+        },
     )
     monkeypatch.setattr(
-        certification, "capture_tls", lambda _minimum_days: _pass_component()
+        certification,
+        "capture_tls",
+        lambda _minimum_days: {
+            **_pass_component(),
+            "ca_certificate_sha256": "a" * 64,
+        },
     )
     monkeypatch.setattr(
         certification,
@@ -82,6 +91,33 @@ def test_final_certification_passes_after_manual_desktop_smoke(monkeypatch):
 
     assert report["status"] == "PASS"
     assert report["finding_count"] == 0
+
+
+def test_certification_rejects_desktop_ca_that_does_not_match_server(monkeypatch):
+    _patch_pass_components(monkeypatch)
+    monkeypatch.setattr(
+        certification,
+        "capture_tls",
+        lambda _minimum_days: {
+            **_pass_component(),
+            "ca_certificate_sha256": "b" * 64,
+        },
+    )
+
+    report = certification.capture_certification(
+        distribution=Path("dist"),
+        final=False,
+        desktop_smoke_confirmed=False,
+        api_samples=1,
+        query_samples=1,
+        maximum_api_seconds=3.0,
+        maximum_query_seconds=5.0,
+        minimum_certificate_days=30,
+    )
+
+    assert report["status"] == "FAIL"
+    assert report["components"]["desktop"]["public_ca_matches_server"] is False
+    assert "DESKTOP_PUBLIC_CA_MISMATCH" in json.dumps(report)
 
 
 def test_component_exception_fails_closed_without_exposing_exception_text(monkeypatch):
@@ -179,6 +215,63 @@ def test_database_assurance_blocks_missing_migration(monkeypatch):
 
     assert report["status"] == "FAIL"
     assert report["findings"][0]["code"] == "MIGRATIONS_MISSING"
+
+
+def _write_certification_package(path: Path) -> bytes:
+    executable = b"phase-6-desktop-binary"
+    (path / "Treasury.exe").write_bytes(executable)
+    certificates = path / "certificates"
+    certificates.mkdir()
+    (certificates / "mto-lan-ca.pem").write_text("public CA", encoding="utf-8")
+    (path / "server_config.json").write_text(
+        '{"server_url":"https://127.0.0.1:8001",'
+        '"ca_certificate":"certificates/mto-lan-ca.pem"}',
+        encoding="utf-8",
+    )
+    return executable
+
+
+def test_desktop_certification_fingerprints_clean_executable(tmp_path):
+    executable = _write_certification_package(tmp_path)
+
+    report = certification.capture_desktop_boundary(tmp_path)
+
+    assert report["status"] == "PASS"
+    assert report["executable_present"] is True
+    assert report["executable_size_bytes"] == len(executable)
+    assert report["executable_sha256"] == hashlib.sha256(executable).hexdigest()
+    assert report["public_ca_configured"] is True
+    assert len(report["public_ca_sha256"]) == 64
+    assert report["unexpected_item_count"] == 0
+
+
+def test_desktop_certification_rejects_missing_executable(tmp_path):
+    _write_certification_package(tmp_path)
+    (tmp_path / "Treasury.exe").unlink()
+
+    report = certification.capture_desktop_boundary(tmp_path)
+
+    assert report["status"] == "FAIL"
+    assert report["executable_present"] is False
+    assert any(
+        item["code"] == "DESKTOP_EXECUTABLE_MISSING" for item in report["findings"]
+    )
+
+
+def test_desktop_certification_rejects_runtime_artifacts_without_naming_them(
+    tmp_path,
+):
+    _write_certification_package(tmp_path)
+    private_runtime_name = "PRIVATE-TAXPAYER-local.db"
+    (tmp_path / private_runtime_name).write_bytes(b"runtime data")
+
+    report = certification.capture_desktop_boundary(tmp_path)
+    rendered = json.dumps(report)
+
+    assert report["status"] == "FAIL"
+    assert report["unexpected_item_count"] == 1
+    assert "DESKTOP_CERTIFICATION_PACKAGE_NOT_CLEAN" in rendered
+    assert private_runtime_name not in rendered
 
 
 def test_api_latency_report_omits_credentials_and_query(monkeypatch):
@@ -308,3 +401,18 @@ def test_preflight_rejects_manual_confirmation_flag():
         )
 
     assert caught.value.code == 2
+
+
+def test_production_launchers_use_only_managed_supervisor():
+    project_root = Path(__file__).resolve().parents[1]
+    start = (project_root / "start_mto.bat").read_text(encoding="utf-8").lower()
+    restart = (project_root / "restart_mto.bat").read_text(encoding="utf-8").lower()
+
+    for launcher in (start, restart):
+        assert 'schtasks /run /tn "mto treasury api"' in launcher
+        assert "wait_for_mto_api.ps1" in launcher
+        assert "uvicorn" not in launcher
+        assert "npm start" not in launcher
+        assert "--host 0.0.0.0" not in launcher
+
+    assert "stop_mto_runtime.ps1" in restart

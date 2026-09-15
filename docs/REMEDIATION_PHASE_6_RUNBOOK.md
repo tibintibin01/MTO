@@ -34,7 +34,10 @@ The runner checks all of the following:
    checksum, is present on the server, and has current restore verification.
 6. Python, frontend, and CI dependencies satisfy the pinned dependency policy.
 7. Desktop sources, PyInstaller configuration, and the selected distribution
-   contain no server-only modules or secret/private-key material.
+   contain no server-only modules or secret/private-key material. The immutable
+   certification package must contain `Treasury.exe`; the runner records its
+   SHA-256 fingerprint and rejects runtime or unapproved files. The bundled
+   public CA must exactly match the server's configured public CA.
 8. Authenticated TLS configuration, key/certificate match, certificate chain,
    identities, and expiry window are valid.
 9. The HTTPS `/readyz` endpoint succeeds within the latency threshold.
@@ -53,7 +56,21 @@ used merely to hide a regression.
 
 Use Command Prompt as Administrator. The API must be online. First create a
 fresh Hybrid Backup through the application and wait for cloud protection and
-restore verification to report success. Then run:
+restore verification to report success.
+
+The `--distribution` directory is a clean certification copy, not the active
+desktop data directory. Copy only these release artifacts into it:
+
+- `Treasury.exe`
+- `server_config.json`
+- `certificates\mto-lan-ca.pem`
+- `MTO_Treasury_User_Manual.html` when supplied
+
+Never copy `mto_local.db`, `config.json`, logs, queues, or executable-backup
+folders into the certification package. These can contain workstation state or
+taxpayer information.
+
+Then run:
 
 ```bat
 cd /d C:\mto
@@ -65,6 +82,29 @@ The command must report every automated component as `PASS` and the overall
 status as `READY_FOR_MANUAL_ACCEPTANCE`. A dirty worktree is intentionally a
 blocking finding. Review local files rather than deleting or moving them
 without confirming their purpose.
+
+The tracked `start_mto.bat` and `restart_mto.bat` launch only the managed
+`MTO Treasury API` scheduled supervisor and require authenticated readiness.
+They must never start Uvicorn or the frontend development server directly.
+
+### Legacy launcher transition
+
+An older server may have untracked `call`, `cd`, `start_mto.bat`, or
+`restart_mto.bat` files in `C:\mto`. The old batch files start Uvicorn and the
+frontend development server directly, bypassing the authenticated TLS
+supervisor. Do not overwrite or permanently delete them during preflight.
+
+During a separately approved server activation, first resolve and verify these
+exact four paths. Move only the files that exist into a recoverable timestamped
+directory such as
+`C:\ProgramData\MTO\quarantine\phase6-legacy-launchers-YYYYMMDD-HHMMSS`.
+Then fast-forward the server to the approved commit. The tracked hardened
+launchers restore the same `C:\mto\restart_mto.bat` shortcut target while using
+the scheduled supervisor and authenticated readiness checks.
+
+Test the existing desktop restart shortcut and authenticated `/readyz` endpoint
+before removing the quarantine copy. Do not move any other untracked server
+file without separately establishing its purpose.
 
 ## Manual desktop acceptance
 

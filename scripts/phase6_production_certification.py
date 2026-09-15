@@ -8,6 +8,8 @@ changes business data, configuration, credentials, certificates, or services.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import shutil
@@ -37,6 +39,17 @@ DEFAULT_MAX_API_SECONDS = 3.0
 DEFAULT_MAX_QUERY_SECONDS = 5.0
 DEFAULT_MINIMUM_CERTIFICATE_DAYS = 30
 TASK_NAME = "MTO Treasury API"
+DESKTOP_EXECUTABLE = "Treasury.exe"
+DESKTOP_CA_RELATIVE_PATH = Path("certificates") / "mto-lan-ca.pem"
+CERTIFICATION_PACKAGE_ALLOWED_PATHS = frozenset(
+    {
+        DESKTOP_EXECUTABLE.lower(),
+        "server_config.json",
+        "certificates",
+        DESKTOP_CA_RELATIVE_PATH.as_posix(),
+        "mto_treasury_user_manual.html",
+    }
+)
 
 
 def _finding(component: str, code: str, detail: str, severity: str) -> dict:
@@ -50,6 +63,14 @@ def _finding(component: str, code: str, detail: str, severity: str) -> dict:
 
 def _status(findings: list[dict]) -> str:
     return "PASS" if not findings else "FAIL"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def capture_source_control() -> dict:
@@ -255,22 +276,103 @@ def capture_dependency_policy() -> dict:
 
 
 def capture_desktop_boundary(distribution: Path) -> dict:
+    from api_clients.client_config import load_client_config
     from scripts.verify_desktop_trust_boundary import (
         verify_distribution,
         verify_source_boundary,
         verify_spec_boundary,
     )
 
+    resolved_distribution = distribution.resolve()
     errors = verify_source_boundary()
     errors.extend(verify_spec_boundary())
-    errors.extend(verify_distribution(distribution.resolve()))
+    errors.extend(verify_distribution(resolved_distribution))
     findings = [
         _finding("desktop", "DESKTOP_TRUST_BOUNDARY_FAILED", error, "CRITICAL")
         for error in errors
     ]
+
+    executable = resolved_distribution / DESKTOP_EXECUTABLE
+    expected_ca = resolved_distribution / DESKTOP_CA_RELATIVE_PATH
+    executable_sha256 = None
+    executable_size_bytes = None
+    ca_sha256 = None
+    ca_configured = False
+    unexpected_item_count = 0
+    if resolved_distribution.is_dir():
+        if executable.is_file():
+            executable_sha256 = _sha256_file(executable)
+            executable_size_bytes = executable.stat().st_size
+        else:
+            findings.append(
+                _finding(
+                    "desktop",
+                    "DESKTOP_EXECUTABLE_MISSING",
+                    f"Certification package is missing {DESKTOP_EXECUTABLE}.",
+                    "CRITICAL",
+                )
+            )
+
+        if expected_ca.is_file():
+            ca_sha256 = _sha256_file(expected_ca)
+        else:
+            findings.append(
+                _finding(
+                    "desktop",
+                    "DESKTOP_PUBLIC_CA_MISSING",
+                    "Certification package is missing the MTO LAN public CA.",
+                    "CRITICAL",
+                )
+            )
+
+        config_path = resolved_distribution / "server_config.json"
+        if config_path.is_file():
+            try:
+                client_config = load_client_config(config_path)
+                ca_configured = (
+                    client_config.ca_certificate is not None
+                    and client_config.ca_certificate == expected_ca.resolve()
+                )
+            except ValueError:
+                ca_configured = False
+        if not ca_configured:
+            findings.append(
+                _finding(
+                    "desktop",
+                    "DESKTOP_PUBLIC_CA_NOT_CONFIGURED",
+                    "Desktop endpoint configuration must reference "
+                    "certificates/mto-lan-ca.pem.",
+                    "CRITICAL",
+                )
+            )
+
+        unexpected_item_count = sum(
+            1
+            for item in resolved_distribution.rglob("*")
+            if item.relative_to(resolved_distribution).as_posix().lower()
+            not in CERTIFICATION_PACKAGE_ALLOWED_PATHS
+            or item.is_symlink()
+        )
+        if unexpected_item_count:
+            findings.append(
+                _finding(
+                    "desktop",
+                    "DESKTOP_CERTIFICATION_PACKAGE_NOT_CLEAN",
+                    "Certification package contains runtime, linked, or "
+                    "unapproved items.",
+                    "CRITICAL",
+                )
+            )
+
     return {
         "status": _status(findings),
-        "distribution_checked": distribution.name,
+        "distribution_checked": resolved_distribution.name,
+        "executable_present": executable.is_file(),
+        "executable_size_bytes": executable_size_bytes,
+        "executable_sha256": executable_sha256,
+        "public_ca_configured": ca_configured,
+        "public_ca_sha256": ca_sha256,
+        "unexpected_item_count": unexpected_item_count,
         "findings": findings,
     }
 
@@ -324,6 +426,7 @@ def capture_tls(minimum_certificate_days: int) -> dict:
         "certificate_expires_utc": identity.not_valid_after.isoformat(),
         "certificate_days_remaining": round(days_remaining, 1),
         "certificate_sha256_short": f"{fingerprint[:12]}...{fingerprint[-12:]}",
+        "ca_certificate_sha256": _sha256_file(config.ca_certificate_file),
         "minimum_certificate_days": minimum_certificate_days,
         "findings": findings,
     }
@@ -648,6 +751,26 @@ def capture_certification(
         ),
         "runtime": _capture_component("runtime", capture_runtime_supervisor),
     }
+    desktop = components["desktop"]
+    tls = components["tls"]
+    if desktop.get("status") == "PASS" and tls.get("status") == "PASS":
+        desktop_ca = str(desktop.get("public_ca_sha256") or "")
+        server_ca = str(tls.get("ca_certificate_sha256") or "")
+        ca_matches_server = bool(
+            desktop_ca and server_ca and hmac.compare_digest(desktop_ca, server_ca)
+        )
+        desktop["public_ca_matches_server"] = ca_matches_server
+        if not ca_matches_server:
+            desktop["status"] = "FAIL"
+            desktop.setdefault("findings", []).append(
+                _finding(
+                    "desktop",
+                    "DESKTOP_PUBLIC_CA_MISMATCH",
+                    "Desktop certification package does not contain the "
+                    "server's configured public CA certificate.",
+                    "CRITICAL",
+                )
+            )
     findings = [
         item
         for component in components.values()
