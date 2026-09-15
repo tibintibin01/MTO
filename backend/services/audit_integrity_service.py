@@ -672,6 +672,7 @@ def ensure_audit_timestamp_precision_recovery(
         )
 
     plan = build_audit_timestamp_recovery_plan(db_session)
+    timestamp_precision_before = plan.timestamp_precision
     if not plan.ready:
         detail = "; ".join(plan.issues) or "Recovery evidence is incomplete."
         raise AuditTimestampRecoveryError(detail)
@@ -751,6 +752,7 @@ def ensure_audit_timestamp_precision_recovery(
     report = plan.privacy_safe_report()
     report.update(
         {
+            "timestamp_precision": timestamp_precision_before,
             "timestamp_precision_after": AUDIT_TIMESTAMP_REQUIRED_PRECISION,
             "verification_status_after": "verified",
             "hashes_modified": False,

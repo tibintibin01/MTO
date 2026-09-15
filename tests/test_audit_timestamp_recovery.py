@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -213,11 +214,12 @@ def test_confirmed_recovery_updates_only_timestamp_and_preserves_hashes():
         return MagicMock()
 
     session.execute.side_effect = execute
+    locked_plan = replace(plan, timestamp_precision=6)
     with (
         patch.object(
             integrity,
             "build_audit_timestamp_recovery_plan",
-            return_value=plan,
+            side_effect=[plan, locked_plan],
         ),
         patch.object(
             integrity,
@@ -249,6 +251,8 @@ def test_confirmed_recovery_updates_only_timestamp_and_preserves_hashes():
     assert result["hashes_modified"] is False
     assert result["timestamp_values_restored"] is True
     assert result["non_timestamp_fields_modified"] is False
+    assert result["timestamp_precision"] == 0
+    assert result["timestamp_precision_after"] == 6
 
 
 def test_recovery_migration_is_registered_as_the_latest_server_migration():
