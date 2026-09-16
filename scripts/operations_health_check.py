@@ -243,6 +243,35 @@ def _normalized_findings(components: dict[str, dict]) -> list[dict]:
     return normalized
 
 
+def summarize_components(components: dict[str, dict]) -> tuple[str, list[dict], dict]:
+    """Return the aggregate status, normalized findings, and summary counts."""
+    findings = _normalized_findings(components)
+    component_statuses = {
+        name: str(component.get("status") or "FAIL").upper()
+        for name, component in components.items()
+    }
+    status = _status_for_findings(findings)
+    if "FAIL" in component_statuses.values():
+        status = "FAIL"
+    elif status == "PASS" and "WARN" in component_statuses.values():
+        status = "WARN"
+
+    component_counts = {
+        name: sum(1 for value in component_statuses.values() if value == name)
+        for name in ("PASS", "WARN", "FAIL")
+    }
+    summary = {
+        "component_counts": component_counts,
+        "finding_count": len(findings),
+        "highest_severity": max(
+            (str(item["severity"]) for item in findings),
+            key=lambda value: SEVERITY_ORDER.get(value, 3),
+            default=None,
+        ),
+    }
+    return status, findings, summary
+
+
 def capture_health(
     *,
     api_samples: int = DEFAULT_API_SAMPLES,
@@ -288,21 +317,7 @@ def capture_health(
             ),
         ),
     }
-    findings = _normalized_findings(components)
-    component_statuses = {
-        name: str(component.get("status") or "FAIL").upper()
-        for name, component in components.items()
-    }
-    status = _status_for_findings(findings)
-    if "FAIL" in component_statuses.values():
-        status = "FAIL"
-    elif status == "PASS" and "WARN" in component_statuses.values():
-        status = "WARN"
-
-    component_counts = {
-        name: sum(1 for value in component_statuses.values() if value == name)
-        for name in ("PASS", "WARN", "FAIL")
-    }
+    status, findings, summary = summarize_components(components)
     return {
         "format_version": FORMAT_VERSION,
         "report_type": REPORT_TYPE,
@@ -315,15 +330,7 @@ def capture_health(
             "minimum_free_disk_percent": minimum_free_disk_percent,
             "minimum_free_disk_gb": minimum_free_disk_gb,
         },
-        "summary": {
-            "component_counts": component_counts,
-            "finding_count": len(findings),
-            "highest_severity": max(
-                (str(item["severity"]) for item in findings),
-                key=lambda value: SEVERITY_ORDER.get(value, 3),
-                default=None,
-            ),
-        },
+        "summary": summary,
         "components": components,
         "findings": findings,
     }

@@ -163,7 +163,56 @@ and scheduled-task activation remain separate approval events.
 
 ## Monitoring activation boundary
 
-Workstream 1 adds only this runbook, the read-only checker, and tests. It does
-not install a Windows task or enable automatic backups. Scheduler creation,
-notification policy, report retention, and production activation require a
-separate review and approval after a successful server preflight.
+Workstream 1 adds only this runbook, the read-only checker, and tests.
+
+Workstream 2 adds a scheduler definition, a single-instance scheduled runner,
+and bounded operations-report retention. Adding these files does not itself
+register or start a Windows task and does not enable or alter automatic
+backups. Production activation remains a separate approval event.
+
+## Workstream 2 scheduler and report retention
+
+The approved scheduler design is:
+
+- Windows task name: `MTO Operations Health Check`;
+- daily execution at 06:30 local server time by default;
+- execution as the Windows `SYSTEM` service account with highest privileges;
+- at most one instance, enforced by both Task Scheduler `IgnoreNew` and a
+  non-blocking process lock;
+- a 30-minute execution limit without automatic repair or retry loops;
+- a privacy-safe JSON report for each completed run;
+- 400 days of operations-health reports retained by default.
+
+Retention is deliberately narrow. The runner deletes only regular, non-linked
+files directly inside `logs\operations` whose names exactly match
+`operations-health-YYYYMMDDTHHMMSSZ.json` and whose embedded UTC timestamp is
+older than the approved retention period. It does not delete certification,
+remediation, audit, application, or backup evidence. The allowed retention
+range is 30 through 3,650 days.
+
+Run the scheduler preflight from an Administrator PowerShell session after the
+approved source is synchronized to the server:
+
+```powershell
+cd C:\mto
+.\venv\Scripts\Activate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  C:\mto\scripts\install_operations_health_task.ps1 -Preflight
+```
+
+Preflight is read-only. It verifies the managed Python executable, runner, and
+any existing task configuration. It does not run the health check, create a
+report, or register, replace, start, or stop a task.
+
+Task registration is permitted only after a separately approved activation:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File `
+  C:\mto\scripts\install_operations_health_task.ps1 -Apply
+```
+
+The activation requires the exact interactive confirmation phrase and
+registers the task without immediately starting it. A separately approved
+post-activation smoke test must start the task once, verify its task result,
+inspect the newly written JSON status, and confirm that financial and audit
+invariants remain intact.
