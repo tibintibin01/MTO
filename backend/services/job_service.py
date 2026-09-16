@@ -731,7 +731,15 @@ def _refresh_dashboard_stats():
 
 def _recover_stale_jobs():
     """
-    Resets jobs stuck in RUNNING back to PENDING.
+    Resets abandoned RUNNING jobs back to PENDING.
+
+    A job whose exact ID is still owned by a live in-process worker is not
+    abandoned, regardless of how long the handler has been running. Requeuing
+    such a job would allow a second worker to execute it concurrently. Jobs
+    left behind by a process crash are recoverable because the new process has
+    no live worker ownership for them; jobs whose worker thread has exited are
+    recoverable on the next maintenance cycle.
+
     Called on startup and every 5 minutes by the maintenance thread.
     Also prunes expired idempotency keys, refresh tokens, and import caches.
     """
@@ -744,18 +752,35 @@ def _recover_stale_jobs():
     except Exception as e:
         mto_logger.error(f"Import cache pruning error: {e}")
         
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=STALE_THRESHOLD_MINUTES)
+    cutoff = (
+        datetime.now(timezone.utc).replace(tzinfo=None)
+        - timedelta(minutes=STALE_THRESHOLD_MINUTES)
+    )
     try:
+        active_job_ids = _active_worker_job_ids()
         with SessionLocal() as db:
-            result = db.execute(text(
-                "UPDATE jobs SET status = 'PENDING', started_at = NULL, "
-                "progress = 0, progress_message = 'Reset after stale timeout' "
-                "WHERE status = 'RUNNING' AND started_at < :cutoff"
-            ), {"cutoff": cutoff.isoformat()})
+            recovery_query = db.query(Job).filter(
+                Job.status == "RUNNING",
+                Job.started_at < cutoff,
+            )
+            if active_job_ids:
+                recovery_query = recovery_query.filter(
+                    ~Job.id.in_(tuple(active_job_ids))
+                )
+
+            recovered_count = recovery_query.update(
+                {
+                    Job.status: "PENDING",
+                    Job.started_at: None,
+                    Job.progress: 0,
+                    Job.progress_message: "Reset after stale timeout",
+                },
+                synchronize_session=False,
+            )
             db.commit()
-            if result.rowcount > 0:
+            if recovered_count > 0:
                 mto_logger.warning(
-                    f"Recovered {result.rowcount} stale job(s) back to PENDING."
+                    f"Recovered {recovered_count} stale job(s) back to PENDING."
                 )
     except Exception as e:
         mto_logger.error(f"Stale job recovery error: {e}")
@@ -767,6 +792,8 @@ def _recover_stale_jobs():
 # Each worker thread writes its worker_id → timestamp here on every loop
 # iteration (idle or busy). The health check reads this dict to detect
 # threads that have stopped updating — indicating a dead or hung thread.
+# Stale-job recovery separately uses the exact current_job ID plus the owning
+# Thread.is_alive() state. It must never infer ownership from an abbreviated ID.
 #
 # Structure:
 #   _worker_heartbeats = {
@@ -774,7 +801,7 @@ def _recover_stale_jobs():
 #           "last_beat":  datetime,   # last time the thread updated
 #           "pool":       "fast",     # "fast" | "slow"
 #           "status":     "idle",     # "idle" | "running" | "db_backoff"
-#           "current_job": None,      # job_id[:8] or None
+#           "current_job": None,      # exact job_id or None (internal only)
 #           "thread_alive": True,     # threading.Thread.is_alive()
 #       },
 #       ...
@@ -796,6 +823,26 @@ _worker_heartbeats: dict[str, dict] = {}
 _heartbeat_lock = threading.Lock()
 # Keep a reference to each Thread object so we can call .is_alive()
 _worker_threads: dict[str, threading.Thread] = {}
+
+
+def _active_worker_job_ids() -> set[str]:
+    """Return exact job IDs currently owned by live in-process workers."""
+    with _heartbeat_lock:
+        heartbeats = dict(_worker_heartbeats)
+        threads = dict(_worker_threads)
+
+    active_job_ids: set[str] = set()
+    for worker_id, info in heartbeats.items():
+        current_job = info.get("current_job")
+        thread = threads.get(worker_id)
+        if (
+            info.get("status") == "running"
+            and current_job
+            and thread is not None
+            and thread.is_alive()
+        ):
+            active_job_ids.add(str(current_job))
+    return active_job_ids
 
 
 def _beat(worker_id: str, pool: str, status: str, current_job: str | None = None):
@@ -846,12 +893,15 @@ def get_worker_health() -> dict:
         else:
             state = "healthy"
 
+        current_job = info.get("current_job")
         workers.append({
             "worker_id": worker_id,
             "pool": info["pool"],
             "status": info["status"],
             "state": state,
-            "current_job": info["current_job"],
+            # Worker-health responses retain the historical short identifier;
+            # the exact ID remains internal for collision-safe ownership.
+            "current_job": str(current_job)[:8] if current_job else None,
             "last_beat_seconds_ago": round(age_seconds, 1),
             "thread_alive": thread_alive,
         })
@@ -922,7 +972,7 @@ def start_worker():
                         mto_logger.info(
                             f"[{worker_id}] Claimed: {job.job_type} [{job.id[:8]}]"
                         )
-                        _beat(worker_id, pool_name, "running", job.id[:8])
+                        _beat(worker_id, pool_name, "running", job.id)
                         _run_job(job)
                         _beat(worker_id, pool_name, "idle")
                     else:
@@ -933,7 +983,7 @@ def start_worker():
                             mto_logger.info(
                                 f"[{worker_id}] Claimed: {job.job_type} [{job.id[:8]}]"
                             )
-                            _beat(worker_id, pool_name, "running", job.id[:8])
+                            _beat(worker_id, pool_name, "running", job.id)
                             _run_job(job)
                             _beat(worker_id, pool_name, "idle")
                         else:
