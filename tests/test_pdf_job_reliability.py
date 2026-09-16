@@ -72,4 +72,3 @@ def test_missing_property_raises_without_false_completion(monkeypatch):
         raise AssertionError("Missing property must fail PDF generation")
 
     assert not any(values.get("status") == "COMPLETED" for _job_id, values in updates)
-

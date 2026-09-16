@@ -222,4 +222,3 @@ def test_main_writes_atomic_report_and_returns_review(monkeypatch, tmp_path):
     assert result == 4
     assert json.loads(destination.read_text(encoding="utf-8"))["require_ready"] is True
     assert not list(tmp_path.glob("*.tmp"))
-
