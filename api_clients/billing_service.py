@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # Client-side Billing Service (Thin Client)
 import re
+import time
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from api_clients.api_helper import api_request, api_download_file
@@ -195,9 +196,63 @@ def download_tax_bill_pdf(property_id, tax_year):
     )
 
 
-def download_statement_pdf(property_id):
-    """Triggers the download of a statement PDF and returns the local path."""
-    return api_download_file("GET", f"/properties/{property_id}/statement-pdf")
+def download_statement_pdf(
+    property_id,
+    *,
+    timeout_seconds=120.0,
+    poll_interval=0.5,
+):
+    """Generate an SOA through the persistent job queue and download its result."""
+    timeout_seconds = float(timeout_seconds)
+    poll_interval = float(poll_interval)
+    if timeout_seconds <= 0:
+        raise ValueError("SOA generation timeout must be greater than zero.")
+    if poll_interval <= 0:
+        raise ValueError("SOA polling interval must be greater than zero.")
+
+    submitted = api_request(
+        "POST",
+        f"/jobs/pdf/soa/{property_id}",
+        queue_offline=False,
+    )
+    job_id = submitted.get("job_id") if isinstance(submitted, dict) else None
+    if not isinstance(job_id, str) or not job_id.strip():
+        raise RuntimeError("The server did not return a valid SOA job identifier.")
+    job_id = job_id.strip()
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        job = api_request(
+            "GET",
+            f"/jobs/{job_id}",
+            queue_offline=False,
+        )
+        if not isinstance(job, dict):
+            raise RuntimeError("The server returned an invalid SOA job status.")
+
+        status = str(job.get("status") or "").strip().upper()
+        if status == "COMPLETED":
+            return api_download_file(
+                "GET",
+                f"/jobs/pdf/soa/{job_id}/download",
+                timeout=timeout_seconds,
+            )
+        if status == "FAILED":
+            raise RuntimeError(
+                "Statement of Account generation failed on the server. "
+                "Please try again or contact the system administrator."
+            )
+        if status not in {"PENDING", "RUNNING"}:
+            raise RuntimeError("The server returned an unknown SOA job status.")
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                "Statement of Account generation did not finish within "
+                f"{timeout_seconds:g} seconds. The server job may still complete; "
+                "wait briefly before trying again."
+            )
+        time.sleep(min(poll_interval, remaining))
 
 
 def download_notice_pdf(property_id):
