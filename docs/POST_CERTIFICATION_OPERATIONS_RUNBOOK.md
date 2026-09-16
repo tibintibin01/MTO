@@ -216,3 +216,44 @@ registers the task without immediately starting it. A separately approved
 post-activation smoke test must start the task once, verify its task result,
 inspect the newly written JSON status, and confirm that financial and audit
 invariants remain intact.
+
+## Workstream 3 local alerting and escalation
+
+The scheduled runner maintains privacy-safe local alert evidence under
+logs\operations\alerts. External notifications remain disabled until a
+notification destination, data-minimization rules, credentials, ownership, and
+failure handling are separately approved.
+
+The local alert controls are:
+
+- WARN requires same-business-day operator review;
+- FAIL requires immediate escalation and continues to return task result 2;
+- only component, finding code, severity, status, timestamps, occurrence count,
+  and the report filename are recorded;
+- finding details, taxpayer data, credentials, absolute paths, and secret values
+  are not copied into alert state or events;
+- identical active alerts are suppressed for 24 hours while their occurrence
+  count continues to increase;
+- an unresolved alert produces a reminder after 24 hours;
+- a changed finding creates a new transition event;
+- the first subsequent PASS creates a resolution event and clears the active
+  alert;
+- alert event files use the same approved retention period as operations
+  reports, while the current state remains available until superseded.
+
+The state file is current-alert.json. Transition evidence uses exact managed
+names of the form operations-alert-YYYYMMDDTHHMMSSffffffZ.json. Retention never
+deletes unrelated operations, certification, audit, remediation, or backup
+evidence.
+
+After approved source synchronization, run the read-only alerting preflight:
+
+    cd /d C:\mto
+    call venv\Scripts\activate
+    python -m scripts.operations_alerting --preflight
+
+Preflight validates an existing state file if one exists. It does not create an
+alert directory or state, run the health checker, modify the scheduler, contact
+an external system, or change the database. A separately approved scheduled
+smoke test creates the first inactive PASS state and confirms the health report
+contains alerting=PASS.

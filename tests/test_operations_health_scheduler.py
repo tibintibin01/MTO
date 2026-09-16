@@ -33,6 +33,19 @@ def _base_report(status="PASS"):
     }
 
 
+def _patch_alerting_pass(monkeypatch):
+    monkeypatch.setattr(
+        runner.alerting,
+        "capture_alerting",
+        lambda *_args, **_kwargs: {
+            "status": "PASS",
+            "alert_active": False,
+            "external_notifications": "DISABLED",
+            "findings": [],
+        },
+    )
+
+
 def test_retention_removes_only_expired_managed_reports(tmp_path):
     expired = tmp_path / "operations-health-20240101T000000Z.json"
     current = tmp_path / "operations-health-20260915T000000Z.json"
@@ -116,6 +129,7 @@ def test_scheduled_run_writes_retention_component(monkeypatch, tmp_path):
         },
     )
     monkeypatch.setattr(health, "_default_report_path", lambda _now: destination)
+    _patch_alerting_pass(monkeypatch)
 
     result = runner.run_once(400)
     report = json.loads(destination.read_text(encoding="utf-8"))
@@ -124,7 +138,8 @@ def test_scheduled_run_writes_retention_component(monkeypatch, tmp_path):
     assert lock.closed is True
     assert report["status"] == "PASS"
     assert report["components"]["report_retention"]["expired_reports_removed"] == 2
-    assert report["summary"]["component_counts"]["PASS"] == 2
+    assert report["summary"]["component_counts"]["PASS"] == 3
+    assert report["components"]["alerting"]["status"] == "PASS"
     assert report["scheduled_runner"]["single_instance"] is True
 
 
@@ -151,10 +166,50 @@ def test_retention_warning_sets_task_warning_exit(monkeypatch, tmp_path):
         },
     )
     monkeypatch.setattr(health, "_default_report_path", lambda _now: destination)
+    _patch_alerting_pass(monkeypatch)
 
     assert runner.run_once(400) == 1
     assert lock.closed is True
     assert json.loads(destination.read_text(encoding="utf-8"))["status"] == "WARN"
+
+
+def test_alert_evidence_failure_sets_task_failure_exit(monkeypatch, tmp_path):
+    lock = _Lock()
+    destination = tmp_path / "operations-health-20260916T000000Z.json"
+    monkeypatch.setattr(runner, "acquire_single_instance_lock", lambda: lock)
+    monkeypatch.setattr(health, "capture_health", _base_report)
+    monkeypatch.setattr(
+        runner,
+        "capture_report_retention",
+        lambda *_args, **_kwargs: {
+            "status": "PASS",
+            "retention_days": 400,
+            "expired_reports_removed": 0,
+            "findings": [],
+        },
+    )
+    monkeypatch.setattr(
+        runner.alerting,
+        "capture_alerting",
+        lambda *_args, **_kwargs: {
+            "status": "FAIL",
+            "alert_active": None,
+            "external_notifications": "DISABLED",
+            "findings": [
+                {
+                    "component": "alerting",
+                    "code": "OPERATIONS_ALERT_EVIDENCE_FAILED",
+                    "detail": "Operator review is required.",
+                    "severity": "HIGH",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(health, "_default_report_path", lambda _now: destination)
+
+    assert runner.run_once(400) == 2
+    assert lock.closed is True
+    assert json.loads(destination.read_text(encoding="utf-8"))["status"] == "FAIL"
 
 
 def test_installer_is_daily_single_instance_and_does_not_start_task():

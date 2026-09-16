@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts import operations_alerting as alerting  # noqa: E402
 from scripts import operations_health_check as health  # noqa: E402
 
 
@@ -151,10 +152,19 @@ def run_once(retention_days: int = DEFAULT_RETENTION_DAYS) -> int:
             "single_instance": True,
             "retention_days": retention_days,
         }
-        destination = health.write_report(
+        destination = health._default_report_path(current_time)
+        alert_component = alerting.capture_alerting(
             report,
-            health._default_report_path(current_time),
+            destination,
+            retention_days,
+            now=current_time,
         )
+        report["components"]["alerting"] = alert_component
+        status, findings, summary = health.summarize_components(report["components"])
+        report["status"] = status
+        report["findings"] = findings
+        report["summary"] = summary
+        destination = health.write_report(report, destination)
 
         print("MTO SCHEDULED OPERATIONS HEALTH CHECK")
         for name, component in report["components"].items():
