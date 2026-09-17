@@ -1,106 +1,49 @@
 @echo off
-title MTO System Updater
+setlocal
+title MTO Immutable Release Updater
 color 0A
+
+cd /d "%~dp0"
+
+if "%~1"=="" goto :usage
+if "%~2"=="" goto :usage
+
 echo ================================================
-echo   MTO TREASURY SYSTEM - AUTO UPDATER
+echo   MTO TREASURY SYSTEM - IMMUTABLE UPDATER
 echo   Bayan ng Dipaculao, Aurora
 echo ================================================
 echo.
+echo Release tag: %~1
+echo Release package: %~2
+echo.
 
-echo [1/5] Pulling latest code from GitHub...
-cd /d C:\MTO
+REM The PowerShell implementation runs phase5_supply_chain_preflight, verifies
+REM release-manifest.json, calls capture_remediation_baseline, retains a
+REM rollback ref, installs requirements.lock with hashes, and invokes
+REM wait_for_mto_api.ps1 before declaring success.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\apply_immutable_release.ps1" ^
+  -Apply ^
+  -ReleaseTag "%~1" ^
+  -Distribution "%~2" ^
+  -ProjectRoot "%~dp0"
 
-REM Frontend installs/builds can rewrite tracked generated artifacts and block
-REM the next pull. Restore only these known-safe files before updating. This
-REM never touches MariaDB, backups, .env, server_config.json, or office records.
-for %%F in (frontend/package-lock.json) do (
-    git diff --quiet -- "%%F"
-    if errorlevel 1 (
-        echo Local generated-file drift detected: %%F
-        git restore -- "%%F"
-    )
-)
-
-git pull --ff-only origin master
-if %errorlevel% neq 0 (
-    echo ERROR: Git pull failed.
-    echo This is usually caused by local source changes, a stuck Git process, or network trouble.
-    echo Run: git status --short
+set "MTO_UPDATE_RESULT=%ERRORLEVEL%"
+if not "%MTO_UPDATE_RESULT%"=="0" (
+    echo.
+    echo ERROR: Immutable release update did not complete.
+    echo Review the protected update evidence before approving recovery or rollback.
     pause
-    exit /b 1
+    exit /b %MTO_UPDATE_RESULT%
 )
-echo Done.
-echo.
 
-echo [2/5] Stopping old services safely...
-set "MTO_API_TASK_INSTALLED="
-schtasks /Query /TN "MTO Treasury API" >nul 2>&1
-if %errorlevel% equ 0 (
-    set "MTO_API_TASK_INSTALLED=1"
-)
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\stop_mto_runtime.ps1" -ProjectRoot "C:\MTO"
-if %errorlevel% neq 0 (
-    echo ERROR: Existing MTO services could not be stopped safely.
-    echo Run this updater as Administrator, then try again.
-    pause
-    exit /b 1
-)
-echo Done.
 echo.
-
-echo [3/5] Installing/updating Python dependencies...
-call venv\Scripts\activate
-python -m pip install --require-hashes -r requirements.lock -q
-if %errorlevel% neq 0 (
-    echo ERROR: Python dependency update failed. Services were not restarted.
-    pause
-    exit /b 1
-)
-echo Done.
-echo.
-
-echo [4/5] Applying server database migrations...
-python -m migration_manager
-if %errorlevel% neq 0 (
-    echo ERROR: Database migration failed. Services were not restarted.
-    echo Review the error above and restore from the verified backup if required.
-    pause
-    exit /b 1
-)
-echo Done.
-echo.
-REM The public portal is hosted on Vercel. The optional LAN portal can still be
-REM started deliberately with run_system.bat, but this updater no longer builds
-REM or starts a redundant local Next.js process on port 3000.
-echo [5/5] Starting updated services...
-cd C:\MTO
-call venv\Scripts\activate
-if defined MTO_API_TASK_INSTALLED (
-    schtasks /Run /TN "MTO Treasury API" >nul
-    if errorlevel 1 (
-        echo ERROR: The automatic API recovery task could not be started.
-        echo Run this updater as Administrator and check Task Scheduler.
-        pause
-        exit /b 1
-    )
-) else (
-    start "MTO Backend" cmd /k "python scripts\run_api_supervisor.py"
-)
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\wait_for_mto_api.ps1" -TimeoutSeconds 90
-if %errorlevel% neq 0 (
-    echo ERROR: The updated API did not become ready.
-    echo Review C:\MTO\logs\api_supervisor.log before opening client applications.
-    pause
-    exit /b 1
-)
-echo Done.
-echo.
-
-echo ================================================
-echo   UPDATE COMPLETE! System is now running.
-echo   Backend:  https://localhost:8001 (authenticated TLS)
-echo   Public portal: hosted on Vercel
-echo   Local port 3000: not started by this updater
-echo ================================================
-echo.
+echo Immutable MTO release activation completed successfully.
 pause
+exit /b 0
+
+:usage
+echo Usage: update_mto.bat vX.Y.Z C:\ProgramData\MTO\releases\vX.Y.Z
+echo.
+echo The release must be an approved immutable tag and the package must contain
+echo valid Authenticode signatures, release-manifest.json, and sbom.cdx.json.
+exit /b 2

@@ -47,17 +47,12 @@ def test_installer_build_creates_final_manifest_and_sbom():
     assert "SignedUninstaller=yes" in installer
 
 
-def test_release_control_preflight_has_only_updater_gaps_after_build_hardening():
+def test_release_control_preflight_passes_after_updater_hardening():
     result = capture_release_controls(PROJECT_ROOT)
-    codes = {item["code"] for item in result["findings"]}
-    expected_updater_gaps = {
-        "UPDATER_DEPLOYS_MUTABLE_MASTER",
-        "UPDATER_SUPPLY_CHAIN_GATE_MISSING",
-        "UPDATER_MANIFEST_GATE_MISSING",
-        "UPDATER_BASELINE_GATE_MISSING",
-        "UPDATER_CODE_ROLLBACK_MISSING",
-    }
 
     assert result["deployment_branches"] == []
     assert result["version_tag_trigger_present"] is True
-    assert codes == expected_updater_gaps
+    assert result["runtime_hash_install_present"] is True
+    assert result["authenticated_readiness_present"] is True
+    assert result["status"] == "PASS"
+    assert result["findings"] == []

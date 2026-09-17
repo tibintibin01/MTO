@@ -393,7 +393,10 @@ def validate_repository(
         )
 
     required_text = {
-        root / "update_mto.bat": ["--require-hashes -r requirements.lock"],
+        root / "update_mto.bat": ["apply_immutable_release.ps1"],
+        root
+        / "scripts"
+        / "apply_immutable_release.ps1": ["--require-hashes", "requirements.lock"],
         root / "Dockerfile": ["--require-hashes", "requirements.lock"],
         root
         / "build_pyinstaller.ps1": [

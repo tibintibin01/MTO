@@ -141,3 +141,48 @@ then installs the complete reviewed dependency graph from
 Do not store a certificate password, private key, PFX, or thumbprint override in
 Git. The signing certificate must be separately approved and provisioned before
 the production build is authorized.
+
+## Immutable production updater
+
+`update_mto.bat` no longer pulls mutable `master`. It requires an explicitly
+approved stable release tag and the matching signed release directory:
+
+```bat
+cd /d C:\mto
+call venv\Scripts\activate
+call update_mto.bat vX.Y.Z C:\ProgramData\MTO\releases\vX.Y.Z
+```
+
+Before interrupting the API, the updater verifies that the selected tag is the
+exact fetched `origin/master` commit and a fast-forward descendant of the
+active source. It validates the release manifest hashes, CycloneDX SBOM,
+private-key exclusion, and Authenticode signatures. It then requires the
+operator to type the release-specific confirmation phrase.
+
+Protected evidence is stored outside the checkout under
+`C:\ProgramData\MTO\updates\<release-and-timestamp>`. It includes the release
+manifest, pre-update financial/backup baseline, supply-chain report, audit
+integrity report, post-update comparison, exact previous and target commits,
+and a retained Git rollback reference. The updater stops on every failed gate.
+The candidate dependencies are installed into a separate hash-locked virtual
+environment. The active runtime is switched only after that environment passes
+`pip check`, while the exact previous environment is retained with the rollback
+evidence. A failure before migrations automatically restores both the prior
+code revision and its runtime. Once migration execution starts, the updater
+fails closed and requires explicit incident review rather than assuming that a
+code-only rollback is schema-safe.
+
+An explicitly approved code rollback uses the evidence record ID:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File C:\mto\scripts\apply_immutable_release.ps1 `
+  -Rollback `
+  -RollbackId <approved-record-id> `
+  -ProjectRoot C:\mto
+```
+
+Rollback preserves the failed commit, captures immediate before/after
+financial evidence, reinstalls the previous hash-locked runtime, restarts the
+managed API, and requires authenticated readiness. It does not reverse database
+schema changes and must never be run without separate incident approval.

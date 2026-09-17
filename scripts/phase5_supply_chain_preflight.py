@@ -275,6 +275,22 @@ def capture_release_controls(root: Path = PROJECT_ROOT) -> dict:
         root / "installer" / "MTO_Treasury_Setup.iss", "release_controls", findings
     )
     updater = _read_required(root / "update_mto.bat", "release_controls", findings)
+    updater_script_path = root / "scripts" / "apply_immutable_release.ps1"
+    updater_script = (
+        updater_script_path.read_text(encoding="utf-8")
+        if updater_script_path.is_file()
+        else ""
+    )
+    if "apply_immutable_release.ps1" in updater.lower() and not updater_script:
+        findings.append(
+            _finding(
+                "release_controls",
+                "IMMUTABLE_UPDATER_SCRIPT_MISSING",
+                "The immutable updater entry point references a missing implementation.",
+                "HIGH",
+            )
+        )
+    complete_updater = f"{updater}\n{updater_script}"
     complete_desktop_build = f"{build}\n{installer_build}"
 
     branch_match = re.search(r"branches:\s*\[([^\]]+)]", deploy)
@@ -404,7 +420,7 @@ def capture_release_controls(root: Path = PROJECT_ROOT) -> dict:
             )
         )
 
-    updater_lower = updater.lower()
+    updater_lower = complete_updater.lower()
     if "git pull --ff-only origin master" in updater_lower:
         findings.append(
             _finding(
@@ -440,7 +456,9 @@ def capture_release_controls(root: Path = PROJECT_ROOT) -> dict:
     for token, code, detail in required_updater_controls:
         if token not in updater_lower:
             findings.append(_finding("release_controls", code, detail, "HIGH"))
-    if "--require-hashes -r requirements.lock" not in updater:
+    if not all(
+        token in complete_updater for token in ("--require-hashes", "requirements.lock")
+    ):
         findings.append(
             _finding(
                 "release_controls",
@@ -449,7 +467,7 @@ def capture_release_controls(root: Path = PROJECT_ROOT) -> dict:
                 "HIGH",
             )
         )
-    if "wait_for_mto_api.ps1" not in updater:
+    if "wait_for_mto_api.ps1" not in complete_updater:
         findings.append(
             _finding(
                 "release_controls",
@@ -464,10 +482,13 @@ def capture_release_controls(root: Path = PROJECT_ROOT) -> dict:
         "deployment_branches": deployment_branches,
         "version_tag_trigger_present": "tags: [ 'v*' ]" in deploy,
         "production_approval_gate_present": "environment: production" in deploy,
-        "runtime_hash_install_present": (
-            "--require-hashes -r requirements.lock" in updater
+        "runtime_hash_install_present": all(
+            token in complete_updater
+            for token in ("--require-hashes", "requirements.lock")
         ),
-        "authenticated_readiness_present": "wait_for_mto_api.ps1" in updater,
+        "authenticated_readiness_present": (
+            "wait_for_mto_api.ps1" in complete_updater
+        ),
         "finding_count": len(findings),
         "findings": findings,
     }
