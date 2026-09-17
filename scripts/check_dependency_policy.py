@@ -399,6 +399,8 @@ def validate_repository(
         / "build_pyinstaller.ps1": [
             "[string]$PythonPath",
             "dev-requirements.txt",
+            "dev-requirements.lock",
+            "--require-hashes",
             "from importlib.metadata import version",
             "-m pip check",
         ],

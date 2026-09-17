@@ -104,3 +104,40 @@ Phase 5 supply-chain closure requires all of the following:
 
 Any signing, updater, deployment, server sync, or activation action requires a
 separate explicit approval and its own before/after evidence.
+
+## Immutable release build implementation
+
+The approved build foundation provides the following controls:
+
+- production deployment is triggered only by an immutable `vX.Y.Z` tag;
+- desktop and installer versions are derived from that exact tag;
+- the source must be clean and match local `origin/master` before building;
+- the complete desktop build environment is installed from
+  `dev-requirements.lock` with `--require-hashes`;
+- `Treasury.exe`, the installer, and the generated uninstaller use the same
+  managed Authenticode identity when signing is enabled;
+- unsigned output requires the explicit
+  `-AllowUnsignedDevelopmentBuild` switch and cannot pass production preflight;
+- the final package receives `release-manifest.json` with SHA-256 hashes for
+  every required artifact and reviewed build material;
+- the final package receives a deterministic CycloneDX 1.5 SBOM generated from
+  the hash-locked runtime dependency graph.
+
+The normal production build is intentionally fail-closed:
+
+```powershell
+$buildPython = '.\.phase5-release-venv\Scripts\python.exe'
+py -3.11 -m venv .\.phase5-release-venv
+$env:MTO_CODE_SIGNING_CERT_THUMBPRINT = '<managed-certificate-thumbprint>'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build_installer.ps1 `
+  -PythonPath $buildPython
+```
+
+The dedicated build environment prevents development and packaging tools from
+being installed into the production API virtual environment. The build script
+then installs the complete reviewed dependency graph from
+`dev-requirements.lock` with hashes before packaging.
+
+Do not store a certificate password, private key, PFX, or thumbprint override in
+Git. The signing certificate must be separately approved and provisioned before
+the production build is authorized.

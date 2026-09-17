@@ -1,0 +1,63 @@
+import re
+
+from scripts.phase5_supply_chain_preflight import (
+    PROJECT_ROOT,
+    capture_release_controls,
+)
+
+
+def test_production_deployment_is_tag_only():
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    trigger = workflow[workflow.index("on:") : workflow.index("jobs:")]
+
+    assert "tags: [ 'v*' ]" in trigger
+    assert "branches:" not in trigger
+    assert "GITHUB_REF_TYPE" in workflow
+    assert "git describe --tags --exact-match HEAD" in workflow
+
+
+def test_desktop_build_requires_locked_identity_and_signature():
+    build = (PROJECT_ROOT / "build_pyinstaller.ps1").read_text(encoding="utf-8")
+
+    assert "dev-requirements.lock" in build
+    assert "--require-hashes" in build
+    assert ".phase5-release-venv" in build
+    assert "sys.version_info[:2] == (3, 11)" in build
+    assert "--identity-only" in build
+    assert "Get-AuthenticodeSignature" in build
+    assert "MTO_CODE_SIGNING_CERT_THUMBPRINT" in build
+    assert "AllowUnsignedDevelopmentBuild" in build
+
+
+def test_installer_build_creates_final_manifest_and_sbom():
+    build = (PROJECT_ROOT / "build_installer.ps1").read_text(encoding="utf-8")
+    installer = (PROJECT_ROOT / "installer" / "MTO_Treasury_Setup.iss").read_text(
+        encoding="utf-8"
+    )
+
+    assert "build_release_metadata.py" in build
+    assert "release-manifest.json" in build
+    assert "sbom.cdx.json" in build
+    assert "Get-AuthenticodeSignature" in build
+    assert "/DMyAppVersion=" in build
+    assert re.search(r'#define\s+MyAppVersion\s+"\d+\.\d+\.\d+"', installer) is None
+    assert "SignTool=MTOCodeSign" in installer
+    assert "SignedUninstaller=yes" in installer
+
+
+def test_release_control_preflight_has_only_updater_gaps_after_build_hardening():
+    result = capture_release_controls(PROJECT_ROOT)
+    codes = {item["code"] for item in result["findings"]}
+    expected_updater_gaps = {
+        "UPDATER_DEPLOYS_MUTABLE_MASTER",
+        "UPDATER_SUPPLY_CHAIN_GATE_MISSING",
+        "UPDATER_MANIFEST_GATE_MISSING",
+        "UPDATER_BASELINE_GATE_MISSING",
+        "UPDATER_CODE_ROLLBACK_MISSING",
+    }
+
+    assert result["deployment_branches"] == []
+    assert result["version_tag_trigger_present"] is True
+    assert codes == expected_updater_gaps

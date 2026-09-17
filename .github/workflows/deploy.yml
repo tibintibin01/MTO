@@ -2,7 +2,6 @@ name: MTO Treasury Deploy
 
 on:
   push:
-    branches: [ main ]
     tags: [ 'v*' ]
 
 jobs:
@@ -20,6 +19,19 @@ jobs:
 
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+    - name: Verify immutable semantic release tag
+      shell: bash
+      run: |
+        if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+          echo "Production deployment requires an immutable Git tag." >&2
+          exit 1
+        fi
+        if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "Release tag must use semantic versioning (for example v2.2.0)." >&2
+          exit 1
+        fi
+        git describe --tags --exact-match HEAD
 
     - name: Set up Python
       uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5

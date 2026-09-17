@@ -55,7 +55,10 @@ jobs:
             "pip install --require-hashes -r dev-requirements.lock\n"
             "release-manifest.json\nsbom.cdx.json\nGet-AuthenticodeSignature\n"
         )
-        installer_build = "Get-AuthenticodeSignature\n"
+        installer_build = (
+            "Get-AuthenticodeSignature\nbuild_release_metadata\n"
+            "release-manifest.json\nsbom.cdx.json\n"
+        )
         installer = (
             '#define MyAppVersion GetEnv("MTO_RELEASE_VERSION")\n'
             "SignTool=approved\nSignedUninstaller=yes\n"
@@ -119,22 +122,38 @@ def _write_release_package(root: Path) -> None:
         ),
         encoding="utf-8",
     )
-    artifact_hashes = {
-        relative: _sha256(root / Path(relative))
-        for relative in preflight.REQUIRED_RELEASE_ARTIFACTS
-    }
-    (root / "release-manifest.json").write_text(
+    (root / "sbom.cdx.json").write_text(
         json.dumps(
             {
-                "version": "v2.1.0",
-                "source_commit": COMMIT,
-                "artifacts": artifact_hashes,
+                "bomFormat": "CycloneDX",
+                "specVersion": "1.5",
+                "metadata": {
+                    "component": {
+                        "version": "2.1.0",
+                        "properties": [
+                            {"name": "mto:source-commit", "value": COMMIT}
+                        ],
+                    }
+                },
+                "components": [{"name": "requests", "version": "2.34.2"}],
             }
         ),
         encoding="utf-8",
     )
-    (root / "sbom.cdx.json").write_text(
-        json.dumps({"bomFormat": "CycloneDX", "specVersion": "1.5"}),
+    artifact_hashes = {
+        relative: _sha256(root / Path(relative))
+        for relative in preflight.REQUIRED_RELEASE_ARTIFACTS
+    }
+    artifact_hashes["sbom.cdx.json"] = _sha256(root / "sbom.cdx.json")
+    (root / "release-manifest.json").write_text(
+        json.dumps(
+            {
+                "version": "v2.1.0",
+                "product_version": "2.1.0",
+                "source_commit": COMMIT,
+                "artifacts": artifact_hashes,
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -247,6 +266,7 @@ def test_desktop_release_passes_with_valid_signatures_manifest_and_sbom(tmp_path
     assert result["status"] == "PASS"
     assert result["required_artifact_count"] == 4
     assert result["sbom_valid"] is True
+    assert result["sbom_identity_valid"] is True
     assert result["findings"] == []
 
 
@@ -291,6 +311,71 @@ def test_desktop_release_requires_manifest_and_sbom(tmp_path):
     assert result["status"] == "FAIL"
     assert "RELEASE_MANIFEST_MISSING" in _codes(result)
     assert "DESKTOP_SBOM_MISSING_OR_INVALID" in _codes(result)
+
+
+def test_desktop_release_rejects_manifest_from_different_source(tmp_path):
+    _write_release_package(tmp_path)
+    manifest_path = tmp_path / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["source_commit"] = "b" * 40
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = preflight.capture_desktop_release(
+        tmp_path,
+        expected_source_commit=COMMIT,
+        signature_probe=lambda _path: {
+            "available": True,
+            "valid": True,
+            "status": "Valid",
+        },
+    )
+
+    assert result["status"] == "FAIL"
+    assert "RELEASE_MANIFEST_SOURCE_MISMATCH" in _codes(result)
+
+
+def test_desktop_release_rejects_non_mapping_artifact_manifest(tmp_path):
+    _write_release_package(tmp_path)
+    manifest_path = tmp_path / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"] = []
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = preflight.capture_desktop_release(
+        tmp_path,
+        signature_probe=lambda _path: {
+            "available": True,
+            "valid": True,
+            "status": "Valid",
+        },
+    )
+
+    assert result["status"] == "FAIL"
+    assert "RELEASE_MANIFEST_ARTIFACTS_INVALID" in _codes(result)
+
+
+def test_desktop_release_rejects_sbom_from_different_source(tmp_path):
+    _write_release_package(tmp_path)
+    sbom_path = tmp_path / "sbom.cdx.json"
+    sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
+    sbom["metadata"]["component"]["properties"][0]["value"] = "b" * 40
+    sbom_path.write_text(json.dumps(sbom), encoding="utf-8")
+    manifest_path = tmp_path / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"]["sbom.cdx.json"] = _sha256(sbom_path)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = preflight.capture_desktop_release(
+        tmp_path,
+        signature_probe=lambda _path: {
+            "available": True,
+            "valid": True,
+            "status": "Valid",
+        },
+    )
+
+    assert result["status"] == "FAIL"
+    assert "DESKTOP_SBOM_IDENTITY_MISMATCH" in _codes(result)
 
 
 def test_component_exception_is_redacted():

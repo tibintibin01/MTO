@@ -1,12 +1,16 @@
 #define MyAppName "MTO Treasury System"
 #define MyAppPublisher "Municipal Treasury Office"
 #define MyAppExeName "Treasury.exe"
-#define MyAppVersion "2.1.0"
+
+#ifndef MyAppVersion
+  #error "MyAppVersion must be supplied from the approved release tag."
+#endif
 
 [Setup]
 AppId={{7F5E33A1-5484-49D7-9B89-4F7E092D8D3C}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\MTO Treasury
 DefaultGroupName={#MyAppName}
@@ -19,6 +23,12 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\{#MyAppExeName}
+#ifdef MTOEnableSigning
+SignTool=MTOCodeSign
+SignedUninstaller=yes
+#else
+SignedUninstaller=no
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

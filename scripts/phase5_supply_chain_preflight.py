@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from scripts import check_dependency_policy
+from scripts import build_release_metadata, check_dependency_policy
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -32,7 +32,7 @@ FORMAT_VERSION = 1
 REPORT_TYPE = "MTO_ORIGINAL_PHASE_5_SUPPLY_CHAIN"
 PRIMARY_BRANCH = "master"
 EXPECTED_ORIGIN = "https://github.com/tibintibin01/MTO.git"
-RELEASE_TAG_PATTERN = re.compile(r"^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+RELEASE_TAG_PATTERN = re.compile(r"^v\d+\.\d+\.\d+$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 SEVERITY_ORDER = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 REQUIRED_RELEASE_ARTIFACTS = (
@@ -210,6 +210,7 @@ def capture_source_identity(
         "status": _status_for_findings(findings),
         "branch": branch,
         "commit": head[:12] if COMMIT_PATTERN.fullmatch(head) else "INVALID",
+        "commit_full": head if COMMIT_PATTERN.fullmatch(head) else None,
         "changed_file_count": len(changed),
         "origin_approved": (
             _normalize_remote(origin) == _normalize_remote(EXPECTED_ORIGIN)
@@ -274,6 +275,7 @@ def capture_release_controls(root: Path = PROJECT_ROOT) -> dict:
         root / "installer" / "MTO_Treasury_Setup.iss", "release_controls", findings
     )
     updater = _read_required(root / "update_mto.bat", "release_controls", findings)
+    complete_desktop_build = f"{build}\n{installer_build}"
 
     branch_match = re.search(r"branches:\s*\[([^\]]+)]", deploy)
     deployment_branches = (
@@ -340,7 +342,10 @@ def capture_release_controls(root: Path = PROJECT_ROOT) -> dict:
                 "HIGH",
             )
         )
-    if "release-manifest.json" not in build:
+    if (
+        "build_release_metadata" not in installer_build
+        or "release-manifest.json" not in complete_desktop_build
+    ):
         findings.append(
             _finding(
                 "release_controls",
@@ -349,7 +354,7 @@ def capture_release_controls(root: Path = PROJECT_ROOT) -> dict:
                 "HIGH",
             )
         )
-    if "sbom.cdx.json" not in build:
+    if "sbom.cdx.json" not in complete_desktop_build:
         findings.append(
             _finding(
                 "release_controls",
@@ -522,6 +527,8 @@ def capture_desktop_release(
     distribution: Path,
     *,
     signature_probe: Callable[[Path], dict] = probe_authenticode,
+    source_root: Path | None = None,
+    expected_source_commit: str | None = None,
 ) -> dict:
     resolved = distribution.resolve()
     findings: list[dict] = []
@@ -620,6 +627,7 @@ def capture_desktop_release(
     manifest_path = resolved / "release-manifest.json"
     manifest_version = None
     manifest_commit = None
+    manifest: dict = {}
     if not manifest_path.is_file():
         findings.append(
             _finding(
@@ -634,9 +642,31 @@ def capture_desktop_release(
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             manifest = {}
+        if not isinstance(manifest, dict):
+            manifest = {}
+            findings.append(
+                _finding(
+                    "desktop_release",
+                    "RELEASE_MANIFEST_STRUCTURE_INVALID",
+                    "Release manifest must be a JSON object.",
+                    "HIGH",
+                )
+            )
         manifest_version = str(manifest.get("version") or "")
         manifest_commit = str(manifest.get("source_commit") or "").lower()
-        listed = manifest.get("artifacts") or {}
+        listed = manifest.get("artifacts")
+        if listed is None:
+            listed = {}
+        if not isinstance(listed, dict):
+            listed = {}
+            findings.append(
+                _finding(
+                    "desktop_release",
+                    "RELEASE_MANIFEST_ARTIFACTS_INVALID",
+                    "Release manifest artifacts must be a hash mapping.",
+                    "HIGH",
+                )
+            )
         if not RELEASE_TAG_PATTERN.fullmatch(manifest_version):
             findings.append(
                 _finding(
@@ -655,6 +685,19 @@ def capture_desktop_release(
                     "HIGH",
                 )
             )
+        if (
+            expected_source_commit
+            and COMMIT_PATTERN.fullmatch(expected_source_commit)
+            and manifest_commit != expected_source_commit
+        ):
+            findings.append(
+                _finding(
+                    "desktop_release",
+                    "RELEASE_MANIFEST_SOURCE_MISMATCH",
+                    "Release manifest source does not match the approved checkout.",
+                    "CRITICAL",
+                )
+            )
         for relative, actual_hash in artifact_hashes.items():
             recorded_hash = str(listed.get(relative) or "").lower()
             if recorded_hash != actual_hash:
@@ -666,14 +709,59 @@ def capture_desktop_release(
                         "CRITICAL",
                     )
                 )
+        if source_root is not None:
+            materials = manifest.get("materials")
+            if materials is None:
+                materials = {}
+            if not isinstance(materials, dict):
+                materials = {}
+            for relative in build_release_metadata.RELEASE_MATERIALS:
+                material_path = source_root.resolve() / Path(relative)
+                recorded_hash = str(materials.get(relative) or "").lower()
+                if not material_path.is_file() or recorded_hash != _sha256(
+                    material_path
+                ):
+                    findings.append(
+                        _finding(
+                            "desktop_release",
+                            "RELEASE_MATERIAL_HASH_MISMATCH",
+                            f"Release material hash does not match {relative}.",
+                            "CRITICAL",
+                        )
+                    )
 
     sbom_path = resolved / "sbom.cdx.json"
     sbom_valid = False
+    sbom_identity_valid = False
     if sbom_path.is_file():
         try:
             sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
-            sbom_valid = sbom.get("bomFormat") == "CycloneDX" and bool(
-                sbom.get("specVersion")
+            if not isinstance(sbom, dict):
+                sbom = {}
+            sbom_components = sbom.get("components")
+            sbom_valid = (
+                sbom.get("bomFormat") == "CycloneDX"
+                and bool(sbom.get("specVersion"))
+                and isinstance(sbom_components, list)
+                and bool(sbom_components)
+            )
+            sbom_metadata = sbom.get("metadata")
+            sbom_application = (
+                sbom_metadata.get("component", {})
+                if isinstance(sbom_metadata, dict)
+                else {}
+            )
+            if not isinstance(sbom_application, dict):
+                sbom_application = {}
+            sbom_properties = {
+                str(item.get("name") or ""): str(item.get("value") or "")
+                for item in sbom_application.get("properties", [])
+                if isinstance(item, dict)
+            }
+            sbom_identity_valid = (
+                str(sbom_application.get("version") or "")
+                == str(manifest.get("product_version") or "")
+                and sbom_properties.get("mto:source-commit") == manifest_commit
             )
         except (OSError, json.JSONDecodeError):
             sbom_valid = False
@@ -686,6 +774,33 @@ def capture_desktop_release(
                 "MEDIUM",
             )
         )
+    elif manifest_path.is_file() and not sbom_identity_valid:
+        findings.append(
+            _finding(
+                "desktop_release",
+                "DESKTOP_SBOM_IDENTITY_MISMATCH",
+                "CycloneDX SBOM identity does not match the release manifest.",
+                "HIGH",
+            )
+        )
+    if sbom_valid and manifest_path.is_file():
+        listed = manifest.get("artifacts")
+        if listed is None:
+            listed = {}
+        recorded_sbom_hash = (
+            str(listed.get("sbom.cdx.json") or "").lower()
+            if isinstance(listed, dict)
+            else ""
+        )
+        if recorded_sbom_hash != _sha256(sbom_path):
+            findings.append(
+                _finding(
+                    "desktop_release",
+                    "RELEASE_SBOM_HASH_MISMATCH",
+                    "Release manifest hash does not match the CycloneDX SBOM.",
+                    "CRITICAL",
+                )
+            )
 
     return {
         "status": _status_for_findings(findings),
@@ -704,6 +819,7 @@ def capture_desktop_release(
             ),
         },
         "sbom_valid": sbom_valid,
+        "sbom_identity_valid": sbom_identity_valid,
         "findings": findings,
     }
 
@@ -752,10 +868,9 @@ def summarize_components(components: dict[str, dict]) -> tuple[str, list[dict]]:
 def capture_supply_chain(
     *, root: Path = PROJECT_ROOT, distribution: Path = DEFAULT_DISTRIBUTION
 ) -> dict:
+    source = _capture_component("source", lambda: capture_source_identity(root))
     components = {
-        "source": _capture_component(
-            "source", lambda: capture_source_identity(root)
-        ),
+        "source": source,
         "dependencies": _capture_component(
             "dependencies", lambda: capture_dependency_policy(root)
         ),
@@ -763,7 +878,12 @@ def capture_supply_chain(
             "release_controls", lambda: capture_release_controls(root)
         ),
         "desktop_release": _capture_component(
-            "desktop_release", lambda: capture_desktop_release(distribution)
+            "desktop_release",
+            lambda: capture_desktop_release(
+                distribution,
+                source_root=root,
+                expected_source_commit=source.get("commit_full"),
+            ),
         ),
     }
     status, findings = summarize_components(components)
