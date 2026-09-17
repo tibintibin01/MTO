@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from mto_version import PRODUCT_VERSION
 from utils.logger import mto_logger
 from backend.deps import limiter, user_limiter
 
@@ -250,7 +251,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Municipal Revenue System",
         description="Professional Enterprise API for Municipal Revenue Operations. Includes Property Assessment, Billing, and Collection management with high-entropy security controls.",
-        version="2.1.0",
+        version=PRODUCT_VERSION,
         lifespan=lifespan,
         contact={
             "name": "MTO IT Support",

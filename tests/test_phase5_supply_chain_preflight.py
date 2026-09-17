@@ -191,6 +191,30 @@ def test_source_identity_fails_closed_on_mutable_or_unapproved_source(tmp_path):
     }
 
 
+def test_source_identity_rejects_tag_that_differs_from_product_version(tmp_path):
+    responses = _source_responses()
+    responses[("tag", "--points-at", "HEAD", "--list", "v*")] = "v2.2.0"
+
+    result = preflight.capture_source_identity(
+        tmp_path, git_runner=_git_runner(responses)
+    )
+
+    assert result["status"] == "FAIL"
+    assert _codes(result) == {"RELEASE_TAG_VERSION_MISMATCH"}
+
+
+def test_source_identity_rejects_multiple_product_version_tags(tmp_path):
+    responses = _source_responses()
+    responses[("tag", "--points-at", "HEAD", "--list", "v*")] = "v2.1.0\nv2.2.0"
+
+    result = preflight.capture_source_identity(
+        tmp_path, git_runner=_git_runner(responses)
+    )
+
+    assert result["status"] == "FAIL"
+    assert _codes(result) == {"IMMUTABLE_RELEASE_TAG_AMBIGUOUS"}
+
+
 def test_dependency_findings_are_privacy_safe(monkeypatch, tmp_path):
     secret_path = tmp_path / "private" / "requirements.txt"
     monkeypatch.setattr(

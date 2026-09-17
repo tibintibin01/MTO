@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # Client-side System Service (Thin Client)
 from api_clients.api_helper import api_request
+from mto_version import API_VERSION, MIN_CLIENT_VERSION
 
 
 def get_dashboard_summary():
@@ -83,7 +84,7 @@ def get_api_version():
         return None
 
 
-def check_version_compatibility(client_version: str = "1.0") -> dict:
+def check_version_compatibility(client_version: str = API_VERSION) -> dict:
     """
     Checks if this client version is compatible with the running server.
     Returns {"compatible": True/False, "server_version": "x.y", "message": "..."}
@@ -92,8 +93,8 @@ def check_version_compatibility(client_version: str = "1.0") -> dict:
     if not info:
         return {"compatible": True, "server_version": "unknown", "message": ""}
 
-    server_version = info.get("api_version", "1.0")
-    min_client = info.get("min_client_version", "1.0")
+    server_version = info.get("api_version", API_VERSION)
+    min_client = info.get("min_client_version", MIN_CLIENT_VERSION)
 
     # Simple major.minor comparison
     def _ver(v):

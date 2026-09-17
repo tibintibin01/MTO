@@ -13,8 +13,8 @@ import hashlib
 import json
 import os
 import re
+import runpy
 import subprocess
-import sys
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -23,7 +23,16 @@ from typing import Callable
 from urllib.parse import quote
 
 
+def _load_product_version(root: Path) -> str:
+    namespace = runpy.run_path(str(root / "mto_version.py"))
+    version = str(namespace.get("PRODUCT_VERSION") or "")
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise RuntimeError("AUTHORITATIVE_PRODUCT_VERSION_INVALID")
+    return version
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PRODUCT_VERSION = _load_product_version(PROJECT_ROOT)
 PRIMARY_BRANCH = "master"
 EXPECTED_ORIGIN = "https://github.com/tibintibin01/MTO.git"
 RELEASE_TAG_PATTERN = re.compile(r"^v\d+\.\d+\.\d+$")
@@ -36,6 +45,8 @@ REQUIRED_ARTIFACTS = (
     "installer/MTO_Treasury_Setup.exe",
 )
 RELEASE_MATERIALS = (
+    "pyproject.toml",
+    "mto_version.py",
     "requirements.txt",
     "requirements.lock",
     "dev-requirements.txt",
@@ -135,6 +146,8 @@ def capture_release_identity(
         failures.append("SOURCE_NOT_APPROVED_REMOTE_HEAD")
     if len(release_tags) != 1:
         failures.append("SOURCE_REQUIRES_ONE_RELEASE_TAG")
+    elif release_tags[0] != f"v{PRODUCT_VERSION}":
+        failures.append("SOURCE_RELEASE_TAG_VERSION_MISMATCH")
     if not commit_time_utc:
         failures.append("SOURCE_COMMIT_TIME_MISSING")
     if failures:
@@ -145,7 +158,7 @@ def capture_release_identity(
         "branch": branch or "DETACHED",
         "source_commit": head,
         "release_tag": release_tag,
-        "product_version": release_tag[1:],
+        "product_version": PRODUCT_VERSION,
         "commit_time_utc": commit_time_utc,
         "origin_approved": True,
         "remote_tracking_match": True,

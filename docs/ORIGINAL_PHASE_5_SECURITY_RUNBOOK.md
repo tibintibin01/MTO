@@ -11,6 +11,23 @@ The gate does not fetch source, build binaries, install packages, sign files,
 start or stop services, change configuration, run migrations, or alter business
 data. Its only optional write is a privacy-safe JSON report.
 
+## Authoritative release identity
+
+`mto_version.py` is the single source for the product version and the API
+compatibility contract. `PRODUCT_VERSION` is the application, package, build,
+installer, manifest, SBOM, and production-tag version. Production tags must be
+exactly `v<PRODUCT_VERSION>`; the release metadata and supply-chain gates fail
+closed when they differ.
+
+`API_VERSION` and `MIN_CLIENT_VERSION` are protocol compatibility values. They
+must not be changed merely because the product receives a normal patch or minor
+release. Change them only when the server/client compatibility contract changes.
+
+For a future release, update `PRODUCT_VERSION` in `mto_version.py`, complete the
+reviewed build and test workflow, merge that change to `master`, and only then
+create the matching immutable semantic tag. Do not create or move a production
+tag to compensate for inconsistent source metadata.
+
 ## Scope of this preflight
 
 The preflight verifies four independent components:

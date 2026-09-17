@@ -11,8 +11,8 @@ COMMIT = "a" * 40
 IDENTITY = {
     "branch": "master",
     "source_commit": COMMIT,
-    "release_tag": "v2.2.0",
-    "product_version": "2.2.0",
+    "release_tag": "v2.1.0",
+    "product_version": "2.1.0",
     "commit_time_utc": "2026-09-17T08:00:00+00:00",
     "origin_approved": True,
     "remote_tracking_match": True,
@@ -26,7 +26,7 @@ def _identity_responses() -> dict[tuple[str, ...], str]:
         ("status", "--porcelain", "--untracked-files=all"): "",
         ("remote", "get-url", "origin"): metadata.EXPECTED_ORIGIN,
         ("rev-parse", "refs/remotes/origin/master"): COMMIT,
-        ("tag", "--points-at", "HEAD", "--list", "v*"): "v2.2.0",
+        ("tag", "--points-at", "HEAD", "--list", "v*"): "v2.1.0",
         ("show", "-s", "--format=%cI", "HEAD"): IDENTITY["commit_time_utc"],
     }
 
@@ -98,6 +98,19 @@ def test_prerelease_tag_is_not_accepted_for_production_installer(tmp_path):
         )
 
 
+def test_release_tag_must_match_authoritative_product_version(tmp_path):
+    responses = _identity_responses()
+    responses[("tag", "--points-at", "HEAD", "--list", "v*")] = "v2.2.0"
+
+    with pytest.raises(
+        metadata.ReleaseIdentityError,
+        match="SOURCE_RELEASE_TAG_VERSION_MISMATCH",
+    ):
+        metadata.capture_release_identity(
+            tmp_path, git_runner=_git_runner(responses)
+        )
+
+
 @pytest.mark.parametrize(
     ("key", "value", "code"),
     [
@@ -163,7 +176,7 @@ def test_release_metadata_is_deterministic_and_hashes_every_artifact(tmp_path):
     assert first["artifact_count"] == second["artifact_count"] == 5
     manifest = json.loads(first_manifest)
     sbom = json.loads(first_sbom)
-    assert manifest["version"] == "v2.2.0"
+    assert manifest["version"] == "v2.1.0"
     assert manifest["source_commit"] == COMMIT
     for relative in metadata.REQUIRED_ARTIFACTS:
         assert manifest["artifacts"][relative] == _sha256(

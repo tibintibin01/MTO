@@ -307,15 +307,30 @@ def validate_repository(
                 "requires-python must be >=3.11",
             )
         )
-    if project.get("dynamic") != ["dependencies"] or "dependencies" in project:
+    dynamic_fields = project.get("dynamic")
+    if (
+        not isinstance(dynamic_fields, list)
+        or len(dynamic_fields) != 2
+        or set(dynamic_fields) != {"version", "dependencies"}
+        or "version" in project
+        or "dependencies" in project
+    ):
         findings.append(
             finding(
                 "PYTHON_DUPLICATE_MANIFEST",
                 pyproject_path,
-                "dependencies must load only from requirements.txt",
+                "version and dependencies must use only their approved dynamic sources",
             )
         )
     dynamic = pyproject.get("tool", {}).get("setuptools", {}).get("dynamic", {})
+    if dynamic.get("version", {}).get("attr") != "mto_version.PRODUCT_VERSION":
+        findings.append(
+            finding(
+                "PYTHON_DYNAMIC_VERSION",
+                pyproject_path,
+                "setuptools version must load from mto_version.PRODUCT_VERSION",
+            )
+        )
     if dynamic.get("dependencies", {}).get("file") != ["requirements.txt"]:
         findings.append(
             finding(

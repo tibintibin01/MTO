@@ -4,16 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mto-treasury"
-version = "1.0.0"
 description = "Municipal Treasury Office System"
 readme = "README.md"
 requires-python = ">=3.11"
-dynamic = ["dependencies"]
+dynamic = ["version", "dependencies"]
 
 [tool.setuptools]
-py-modules = ["migration_manager", "database_hardening_tool"]
+py-modules = ["migration_manager", "database_hardening_tool", "mto_version"]
 
 [tool.setuptools.dynamic]
+version = { attr = "mto_version.PRODUCT_VERSION" }
 dependencies = { file = ["requirements.txt"] }
 
 [tool.setuptools.packages.find]

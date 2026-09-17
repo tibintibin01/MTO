@@ -22,8 +22,8 @@ from typing import Callable
 
 from scripts import build_release_metadata, check_dependency_policy
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PRODUCT_VERSION = build_release_metadata.PRODUCT_VERSION
 DEFAULT_DISTRIBUTION = PROJECT_ROOT / "dist"
 DEFAULT_REPORT = (
     PROJECT_ROOT / "logs" / "remediation-original-phase-5-supply-chain.json"
@@ -205,6 +205,24 @@ def capture_source_identity(
                 "HIGH",
             )
         )
+    elif len(valid_release_tags) != 1:
+        findings.append(
+            _finding(
+                "source",
+                "IMMUTABLE_RELEASE_TAG_AMBIGUOUS",
+                "The release commit has more than one production version tag.",
+                "HIGH",
+            )
+        )
+    elif valid_release_tags[0] != f"v{PRODUCT_VERSION}":
+        findings.append(
+            _finding(
+                "source",
+                "RELEASE_TAG_VERSION_MISMATCH",
+                "The release tag does not match the authoritative product version.",
+                "HIGH",
+            )
+        )
 
     return {
         "status": _status_for_findings(findings),
@@ -217,6 +235,7 @@ def capture_source_identity(
         ),
         "remote_tracking_match": head == remote_head,
         "release_tags": valid_release_tags,
+        "product_version": PRODUCT_VERSION,
         "findings": findings,
     }
 

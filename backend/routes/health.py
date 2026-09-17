@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
 from backend.deps import admin_only, get_db, Session
+from mto_version import API_VERSION, MIN_CLIENT_VERSION, PRODUCT_NAME, PRODUCT_VERSION
 
 router = APIRouter(tags=["Health"])
 
@@ -171,9 +172,9 @@ def get_worker_health(current_user: dict = Depends(admin_only)):
 async def api_version():
     """Returns the current API version and build info."""
     return {
-        "api_version": "1.0",
-        "min_client_version": "1.0",
-        "app_name": "MTO Treasury System",
-        "app_version": "2.1.0",
+        "api_version": API_VERSION,
+        "min_client_version": MIN_CLIENT_VERSION,
+        "app_name": PRODUCT_NAME,
+        "app_version": PRODUCT_VERSION,
         "status": "online",
     }
