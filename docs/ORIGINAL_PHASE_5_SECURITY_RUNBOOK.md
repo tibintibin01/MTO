@@ -103,6 +103,39 @@ self-signed certificate must not be treated as enterprise production trust.
 The preflight reports only signature status, a shortened certificate
 thumbprint, and certificate expiry. It never reports or copies private keys.
 
+## Read-only code-signing readiness gate
+
+Before provisioning or using a production signing identity, run the dedicated
+builder-readiness gate on the Windows workstation that will create the release:
+
+```bat
+cd /d C:\mto
+call venv\Scripts\activate
+set MTO_CODE_SIGNING_CERT_THUMBPRINT=<approved-certificate-thumbprint>
+python -m scripts.phase5_signing_readiness --require-ready --confirm-managed-key-custody --output logs\remediation-original-phase-5-signing-readiness.json
+echo Exit code: %ERRORLEVEL%
+```
+
+The command requires a 64-bit Python 3.11 build runtime, Windows SDK
+`signtool.exe`, Inno Setup 6, one selected trusted certificate with an
+accessible private key and Code Signing EKU, at least 90 days of certificate
+validity, a safe HTTPS timestamp endpoint, and an explicit operator attestation
+that private-key custody meets the approved policy. The attestation switch must
+be used only after the certificate custodian confirms hardware-backed,
+non-exportable, or equivalently controlled key custody.
+
+The gate is read-only except for its privacy-safe JSON report. It does not
+install tools, import or export a certificate, access or reveal private-key
+material, sign an artifact, call the timestamp service, create a Git tag, or
+change any server or database state. The full certificate thumbprint is used
+only for the local Windows certificate-store lookup and is never written to the
+report; output contains only a shortened identifier.
+
+Exit codes are `0` for ready, `4` for manual review when strict mode is not
+requested, and `2` for a failed or not-yet-ready strict gate. A failed gate is
+readiness evidence, not authorization to install a tool or provision a signing
+certificate. Those actions require separate explicit approval.
+
 ## Acceptance criteria
 
 Phase 5 supply-chain closure requires all of the following:
