@@ -1,11 +1,11 @@
 import hashlib
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from scripts import phase5_supply_chain_preflight as preflight
-
 
 APPROVED_ORIGIN = "https://github.com/tibintibin01/MTO.git"
 COMMIT = "a" * 40
@@ -93,9 +93,7 @@ jobs:
     (workflow / "deploy.yml").write_text(deploy, encoding="utf-8")
     (root / "build_pyinstaller.ps1").write_text(build, encoding="utf-8")
     (root / "build_installer.ps1").write_text(installer_build, encoding="utf-8")
-    (installer_dir / "MTO_Treasury_Setup.iss").write_text(
-        installer, encoding="utf-8"
-    )
+    (installer_dir / "MTO_Treasury_Setup.iss").write_text(installer, encoding="utf-8")
     (root / "update_mto.bat").write_text(updater, encoding="utf-8")
 
 
@@ -110,9 +108,7 @@ def _write_release_package(root: Path) -> None:
     (root / "certificates" / "mto-lan-ca.pem").write_text(
         "PUBLIC CERTIFICATE ONLY", encoding="utf-8"
     )
-    (root / "installer" / "MTO_Treasury_Setup.exe").write_bytes(
-        b"installer-binary"
-    )
+    (root / "installer" / "MTO_Treasury_Setup.exe").write_bytes(b"installer-binary")
     (root / "server_config.json").write_text(
         json.dumps(
             {
@@ -130,9 +126,7 @@ def _write_release_package(root: Path) -> None:
                 "metadata": {
                     "component": {
                         "version": "2.1.0",
-                        "properties": [
-                            {"name": "mto:source-commit", "value": COMMIT}
-                        ],
+                        "properties": [{"name": "mto:source-commit", "value": COMMIT}],
                     }
                 },
                 "components": [{"name": "requests", "version": "2.34.2"}],
@@ -156,6 +150,25 @@ def _write_release_package(root: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _write_risk_acceptance(root: Path, **overrides) -> Path:
+    record = {
+        "format_version": 1,
+        "risk_id": preflight.UNSIGNED_INTERNAL_RISK_ID,
+        "status": "APPROVED",
+        "distribution_scope": "INTERNAL_MUNICIPAL_ONLY",
+        "effective_date": "2026-09-21",
+        "review_due_date": "2027-03-20",
+        "approved_by_role": "MTO system owner",
+        "approval_reference": "MTO-ORIGINAL-PHASE-5-EXCEPTION-2026-09-21",
+        "waived_findings": sorted(preflight.UNSIGNED_INTERNAL_WAIVED_FINDINGS),
+        "required_controls": sorted(preflight.UNSIGNED_INTERNAL_REQUIRED_CONTROLS),
+    }
+    record.update(overrides)
+    path = root / "risk-acceptance.json"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    return path
 
 
 def test_source_identity_passes_for_clean_tagged_remote_head(tmp_path):
@@ -316,6 +329,222 @@ def test_desktop_release_detects_tampering_and_private_material(tmp_path):
         "RELEASE_ARTIFACT_HASH_MISMATCH",
         "AUTHENTICODE_SIGNATURE_INVALID",
     }.issubset(_codes(result))
+
+
+def test_internal_unsigned_risk_acceptance_is_explicit_and_time_bounded(tmp_path):
+    path = _write_risk_acceptance(tmp_path)
+
+    result = preflight.capture_unsigned_internal_risk_acceptance(
+        path,
+        distribution_scope=preflight.INTERNAL_MUNICIPAL_SCOPE,
+        current_date=date(2026, 9, 21),
+    )
+
+    assert result["status"] == "PASS"
+    assert result["active"] is True
+    assert result["review_due_date"] == "2027-03-20"
+    assert result["record_sha256"] == _sha256(path)
+
+
+@pytest.mark.parametrize(
+    ("scope", "overrides", "today", "code"),
+    [
+        (
+            preflight.SIGNED_PRODUCTION_SCOPE,
+            {},
+            date(2026, 9, 21),
+            "RISK_EXCEPTION_SCOPE_INVALID",
+        ),
+        (
+            preflight.INTERNAL_MUNICIPAL_SCOPE,
+            {"review_due_date": "2026-09-20"},
+            date(2026, 9, 21),
+            "RISK_ACCEPTANCE_EXPIRED",
+        ),
+        (
+            preflight.INTERNAL_MUNICIPAL_SCOPE,
+            {"review_due_date": "2027-09-21"},
+            date(2026, 9, 21),
+            "RISK_ACCEPTANCE_WINDOW_INVALID",
+        ),
+        (
+            preflight.INTERNAL_MUNICIPAL_SCOPE,
+            {"required_controls": []},
+            date(2026, 9, 21),
+            "RISK_ACCEPTANCE_CONTROLS_INCOMPLETE",
+        ),
+    ],
+)
+def test_internal_unsigned_risk_acceptance_fails_closed(
+    tmp_path, scope, overrides, today, code
+):
+    path = _write_risk_acceptance(tmp_path, **overrides)
+
+    result = preflight.capture_unsigned_internal_risk_acceptance(
+        path, distribution_scope=scope, current_date=today
+    )
+
+    assert result["status"] == "FAIL"
+    assert result["active"] is False
+    assert code in _codes(result)
+
+
+def test_valid_exception_waives_only_invalid_authenticode_signatures(tmp_path):
+    acceptance = preflight.capture_unsigned_internal_risk_acceptance(
+        _write_risk_acceptance(tmp_path),
+        distribution_scope=preflight.INTERNAL_MUNICIPAL_SCOPE,
+        current_date=date(2026, 9, 21),
+    )
+    desktop = {
+        "status": "FAIL",
+        "findings": [
+            preflight._finding(
+                "desktop_release",
+                "AUTHENTICODE_SIGNATURE_INVALID",
+                "Authenticode signature is not valid for Treasury.exe.",
+                "HIGH",
+            ),
+            preflight._finding(
+                "desktop_release",
+                "RELEASE_ARTIFACT_HASH_MISMATCH",
+                "Release artifact hash does not match Treasury.exe.",
+                "CRITICAL",
+            ),
+        ],
+    }
+
+    result = preflight.apply_unsigned_internal_risk_exception(desktop, acceptance)
+
+    assert result["accepted_risk_count"] == 1
+    assert result["status"] == "FAIL"
+    assert "AUTHENTICODE_SIGNATURE_INVALID" not in _codes(result)
+    assert "AUTHENTICODE_SIGNATURE_RISK_ACCEPTED" in _codes(result)
+    assert "RELEASE_ARTIFACT_HASH_MISMATCH" in _codes(result)
+
+
+def test_exception_does_not_waive_unavailable_signature_verification(tmp_path):
+    acceptance = preflight.capture_unsigned_internal_risk_acceptance(
+        _write_risk_acceptance(tmp_path),
+        distribution_scope=preflight.INTERNAL_MUNICIPAL_SCOPE,
+        current_date=date(2026, 9, 21),
+    )
+    desktop = {
+        "status": "FAIL",
+        "findings": [
+            preflight._finding(
+                "desktop_release",
+                "AUTHENTICODE_CHECK_UNAVAILABLE",
+                "Authenticode verification was unavailable.",
+                "HIGH",
+            )
+        ],
+    }
+
+    result = preflight.apply_unsigned_internal_risk_exception(desktop, acceptance)
+
+    assert result["status"] == "FAIL"
+    assert result["accepted_risk_count"] == 0
+    assert "AUTHENTICODE_CHECK_UNAVAILABLE" in _codes(result)
+
+
+def test_supply_chain_reports_pass_with_accepted_risk(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        preflight,
+        "capture_source_identity",
+        lambda _root: {"status": "PASS", "commit_full": COMMIT, "findings": []},
+    )
+    monkeypatch.setattr(
+        preflight,
+        "capture_dependency_policy",
+        lambda _root: {"status": "PASS", "findings": []},
+    )
+    monkeypatch.setattr(
+        preflight,
+        "capture_release_controls",
+        lambda _root: {"status": "PASS", "findings": []},
+    )
+    monkeypatch.setattr(
+        preflight,
+        "capture_desktop_release",
+        lambda *_args, **_kwargs: {
+            "status": "FAIL",
+            "findings": [
+                preflight._finding(
+                    "desktop_release",
+                    "AUTHENTICODE_SIGNATURE_INVALID",
+                    "Authenticode signature is not valid for Treasury.exe.",
+                    "HIGH",
+                ),
+                preflight._finding(
+                    "desktop_release",
+                    "AUTHENTICODE_SIGNATURE_INVALID",
+                    "Authenticode signature is not valid for MTO_Treasury_Setup.exe.",
+                    "HIGH",
+                ),
+            ],
+        },
+    )
+
+    result = preflight.capture_supply_chain(
+        root=tmp_path,
+        distribution=tmp_path,
+        distribution_scope=preflight.INTERNAL_MUNICIPAL_SCOPE,
+        risk_acceptance=_write_risk_acceptance(tmp_path),
+        current_date=date(2026, 9, 21),
+    )
+
+    assert result["status"] == "PASS"
+    assert result["certification_status"] == "PASS_WITH_ACCEPTED_RISK"
+    assert result["accepted_risk_count"] == 2
+    assert result["components"]["risk_acceptance"]["active"] is True
+    assert _codes(result) == {"AUTHENTICODE_SIGNATURE_RISK_ACCEPTED"}
+
+
+def test_supply_chain_rejects_expired_exception(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        preflight,
+        "capture_source_identity",
+        lambda _root: {"status": "PASS", "commit_full": COMMIT, "findings": []},
+    )
+    monkeypatch.setattr(
+        preflight,
+        "capture_dependency_policy",
+        lambda _root: {"status": "PASS", "findings": []},
+    )
+    monkeypatch.setattr(
+        preflight,
+        "capture_release_controls",
+        lambda _root: {"status": "PASS", "findings": []},
+    )
+    monkeypatch.setattr(
+        preflight,
+        "capture_desktop_release",
+        lambda *_args, **_kwargs: {
+            "status": "FAIL",
+            "findings": [
+                preflight._finding(
+                    "desktop_release",
+                    "AUTHENTICODE_SIGNATURE_INVALID",
+                    "Authenticode signature is not valid for Treasury.exe.",
+                    "HIGH",
+                )
+            ],
+        },
+    )
+
+    result = preflight.capture_supply_chain(
+        root=tmp_path,
+        distribution=tmp_path,
+        distribution_scope=preflight.INTERNAL_MUNICIPAL_SCOPE,
+        risk_acceptance=_write_risk_acceptance(tmp_path, review_due_date="2026-09-20"),
+        current_date=date(2026, 9, 21),
+    )
+
+    assert result["status"] == "FAIL"
+    assert result["certification_status"] == "FAIL"
+    assert result["accepted_risk_count"] == 0
+    assert "AUTHENTICODE_SIGNATURE_INVALID" in _codes(result)
+    assert "RISK_ACCEPTANCE_EXPIRED" in _codes(result)
 
 
 def test_desktop_release_requires_manifest_and_sbom(tmp_path):

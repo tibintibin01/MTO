@@ -207,6 +207,21 @@ Do not store a certificate password, private key, PFX, or thumbprint override in
 Git. The signing certificate must be separately approved and provisioned before
 the production build is authorized.
 
+### Temporary unsigned internal-only exception
+
+When a public code-signing identity is not available, the separately approved,
+expiring exception in
+`docs/ORIGINAL_PHASE_5_UNSIGNED_INTERNAL_ONLY_RISK_EXCEPTION.md` may be used
+only for controlled municipal computers. It does not turn an unsigned artifact
+into a signed artifact and it does not permit public distribution. The operator
+must explicitly provide both `--distribution-scope internal-municipal` and the
+validated acceptance record. Only `AUTHENTICODE_SIGNATURE_INVALID` is waived;
+all identity, manifest, SBOM, hash, private-material, dependency, TLS, database,
+audit, and runtime gates remain fail-closed.
+
+An accepted package reports `PASS_WITH_ACCEPTED_RISK`. The default command and
+the default updater path still require valid Authenticode signatures.
+
 ## Immutable production updater
 
 `update_mto.bat` no longer pulls mutable `master`. It requires an explicitly

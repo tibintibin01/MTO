@@ -16,7 +16,7 @@ import os
 import re
 import subprocess
 import tempfile
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -42,6 +42,23 @@ REQUIRED_RELEASE_ARTIFACTS = (
     "installer/MTO_Treasury_Setup.exe",
 )
 FORBIDDEN_ARTIFACT_SUFFIXES = frozenset({".key", ".p12", ".pfx"})
+SIGNED_PRODUCTION_SCOPE = "signed-production"
+INTERNAL_MUNICIPAL_SCOPE = "internal-municipal"
+UNSIGNED_INTERNAL_RISK_ID = "MTO-ORIGINAL-PHASE-5-UNSIGNED-INTERNAL-ONLY"
+UNSIGNED_INTERNAL_RISK_MAX_DAYS = 180
+UNSIGNED_INTERNAL_WAIVED_FINDINGS = frozenset({"AUTHENTICODE_SIGNATURE_INVALID"})
+UNSIGNED_INTERNAL_REQUIRED_CONTROLS = frozenset(
+    {
+        "CONTROLLED_INTERNAL_DISTRIBUTION",
+        "IMMUTABLE_TAGGED_SOURCE",
+        "MANIFEST_SHA256_VERIFICATION",
+        "CYCLONEDX_SBOM",
+        "MALWARE_SCAN_BEFORE_INSTALL",
+        "DO_NOT_DISABLE_WINDOWS_SECURITY",
+        "UNSIGNED_STATUS_DISCLOSED",
+        "EXPIRING_REVIEW",
+    }
+)
 
 
 def _finding(component: str, code: str, detail: str, severity: str) -> dict:
@@ -505,9 +522,7 @@ def capture_release_controls(root: Path = PROJECT_ROOT) -> dict:
             token in complete_updater
             for token in ("--require-hashes", "requirements.lock")
         ),
-        "authenticated_readiness_present": (
-            "wait_for_mto_api.ps1" in complete_updater
-        ),
+        "authenticated_readiness_present": ("wait_for_mto_api.ps1" in complete_updater),
         "finding_count": len(findings),
         "findings": findings,
     }
@@ -864,6 +879,219 @@ def capture_desktop_release(
     }
 
 
+def capture_unsigned_internal_risk_acceptance(
+    path: Path | None,
+    *,
+    distribution_scope: str,
+    current_date: date | None = None,
+) -> dict:
+    """Validate the narrow, expiring unsigned internal-release exception."""
+    findings: list[dict] = []
+    resolved = path.resolve() if path is not None else None
+    record: dict = {}
+
+    if distribution_scope != INTERNAL_MUNICIPAL_SCOPE:
+        findings.append(
+            _finding(
+                "risk_acceptance",
+                "RISK_EXCEPTION_SCOPE_INVALID",
+                "The unsigned exception is valid only for internal municipal distribution.",
+                "HIGH",
+            )
+        )
+    if resolved is None or not resolved.is_file():
+        findings.append(
+            _finding(
+                "risk_acceptance",
+                "RISK_ACCEPTANCE_RECORD_MISSING",
+                "The explicit unsigned internal-only risk acceptance record is missing.",
+                "HIGH",
+            )
+        )
+    else:
+        try:
+            loaded = json.loads(resolved.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                record = loaded
+            else:
+                raise ValueError("record must be an object")
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+            findings.append(
+                _finding(
+                    "risk_acceptance",
+                    "RISK_ACCEPTANCE_RECORD_INVALID",
+                    "The risk acceptance record is not valid JSON governance data.",
+                    "HIGH",
+                )
+            )
+
+    effective: date | None = None
+    review_due: date | None = None
+    if record:
+        expected_values = {
+            "format_version": 1,
+            "risk_id": UNSIGNED_INTERNAL_RISK_ID,
+            "status": "APPROVED",
+            "distribution_scope": "INTERNAL_MUNICIPAL_ONLY",
+        }
+        for field, expected in expected_values.items():
+            if record.get(field) != expected:
+                findings.append(
+                    _finding(
+                        "risk_acceptance",
+                        "RISK_ACCEPTANCE_IDENTITY_INVALID",
+                        f"Risk acceptance field {field} does not match the approved policy.",
+                        "HIGH",
+                    )
+                )
+
+        try:
+            effective = date.fromisoformat(str(record.get("effective_date") or ""))
+            review_due = date.fromisoformat(str(record.get("review_due_date") or ""))
+        except ValueError:
+            findings.append(
+                _finding(
+                    "risk_acceptance",
+                    "RISK_ACCEPTANCE_DATES_INVALID",
+                    "Risk acceptance effective and review dates must use ISO dates.",
+                    "HIGH",
+                )
+            )
+        if effective is not None and review_due is not None:
+            duration = (review_due - effective).days
+            today = current_date or datetime.now(timezone.utc).date()
+            if duration <= 0 or duration > UNSIGNED_INTERNAL_RISK_MAX_DAYS:
+                findings.append(
+                    _finding(
+                        "risk_acceptance",
+                        "RISK_ACCEPTANCE_WINDOW_INVALID",
+                        "The unsigned exception must expire within 180 days.",
+                        "HIGH",
+                    )
+                )
+            if today < effective:
+                findings.append(
+                    _finding(
+                        "risk_acceptance",
+                        "RISK_ACCEPTANCE_NOT_YET_EFFECTIVE",
+                        "The unsigned exception is not yet effective.",
+                        "HIGH",
+                    )
+                )
+            if today > review_due:
+                findings.append(
+                    _finding(
+                        "risk_acceptance",
+                        "RISK_ACCEPTANCE_EXPIRED",
+                        "The unsigned internal-only exception has expired.",
+                        "HIGH",
+                    )
+                )
+
+        waived = record.get("waived_findings")
+        if not isinstance(waived, list) or set(map(str, waived)) != set(
+            UNSIGNED_INTERNAL_WAIVED_FINDINGS
+        ):
+            findings.append(
+                _finding(
+                    "risk_acceptance",
+                    "RISK_ACCEPTANCE_WAIVER_INVALID",
+                    "The record may waive only invalid Authenticode signatures.",
+                    "HIGH",
+                )
+            )
+        controls = record.get("required_controls")
+        if not isinstance(
+            controls, list
+        ) or not UNSIGNED_INTERNAL_REQUIRED_CONTROLS.issubset(set(map(str, controls))):
+            findings.append(
+                _finding(
+                    "risk_acceptance",
+                    "RISK_ACCEPTANCE_CONTROLS_INCOMPLETE",
+                    "The record does not require every compensating control.",
+                    "HIGH",
+                )
+            )
+        role = str(record.get("approved_by_role") or "").strip()
+        reference = str(record.get("approval_reference") or "").strip()
+        if (
+            not role
+            or len(role) > 80
+            or not re.fullmatch(r"[A-Z0-9][A-Z0-9._:-]{7,100}", reference)
+        ):
+            findings.append(
+                _finding(
+                    "risk_acceptance",
+                    "RISK_ACCEPTANCE_APPROVAL_INVALID",
+                    "The approving role or approval reference is missing or invalid.",
+                    "HIGH",
+                )
+            )
+
+    active = not findings
+    return {
+        "status": "PASS" if active else "FAIL",
+        "active": active,
+        "risk_id": (
+            UNSIGNED_INTERNAL_RISK_ID
+            if record.get("risk_id") == UNSIGNED_INTERNAL_RISK_ID
+            else None
+        ),
+        "record_sha256": _sha256(resolved) if resolved and resolved.is_file() else None,
+        "effective_date": effective.isoformat() if effective else None,
+        "review_due_date": review_due.isoformat() if review_due else None,
+        "waived_findings": sorted(UNSIGNED_INTERNAL_WAIVED_FINDINGS) if active else [],
+        "required_control_count": (
+            len(UNSIGNED_INTERNAL_REQUIRED_CONTROLS) if active else 0
+        ),
+        "findings": findings,
+    }
+
+
+def apply_unsigned_internal_risk_exception(
+    desktop_release: dict, risk_acceptance: dict
+) -> dict:
+    """Accept only unsigned-artifact findings under a validated exception."""
+    result = dict(desktop_release)
+    findings = list(desktop_release.get("findings") or [])
+    if not risk_acceptance.get("active"):
+        result["accepted_findings"] = []
+        result["accepted_risk_count"] = 0
+        return result
+
+    retained: list[dict] = []
+    accepted: list[dict] = []
+    for item in findings:
+        if (
+            str(item.get("component") or "") == "desktop_release"
+            and str(item.get("code") or "") in UNSIGNED_INTERNAL_WAIVED_FINDINGS
+        ):
+            accepted.append(
+                {
+                    "code": str(item.get("code")),
+                    "detail": str(item.get("detail") or "Unsigned artifact."),
+                }
+            )
+        else:
+            retained.append(item)
+
+    if accepted:
+        retained.append(
+            _finding(
+                "desktop_release",
+                "AUTHENTICODE_SIGNATURE_RISK_ACCEPTED",
+                "Unsigned executable and installer artifacts are accepted only for "
+                f"controlled internal municipal use through {risk_acceptance['review_due_date']}.",
+                "LOW",
+            )
+        )
+    result["findings"] = retained
+    result["status"] = _status_for_findings(retained)
+    result["accepted_findings"] = accepted
+    result["accepted_risk_count"] = len(accepted)
+    return result
+
+
 def _normalized_findings(components: dict[str, dict]) -> list[dict]:
     normalized: list[dict] = []
     for component_name, component in components.items():
@@ -906,7 +1134,12 @@ def summarize_components(components: dict[str, dict]) -> tuple[str, list[dict]]:
 
 
 def capture_supply_chain(
-    *, root: Path = PROJECT_ROOT, distribution: Path = DEFAULT_DISTRIBUTION
+    *,
+    root: Path = PROJECT_ROOT,
+    distribution: Path = DEFAULT_DISTRIBUTION,
+    distribution_scope: str = SIGNED_PRODUCTION_SCOPE,
+    risk_acceptance: Path | None = None,
+    current_date: date | None = None,
 ) -> dict:
     source = _capture_component("source", lambda: capture_source_identity(root))
     components = {
@@ -926,15 +1159,39 @@ def capture_supply_chain(
             ),
         ),
     }
+    if risk_acceptance is not None or distribution_scope == INTERNAL_MUNICIPAL_SCOPE:
+        acceptance = _capture_component(
+            "risk_acceptance",
+            lambda: capture_unsigned_internal_risk_acceptance(
+                risk_acceptance,
+                distribution_scope=distribution_scope,
+                current_date=current_date,
+            ),
+        )
+        components["risk_acceptance"] = acceptance
+        components["desktop_release"] = apply_unsigned_internal_risk_exception(
+            components["desktop_release"], acceptance
+        )
     status, findings = summarize_components(components)
+    accepted_risk_count = int(
+        components["desktop_release"].get("accepted_risk_count") or 0
+    )
+    certification_status = (
+        "PASS_WITH_ACCEPTED_RISK"
+        if status == "PASS" and accepted_risk_count
+        else status
+    )
     return {
         "format_version": FORMAT_VERSION,
         "report_type": REPORT_TYPE,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "status": status,
+        "certification_status": certification_status,
+        "distribution_scope": distribution_scope,
         "components": components,
         "finding_count": len(findings),
         "findings": findings,
+        "accepted_risk_count": accepted_risk_count,
     }
 
 
@@ -972,17 +1229,40 @@ def main(argv: list[str] | None = None) -> int:
         help="Require every source, dependency, release, and artifact gate to pass.",
     )
     parser.add_argument("--distribution", type=Path, default=DEFAULT_DISTRIBUTION)
+    parser.add_argument(
+        "--distribution-scope",
+        choices=(SIGNED_PRODUCTION_SCOPE, INTERNAL_MUNICIPAL_SCOPE),
+        default=SIGNED_PRODUCTION_SCOPE,
+        help="Use internal-municipal only with an explicitly approved risk record.",
+    )
+    parser.add_argument(
+        "--risk-acceptance",
+        type=Path,
+        help="Validated, expiring governance record for an unsigned internal release.",
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_REPORT)
     args = parser.parse_args(argv)
 
-    report = capture_supply_chain(distribution=args.distribution)
+    report = capture_supply_chain(
+        distribution=args.distribution,
+        distribution_scope=args.distribution_scope,
+        risk_acceptance=args.risk_acceptance,
+    )
     report["require_ready"] = bool(args.require_ready)
     destination = write_report(report, args.output)
 
     print("ORIGINAL PHASE 5 SUPPLY-CHAIN PREFLIGHT")
     for name, component in report["components"].items():
         print(f"- {name}: {component['status']}")
-    print(f"- Overall status: {report['status']}")
+    print(f"- Gate status: {report['status']}")
+    print(
+        f"- Certification status: "
+        f"{report.get('certification_status', report['status'])}"
+    )
+    print(
+        f"- Distribution scope: {report.get('distribution_scope', SIGNED_PRODUCTION_SCOPE)}"
+    )
+    print(f"- Accepted risk findings: {report.get('accepted_risk_count', 0)}")
     print(f"- Findings: {report['finding_count']}")
     print(f"- Privacy-safe report: {destination}")
     for item in report["findings"]:

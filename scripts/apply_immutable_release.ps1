@@ -4,6 +4,8 @@ param(
     [string]$ReleaseTag,
     [string]$Distribution,
     [string]$RollbackId,
+    [switch]$InternalOnlyUnsignedRisk,
+    [string]$RiskAcceptance,
     [string]$ProjectRoot = "C:\MTO",
     [string]$EvidenceRoot = "C:\ProgramData\MTO\updates",
     [string]$TaskName = "MTO Treasury API"
@@ -90,11 +92,80 @@ function Get-ManifestProperties {
     return $values
 }
 
+function Assert-UnsignedInternalRiskAcceptance {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'The unsigned risk acceptance record cannot be a linked item.'
+    }
+    try {
+        $record = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    } catch {
+        throw 'The unsigned risk acceptance record is not valid JSON.'
+    }
+    if ([int]$record.format_version -ne 1 -or
+        [string]$record.risk_id -cne 'MTO-ORIGINAL-PHASE-5-UNSIGNED-INTERNAL-ONLY' -or
+        [string]$record.status -cne 'APPROVED' -or
+        [string]$record.distribution_scope -cne 'INTERNAL_MUNICIPAL_ONLY') {
+        throw 'The unsigned risk acceptance identity or scope is invalid.'
+    }
+    try {
+        $effective = [DateTime]::ParseExact(
+            [string]$record.effective_date,
+            'yyyy-MM-dd',
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None
+        )
+        $reviewDue = [DateTime]::ParseExact(
+            [string]$record.review_due_date,
+            'yyyy-MM-dd',
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None
+        )
+    } catch {
+        throw 'The unsigned risk acceptance dates are invalid.'
+    }
+    $duration = ($reviewDue - $effective).TotalDays
+    $today = [DateTime]::UtcNow.Date
+    if ($duration -le 0 -or $duration -gt 180) {
+        throw 'The unsigned risk acceptance window must be no more than 180 days.'
+    }
+    if ($today -lt $effective -or $today -gt $reviewDue) {
+        throw 'The unsigned internal-only risk acceptance is not currently active.'
+    }
+    $waived = @($record.waived_findings | ForEach-Object { [string]$_ })
+    if ($waived.Count -ne 1 -or $waived[0] -cne 'AUTHENTICODE_SIGNATURE_INVALID') {
+        throw 'The unsigned risk acceptance attempts to waive an unapproved finding.'
+    }
+    $requiredControls = @(
+        'CONTROLLED_INTERNAL_DISTRIBUTION',
+        'IMMUTABLE_TAGGED_SOURCE',
+        'MANIFEST_SHA256_VERIFICATION',
+        'CYCLONEDX_SBOM',
+        'MALWARE_SCAN_BEFORE_INSTALL',
+        'DO_NOT_DISABLE_WINDOWS_SECURITY',
+        'UNSIGNED_STATUS_DISCLOSED',
+        'EXPIRING_REVIEW'
+    )
+    $controls = @($record.required_controls | ForEach-Object { [string]$_ })
+    foreach ($control in $requiredControls) {
+        if ($control -cnotin $controls) {
+            throw "The unsigned risk acceptance is missing compensating control $control."
+        }
+    }
+    if (-not [string]$record.approved_by_role -or
+        [string]$record.approval_reference -cnotmatch '^[A-Z0-9][A-Z0-9._:-]{7,100}$') {
+        throw 'The unsigned risk acceptance approval reference is invalid.'
+    }
+    return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+}
+
 function Assert-ReleasePackage {
     param(
         [Parameter(Mandatory = $true)][string]$PackageRoot,
         [Parameter(Mandatory = $true)][string]$ExpectedTag,
-        [Parameter(Mandatory = $true)][string]$ExpectedCommit
+        [Parameter(Mandatory = $true)][string]$ExpectedCommit,
+        [switch]$AllowUnsignedInternalOnly
     )
     $manifestPath = Join-Path $PackageRoot 'release-manifest.json'
     $packageItem = Get-Item -LiteralPath $PackageRoot -Force
@@ -153,7 +224,7 @@ function Assert-ReleasePackage {
     }
     foreach ($relative in @('Treasury.exe', 'installer/MTO_Treasury_Setup.exe')) {
         $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $PackageRoot $relative)
-        if ([string]$signature.Status -ne 'Valid') {
+        if ([string]$signature.Status -ne 'Valid' -and -not $AllowUnsignedInternalOnly) {
             throw "Authenticode signature is not valid for $relative."
         }
     }
@@ -408,6 +479,21 @@ if ($ReleaseTag -notmatch $ReleasePattern) {
 if (-not $Distribution) {
     throw 'Distribution is required for immutable release activation.'
 }
+if ($InternalOnlyUnsignedRisk -and -not $RiskAcceptance) {
+    throw 'RiskAcceptance is required for an unsigned internal-only release.'
+}
+if ($RiskAcceptance -and -not $InternalOnlyUnsignedRisk) {
+    throw 'RiskAcceptance cannot be used without InternalOnlyUnsignedRisk.'
+}
+$resolvedRiskAcceptance = $null
+$riskAcceptanceHash = $null
+if ($InternalOnlyUnsignedRisk) {
+    $resolvedRiskAcceptance = [IO.Path]::GetFullPath($RiskAcceptance)
+    if (-not (Test-Path -LiteralPath $resolvedRiskAcceptance -PathType Leaf)) {
+        throw 'The unsigned internal-only risk acceptance record does not exist.'
+    }
+    $riskAcceptanceHash = Assert-UnsignedInternalRiskAcceptance $resolvedRiskAcceptance
+}
 $resolvedDistribution = [IO.Path]::GetFullPath($Distribution).TrimEnd('\')
 if (-not (Test-Path -LiteralPath $resolvedDistribution -PathType Container)) {
     throw 'The immutable release distribution directory does not exist.'
@@ -436,10 +522,20 @@ if ($previousCommit -eq $targetCommit) {
 if ($LASTEXITCODE -ne 0) {
     throw 'The selected release is not a fast-forward descendant of the active source.'
 }
-Assert-ReleasePackage $resolvedDistribution $ReleaseTag $targetCommit
+Assert-ReleasePackage `
+    -PackageRoot $resolvedDistribution `
+    -ExpectedTag $ReleaseTag `
+    -ExpectedCommit $targetCommit `
+    -AllowUnsignedInternalOnly:$InternalOnlyUnsignedRisk
 
-$confirmation = Read-Host "Type APPLY IMMUTABLE MTO RELEASE $ReleaseTag to continue"
-if ($confirmation -cne "APPLY IMMUTABLE MTO RELEASE $ReleaseTag") {
+$expectedConfirmation = "APPLY IMMUTABLE MTO RELEASE $ReleaseTag"
+if ($InternalOnlyUnsignedRisk) {
+    Write-Warning 'Treasury.exe and the installer are unsigned. This release is approved only for controlled internal municipal use.'
+    Write-Warning 'Do not disable Windows Security or distribute these artifacts publicly.'
+    $expectedConfirmation = "APPLY UNSIGNED INTERNAL-ONLY MTO RELEASE $ReleaseTag"
+}
+$confirmation = Read-Host "Type $expectedConfirmation to continue"
+if ($confirmation -cne $expectedConfirmation) {
     throw 'Immutable release confirmation did not match.'
 }
 
@@ -460,6 +556,7 @@ $beforeBaseline = Join-Path $recordDirectory 'financial-before.json'
 $afterBaseline = Join-Path $recordDirectory 'financial-after.json'
 $supplyReport = Join-Path $recordDirectory 'supply-chain.json'
 $auditReport = Join-Path $recordDirectory 'audit-integrity.json'
+$riskEvidence = if ($resolvedRiskAcceptance) { Join-Path $recordDirectory 'risk-acceptance.json' } else { $null }
 $rollbackRef = "refs/mto/rollback/$recordId"
 $activeRuntime = Join-Path $resolvedProject 'venv'
 $candidateRuntime = Join-Path $recordDirectory 'candidate-venv'
@@ -473,6 +570,8 @@ $state = @{
     target_commit = $targetCommit
     previous_commit = $previousCommit
     distribution = $resolvedDistribution
+    distribution_scope = if ($InternalOnlyUnsignedRisk) { 'internal-municipal' } else { 'signed-production' }
+    risk_acceptance_sha256 = $riskAcceptanceHash
     rollback_ref = $rollbackRef
     previous_runtime = $previousRuntime
     status = 'PREPARING'
@@ -487,6 +586,13 @@ $state = @{
 try {
     Write-State $state $statePath
     Copy-Item -LiteralPath (Join-Path $resolvedDistribution 'release-manifest.json') -Destination (Join-Path $recordDirectory 'release-manifest.json')
+    if ($resolvedRiskAcceptance) {
+        Copy-Item -LiteralPath $resolvedRiskAcceptance -Destination $riskEvidence
+        $copiedRiskHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $riskEvidence).Hash.ToLowerInvariant()
+        if ($copiedRiskHash -cne $riskAcceptanceHash) {
+            throw 'The unsigned risk acceptance changed while update evidence was captured.'
+        }
+    }
     Invoke-NativeChecked $python @(
         '-m', 'scripts.capture_remediation_baseline', '--database', '--require-ready',
         '--output', $beforeBaseline
@@ -506,10 +612,17 @@ try {
     $state.status = 'VERIFYING_RELEASE'
     Write-State $state $statePath
 
-    Invoke-NativeChecked $python @(
+    $supplyChainArguments = @(
         '-m', 'scripts.phase5_supply_chain_preflight', '--require-ready',
         '--distribution', $resolvedDistribution, '--output', $supplyReport
-    ) 'The Phase 5 supply-chain gate rejected the selected release'
+    )
+    if ($InternalOnlyUnsignedRisk) {
+        $supplyChainArguments += @(
+            '--distribution-scope', 'internal-municipal',
+            '--risk-acceptance', $riskEvidence
+        )
+    }
+    Invoke-NativeChecked $python $supplyChainArguments 'The Phase 5 supply-chain gate rejected the selected release'
     [void](New-LockedRuntime $python $candidateRuntime)
     Switch-LockedRuntime $activeRuntime $candidateRuntime $previousRuntime
     $state.runtime_switched = $true

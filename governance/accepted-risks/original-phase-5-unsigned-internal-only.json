@@ -1,0 +1,23 @@
+{
+  "approval_reference": "MTO-ORIGINAL-PHASE-5-EXCEPTION-2026-09-21",
+  "approved_by_role": "MTO system owner",
+  "distribution_scope": "INTERNAL_MUNICIPAL_ONLY",
+  "effective_date": "2026-09-21",
+  "format_version": 1,
+  "required_controls": [
+    "CONTROLLED_INTERNAL_DISTRIBUTION",
+    "IMMUTABLE_TAGGED_SOURCE",
+    "MANIFEST_SHA256_VERIFICATION",
+    "CYCLONEDX_SBOM",
+    "MALWARE_SCAN_BEFORE_INSTALL",
+    "DO_NOT_DISABLE_WINDOWS_SECURITY",
+    "UNSIGNED_STATUS_DISCLOSED",
+    "EXPIRING_REVIEW"
+  ],
+  "review_due_date": "2027-03-20",
+  "risk_id": "MTO-ORIGINAL-PHASE-5-UNSIGNED-INTERNAL-ONLY",
+  "status": "APPROVED",
+  "waived_findings": [
+    "AUTHENTICODE_SIGNATURE_INVALID"
+  ]
+}

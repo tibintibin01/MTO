@@ -16,6 +16,24 @@ def test_batch_entrypoint_requires_explicit_tag_and_release_package():
     assert "git pull --ff-only origin master" not in wrapper.lower()
 
 
+def test_unsigned_internal_release_requires_explicit_bounded_exception():
+    wrapper = _read("update_mto.bat")
+    updater = _read("scripts/apply_immutable_release.ps1")
+
+    assert "--internal-only" in wrapper
+    assert "-InternalOnlyUnsignedRisk" in wrapper
+    assert "-RiskAcceptance" in wrapper
+    assert "RiskAcceptance cannot be used without InternalOnlyUnsignedRisk" in updater
+    assert "--distribution-scope', 'internal-municipal'" in updater
+    assert "Assert-UnsignedInternalRiskAcceptance" in updater
+    assert "--risk-acceptance', $riskEvidence" in updater
+    assert "risk_acceptance_sha256" in updater
+    assert "risk-acceptance.json" in updater
+    assert "changed while update evidence was captured" in updater
+    assert "APPLY UNSIGNED INTERNAL-ONLY MTO RELEASE $ReleaseTag" in updater
+    assert "Do not disable Windows Security" in updater
+
+
 def test_updater_fetches_and_switches_only_the_selected_immutable_tag():
     updater = _read("scripts/apply_immutable_release.ps1")
 
@@ -31,7 +49,7 @@ def test_updater_fetches_and_switches_only_the_selected_immutable_tag():
 def test_updater_verifies_release_before_service_interruption():
     updater = _read("scripts/apply_immutable_release.ps1")
 
-    package_gate = updater.index("Assert-ReleasePackage $resolvedDistribution")
+    package_gate = updater.index("Assert-ReleasePackage `")
     confirmation = updater.index("Read-Host", package_gate)
     stop_runtime = updater.index("Stop-MtoRuntime $resolvedProject", confirmation)
 
