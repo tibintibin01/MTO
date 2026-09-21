@@ -136,6 +136,21 @@ requested, and `2` for a failed or not-yet-ready strict gate. A failed gate is
 readiness evidence, not authorization to install a tool or provision a signing
 certificate. Those actions require separate explicit approval.
 
+## Public certificate procurement package
+
+When the municipality does not already own an approved signing identity, use
+`ORIGINAL_PHASE_5_CODE_SIGNING_PROCUREMENT_PACKAGE.md` as the vendor-neutral
+technical specification and decision record. Obtain comparable vendor responses
+with `templates/ORIGINAL_PHASE_5_CODE_SIGNING_VENDOR_RESPONSE.md`. After an
+approved purchase and controlled delivery, use
+`templates/ORIGINAL_PHASE_5_CODE_SIGNING_DELIVERY_ACCEPTANCE.md` under a
+separately approved acceptance activity.
+
+The package does not select a vendor or authorize payment, identity submission,
+certificate installation, token activation, or artifact signing. Procurement
+records containing personal, legal, financial, or secret information must stay
+in the municipality's protected records system and out of Git.
+
 ## Acceptance criteria
 
 Phase 5 supply-chain closure requires all of the following:
