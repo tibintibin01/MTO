@@ -28,6 +28,11 @@ reviewed build and test workflow, merge that change to `master`, and only then
 create the matching immutable semantic tag. Do not create or move a production
 tag to compensate for inconsistent source metadata.
 
+The published `v2.1.0` tag records a failed build attempt at commit `3ac5216`.
+No `v2.1.0` release package was produced or activated. The tag must remain
+unchanged for auditability. The build argument-splatting correction advances
+the next eligible immutable release identity to `v2.1.1`.
+
 ## Scope of this preflight
 
 The preflight verifies four independent components:

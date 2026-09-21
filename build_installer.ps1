@@ -77,15 +77,15 @@ function Assert-ValidAuthenticodeSignature {
 }
 
 # Always rebuild so an older EXE that embedded server secrets cannot be packaged.
-$buildArguments = @(
-    "-PythonPath", $Python,
-    "-TimestampUrl", $TimestampUrl
-)
+$buildArguments = @{
+    PythonPath = $Python
+    TimestampUrl = $TimestampUrl
+}
 if (-not [string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
-    $buildArguments += @("-SigningCertificateThumbprint", $SigningCertificateThumbprint)
+    $buildArguments["SigningCertificateThumbprint"] = $SigningCertificateThumbprint
 }
 if ($AllowUnsignedDevelopmentBuild) {
-    $buildArguments += "-AllowUnsignedDevelopmentBuild"
+    $buildArguments["AllowUnsignedDevelopmentBuild"] = $true
 }
 & $BuildScript @buildArguments
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $Exe -PathType Leaf)) {

@@ -9,6 +9,8 @@ from scripts import phase5_supply_chain_preflight as preflight
 
 APPROVED_ORIGIN = "https://github.com/tibintibin01/MTO.git"
 COMMIT = "a" * 40
+VERSION = preflight.PRODUCT_VERSION
+RELEASE_TAG = f"v{VERSION}"
 
 
 def _codes(result: dict) -> set[str]:
@@ -29,7 +31,7 @@ def _source_responses() -> dict[tuple[str, ...], str]:
         ("status", "--porcelain", "--untracked-files=all"): "",
         ("remote", "get-url", "origin"): APPROVED_ORIGIN,
         ("rev-parse", "refs/remotes/origin/master"): COMMIT,
-        ("tag", "--points-at", "HEAD", "--list", "v*"): "v2.1.0",
+        ("tag", "--points-at", "HEAD", "--list", "v*"): RELEASE_TAG,
     }
 
 
@@ -125,7 +127,7 @@ def _write_release_package(root: Path) -> None:
                 "specVersion": "1.5",
                 "metadata": {
                     "component": {
-                        "version": "2.1.0",
+                        "version": VERSION,
                         "properties": [{"name": "mto:source-commit", "value": COMMIT}],
                     }
                 },
@@ -142,8 +144,8 @@ def _write_release_package(root: Path) -> None:
     (root / "release-manifest.json").write_text(
         json.dumps(
             {
-                "version": "v2.1.0",
-                "product_version": "2.1.0",
+                "version": RELEASE_TAG,
+                "product_version": VERSION,
                 "source_commit": COMMIT,
                 "artifacts": artifact_hashes,
             }
@@ -178,7 +180,7 @@ def test_source_identity_passes_for_clean_tagged_remote_head(tmp_path):
 
     assert result["status"] == "PASS"
     assert result["commit"] == COMMIT[:12]
-    assert result["release_tags"] == ["v2.1.0"]
+    assert result["release_tags"] == [RELEASE_TAG]
     assert result["findings"] == []
 
 

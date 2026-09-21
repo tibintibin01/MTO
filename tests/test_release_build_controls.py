@@ -47,6 +47,21 @@ def test_installer_build_creates_final_manifest_and_sbom():
     assert "SignedUninstaller=yes" in installer
 
 
+def test_installer_passes_named_arguments_to_desktop_build():
+    build = (PROJECT_ROOT / "build_installer.ps1").read_text(encoding="utf-8")
+
+    assert "$buildArguments = @{" in build
+    assert "PythonPath = $Python" in build
+    assert "TimestampUrl = $TimestampUrl" in build
+    assert (
+        '$buildArguments["SigningCertificateThumbprint"] = '
+        "$SigningCertificateThumbprint" in build
+    )
+    assert '$buildArguments["AllowUnsignedDevelopmentBuild"] = $true' in build
+    assert "& $BuildScript @buildArguments" in build
+    assert '$buildArguments += @("-SigningCertificateThumbprint"' not in build
+
+
 def test_release_control_preflight_passes_after_updater_hardening():
     result = capture_release_controls(PROJECT_ROOT)
 

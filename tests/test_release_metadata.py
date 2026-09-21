@@ -6,13 +6,14 @@ import pytest
 
 from scripts import build_release_metadata as metadata
 
-
 COMMIT = "a" * 40
+VERSION = metadata.PRODUCT_VERSION
+RELEASE_TAG = f"v{VERSION}"
 IDENTITY = {
     "branch": "master",
     "source_commit": COMMIT,
-    "release_tag": "v2.1.0",
-    "product_version": "2.1.0",
+    "release_tag": RELEASE_TAG,
+    "product_version": VERSION,
     "commit_time_utc": "2026-09-17T08:00:00+00:00",
     "origin_approved": True,
     "remote_tracking_match": True,
@@ -26,7 +27,7 @@ def _identity_responses() -> dict[tuple[str, ...], str]:
         ("status", "--porcelain", "--untracked-files=all"): "",
         ("remote", "get-url", "origin"): metadata.EXPECTED_ORIGIN,
         ("rev-parse", "refs/remotes/origin/master"): COMMIT,
-        ("tag", "--points-at", "HEAD", "--list", "v*"): "v2.1.0",
+        ("tag", "--points-at", "HEAD", "--list", "v*"): RELEASE_TAG,
         ("show", "-s", "--format=%cI", "HEAD"): IDENTITY["commit_time_utc"],
     }
 
@@ -74,9 +75,7 @@ def test_release_identity_is_derived_from_one_clean_approved_tag(tmp_path):
 
 def test_release_identity_normalizes_commit_time_to_utc(tmp_path):
     responses = _identity_responses()
-    responses[("show", "-s", "--format=%cI", "HEAD")] = (
-        "2026-09-17T16:00:00+08:00"
-    )
+    responses[("show", "-s", "--format=%cI", "HEAD")] = "2026-09-17T16:00:00+08:00"
 
     result = metadata.capture_release_identity(
         tmp_path, git_runner=_git_runner(responses)
@@ -93,9 +92,7 @@ def test_prerelease_tag_is_not_accepted_for_production_installer(tmp_path):
         metadata.ReleaseIdentityError,
         match="SOURCE_REQUIRES_ONE_RELEASE_TAG",
     ):
-        metadata.capture_release_identity(
-            tmp_path, git_runner=_git_runner(responses)
-        )
+        metadata.capture_release_identity(tmp_path, git_runner=_git_runner(responses))
 
 
 def test_release_tag_must_match_authoritative_product_version(tmp_path):
@@ -106,9 +103,7 @@ def test_release_tag_must_match_authoritative_product_version(tmp_path):
         metadata.ReleaseIdentityError,
         match="SOURCE_RELEASE_TAG_VERSION_MISMATCH",
     ):
-        metadata.capture_release_identity(
-            tmp_path, git_runner=_git_runner(responses)
-        )
+        metadata.capture_release_identity(tmp_path, git_runner=_git_runner(responses))
 
 
 @pytest.mark.parametrize(
@@ -136,9 +131,7 @@ def test_release_identity_fails_closed(tmp_path, key, value, code):
     responses[key] = value
 
     with pytest.raises(metadata.ReleaseIdentityError, match=code):
-        metadata.capture_release_identity(
-            tmp_path, git_runner=_git_runner(responses)
-        )
+        metadata.capture_release_identity(tmp_path, git_runner=_git_runner(responses))
 
 
 def test_lock_parser_produces_sorted_cyclonedx_components(tmp_path):
@@ -176,12 +169,10 @@ def test_release_metadata_is_deterministic_and_hashes_every_artifact(tmp_path):
     assert first["artifact_count"] == second["artifact_count"] == 5
     manifest = json.loads(first_manifest)
     sbom = json.loads(first_sbom)
-    assert manifest["version"] == "v2.1.0"
+    assert manifest["version"] == RELEASE_TAG
     assert manifest["source_commit"] == COMMIT
     for relative in metadata.REQUIRED_ARTIFACTS:
-        assert manifest["artifacts"][relative] == _sha256(
-            distribution / Path(relative)
-        )
+        assert manifest["artifacts"][relative] == _sha256(distribution / Path(relative))
     assert manifest["artifacts"]["sbom.cdx.json"] == _sha256(
         distribution / "sbom.cdx.json"
     )
