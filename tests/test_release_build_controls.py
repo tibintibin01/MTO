@@ -29,6 +29,9 @@ def test_desktop_build_requires_locked_identity_and_signature():
     assert "Get-AuthenticodeSignature" in build
     assert "MTO_CODE_SIGNING_CERT_THUMBPRINT" in build
     assert "AllowUnsignedDevelopmentBuild" in build
+    assert "$releaseVersion = [string]$identity.product_version" in build
+    assert "$configData.client_version = $releaseVersion" in build
+    assert "Built server_config.json client_version does not match" in build
 
 
 def test_installer_build_creates_final_manifest_and_sbom():

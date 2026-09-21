@@ -91,6 +91,16 @@ def _write_release_tree(root: Path) -> Path:
         path = distribution / Path(relative)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(f"artifact:{relative}".encode())
+    (distribution / "server_config.json").write_text(
+        json.dumps(
+            {
+                "server_url": "https://WIN-6C3OM845I7L:8001",
+                "ca_certificate": "certificates/mto-lan-ca.pem",
+                "client_version": VERSION,
+            }
+        ),
+        encoding="utf-8",
+    )
     return distribution
 
 
@@ -229,6 +239,25 @@ def test_release_metadata_rejects_incomplete_distribution(tmp_path):
     with pytest.raises(
         metadata.ReleaseMetadataError,
         match="REQUIRED_RELEASE_ARTIFACT_MISSING",
+    ):
+        metadata.generate_release_metadata(
+            root=tmp_path,
+            distribution=distribution,
+            identity=IDENTITY,
+            material_hash_provider=_git_blob_hash,
+        )
+
+
+def test_release_metadata_rejects_client_config_version_mismatch(tmp_path):
+    distribution = _write_release_tree(tmp_path)
+    config_path = distribution / "server_config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["client_version"] = "2.1.0"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(
+        metadata.ReleaseMetadataError,
+        match="DESKTOP_CONFIG_VERSION_MISMATCH",
     ):
         metadata.generate_release_metadata(
             root=tmp_path,

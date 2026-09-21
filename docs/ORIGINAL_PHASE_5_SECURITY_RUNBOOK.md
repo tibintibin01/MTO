@@ -33,6 +33,14 @@ No `v2.1.0` release package was produced or activated. The tag must remain
 unchanged for auditability. The build argument-splatting correction advances
 the next eligible immutable release identity to `v2.1.1`.
 
+The `v2.1.2` server release was activated successfully, but its desktop pilot
+was rejected before deployment because the packaged `server_config.json`
+retained the stale client version `2.1.0`. No pilot files were replaced. The
+v2.1.3 hotfix generates `client_version` from the authoritative immutable
+release identity during the desktop build. Release metadata generation and the
+supply-chain gate now fail closed when the client configuration, manifest
+product version, and semantic release tag do not agree.
+
 ## Scope of this preflight
 
 The preflight verifies four independent components:

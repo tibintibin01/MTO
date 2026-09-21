@@ -109,6 +109,10 @@ if ($LASTEXITCODE -ne 0) {
     throw "Immutable release source identity validation failed."
 }
 $identity = [string]($identityOutput | Select-Object -Last 1) | ConvertFrom-Json
+$releaseVersion = [string]$identity.product_version
+if ($releaseVersion -notmatch '^\d+\.\d+\.\d+$') {
+    throw "The immutable release product version is invalid."
+}
 Write-Host "Building immutable release $($identity.release_tag) from $($identity.source_commit.Substring(0, 12))."
 
 # Install the complete reviewed build graph from its SHA-256 lock. This is
@@ -159,12 +163,30 @@ if ([string]$configData.server_url -notmatch '^https://') {
 if ([string]$configData.ca_certificate -ne 'certificates/mto-lan-ca.pem') {
     throw "server_config.json ca_certificate must be certificates/mto-lan-ca.pem."
 }
+if ($configData.PSObject.Properties.Name -contains 'client_version') {
+    $configData.client_version = $releaseVersion
+} else {
+    $configData | Add-Member -NotePropertyName client_version -NotePropertyValue $releaseVersion
+}
 
 # The endpoint config and public CA remain external to Treasury.exe so a CA or
-# server-address rotation does not require rebuilding application code.
+# server-address rotation does not require rebuilding application code. The
+# client version is generated from the immutable release identity; the ignored
+# local endpoint config is never authoritative for release versioning.
 $distCertificates = Join-Path $Dist "certificates"
 New-Item -ItemType Directory -Force -Path $distCertificates | Out-Null
-Copy-Item -LiteralPath $Config -Destination (Join-Path $Dist "server_config.json") -Force
+$distConfig = Join-Path $Dist "server_config.json"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$configJson = $configData | ConvertTo-Json -Depth 10
+[IO.File]::WriteAllText(
+    $distConfig,
+    $configJson + [Environment]::NewLine,
+    $utf8NoBom
+)
+$writtenConfig = Get-Content -LiteralPath $distConfig -Raw | ConvertFrom-Json
+if ([string]$writtenConfig.client_version -ne $releaseVersion) {
+    throw "Built server_config.json client_version does not match the immutable release identity."
+}
 Copy-Item -LiteralPath $PublicCa -Destination (Join-Path $distCertificates "mto-lan-ca.pem") -Force
 
 $privateMaterial = Get-ChildItem -LiteralPath $Dist -Recurse -File | Where-Object {

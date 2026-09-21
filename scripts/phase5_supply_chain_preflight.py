@@ -631,11 +631,15 @@ def capture_desktop_release(
             artifact_hashes[relative] = _sha256(path)
 
     config_path = resolved / "server_config.json"
+    config_client_version: str | None = None
     if config_path.is_file():
         try:
             config = json.loads(config_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             config = {}
+        if not isinstance(config, dict):
+            config = {}
+        config_client_version = str(config.get("client_version") or "")
         if not str(config.get("server_url") or "").startswith("https://"):
             findings.append(
                 _finding(
@@ -685,6 +689,7 @@ def capture_desktop_release(
     manifest_path = resolved / "release-manifest.json"
     manifest_version = None
     manifest_commit = None
+    manifest_product_version = None
     manifest: dict = {}
     if not manifest_path.is_file():
         findings.append(
@@ -711,6 +716,7 @@ def capture_desktop_release(
                 )
             )
         manifest_version = str(manifest.get("version") or "")
+        manifest_product_version = str(manifest.get("product_version") or "")
         manifest_commit = str(manifest.get("source_commit") or "").lower()
         listed = manifest.get("artifacts")
         if listed is None:
@@ -732,6 +738,27 @@ def capture_desktop_release(
                     "RELEASE_MANIFEST_VERSION_INVALID",
                     "Release manifest version is not an approved semantic version tag.",
                     "HIGH",
+                )
+            )
+        elif manifest_product_version != manifest_version.removeprefix("v"):
+            findings.append(
+                _finding(
+                    "desktop_release",
+                    "RELEASE_MANIFEST_PRODUCT_VERSION_MISMATCH",
+                    "Release manifest product_version must match its immutable tag.",
+                    "CRITICAL",
+                )
+            )
+        if (
+            config_client_version is not None
+            and config_client_version != manifest_product_version
+        ):
+            findings.append(
+                _finding(
+                    "desktop_release",
+                    "DESKTOP_CLIENT_VERSION_MISMATCH",
+                    "Desktop client_version must match the immutable release product version.",
+                    "CRITICAL",
                 )
             )
         if not COMMIT_PATTERN.fullmatch(manifest_commit):
@@ -887,12 +914,14 @@ def capture_desktop_release(
         "manifest": {
             "present": manifest_path.is_file(),
             "version": manifest_version,
+            "product_version": manifest_product_version,
             "source_commit": (
                 manifest_commit[:12]
                 if manifest_commit and COMMIT_PATTERN.fullmatch(manifest_commit)
                 else None
             ),
         },
+        "client_version": config_client_version,
         "sbom_valid": sbom_valid,
         "sbom_identity_valid": sbom_identity_valid,
         "findings": findings,

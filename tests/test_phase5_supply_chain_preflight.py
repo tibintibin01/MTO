@@ -116,6 +116,7 @@ def _write_release_package(root: Path) -> None:
             {
                 "server_url": "https://WIN-6C3OM845I7L:8001",
                 "ca_certificate": "certificates/mto-lan-ca.pem",
+                "client_version": VERSION,
             }
         ),
         encoding="utf-8",
@@ -330,6 +331,56 @@ def test_desktop_release_detects_tampering_and_private_material(tmp_path):
         "RELEASE_PACKAGE_CONTAINS_PRIVATE_MATERIAL",
         "RELEASE_ARTIFACT_HASH_MISMATCH",
         "AUTHENTICODE_SIGNATURE_INVALID",
+    }.issubset(_codes(result))
+
+
+def test_desktop_release_rejects_client_version_identity_mismatch(tmp_path):
+    _write_release_package(tmp_path)
+    config_path = tmp_path / "server_config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["client_version"] = "2.1.0"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    manifest_path = tmp_path / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"]["server_config.json"] = _sha256(config_path)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = preflight.capture_desktop_release(
+        tmp_path,
+        signature_probe=lambda _path: {
+            "available": True,
+            "valid": True,
+            "status": "Valid",
+        },
+    )
+
+    assert result["status"] == "FAIL"
+    assert result["client_version"] == "2.1.0"
+    assert result["manifest"]["product_version"] == VERSION
+    assert _codes(result) == {"DESKTOP_CLIENT_VERSION_MISMATCH"}
+
+
+def test_desktop_release_rejects_manifest_tag_product_version_mismatch(tmp_path):
+    _write_release_package(tmp_path)
+    manifest_path = tmp_path / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["product_version"] = "2.1.0"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = preflight.capture_desktop_release(
+        tmp_path,
+        signature_probe=lambda _path: {
+            "available": True,
+            "valid": True,
+            "status": "Valid",
+        },
+    )
+
+    assert result["status"] == "FAIL"
+    assert {
+        "RELEASE_MANIFEST_PRODUCT_VERSION_MISMATCH",
+        "DESKTOP_CLIENT_VERSION_MISMATCH",
+        "DESKTOP_SBOM_IDENTITY_MISMATCH",
     }.issubset(_codes(result))
 
 

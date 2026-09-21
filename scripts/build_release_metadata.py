@@ -305,6 +305,22 @@ def _require_file(root: Path, relative: str, code: str) -> Path:
     return path
 
 
+def _require_release_config_version(distribution: Path, expected_version: str) -> None:
+    config_path = _require_file(
+        distribution,
+        "server_config.json",
+        "REQUIRED_RELEASE_ARTIFACT_MISSING",
+    )
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ReleaseMetadataError("DESKTOP_CONFIG_INVALID") from exc
+    if not isinstance(config, dict):
+        raise ReleaseMetadataError("DESKTOP_CONFIG_INVALID")
+    if str(config.get("client_version") or "") != expected_version:
+        raise ReleaseMetadataError("DESKTOP_CONFIG_VERSION_MISMATCH")
+
+
 def build_cyclonedx_sbom(root: Path, identity: dict) -> dict:
     lock_path = _require_file(root, "requirements.lock", "MATERIAL_MISSING")
     components = parse_locked_components(lock_path)
@@ -381,6 +397,10 @@ def generate_release_metadata(
     for relative in RELEASE_MATERIALS:
         _require_unlinked_path(resolved_root, relative)
         _require_file(resolved_root, relative, "MATERIAL_MISSING")
+    _require_release_config_version(
+        resolved_distribution,
+        str(identity["product_version"]),
+    )
 
     sbom_path = resolved_distribution / "sbom.cdx.json"
     sbom = build_cyclonedx_sbom(resolved_root, identity)
