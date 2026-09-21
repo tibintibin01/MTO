@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -41,6 +42,34 @@ def _git_runner(responses: dict[tuple[str, ...], str]):
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _git_blob_hash(root: Path, _commit: str, relative: str) -> str:
+    payload = (root / Path(relative)).read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def test_release_material_hash_uses_git_blob_bytes(monkeypatch, tmp_path):
+    relative = metadata.RELEASE_MATERIALS[0]
+    material = tmp_path / relative
+    material.parent.mkdir(parents=True, exist_ok=True)
+    material.write_bytes(b"windows\r\ncheckout\r\n")
+    git_blob = b"windows\ncheckout\n"
+    calls = []
+
+    def run(arguments, **kwargs):
+        calls.append((arguments, kwargs))
+        return SimpleNamespace(returncode=0, stdout=git_blob, stderr=b"")
+
+    monkeypatch.setattr(metadata.subprocess, "run", run)
+
+    result = metadata.release_material_sha256(tmp_path, COMMIT, relative)
+
+    assert result == hashlib.sha256(git_blob).hexdigest()
+    assert result != hashlib.sha256(material.read_bytes()).hexdigest()
+    assert calls[0][0] == ["git", "cat-file", "blob", f"{COMMIT}:{relative}"]
+    assert calls[0][1]["cwd"] == tmp_path
+    assert calls[0][1]["capture_output"] is True
 
 
 def _write_release_tree(root: Path) -> Path:
@@ -155,6 +184,7 @@ def test_release_metadata_is_deterministic_and_hashes_every_artifact(tmp_path):
         root=tmp_path,
         distribution=distribution,
         identity=IDENTITY,
+        material_hash_provider=_git_blob_hash,
     )
     first_manifest = (distribution / "release-manifest.json").read_bytes()
     first_sbom = (distribution / "sbom.cdx.json").read_bytes()
@@ -162,6 +192,7 @@ def test_release_metadata_is_deterministic_and_hashes_every_artifact(tmp_path):
         root=tmp_path,
         distribution=distribution,
         identity=IDENTITY,
+        material_hash_provider=_git_blob_hash,
     )
 
     assert first_manifest == (distribution / "release-manifest.json").read_bytes()
@@ -171,12 +202,18 @@ def test_release_metadata_is_deterministic_and_hashes_every_artifact(tmp_path):
     sbom = json.loads(first_sbom)
     assert manifest["version"] == RELEASE_TAG
     assert manifest["source_commit"] == COMMIT
+    assert manifest["format_version"] == 2
+    assert manifest["material_hash_mode"] == metadata.MATERIAL_HASH_MODE
     for relative in metadata.REQUIRED_ARTIFACTS:
         assert manifest["artifacts"][relative] == _sha256(distribution / Path(relative))
     assert manifest["artifacts"]["sbom.cdx.json"] == _sha256(
         distribution / "sbom.cdx.json"
     )
     assert set(manifest["materials"]) == set(metadata.RELEASE_MATERIALS)
+    for relative in metadata.RELEASE_MATERIALS:
+        assert manifest["materials"][relative] == _git_blob_hash(
+            tmp_path, COMMIT, relative
+        )
     assert sbom["bomFormat"] == "CycloneDX"
     assert sbom["specVersion"] == "1.5"
     assert [item["name"] for item in sbom["components"]] == [
@@ -197,6 +234,7 @@ def test_release_metadata_rejects_incomplete_distribution(tmp_path):
             root=tmp_path,
             distribution=distribution,
             identity=IDENTITY,
+            material_hash_provider=_git_blob_hash,
         )
 
 
@@ -209,6 +247,7 @@ def test_release_metadata_rejects_invalid_identity_payload(tmp_path):
             root=tmp_path,
             distribution=distribution,
             identity=invalid,
+            material_hash_provider=_git_blob_hash,
         )
 
 
@@ -226,4 +265,5 @@ def test_release_metadata_rejects_linked_artifact_path(monkeypatch, tmp_path):
             root=tmp_path,
             distribution=distribution,
             identity=IDENTITY,
+            material_hash_provider=_git_blob_hash,
         )

@@ -584,6 +584,9 @@ def capture_desktop_release(
     signature_probe: Callable[[Path], dict] = probe_authenticode,
     source_root: Path | None = None,
     expected_source_commit: str | None = None,
+    material_hash_provider: Callable[[Path, str, str], str] = (
+        build_release_metadata.release_material_sha256
+    ),
 ) -> dict:
     resolved = distribution.resolve()
     findings: list[dict] = []
@@ -770,12 +773,29 @@ def capture_desktop_release(
                 materials = {}
             if not isinstance(materials, dict):
                 materials = {}
-            for relative in build_release_metadata.RELEASE_MATERIALS:
-                material_path = source_root.resolve() / Path(relative)
-                recorded_hash = str(materials.get(relative) or "").lower()
-                if not material_path.is_file() or recorded_hash != _sha256(
-                    material_path
-                ):
+            material_hash_mode = str(manifest.get("material_hash_mode") or "")
+            if material_hash_mode != build_release_metadata.MATERIAL_HASH_MODE:
+                findings.append(
+                    _finding(
+                        "desktop_release",
+                        "RELEASE_MATERIAL_HASH_MODE_INVALID",
+                        "Release materials must use immutable Git-blob SHA-256 hashes.",
+                        "CRITICAL",
+                    )
+                )
+            elif COMMIT_PATTERN.fullmatch(manifest_commit):
+                for relative in build_release_metadata.RELEASE_MATERIALS:
+                    recorded_hash = str(materials.get(relative) or "").lower()
+                    try:
+                        actual_hash = material_hash_provider(
+                            source_root.resolve(),
+                            manifest_commit,
+                            relative,
+                        )
+                    except (OSError, RuntimeError, subprocess.SubprocessError):
+                        actual_hash = None
+                    if recorded_hash == actual_hash:
+                        continue
                     findings.append(
                         _finding(
                             "desktop_release",

@@ -589,6 +589,66 @@ def test_desktop_release_rejects_manifest_from_different_source(tmp_path):
     assert "RELEASE_MANIFEST_SOURCE_MISMATCH" in _codes(result)
 
 
+def test_desktop_release_validates_git_blobs_across_checkout_line_endings(tmp_path):
+    source = tmp_path / "source"
+    distribution = tmp_path / "dist"
+    source.mkdir()
+    distribution.mkdir()
+    _write_release_package(distribution)
+    git_hashes = {}
+    for relative in preflight.build_release_metadata.RELEASE_MATERIALS:
+        material = source / Path(relative)
+        material.parent.mkdir(parents=True, exist_ok=True)
+        material.write_bytes(f"material:{relative}\r\n".encode())
+        git_hashes[relative] = hashlib.sha256(
+            f"material:{relative}\n".encode()
+        ).hexdigest()
+
+    manifest_path = distribution / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["format_version"] = 2
+    manifest["material_hash_mode"] = preflight.build_release_metadata.MATERIAL_HASH_MODE
+    manifest["materials"] = git_hashes
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = preflight.capture_desktop_release(
+        distribution,
+        source_root=source,
+        expected_source_commit=COMMIT,
+        material_hash_provider=lambda _root, _commit, relative: git_hashes[relative],
+        signature_probe=lambda _path: {
+            "available": True,
+            "valid": True,
+            "status": "Valid",
+        },
+    )
+
+    assert result["status"] == "PASS"
+    assert "RELEASE_MATERIAL_HASH_MISMATCH" not in _codes(result)
+
+
+def test_desktop_release_rejects_unspecified_material_hash_mode(tmp_path):
+    source = tmp_path / "source"
+    distribution = tmp_path / "dist"
+    source.mkdir()
+    distribution.mkdir()
+    _write_release_package(distribution)
+
+    result = preflight.capture_desktop_release(
+        distribution,
+        source_root=source,
+        expected_source_commit=COMMIT,
+        signature_probe=lambda _path: {
+            "available": True,
+            "valid": True,
+            "status": "Valid",
+        },
+    )
+
+    assert result["status"] == "FAIL"
+    assert "RELEASE_MATERIAL_HASH_MODE_INVALID" in _codes(result)
+
+
 def test_desktop_release_rejects_non_mapping_artifact_manifest(tmp_path):
     _write_release_package(tmp_path)
     manifest_path = tmp_path / "release-manifest.json"

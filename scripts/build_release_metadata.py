@@ -38,6 +38,7 @@ EXPECTED_ORIGIN = "https://github.com/tibintibin01/MTO.git"
 RELEASE_TAG_PATTERN = re.compile(r"^v\d+\.\d+\.\d+$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 LOCK_PATTERN = re.compile(r"^([A-Za-z0-9_.-]+)==([^\s\\;]+)")
+MATERIAL_HASH_MODE = "git-blob-sha256"
 REQUIRED_ARTIFACTS = (
     "Treasury.exe",
     "server_config.json",
@@ -120,9 +121,7 @@ def capture_release_identity(
         ).splitlines()
         if item.strip()
     ]
-    release_tags = sorted(
-        tag for tag in tags if RELEASE_TAG_PATTERN.fullmatch(tag)
-    )
+    release_tags = sorted(tag for tag in tags if RELEASE_TAG_PATTERN.fullmatch(tag))
     commit_time = git_runner(root, ("show", "-s", "--format=%cI", "HEAD"))
     try:
         commit_time_utc = (
@@ -209,6 +208,30 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def release_material_sha256(root: Path, source_commit: str, relative: str) -> str:
+    """Hash the immutable Git blob, independent of checkout line endings."""
+    normalized_commit = str(source_commit or "").lower()
+    if not COMMIT_PATTERN.fullmatch(normalized_commit):
+        raise ReleaseMetadataError("RELEASE_COMMIT_INVALID")
+    if relative not in RELEASE_MATERIALS:
+        raise ReleaseMetadataError("RELEASE_MATERIAL_NOT_APPROVED")
+
+    completed = subprocess.run(
+        ["git", "cat-file", "blob", f"{normalized_commit}:{relative}"],
+        cwd=root,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ReleaseMetadataError(f"GIT_MATERIAL_READ_FAILED:{relative}")
+    return _sha256_bytes(completed.stdout)
+
+
 def _is_reparse_point(path: Path) -> bool:
     if path.is_symlink():
         return True
@@ -285,12 +308,10 @@ def _require_file(root: Path, relative: str, code: str) -> Path:
 def build_cyclonedx_sbom(root: Path, identity: dict) -> dict:
     lock_path = _require_file(root, "requirements.lock", "MATERIAL_MISSING")
     components = parse_locked_components(lock_path)
-    application_ref = (
-        "pkg:generic/mto-treasury@" + quote(str(identity["product_version"]))
+    application_ref = "pkg:generic/mto-treasury@" + quote(
+        str(identity["product_version"])
     )
-    serial_seed = (
-        f"mto-treasury:{identity['release_tag']}:{identity['source_commit']}"
-    )
+    serial_seed = f"mto-treasury:{identity['release_tag']}:{identity['source_commit']}"
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
@@ -339,6 +360,7 @@ def generate_release_metadata(
     root: Path,
     distribution: Path,
     identity: dict,
+    material_hash_provider: Callable[[Path, str, str], str] = release_material_sha256,
 ) -> dict:
     """Write the final SBOM and manifest after every release artifact exists."""
     if distribution.exists() and _is_reparse_point(distribution):
@@ -370,11 +392,15 @@ def generate_release_metadata(
         for relative in artifact_names
     }
     materials = {
-        relative: _sha256(resolved_root / Path(relative))
+        relative: material_hash_provider(
+            resolved_root,
+            identity["source_commit"],
+            relative,
+        )
         for relative in RELEASE_MATERIALS
     }
     manifest = {
-        "format_version": 1,
+        "format_version": 2,
         "manifest_type": "MTO_IMMUTABLE_DESKTOP_RELEASE",
         "version": identity["release_tag"],
         "product_version": identity["product_version"],
@@ -382,6 +408,7 @@ def generate_release_metadata(
         "source_commit_time_utc": identity["commit_time_utc"],
         "artifacts": artifacts,
         "materials": materials,
+        "material_hash_mode": MATERIAL_HASH_MODE,
         "sbom": {
             "path": "sbom.cdx.json",
             "format": "CycloneDX",

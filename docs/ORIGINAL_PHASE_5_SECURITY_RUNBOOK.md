@@ -190,8 +190,17 @@ The approved build foundation provides the following controls:
   `-AllowUnsignedDevelopmentBuild` switch and cannot pass production preflight;
 - the final package receives `release-manifest.json` with SHA-256 hashes for
   every required artifact and reviewed build material;
+- reviewed source-material hashes use `material_hash_mode` value
+  `git-blob-sha256`: both the builder and verifier hash the raw blob stored at
+  the manifest's exact source commit, never platform-dependent working-tree
+  bytes, so Windows CRLF checkout conversion cannot invalidate provenance;
 - the final package receives a deterministic CycloneDX 1.5 SBOM generated from
   the hash-locked runtime dependency graph.
+
+A missing or different material hash mode is a critical failure. Git blob
+lookup failure, a source-commit mismatch, or any material digest mismatch also
+fails closed; operators must not regenerate a manifest from a mutable checkout
+to bypass one of these findings.
 
 The normal production build is intentionally fail-closed:
 
