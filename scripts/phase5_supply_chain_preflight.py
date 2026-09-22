@@ -457,6 +457,20 @@ def capture_release_controls(root: Path = PROJECT_ROOT) -> dict:
         )
 
     updater_lower = complete_updater.lower()
+    wrapper_lower = updater.lower()
+    if (
+        '-projectroot "%~dp0"' in wrapper_lower
+        or "mto_project_root" not in wrapper_lower
+    ):
+        findings.append(
+            _finding(
+                "release_controls",
+                "UPDATER_PROJECT_ROOT_NORMALIZATION_MISSING",
+                "The updater wrapper does not normalize its trailing batch-directory "
+                "separator before passing ProjectRoot to PowerShell.",
+                "HIGH",
+            )
+        )
     if "git pull --ff-only origin master" in updater_lower:
         findings.append(
             _finding(

@@ -66,6 +66,8 @@ jobs:
             "SignTool=approved\nSignedUninstaller=yes\n"
         )
         updater = (
+            'set "MTO_PROJECT_ROOT=normalized"\n'
+            '-ProjectRoot "%MTO_PROJECT_ROOT%"\n'
             "phase5_supply_chain_preflight\nrelease-manifest.json\n"
             "capture_remediation_baseline\nrollback\n"
             "--require-hashes -r requirements.lock\nwait_for_mto_api.ps1\n"
@@ -287,7 +289,26 @@ def test_release_controls_expose_mutable_unsigned_release_gaps(tmp_path):
         "UPDATER_MANIFEST_GATE_MISSING",
         "UPDATER_BASELINE_GATE_MISSING",
         "UPDATER_CODE_ROLLBACK_MISSING",
+        "UPDATER_PROJECT_ROOT_NORMALIZATION_MISSING",
     }.issubset(_codes(result))
+
+
+def test_release_controls_reject_unnormalized_batch_project_root(tmp_path):
+    _write_release_controls(tmp_path, hardened=True)
+    updater = tmp_path / "update_mto.bat"
+    updater.write_text(
+        updater.read_text(encoding="utf-8").replace(
+            'set "MTO_PROJECT_ROOT=normalized"\n'
+            '-ProjectRoot "%MTO_PROJECT_ROOT%"\n',
+            '-ProjectRoot "%~dp0"\n',
+        ),
+        encoding="utf-8",
+    )
+
+    result = preflight.capture_release_controls(tmp_path)
+
+    assert result["status"] == "FAIL"
+    assert "UPDATER_PROJECT_ROOT_NORMALIZATION_MISSING" in _codes(result)
 
 
 def test_desktop_release_passes_with_valid_signatures_manifest_and_sbom(tmp_path):

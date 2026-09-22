@@ -13,6 +13,12 @@ def test_batch_entrypoint_requires_explicit_tag_and_release_package():
     assert "apply_immutable_release.ps1" in wrapper
     assert '-ReleaseTag "%~1"' in wrapper
     assert '-Distribution "%~2"' in wrapper
+    assert 'for %%I in ("%~dp0.") do set "MTO_PROJECT_ROOT=%%~fI"' in wrapper
+    assert '-ProjectRoot "%MTO_PROJECT_ROOT%"' in wrapper
+    assert '-ProjectRoot "%~dp0"' not in wrapper
+    assert 'if not "%~5"=="" goto :usage' in wrapper
+    assert ":interactive_help" in wrapper
+    assert "Double-clicking it without those release arguments" in wrapper
     assert "git pull --ff-only origin master" not in wrapper.lower()
 
 

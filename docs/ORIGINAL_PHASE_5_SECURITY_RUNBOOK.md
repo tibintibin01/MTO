@@ -255,6 +255,13 @@ call venv\Scripts\activate
 call update_mto.bat vX.Y.Z C:\ProgramData\MTO\releases\vX.Y.Z
 ```
 
+Run the wrapper once on the production server for each separately approved
+release. Do not double-click it without arguments: that mode only displays
+operator guidance and cannot activate a release. The wrapper normalizes its
+own directory before passing `ProjectRoot` to PowerShell, preventing the
+trailing-backslash argument corruption that previously caused `GetFullPath`
+to reject the server checkout path.
+
 Before interrupting the API, the updater verifies that the selected tag is the
 exact fetched `origin/master` commit and a fast-forward descendant of the
 active source. It validates the release manifest hashes, CycloneDX SBOM,
