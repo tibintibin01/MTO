@@ -219,6 +219,11 @@ MIGRATIONS = [
         "handler": "ensure_audit_timestamp_precision_recovery",
         "sql": "",
     },
+    {
+        "id": "phase6_financial_reconciliation_integrity_v1",
+        "handler": "ensure_phase6_financial_reconciliation_schema",
+        "sql": "",
+    },
 ]
 
 
@@ -442,6 +447,77 @@ def _has_named_index(inspector, table_name, index_name):
         if item.get("name")
     )
     return index_name in names
+
+
+def _receipt_payment_foreign_keys(inspector):
+    return [
+        item
+        for item in inspector.get_foreign_keys("receipt_history")
+        if tuple(item.get("constrained_columns") or ()) == ("payment_id",)
+        and item.get("referred_table") == "payments"
+        and tuple(item.get("referred_columns") or ()) == ("id",)
+    ]
+
+
+def ensure_phase6_financial_reconciliation_schema(db_session: Session) -> None:
+    """Install the receipt/payment guard after deterministic legacy cleanup."""
+    connection = db_session.connection()
+    if connection.dialect.name not in {"mysql", "mariadb"}:
+        raise RuntimeError(
+            "Phase 6 financial reconciliation migration requires MariaDB/MySQL."
+        )
+
+    inspector = inspect(connection)
+    required_tables = {"receipt_history", "payments"}
+    missing_tables = sorted(
+        table_name
+        for table_name in required_tables
+        if not inspector.has_table(table_name)
+    )
+    if missing_tables:
+        raise RuntimeError(
+            "Phase 6 financial tables are missing: " + ", ".join(missing_tables)
+        )
+
+    existing = _receipt_payment_foreign_keys(inspector)
+    if existing:
+        delete_rules = {
+            str((item.get("options") or {}).get("ondelete") or "").upper()
+            for item in existing
+        }
+        if "SET NULL" not in delete_rules:
+            raise RuntimeError(
+                "receipt_history.payment_id already has a foreign key without "
+                "the required ON DELETE SET NULL rule."
+            )
+        return
+
+    orphan_count = int(
+        db_session.execute(
+            text(
+                "SELECT COUNT(*) FROM receipt_history rh "
+                "LEFT JOIN payments p ON p.id = rh.payment_id "
+                "WHERE rh.payment_id IS NOT NULL AND p.id IS NULL"
+            )
+        ).scalar()
+        or 0
+    )
+    if orphan_count:
+        raise RuntimeError(
+            "Phase 6 receipt/payment recovery must run before the foreign key "
+            f"migration; orphan receipt links={orphan_count}."
+        )
+
+    db_session.execute(
+        text(
+            "ALTER TABLE receipt_history "
+            "ADD CONSTRAINT fk_receipt_history_payment_id "
+            "FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE SET NULL"
+        )
+    )
+    inspector = inspect(connection)
+    if not _receipt_payment_foreign_keys(inspector):
+        raise RuntimeError("Phase 6 receipt/payment foreign-key verification failed.")
 
 
 def ensure_financial_safety_schema(db_session: Session) -> None:
@@ -823,6 +899,9 @@ def run_migrations(db_session: Session) -> int:
                     )
 
                     ensure_audit_timestamp_precision_recovery(db_session)
+                    statements = []
+                elif handler_name == "ensure_phase6_financial_reconciliation_schema":
+                    ensure_phase6_financial_reconciliation_schema(db_session)
                     statements = []
                 else:
                     statements = None

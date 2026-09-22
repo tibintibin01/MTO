@@ -264,7 +264,12 @@ class ReceiptHistory(Base):
     property_id = Column(
         Integer, ForeignKey("properties.id", ondelete="RESTRICT"), nullable=False
     )
-    payment_id = Column(Integer, nullable=True, index=True)
+    payment_id = Column(
+        Integer,
+        ForeignKey("payments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     td_number = Column(String(255))
     owner_name = Column(String(255))
     or_number = Column(String(255))

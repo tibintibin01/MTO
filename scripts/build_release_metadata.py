@@ -15,6 +15,7 @@ import os
 import re
 import runpy
 import subprocess
+import sys
 import tempfile
 import uuid
 from datetime import datetime, timezone

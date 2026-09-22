@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
@@ -121,15 +121,43 @@ def test_clean_snapshot_reconciles_aggregate_financial_totals(reconciliation_db)
     assert snapshot["schema"]["missing_foreign_keys"] == []
 
 
-def test_missing_receipt_payment_foreign_key_is_explicit_review(reconciliation_db):
+def test_receipt_payment_foreign_key_closes_schema_review(reconciliation_db):
     snapshot = preflight.collect_reconciliation_snapshot(reconciliation_db)
     report = preflight.assemble_report(snapshot, audit={"status": "verified"})
 
-    assert report["status"] == "REVIEW"
+    assert report["status"] == "PASS"
     assert report["blocking_finding_count"] == 0
-    assert {item["code"] for item in report["findings"]} == {
-        "RECEIPT_PAYMENT_FOREIGN_KEY_MISSING"
-    }
+    assert report["findings"] == []
+
+
+def test_receipt_payment_foreign_key_uses_set_null(reconciliation_db):
+    foreign_keys = inspect(reconciliation_db.get_bind()).get_foreign_keys(
+        "receipt_history"
+    )
+    receipt_payment = next(
+        item for item in foreign_keys if item["constrained_columns"] == ["payment_id"]
+    )
+
+    assert receipt_payment["referred_table"] == "payments"
+    assert receipt_payment["referred_columns"] == ["id"]
+    assert receipt_payment["options"]["ondelete"] == "SET NULL"
+
+
+def test_equivalent_unique_index_name_satisfies_semantic_gate(reconciliation_db):
+    reconciliation_db.execute(
+        text("DROP INDEX ix_property_billings_property_id_tax_year")
+    )
+    reconciliation_db.execute(
+        text(
+            "CREATE UNIQUE INDEX uq_equivalent_property_year "
+            "ON property_billings (property_id, tax_year)"
+        )
+    )
+    reconciliation_db.commit()
+
+    snapshot = preflight.collect_reconciliation_snapshot(reconciliation_db)
+
+    assert snapshot["schema"]["missing_indexes"] == []
 
 
 def test_cross_property_and_receipt_mismatches_fail_closed(reconciliation_db):
@@ -217,7 +245,7 @@ def test_backup_or_audit_readiness_blocks_closure(reconciliation_db):
     assert "BACKUP_OR_DATABASE_READINESS_BLOCKED" in codes
 
 
-def test_main_writes_report_and_require_ready_blocks_review(
+def test_main_writes_report_and_require_ready_accepts_closed_gate(
     monkeypatch, tmp_path, reconciliation_db
 ):
     snapshot = preflight.collect_reconciliation_snapshot(reconciliation_db)
@@ -227,6 +255,6 @@ def test_main_writes_report_and_require_ready_blocks_review(
 
     exit_code = preflight.main(["--require-ready", "--output", str(destination)])
 
-    assert exit_code == 3
-    assert json.loads(destination.read_text(encoding="utf-8"))["status"] == "REVIEW"
+    assert exit_code == 0
+    assert json.loads(destination.read_text(encoding="utf-8"))["status"] == "PASS"
     assert not destination.with_suffix(".json.tmp").exists()

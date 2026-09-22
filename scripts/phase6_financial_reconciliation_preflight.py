@@ -69,10 +69,10 @@ REQUIRED_COLUMNS = {
     "receipt_history": {"id", "property_id", "payment_id", "amount"},
     "system_migrations": {"id"},
 }
-REQUIRED_INDEXES = {
-    ("payments", "uq_payments_property_or_tax_year_date"),
-    ("property_billings", "ix_property_billings_property_id_tax_year"),
-    ("payment_billings", "uq_payment_billings_payment_billing"),
+REQUIRED_UNIQUE_INDEXES = {
+    ("payments", ("property_id", "or_number", "tax_year", "date_paid")),
+    ("property_billings", ("property_id", "tax_year")),
+    ("payment_billings", ("payment_id", "billing_id")),
 }
 REQUIRED_FOREIGN_KEYS = {
     ("payments", ("property_id",), "properties", ("id",)),
@@ -212,18 +212,18 @@ def _scalar(session: Any, statement: str) -> int:
     return int(session.execute(text(statement)).scalar() or 0)
 
 
-def _unique_index_names(inspector: Any, table_name: str) -> set[str]:
-    names = {
-        item.get("name")
+def _unique_index_signatures(inspector: Any, table_name: str) -> set[tuple[str, ...]]:
+    signatures = {
+        tuple(item.get("column_names") or ())
         for item in inspector.get_indexes(table_name)
-        if item.get("name") and item.get("unique")
+        if item.get("unique") and item.get("column_names")
     }
-    names.update(
-        item.get("name")
+    signatures.update(
+        tuple(item.get("column_names") or ())
         for item in inspector.get_unique_constraints(table_name)
-        if item.get("name")
+        if item.get("column_names")
     )
-    return names
+    return signatures
 
 
 def _foreign_key_signatures(inspector: Any, table_name: str) -> set[tuple]:
@@ -253,11 +253,11 @@ def capture_schema_status(session: Any) -> dict[str, Any]:
         for column_name in sorted(required - table_columns.get(table_name, set()))
     ]
     missing_indexes = []
-    for table_name, index_name in sorted(REQUIRED_INDEXES):
-        if table_name not in tables or index_name not in _unique_index_names(
+    for table_name, columns in sorted(REQUIRED_UNIQUE_INDEXES):
+        if table_name not in tables or columns not in _unique_index_signatures(
             inspector, table_name
         ):
-            missing_indexes.append(f"{table_name}.{index_name}")
+            missing_indexes.append(f"{table_name}.({','.join(columns)})")
 
     actual_foreign_keys: set[tuple] = set()
     for table_name in tables & {item[0] for item in REQUIRED_FOREIGN_KEYS}:
@@ -271,12 +271,14 @@ def capture_schema_status(session: Any) -> dict[str, Any]:
 
     receipt_payment_fk_present = False
     if "receipt_history" in tables:
-        receipt_payment_fk_present = (
-            "receipt_history",
-            ("payment_id",),
-            "payments",
-            ("id",),
-        ) in _foreign_key_signatures(inspector, "receipt_history")
+        receipt_payment_fk_present = any(
+            tuple(item.get("constrained_columns") or ()) == ("payment_id",)
+            and item.get("referred_table") == "payments"
+            and tuple(item.get("referred_columns") or ()) == ("id",)
+            and str((item.get("options") or {}).get("ondelete") or "").upper()
+            == "SET NULL"
+            for item in inspector.get_foreign_keys("receipt_history")
+        )
 
     missing_money_columns = []
     non_decimal_money_columns = []

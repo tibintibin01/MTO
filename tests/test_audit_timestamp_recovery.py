@@ -255,12 +255,18 @@ def test_confirmed_recovery_updates_only_timestamp_and_preserves_hashes():
     assert result["timestamp_precision_after"] == 6
 
 
-def test_recovery_migration_is_registered_as_the_latest_server_migration():
-    assert MIGRATIONS[-1] == {
+def test_recovery_migration_remains_registered_before_later_server_migrations():
+    expected = {
         "id": integrity.AUDIT_TIMESTAMP_RECOVERY_MIGRATION_ID,
         "handler": "ensure_audit_timestamp_precision_recovery",
         "sql": "",
     }
+    assert expected in MIGRATIONS
+    assert MIGRATIONS.index(expected) < next(
+        index
+        for index, migration in enumerate(MIGRATIONS)
+        if migration["id"] == "phase6_financial_reconciliation_integrity_v1"
+    )
 
 
 def test_server_startup_rejects_second_precision_audit_storage():
