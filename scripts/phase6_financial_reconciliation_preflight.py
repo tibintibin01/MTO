@@ -13,7 +13,6 @@ from typing import Any, Mapping
 
 from sqlalchemy import inspect, text
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -244,9 +243,7 @@ def capture_schema_status(session: Any) -> dict[str, Any]:
     tables = set(inspector.get_table_names())
     missing_tables = sorted(REQUIRED_TABLES - tables)
     table_columns = {
-        table_name: {
-            item["name"] for item in inspector.get_columns(table_name)
-        }
+        table_name: {item["name"] for item in inspector.get_columns(table_name)}
         for table_name in tables & set(REQUIRED_COLUMNS)
     }
     missing_columns = [
@@ -299,9 +296,8 @@ def capture_schema_status(session: Any) -> dict[str, Any]:
                 non_decimal_money_columns.append(f"{table_name}.{column_name}")
 
     migration_applied = False
-    if (
-        "system_migrations" in tables
-        and "id" in table_columns.get("system_migrations", set())
+    if "system_migrations" in tables and "id" in table_columns.get(
+        "system_migrations", set()
     ):
         migration_applied = bool(
             session.execute(
@@ -341,19 +337,23 @@ def _duplicate_td_snapshot(session: Any, tables: set[str]) -> dict[str, int]:
         "duplicate_td_approved_by",
         "duplicate_td_approved_at",
     }
-    rows = session.execute(
-        text(
-            "SELECT COUNT(*) AS member_count, "
-            "SUM(CASE WHEN duplicate_td_verified = 1 "
-            "AND NULLIF(TRIM(duplicate_td_reason), '') IS NOT NULL "
-            "AND NULLIF(TRIM(duplicate_td_reference), '') IS NOT NULL "
-            "AND NULLIF(TRIM(duplicate_td_approved_by), '') IS NOT NULL "
-            "AND duplicate_td_approved_at IS NOT NULL THEN 1 ELSE 0 END) "
-            "AS verified_count FROM properties "
-            "WHERE deleted_at IS NULL GROUP BY UPPER(TRIM(td_number)) "
-            "HAVING COUNT(*) > 1"
-        )
-    ).all() if required <= columns else []
+    rows = (
+        session.execute(
+            text(
+                "SELECT COUNT(*) AS member_count, "
+                "SUM(CASE WHEN duplicate_td_verified = 1 "
+                "AND NULLIF(TRIM(duplicate_td_reason), '') IS NOT NULL "
+                "AND NULLIF(TRIM(duplicate_td_reference), '') IS NOT NULL "
+                "AND NULLIF(TRIM(duplicate_td_approved_by), '') IS NOT NULL "
+                "AND duplicate_td_approved_at IS NOT NULL THEN 1 ELSE 0 END) "
+                "AS verified_count FROM properties "
+                "WHERE deleted_at IS NULL GROUP BY UPPER(TRIM(td_number)) "
+                "HAVING COUNT(*) > 1"
+            )
+        ).all()
+        if required <= columns
+        else []
+    )
     group_count = len(rows)
     verified_count = sum(int(row[0] or 0) == int(row[1] or 0) for row in rows)
     return {
@@ -795,20 +795,17 @@ def main(argv: list[str] | None = None) -> int:
         write_report(args.output.resolve(), report)
 
     schema = report["schema"]
-    schema_ready = (
-        not any(
-            schema.get(key)
-            for key in (
-                "missing_tables",
-                "missing_columns",
-                "missing_indexes",
-                "missing_foreign_keys",
-                "missing_money_columns",
-                "non_decimal_money_columns",
-            )
+    schema_ready = not any(
+        schema.get(key)
+        for key in (
+            "missing_tables",
+            "missing_columns",
+            "missing_indexes",
+            "missing_foreign_keys",
+            "missing_money_columns",
+            "non_decimal_money_columns",
         )
-        and bool(schema.get("phase3_migration_applied"))
-    )
+    ) and bool(schema.get("phase3_migration_applied"))
     print("ORIGINAL PHASE 6 FINANCIAL RECONCILIATION PREFLIGHT")
     print("- Mode: READ ONLY")
     print(f"- Schema: {'PASS' if schema_ready else 'FAIL'}")
@@ -857,10 +854,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         print(f"- Privacy-safe report: {args.output.resolve()}")
     for finding in report["findings"]:
-        print(
-            f"  - [{finding['severity']}] {finding['code']}: "
-            f"{finding['detail']}"
-        )
+        print(f"  - [{finding['severity']}] {finding['code']}: " f"{finding['detail']}")
 
     if report["status"] == "FAIL":
         print("ORIGINAL PHASE 6 PREFLIGHT BLOCKED")

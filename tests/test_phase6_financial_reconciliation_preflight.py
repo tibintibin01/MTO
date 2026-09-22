@@ -109,9 +109,7 @@ def test_clean_snapshot_reconciles_aggregate_financial_totals(reconciliation_db)
         "cross_property_allocations": 0,
         "unbalanced_payment_allocations": 0,
     }
-    assert not any(
-        int(value or 0) for value in snapshot["integrity_counts"].values()
-    )
+    assert not any(int(value or 0) for value in snapshot["integrity_counts"].values())
     assert snapshot["financial_totals"] == {
         "payment_amount_total": "100.00",
         "allocation_amount_total": "100.00",
@@ -129,9 +127,9 @@ def test_missing_receipt_payment_foreign_key_is_explicit_review(reconciliation_d
 
     assert report["status"] == "REVIEW"
     assert report["blocking_finding_count"] == 0
-    assert {
-        item["code"] for item in report["findings"]
-    } == {"RECEIPT_PAYMENT_FOREIGN_KEY_MISSING"}
+    assert {item["code"] for item in report["findings"]} == {
+        "RECEIPT_PAYMENT_FOREIGN_KEY_MISSING"
+    }
 
 
 def test_cross_property_and_receipt_mismatches_fail_closed(reconciliation_db):
@@ -156,9 +154,7 @@ def test_cross_property_and_receipt_mismatches_fail_closed(reconciliation_db):
     reconciliation_db.query(PaymentBilling).filter_by(id=30).update(
         {"billing_id": 21, "tax_year": 2025}
     )
-    reconciliation_db.query(ReceiptHistory).filter_by(id=50).update(
-        {"property_id": 2}
-    )
+    reconciliation_db.query(ReceiptHistory).filter_by(id=50).update({"property_id": 2})
     reconciliation_db.commit()
 
     snapshot = preflight.collect_reconciliation_snapshot(reconciliation_db)
@@ -188,9 +184,7 @@ def test_missing_financial_schema_fails_without_querying_absent_tables():
 
     assert report["status"] == "FAIL"
     assert report["schema"]["missing_tables"]
-    assert "FINANCIAL_TABLE_MISSING" in {
-        item["code"] for item in report["findings"]
-    }
+    assert "FINANCIAL_TABLE_MISSING" in {item["code"] for item in report["findings"]}
 
 
 def test_report_is_aggregate_and_privacy_safe(reconciliation_db):
@@ -231,9 +225,7 @@ def test_main_writes_report_and_require_ready_blocks_review(
     destination = tmp_path / "phase6.json"
     monkeypatch.setattr(preflight, "capture_configured_preflight", lambda: report)
 
-    exit_code = preflight.main(
-        ["--require-ready", "--output", str(destination)]
-    )
+    exit_code = preflight.main(["--require-ready", "--output", str(destination)])
 
     assert exit_code == 3
     assert json.loads(destination.read_text(encoding="utf-8"))["status"] == "REVIEW"
