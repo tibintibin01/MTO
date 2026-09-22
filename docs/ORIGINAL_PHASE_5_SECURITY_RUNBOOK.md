@@ -273,13 +273,14 @@ Protected evidence is stored outside the checkout under
 manifest, pre-update financial/backup baseline, supply-chain report, audit
 integrity report, post-update comparison, exact previous and target commits,
 and a retained Git rollback reference. The updater stops on every failed gate.
-The candidate dependencies are installed into a separate hash-locked virtual
-environment. The active runtime is switched only after that environment passes
-`pip check`, while the exact previous environment is retained with the rollback
-evidence. A failure before migrations automatically restores both the prior
-code revision and its runtime. Once migration execution starts, the updater
-fails closed and requires explicit incident review rather than assuming that a
-code-only rollback is schema-safe.
+The exact previous environment is retained with the rollback evidence before a
+replacement is created. Windows virtual environments are not relocated: the
+new hash-locked runtime is installed directly at the final `venv` path so its
+activation scripts and console launchers cannot retain a stale candidate path.
+The replacement must pass `pip check`. A failure before migrations
+automatically restores both the prior code revision and its runtime. Once
+migration execution starts, the updater fails closed and requires explicit
+incident review rather than assuming that a code-only rollback is schema-safe.
 
 An explicitly approved code rollback uses the evidence record ID:
 

@@ -80,9 +80,31 @@ def test_updater_captures_evidence_and_enforces_post_update_gates():
         "--compare-to",
         "New-LockedRuntime",
         "Switch-LockedRuntime",
-        "relocated release runtime dependency check failed",
+        "release runtime dependency check failed",
+        "Resolve-BasePython",
     ):
         assert token in updater
+
+
+def test_windows_runtime_is_built_at_its_final_path_instead_of_relocated():
+    updater = _read("scripts/apply_immutable_release.ps1")
+
+    switch_start = updater.index("function Switch-LockedRuntime")
+    switch_end = updater.index("function Restore-LockedRuntime", switch_start)
+    switch = updater[switch_start:switch_end]
+
+    retain_previous = switch.index(
+        "Move-Item -LiteralPath $ActiveRuntime -Destination $PreviousRuntime"
+    )
+    build_final = switch.index(
+        "[void](New-LockedRuntime $BootstrapPython $ActiveRuntime)"
+    )
+
+    assert retain_previous < build_final
+    assert "CandidateRuntime" not in switch
+    assert "candidate-venv" not in updater
+    assert "Windows virtual environments embed their creation path" in updater
+    assert "bootstrap_python = $bootstrapPython" in updater
 
 
 def test_updater_retains_and_exercises_bounded_code_rollback():

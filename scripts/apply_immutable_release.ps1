@@ -284,33 +284,57 @@ function New-LockedRuntime {
         [Parameter(Mandatory = $true)][string]$Destination
     )
     if (Test-Path -LiteralPath $Destination) {
-        throw 'The staged runtime destination already exists.'
+        throw 'The release runtime destination already exists.'
     }
-    Invoke-NativeChecked $BootstrapPython @('-m', 'venv', $Destination) 'The staged release runtime could not be created'
+    Invoke-NativeChecked $BootstrapPython @('-m', 'venv', $Destination) 'The release runtime could not be created'
     $candidatePython = Join-Path $Destination 'Scripts\python.exe'
     Install-LockedRuntime $candidatePython
     return $candidatePython
 }
 
+function Resolve-BasePython {
+    param([Parameter(Mandatory = $true)][string]$Python)
+    $output = & $Python -c 'import os, sys; print(os.path.realpath(sys._base_executable))'
+    if ($LASTEXITCODE -ne 0) {
+        throw 'The base Python interpreter could not be resolved.'
+    }
+    $candidate = ([string]($output | Select-Object -Last 1)).Trim()
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        throw 'The base Python interpreter path is empty.'
+    }
+    $resolved = [IO.Path]::GetFullPath($candidate)
+    if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+        throw "The base Python interpreter is unavailable: $resolved"
+    }
+    return $resolved
+}
+
 function Switch-LockedRuntime {
     param(
         [Parameter(Mandatory = $true)][string]$ActiveRuntime,
-        [Parameter(Mandatory = $true)][string]$CandidateRuntime,
-        [Parameter(Mandatory = $true)][string]$PreviousRuntime
+        [Parameter(Mandatory = $true)][string]$PreviousRuntime,
+        [Parameter(Mandatory = $true)][string]$FailedRuntime,
+        [Parameter(Mandatory = $true)][string]$BootstrapPython
     )
     if (-not (Test-Path -LiteralPath $ActiveRuntime -PathType Container)) {
         throw 'The active production runtime is missing.'
     }
-    if (-not (Test-Path -LiteralPath $CandidateRuntime -PathType Container)) {
-        throw 'The staged release runtime is missing.'
-    }
     if (Test-Path -LiteralPath $PreviousRuntime) {
         throw 'The protected previous-runtime destination already exists.'
     }
+    if (Test-Path -LiteralPath $FailedRuntime) {
+        throw 'The failed-runtime evidence destination already exists.'
+    }
     Move-Item -LiteralPath $ActiveRuntime -Destination $PreviousRuntime
     try {
-        Move-Item -LiteralPath $CandidateRuntime -Destination $ActiveRuntime
+        # Windows virtual environments embed their creation path in activation
+        # scripts and console launchers. Build directly at the final path rather
+        # than moving a prebuilt environment and leaving stale candidate paths.
+        [void](New-LockedRuntime $BootstrapPython $ActiveRuntime)
     } catch {
+        if (Test-Path -LiteralPath $ActiveRuntime -PathType Container) {
+            Move-Item -LiteralPath $ActiveRuntime -Destination $FailedRuntime
+        }
         Move-Item -LiteralPath $PreviousRuntime -Destination $ActiveRuntime
         throw
     }
@@ -559,10 +583,10 @@ $auditReport = Join-Path $recordDirectory 'audit-integrity.json'
 $riskEvidence = if ($resolvedRiskAcceptance) { Join-Path $recordDirectory 'risk-acceptance.json' } else { $null }
 $rollbackRef = "refs/mto/rollback/$recordId"
 $activeRuntime = Join-Path $resolvedProject 'venv'
-$candidateRuntime = Join-Path $recordDirectory 'candidate-venv'
 $previousRuntime = Join-Path $recordDirectory 'previous-venv'
 $failedRuntime = Join-Path $recordDirectory 'failed-venv'
 $python = Join-Path $activeRuntime 'Scripts\python.exe'
+$bootstrapPython = Resolve-BasePython $python
 $state = @{
     format_version = 1
     record_id = $recordId
@@ -574,6 +598,7 @@ $state = @{
     risk_acceptance_sha256 = $riskAcceptanceHash
     rollback_ref = $rollbackRef
     previous_runtime = $previousRuntime
+    bootstrap_python = $bootstrapPython
     status = 'PREPARING'
     runtime_stop_attempted = $false
     runtime_stopped = $false
@@ -623,11 +648,11 @@ try {
         )
     }
     Invoke-NativeChecked $python $supplyChainArguments 'The Phase 5 supply-chain gate rejected the selected release'
-    [void](New-LockedRuntime $python $candidateRuntime)
-    Switch-LockedRuntime $activeRuntime $candidateRuntime $previousRuntime
+    Switch-LockedRuntime `
+        $activeRuntime $previousRuntime $failedRuntime $bootstrapPython
     $state.runtime_switched = $true
     $python = Join-Path $activeRuntime 'Scripts\python.exe'
-    Invoke-NativeChecked $python @('-m', 'pip', 'check') 'The relocated release runtime dependency check failed'
+    Invoke-NativeChecked $python @('-m', 'pip', 'check') 'The release runtime dependency check failed'
     $state.status = 'RUNTIME_SWITCHED'
     Write-State $state $statePath
 
