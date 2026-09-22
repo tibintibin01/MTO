@@ -22,6 +22,9 @@ if str(ROOT_DIR) not in sys.path:
 
 ASSETS_DIR = ROOT_DIR  # In this repo, assets are currently in root
 
+from mto_version import PRODUCT_VERSION
+from ui.accessibility import bind_keyboard_activation
+
 
 def _load_circular_seal(size: int) -> Image.Image:
     """Load the official seal unchanged and mask only its square corners."""
@@ -238,7 +241,7 @@ class LoginApp(ctk.CTk):
             self.content_frame,
             text=tr("login.subtitle"),
             font=ModernTheme.BODY,
-            text_color="#64748b",
+            text_color=ModernTheme.TEXT_SUB_DARK,
         ).pack(pady=(0, 24))
 
         # Fields
@@ -253,7 +256,7 @@ class LoginApp(ctk.CTk):
         self.u_err = ctk.CTkLabel(
             self.content_frame,
             text="",
-            text_color=ModernTheme.DANGER,
+            text_color=ModernTheme.DANGER_TEXT_DARK,
             font=ModernTheme.BODY_SMALL,
         )
         self.u_err.pack()
@@ -268,24 +271,30 @@ class LoginApp(ctk.CTk):
         )
         self.pe.pack(pady=5)
 
-        self.peek_lbl = ctk.CTkLabel(
+        self._password_visible = False
+        self.peek_btn = ctk.CTkButton(
             self.pe,
-            text="👁",
-            width=30,
-            height=30,
-            text_color=ModernTheme.TEXT_GRAY,
-            font=("Segoe UI", 16),
+            text="Show",
+            width=54,
+            height=34,
+            text_color=ModernTheme.TEXT_MAIN_DARK,
+            fg_color="#243553",
+            hover_color="#334a70",
+            font=("Segoe UI", 11, "bold"),
             cursor="hand2",
+            command=self._toggle_password_visibility,
         )
-        self.peek_lbl.place(relx=0.96, rely=0.5, anchor="e")
-
-        self.peek_lbl.bind("<ButtonPress-1>", lambda e: self.pe.configure(show=""))
-        self.peek_lbl.bind("<ButtonRelease-1>", lambda e: self.pe.configure(show="*"))
+        self.peek_btn.place(relx=0.985, rely=0.5, anchor="e")
+        bind_keyboard_activation(
+            self.peek_btn,
+            self._toggle_password_visibility,
+            focus_color=ModernTheme.FOCUS_RING,
+        )
 
         self.p_err = ctk.CTkLabel(
             self.content_frame,
             text="",
-            text_color=ModernTheme.DANGER,
+            text_color=ModernTheme.DANGER_TEXT_DARK,
             font=ModernTheme.BODY_SMALL,
         )
         self.p_err.pack()
@@ -302,6 +311,11 @@ class LoginApp(ctk.CTk):
             text_color=ModernTheme.TEXT_GRAY,
         )
         self.remember_cb.pack(pady=(5, 10), anchor="w")
+        bind_keyboard_activation(
+            self.remember_cb,
+            self.remember_cb.toggle,
+            focus_color=ModernTheme.FOCUS_RING,
+        )
 
         # Load remembered username
         from utils import ConfigManager
@@ -324,6 +338,11 @@ class LoginApp(ctk.CTk):
             corner_radius=10,
         )
         self.login_btn.pack(pady=(20, 10))
+        bind_keyboard_activation(
+            self.login_btn,
+            self.start_login_thread,
+            focus_color=ModernTheme.FOCUS_RING,
+        )
 
         self.theme_btn = ctk.CTkButton(
             self.content_frame,
@@ -332,10 +351,15 @@ class LoginApp(ctk.CTk):
             width=120,
             height=30,
             fg_color="transparent",
-            text_color="#475569",
+            text_color=ModernTheme.TEXT_SUB_DARK,
             hover_color="#1e293b",
         )
         self.theme_btn.pack(pady=(0, 4))
+        bind_keyboard_activation(
+            self.theme_btn,
+            self.toggle_theme,
+            focus_color=ModernTheme.FOCUS_RING,
+        )
 
         # Trust badges row
         badges_fr = ctk.CTkFrame(self.content_frame, fg_color="transparent")
@@ -345,7 +369,7 @@ class LoginApp(ctk.CTk):
                 badges_fr,
                 text=badge_text,
                 font=("Inter", 9, "bold"),
-                text_color="#334155",
+                text_color="#cbd5e1",
                 fg_color="#0f172a",
                 corner_radius=6,
                 padx=8,
@@ -355,14 +379,20 @@ class LoginApp(ctk.CTk):
         # Version watermark at bottom of right panel
         ctk.CTkLabel(
             self.login_frame,
-            text="Municipal Treasury Office  ·  v2.1.0",
-            font=("Inter", 8),
-            text_color="#1e3a5f",
+            text=f"Municipal Treasury Office  ·  v{PRODUCT_VERSION}",
+            font=("Inter", 10),
+            text_color=ModernTheme.TEXT_SUB_DARK,
         ).place(relx=0.5, rely=0.97, anchor="center")
 
         # Step 6: Keyboard shortcuts
         self.bind("<Return>", lambda e: self.start_login_thread())
         self.bind("<Escape>", lambda e: self.destroy())
+        self.after(100, self.ue.focus_set)
+
+    def _toggle_password_visibility(self):
+        self._password_visible = not self._password_visible
+        self.pe.configure(show="" if self._password_visible else "*")
+        self.peek_btn.configure(text="Hide" if self._password_visible else "Show")
 
     def _on_resize(self, event):
         """Responsive behavior: Hide sidebar on narrow screens and resize logo."""
@@ -382,7 +412,7 @@ class LoginApp(ctk.CTk):
                     new_h = int(height * 1.1)
                     # Update CTkImage size
                     self.logo_img.configure(size=(new_w, new_h))
-                except:
+                except Exception:
                     pass
 
     def toggle_theme(self):

@@ -2,6 +2,7 @@ import customtkinter as ctk
 import api_clients.auth_service as auth
 from theme_manager import ModernTheme
 from utils import tr, LocalizationManager
+from ui.accessibility import bind_keyboard_activation
 
 # ---------------------------------------------------------------------------
 # Icon map — one icon per nav item key
@@ -77,16 +78,22 @@ class NavigationSidebar(ctk.CTkFrame):
         self._setup_nav_links()
 
         # ── Logout ──────────────────────────────────────────────────────────
-        ctk.CTkButton(
+        self.logout_btn = ctk.CTkButton(
             self,
             text=f"  {tr('dashboard.nav.logout')}",
-            fg_color="#e74c3c",
-            hover_color="#c0392b",
+            fg_color=ModernTheme.DANGER_SURFACE,
+            hover_color=ModernTheme.DANGER_SURFACE_HOVER,
             command=self.callbacks["logout"],
             font=("Segoe UI", 13, "bold"),
             height=42,
             corner_radius=8,
-        ).pack(side="bottom", pady=(0, 20), padx=20, fill="x")
+        )
+        self.logout_btn.pack(side="bottom", pady=(0, 20), padx=20, fill="x")
+        bind_keyboard_activation(
+            self.logout_btn,
+            self.callbacks["logout"],
+            focus_color=ModernTheme.FOCUS_RING,
+        )
 
     def _setup_profile_card(self):
         card = ctk.CTkFrame(
@@ -104,7 +111,11 @@ class NavigationSidebar(ctk.CTkFrame):
         # Avatar circle
         avatar_val = self.username[0].upper() if self.username else "U"
         avatar_fr = ctk.CTkFrame(
-            id_fr, width=40, height=40, corner_radius=20, fg_color=ModernTheme.PRIMARY
+            id_fr,
+            width=40,
+            height=40,
+            corner_radius=20,
+            fg_color=ModernTheme.PRIMARY_SURFACE,
         )
         avatar_fr.pack(side="left", padx=(0, 10))
         avatar_fr.pack_propagate(False)
@@ -127,7 +138,7 @@ class NavigationSidebar(ctk.CTkFrame):
             info_fr,
             text=auth.get_user_role(self.user_data).upper(),
             font=("Segoe UI", 9, "bold"),
-            text_color=ModernTheme.PRIMARY,
+            text_color=(ModernTheme.PRIMARY_SURFACE, ModernTheme.PRIMARY),
             anchor="w",
         ).pack(fill="x")
 
@@ -135,29 +146,41 @@ class NavigationSidebar(ctk.CTkFrame):
         toggle_fr = ctk.CTkFrame(card, fg_color="transparent")
         toggle_fr.pack(fill="x", padx=8, pady=(0, 8))
 
-        ctk.CTkButton(
+        self.theme_btn = ctk.CTkButton(
             toggle_fr,
-            text="🌓",
+            text="🌓 Theme",
             command=self.callbacks["toggle_theme"],
-            width=36,
-            height=28,
+            width=84,
+            height=32,
             fg_color="transparent",
             text_color=ModernTheme.TEXT_GRAY,
             font=("Segoe UI", 13),
             hover_color=("#d1d8e0", "#2c3e50"),
-        ).pack(side="left", padx=2)
+        )
+        self.theme_btn.pack(side="left", padx=2)
+        bind_keyboard_activation(
+            self.theme_btn,
+            self.callbacks["toggle_theme"],
+            focus_color=ModernTheme.FOCUS_RING,
+        )
 
         current_lang = LocalizationManager()._current_locale.upper()
-        ctk.CTkButton(
+        self.language_btn = ctk.CTkButton(
             toggle_fr,
-            text=f"🌏 {current_lang}",
+            text=f"🌏 Language: {current_lang}",
             command=self.callbacks["toggle_language"],
-            height=28,
+            height=32,
             fg_color="transparent",
             text_color=ModernTheme.TEXT_GRAY,
             font=("Segoe UI", 10, "bold"),
             hover_color=("#d1d8e0", "#2c3e50"),
-        ).pack(side="left", fill="x", expand=True)
+        )
+        self.language_btn.pack(side="left", fill="x", expand=True)
+        bind_keyboard_activation(
+            self.language_btn,
+            self.callbacks["toggle_language"],
+            focus_color=ModernTheme.FOCUS_RING,
+        )
 
     # -----------------------------------------------------------------------
     # Nav links
@@ -194,7 +217,6 @@ class NavigationSidebar(ctk.CTkFrame):
                 "Property Portfolios",
                 lambda: self._navigate("portfolios", PortfolioPage),
             )
-
 
         if auth.has_permission(self.user_data, "ledger_view"):
             self._add_nav(
@@ -292,6 +314,11 @@ class NavigationSidebar(ctk.CTkFrame):
             command=command,
         )
         btn.pack(fill="x", padx=10, pady=2)
+        bind_keyboard_activation(
+            btn,
+            command,
+            focus_color=ModernTheme.FOCUS_RING,
+        )
 
         self._nav_items[key] = {"btn": btn, "command": command}
         return btn
@@ -323,7 +350,7 @@ class NavigationSidebar(ctk.CTkFrame):
 
         # Active style: accent background + white text + bold
         btn.configure(
-            fg_color=(ModernTheme.PRIMARY, ModernTheme.PRIMARY),
+            fg_color=(ModernTheme.PRIMARY_SURFACE, ModernTheme.PRIMARY_SURFACE),
             text_color=("white", "white"),
             font=("Segoe UI", 13, "bold"),
         )

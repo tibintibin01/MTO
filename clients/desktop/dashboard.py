@@ -72,6 +72,7 @@ class DashboardApp(ctk.CTk):
         self.bind("<Control-s>", lambda e: self.dispatch_hotkey("save"))
         self.bind("<Control-S>", lambda e: self.dispatch_hotkey("save"))
         self.bind("<Escape>", lambda e: self.dispatch_hotkey("cancel"))
+        self.bind("<F1>", self._open_help_from_keyboard)
 
         # Responsive Layout
         self.grid_columnconfigure(1, weight=1)
@@ -309,6 +310,11 @@ class DashboardApp(ctk.CTk):
 
     def open_command_palette(self):
         CommandPalette(self, self.user_data, self.handle_palette_selection)
+
+    def _open_help_from_keyboard(self, _event=None):
+        self.sidebar._set_active("help")
+        self.load_page(SystemHelpPage)
+        return "break"
 
     def handle_palette_selection(self, result):
         res_type, identifier, command = result.get("type"), result.get("identifier"), result.get("command")

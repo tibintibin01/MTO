@@ -1,30 +1,37 @@
 import customtkinter as ctk
 
+
 class ModernTheme:
     """
     Premium Design System for MTO Treasury.
     Uses 'Midnight Slate' palette for professional, low-strain interfaces.
     """
+
     # --- CORE BRANDING ---
-    PRIMARY = "#38bdf8"        # Sky Blue
+    PRIMARY = "#38bdf8"  # Sky Blue
     PRIMARY_HOVER = "#0ea5e9"
-    ACCENT = "#8b5cf6"         # Violet
-    
+    PRIMARY_SURFACE = "#0369a1"  # White text: WCAG AA contrast
+    PRIMARY_SURFACE_HOVER = "#075985"
+    ACCENT = "#8b5cf6"  # Violet
+
     # --- SEMANTIC STATES ---
-    SUCCESS = "#10b981"        # Emerald
-    DANGER = "#ef4444"         # Rose
-    WARNING = "#f59e0b"        # Amber
-    INFO = "#3b82f6"           # Blue
-    SECONDARY = "#64748b"      # Slate
+    SUCCESS = "#10b981"  # Emerald
+    DANGER = "#ef4444"  # Rose
+    DANGER_SURFACE = "#b91c1c"
+    DANGER_SURFACE_HOVER = "#991b1b"
+    DANGER_TEXT_DARK = "#fca5a5"
+    WARNING = "#f59e0b"  # Amber
+    INFO = "#3b82f6"  # Blue
+    SECONDARY = "#64748b"  # Slate
     SECONDARY_HOVER = "#475569"
-    
+
     # --- NEUTRAL PALETTE (Light) ---
     BG_LIGHT = "#f8fafc"
     CARD_LIGHT = "#ffffff"
     TEXT_MAIN_LIGHT = "#1e293b"
     TEXT_SUB_LIGHT = "#64748b"
     BORDER_LIGHT = "#e2e8f0"
-    
+
     # --- NEUTRAL PALETTE (Dark / Midnight Slate) ---
     BG_DARK = "#0f172a"
     CARD_DARK = "#1e293b"
@@ -32,9 +39,10 @@ class ModernTheme:
     TEXT_SUB_DARK = "#94a3b8"
     BORDER_DARK = "#334155"
     TEXT_GRAY = "#94a3b8"  # Alias for TEXT_SUB_DARK
+    FOCUS_RING = "#fde047"
 
     # --- TYPOGRAPHY ---
-    FONT_FAMILY = "Inter" # Fallback to Segoe UI if Inter is missing
+    FONT_FAMILY = "Inter"  # Fallback to Segoe UI if Inter is missing
     H1 = ("Inter", 32, "bold")
     H2 = ("Inter", 24, "bold")
     H3 = ("Inter", 18, "bold")
@@ -43,6 +51,7 @@ class ModernTheme:
     BODY_SMALL = ("Inter", 11)
     BUTTON = ("Inter", 14, "bold")
     BUTTON_SMALL = ("Inter", 11, "bold")
+
 
 def setup_theme(mode=None):
     """
@@ -53,8 +62,11 @@ def setup_theme(mode=None):
         ctk.set_appearance_mode(mode)
     else:
         ctk.set_appearance_mode("system")
-        
-    ctk.set_default_color_theme("blue") # We use our own variables, but blue is a safe base
+
+    ctk.set_default_color_theme(
+        "blue"
+    )  # We use our own variables, but blue is a safe base
+
 
 def get_colors(mode=None):
     """Returns a dictionary of current theme colors."""
@@ -66,7 +78,7 @@ def get_colors(mode=None):
             "text": ModernTheme.TEXT_MAIN_DARK,
             "subtext": ModernTheme.TEXT_SUB_DARK,
             "border": ModernTheme.BORDER_DARK,
-            "accent": ModernTheme.PRIMARY
+            "accent": ModernTheme.PRIMARY,
         }
     else:
         return {
@@ -75,5 +87,5 @@ def get_colors(mode=None):
             "text": ModernTheme.TEXT_MAIN_LIGHT,
             "subtext": ModernTheme.TEXT_SUB_LIGHT,
             "border": ModernTheme.BORDER_LIGHT,
-            "accent": ModernTheme.PRIMARY
+            "accent": ModernTheme.PRIMARY,
         }

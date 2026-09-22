@@ -1,6 +1,7 @@
 import customtkinter as ctk
 from theme_manager import ModernTheme
 
+
 class SystemHelpPage:
     def __init__(self, parent, user):
         self.container = ctk.CTkScrollableFrame(parent, fg_color="transparent")
@@ -29,7 +30,7 @@ class SystemHelpPage:
             ),
             (
                 "⌨️ Keyboard Shortcuts",
-                "Ctrl + F: Quick Search / Command Palette\nCtrl + P: Open Command Palette\nCtrl + E: Export visible table data to Excel/CSV",
+                "F1: Open this Help guide\nCtrl + F, Ctrl + K, or Ctrl + P: Open the Command Palette\nCtrl + N: Start the current screen's new-record action\nCtrl + S: Save the current form\nEsc: Cancel the current form or close the active dialog\nTab / Shift + Tab: Move between available controls\nEnter or Space: Activate a focused button",
             ),
             (
                 "🛡️ Data Protection",
