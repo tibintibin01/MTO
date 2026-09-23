@@ -15,6 +15,8 @@ sys.path.insert(0, desktop_client_dir)
 
 # Mocking CustomTkinter to avoid GUI initialization during tests
 import customtkinter
+from matplotlib.figure import Figure
+from matplotlib.ticker import FuncFormatter
 
 customtkinter.set_appearance_mode = MagicMock()
 customtkinter.set_default_color_theme = MagicMock()
@@ -38,6 +40,7 @@ from ui.compliant_dashboard import (
     compliance_scope_text,
     suggested_tax_bill_year,
 )
+from ui_components import ModernChartWidget
 
 
 class TestNavigationSidebar(unittest.TestCase):
@@ -367,6 +370,55 @@ class TestDashboardHome(unittest.TestCase):
         args = home._update_ui.call_args.args
         self.assertEqual(args[2], recent)
         self.assertIsNone(args[3])
+
+    def test_dashboard_recent_rows_survive_chart_render_failure(self):
+        home = object.__new__(DashboardHomePage)
+        home.parent = MagicMock()
+        home._hide_loading = MagicMock()
+        home._render_recent_collections = MagicMock()
+        home.bar_chart = MagicMock()
+        home.bar_chart.draw.side_effect = RuntimeError("chart failed")
+        home.stat_cards = {
+            name: MagicMock()
+            for name in (
+                "total_properties",
+                "collections_today",
+                "receipts_today",
+                "collections_month",
+            )
+        }
+        home.stat_cards["total_properties"].winfo_exists.return_value = True
+        recent = [{"id": 9, "or_number": "OR-9", "amount": 397.42}]
+
+        with (
+            patch("ui.dashboard_home.show_toast"),
+            patch("utils.log_error_to_file") as log_error,
+        ):
+            home._update_ui(
+                {
+                    "total_properties": 100,
+                    "collections_today": 0,
+                    "receipts_today": 0,
+                    "collections_month": 397.42,
+                },
+                [{"month": "2026-09", "total": 397.42}],
+                recent,
+            )
+
+        home._render_recent_collections.assert_called_once_with(recent, load_error=None)
+        log_error.assert_called_once()
+
+    def test_chart_draw_completes_with_plain_currency_formatter(self):
+        chart = object.__new__(ModernChartWidget)
+        chart.matplotlib = object()
+        chart.figure = Figure()
+        chart.ax = chart.figure.add_subplot(111)
+        chart.canvas = MagicMock()
+
+        chart.draw(["Sep 26"], [47975.49])
+
+        self.assertIsInstance(chart.ax.yaxis.get_major_formatter(), FuncFormatter)
+        chart.canvas.draw.assert_called_once_with()
 
 
 if __name__ == "__main__":

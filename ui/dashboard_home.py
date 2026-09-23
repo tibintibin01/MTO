@@ -40,9 +40,7 @@ def _recent_payment_display(row):
         "date": date_text or "-",
         "or_number": str(or_number or "-"),
         "td_number": str(td_number or "-"),
-        "owner_year": (
-            f"{str(owner or '-').strip()} / {str(tax_year or '-').strip()}"
-        ),
+        "owner_year": (f"{str(owner or '-').strip()} / {str(tax_year or '-').strip()}"),
         "amount": amount_value,
     }
 
@@ -52,14 +50,22 @@ def _dashboard_month_label(value):
     try:
         year_text, month_text = text.split("-", 1)
         names = (
-            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec",
         )
         return f"{names[int(month_text) - 1]} {year_text[-2:]}"
     except (ValueError, IndexError):
         return text
-
-
 
 
 class DashboardHomePage:
@@ -164,9 +170,7 @@ class DashboardHomePage:
         )
         self.backup_card.pack(fill="x")
 
-        protection_header = ctk.CTkFrame(
-            self.backup_card, fg_color="transparent"
-        )
+        protection_header = ctk.CTkFrame(self.backup_card, fg_color="transparent")
         protection_header.pack(fill="x", padx=18, pady=(13, 8))
         ctk.CTkLabel(
             protection_header,
@@ -179,9 +183,7 @@ class DashboardHomePage:
             font=("Segoe UI", 16),
         ).pack(side="left", padx=(0, 10))
 
-        protection_copy = ctk.CTkFrame(
-            protection_header, fg_color="transparent"
-        )
+        protection_copy = ctk.CTkFrame(protection_header, fg_color="transparent")
         protection_copy.pack(side="left", fill="x", expand=True)
         ctk.CTkLabel(
             protection_copy,
@@ -247,13 +249,9 @@ class DashboardHomePage:
             border_width=1,
             border_color=("#cbd5e1", "#334155"),
         )
-        self.recent_card.grid(
-            row=0, column=1, padx=(10, 0), sticky="nsew"
-        )
+        self.recent_card.grid(row=0, column=1, padx=(10, 0), sticky="nsew")
 
-        recent_header = ctk.CTkFrame(
-            self.recent_card, fg_color="transparent"
-        )
+        recent_header = ctk.CTkFrame(self.recent_card, fg_color="transparent")
         recent_header.pack(fill="x", padx=16, pady=(14, 2))
         ctk.CTkLabel(
             recent_header,
@@ -283,12 +281,8 @@ class DashboardHomePage:
             anchor="w",
         ).pack(fill="x", padx=16, pady=(0, 9))
 
-        self.recent_rows = ctk.CTkFrame(
-            self.recent_card, fg_color="transparent"
-        )
-        self.recent_rows.pack(
-            fill="both", expand=True, padx=12, pady=(0, 12)
-        )
+        self.recent_rows = ctk.CTkFrame(self.recent_card, fg_color="transparent")
+        self.recent_rows.pack(fill="both", expand=True, padx=12, pady=(0, 12))
         self._render_recent_collections([])
 
     def _render_recent_collections(self, rows, load_error=None):
@@ -317,9 +311,7 @@ class DashboardHomePage:
                 anchor="e" if column == 4 else "w",
                 font=("Segoe UI", 8, "bold"),
                 text_color=("#475569", "#94a3b8"),
-            ).grid(
-                row=0, column=column, sticky="ew", padx=6, pady=6
-            )
+            ).grid(row=0, column=column, sticky="ew", padx=6, pady=6)
 
         if load_error:
             ctk.CTkLabel(
@@ -348,9 +340,7 @@ class DashboardHomePage:
             frame = ctk.CTkFrame(
                 self.recent_rows,
                 fg_color=(
-                    ("#f8fafc", "#111827")
-                    if index % 2 == 0
-                    else ("#f1f5f9", "#172033")
+                    ("#f8fafc", "#111827") if index % 2 == 0 else ("#f1f5f9", "#172033")
                 ),
                 corner_radius=0,
             )
@@ -364,27 +354,17 @@ class DashboardHomePage:
             )
             for column, value in enumerate(values):
                 width = columns[column][1]
-                frame.grid_columnconfigure(
-                    column, weight=1 if width == 0 else 0
-                )
+                frame.grid_columnconfigure(column, weight=1 if width == 0 else 0)
                 ctk.CTkLabel(
                     frame,
                     text=value,
                     width=width,
                     anchor="e" if column == 4 else "w",
-                    font=(
-                        ("Segoe UI", 8, "bold")
-                        if column == 4
-                        else ("Segoe UI", 8)
-                    ),
+                    font=(("Segoe UI", 8, "bold") if column == 4 else ("Segoe UI", 8)),
                     text_color=(
-                        ModernTheme.SUCCESS
-                        if column == 4
-                        else ("#1e293b", "#e2e8f0")
+                        ModernTheme.SUCCESS if column == 4 else ("#1e293b", "#e2e8f0")
                     ),
-                ).grid(
-                    row=0, column=column, sticky="ew", padx=6, pady=7
-                )
+                ).grid(row=0, column=column, sticky="ew", padx=6, pady=7)
 
     def _open_payment_ledger(self):
         top = self.parent.winfo_toplevel()
@@ -616,9 +596,7 @@ class DashboardHomePage:
                     recent_error = str(exc)
             self.parent.after(
                 0,
-                lambda: self._update_ui(
-                    summary, trend_rows, recent_rows, recent_error
-                ),
+                lambda: self._update_ui(summary, trend_rows, recent_rows, recent_error),
             )
         except Exception as e:
             print(f"Dashboard refresh error: {e}")
@@ -642,10 +620,18 @@ class DashboardHomePage:
             text=f"P {float(summary.get('collections_month', 0) or 0):,.2f}"
         )
 
+        # The recent-payment feed is operationally more important than the
+        # decorative chart and must not be blocked by a chart-rendering error.
+        self._render_recent_collections(recent_rows, load_error=recent_error)
+
         months = [_dashboard_month_label(row.get("month")) for row in trend_rows]
         totals = [row["total"] for row in trend_rows]
-        self.bar_chart.draw(months, totals, chart_type="bar")
-        self._render_recent_collections(recent_rows, load_error=recent_error)
+        try:
+            self.bar_chart.draw(months, totals, chart_type="bar")
+        except Exception as exc:
+            from utils import log_error_to_file
+
+            log_error_to_file("Dashboard collection trend render failed", exc)
 
         b = summary.get("backup")
         if b:

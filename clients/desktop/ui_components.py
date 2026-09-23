@@ -33,7 +33,11 @@ class ModernChartWidget:
 
         if self.matplotlib:
             # Match the dark theme of CustomTkinter
-            bg_color = ModernTheme.CARD_DARK if ctk.get_appearance_mode().lower() == "dark" else ModernTheme.CARD_LIGHT
+            bg_color = (
+                ModernTheme.CARD_DARK
+                if ctk.get_appearance_mode().lower() == "dark"
+                else ModernTheme.CARD_LIGHT
+            )
             self.figure = self.Figure(figsize=(5, 3), dpi=100, facecolor=bg_color)
             self.ax = self.figure.add_subplot(111)
             self.ax.set_facecolor(bg_color)
@@ -87,7 +91,11 @@ class ModernChartWidget:
 
             self.ax.tick_params(colors="gray", labelsize=8)
             for spine in self.ax.spines.values():
-                spine.set_color(ModernTheme.BORDER_DARK if ctk.get_appearance_mode().lower() == "dark" else ModernTheme.BORDER_LIGHT)
+                spine.set_color(
+                    ModernTheme.BORDER_DARK
+                    if ctk.get_appearance_mode().lower() == "dark"
+                    else ModernTheme.BORDER_LIGHT
+                )
             self.ax.grid(True, axis="y", alpha=0.05)
 
             # ── Format Y-axis as peso values — no scientific notation ─────────
@@ -108,8 +116,10 @@ class ModernChartWidget:
                 self.ax.yaxis.set_major_formatter(
                     mticker.FuncFormatter(lambda x, _: f"₱{x:.0f}")
                 )
-            # Prevent matplotlib from using offset/scientific notation
-            self.ax.ticklabel_format(style="plain", axis="y")
+            # FuncFormatter already produces the complete plain-text label.
+            # Calling ``ticklabel_format`` here is invalid because that helper
+            # only supports ScalarFormatter and raises before the rest of the
+            # dashboard can finish rendering.
 
         self.figure.tight_layout()
         self.canvas.draw()
@@ -168,8 +178,8 @@ class ToastNotification(ctk.CTkToplevel):
         x = screen_width - 320
         y = screen_height - 120
         self.geometry(f"300x70+{x}+{y}")
-        self.attributes("-alpha", 0.0) # Start transparent for animation
-        
+        self.attributes("-alpha", 0.0)  # Start transparent for animation
+
         self.label = ctk.CTkLabel(
             self,
             text=self.message,
@@ -212,24 +222,29 @@ def show_toast(master, message, type="info", duration=None, sticky=False):
     duration: ms to show (overrides default). If 0 or sticky=True, stays until clicked.
     """
     from utils import ConfigManager
+
     colors = {
         "info": "#3498db",
         "success": "#2ecc71",
         "error": "#e74c3c",
         "warning": "#f39c12",
     }
-    
+
     if duration is None:
         duration = ConfigManager.get("toast_duration", 3000)
-    
+
     if sticky or type == "error":
         duration = 0
         message = f"📌 {message}"
 
     # Centralized UI thread safety
     master.after(
-        0, lambda: ToastNotification(master, message, colors.get(type, "#3498db"), duration=duration)
+        0,
+        lambda: ToastNotification(
+            master, message, colors.get(type, "#3498db"), duration=duration
+        ),
     )
+
 
 class ErrorDialog(ctk.CTkToplevel):
     def __init__(self, master, title, message, retry_callback=None):
@@ -238,8 +253,8 @@ class ErrorDialog(ctk.CTkToplevel):
         self.geometry("400x200")
         self.resizable(False, False)
         self.attributes("-topmost", True)
-        self.grab_set() # Modal behavior
-        
+        self.grab_set()  # Modal behavior
+
         # Center in parent
         self.update_idletasks()
         pw = master.winfo_width()
@@ -257,7 +272,9 @@ class ErrorDialog(ctk.CTkToplevel):
         header = ctk.CTkLabel(self, text="⚠️", font=("Segoe UI", 32))
         header.grid(row=0, column=0, pady=(20, 0))
 
-        msg_label = ctk.CTkLabel(self, text=message, font=ModernTheme.BODY, wraplength=350)
+        msg_label = ctk.CTkLabel(
+            self, text=message, font=ModernTheme.BODY, wraplength=350
+        )
         msg_label.grid(row=1, column=0, padx=20, pady=10)
 
         btn_fr = ctk.CTkFrame(self, fg_color="transparent")
@@ -265,31 +282,47 @@ class ErrorDialog(ctk.CTkToplevel):
 
         if retry_callback:
             from utils import tr
-            self.retry_btn = ctk.CTkButton(btn_fr, text=tr("common.retry"), command=lambda: [self.destroy(), retry_callback()])
+
+            self.retry_btn = ctk.CTkButton(
+                btn_fr,
+                text=tr("common.retry"),
+                command=lambda: [self.destroy(), retry_callback()],
+            )
             self.retry_btn.pack(side="left", padx=10)
-        
+
         from utils import tr
-        self.ok_btn = ctk.CTkButton(btn_fr, text=tr("common.ok"), command=self.destroy, fg_color="transparent", border_width=1)
+
+        self.ok_btn = ctk.CTkButton(
+            btn_fr,
+            text=tr("common.ok"),
+            command=self.destroy,
+            fg_color="transparent",
+            border_width=1,
+        )
         self.ok_btn.pack(side="left", padx=10)
+
 
 class ModernProgressBar(ctk.CTkFrame):
     def __init__(self, master, title="Operation in Progress...", **kwargs):
         super().__init__(master, **kwargs)
         self.grid_columnconfigure(0, weight=1)
-        
+
         self.lbl = ctk.CTkLabel(self, text=title, font=ModernTheme.BODY_BOLD)
         self.lbl.grid(row=0, column=0, padx=20, pady=(15, 5), sticky="w")
-        
+
         self.pbar = ctk.CTkProgressBar(self, height=12, corner_radius=6)
         self.pbar.grid(row=1, column=0, padx=20, pady=(0, 5), sticky="ew")
         self.pbar.set(0)
-        
-        self.status_lbl = ctk.CTkLabel(self, text="Preparing...", font=ModernTheme.BODY_SMALL, text_color="gray")
+
+        self.status_lbl = ctk.CTkLabel(
+            self, text="Preparing...", font=ModernTheme.BODY_SMALL, text_color="gray"
+        )
         self.status_lbl.grid(row=2, column=0, padx=20, pady=(0, 15), sticky="w")
 
     def update_progress(self, percentage, message):
         self.pbar.set(percentage / 100)
         self.status_lbl.configure(text=message)
+
 
 class ProgressOverlay(ctk.CTkToplevel):
     def __init__(self, master, title="System Task"):
@@ -298,43 +331,48 @@ class ProgressOverlay(ctk.CTkToplevel):
         self.geometry("450x180")
         self.resizable(False, False)
         self.attributes("-topmost", True)
-        self.overrideredirect(True) # Borderless premium feel
-        
+        self.overrideredirect(True)  # Borderless premium feel
+
         # Center
         self.update_idletasks()
         x = master.winfo_rootx() + (master.winfo_width() // 2) - 225
         y = master.winfo_rooty() + (master.winfo_height() // 2) - 90
         self.geometry(f"+{x}+{y}")
-        
+
         self.configure(fg_color=ModernTheme.SECONDARY)
-        
+
         self.inner = ctk.CTkFrame(self, fg_color="transparent")
         self.inner.pack(fill="both", expand=True, padx=2, pady=2)
-        
-        self.progress_widget = ModernProgressBar(self.inner, title=title, fg_color=ModernTheme.CARD_DARK)
+
+        self.progress_widget = ModernProgressBar(
+            self.inner, title=title, fg_color=ModernTheme.CARD_DARK
+        )
         self.progress_widget.pack(fill="both", expand=True)
-        
+
     def update(self, percentage, message):
         self.progress_widget.update_progress(percentage, message)
         if percentage >= 100:
             self.after(1500, self.destroy)
 
+
 class LoadingOverlay(ctk.CTkToplevel):
     def __init__(self, master, message="Loading...", **kwargs):
         super().__init__(master)
-        
+
         # Premium Floating Window
         self.overrideredirect(True)
         self.attributes("-topmost", True)
-        
+
         # Card Styling
-        card_bg = "#1e1e1e" if ctk.get_appearance_mode().lower() == "dark" else "#f0f0f0"
+        card_bg = (
+            "#1e1e1e" if ctk.get_appearance_mode().lower() == "dark" else "#f0f0f0"
+        )
         self.configure(fg_color=card_bg)
-        
+
         # Center relative to master
         self.update_idletasks()
         width, height = 350, 120
-        
+
         # Try to get master coordinates, fallback to screen center
         try:
             mx = master.winfo_rootx()
@@ -348,50 +386,54 @@ class LoadingOverlay(ctk.CTkToplevel):
             sh = self.winfo_screenheight()
             x = (sw // 2) - (width // 2)
             y = (sh // 2) - (height // 2)
-            
+
         self.geometry(f"{width}x{height}+{x}+{y}")
-        
+
         # Border Frame
         self.border_fr = ctk.CTkFrame(
-            self, 
-            fg_color="transparent", 
-            corner_radius=12, 
-            border_width=2, 
-            border_color=ModernTheme.PRIMARY
+            self,
+            fg_color="transparent",
+            corner_radius=12,
+            border_width=2,
+            border_color=ModernTheme.PRIMARY,
         )
         self.border_fr.pack(fill="both", expand=True)
-        
+
         self.inner = ctk.CTkFrame(self.border_fr, fg_color="transparent")
         self.inner.place(relx=0.5, rely=0.5, anchor="center")
-        
+
         self.lbl = ctk.CTkLabel(self.inner, text=message, font=ModernTheme.BODY_BOLD)
         self.lbl.pack(pady=(0, 15))
-        
-        self.progress = ctk.CTkProgressBar(self.inner, mode="indeterminate", width=250, height=8)
+
+        self.progress = ctk.CTkProgressBar(
+            self.inner, mode="indeterminate", width=250, height=8
+        )
         self.progress.pack()
         self.progress.start()
-        
+
     def hide(self):
         self.destroy()
 
+
 class SyncBadge(ctk.CTkFrame):
     """Real-time status indicator for the offline sync queue."""
+
     def __init__(self, master, command=None, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self.command = command
         self.label = ctk.CTkLabel(
-            self, 
-            text="● Synced", 
+            self,
+            text="● Synced",
             font=ModernTheme.BODY_SMALL,
             text_color="#2ecc71",
-            cursor="hand2"
+            cursor="hand2",
         )
         self.label.pack(side="left", padx=5)
-        
+
         # Make the whole frame and label clickable
         self.bind("<Button-1>", lambda e: self._on_click())
         self.label.bind("<Button-1>", lambda e: self._on_click())
-        
+
         # Internal state
         self.last_count = 0
         self.is_syncing = False
@@ -403,7 +445,7 @@ class SyncBadge(ctk.CTkFrame):
     def update_status(self, count, is_syncing):
         self.last_count = count
         self.is_syncing = is_syncing
-        
+
         # Thread-safe UI update
         self.after(0, self._perform_update)
 
@@ -411,7 +453,9 @@ class SyncBadge(ctk.CTkFrame):
         if self.is_syncing:
             self.label.configure(text=f"🔄 Syncing...", text_color="#f39c12")
         elif self.last_count > 0:
-            self.label.configure(text=f"● {self.last_count} Pending", text_color="#f39c12")
+            self.label.configure(
+                text=f"● {self.last_count} Pending", text_color="#f39c12"
+            )
         else:
             self.label.configure(text="● Synced", text_color="#2ecc71")
 
@@ -461,11 +505,17 @@ def attach_autocomplete(entry: ctk.CTkEntry, values: list, variable: tk.StringVa
         win.configure(bg="#1e293b")
 
         lb = tk.Listbox(
-            win, font=("Inter", 11),
-            bg="#1e293b", fg="#cbd5e1",
-            selectbackground="#1d4ed8", selectforeground="#ffffff",
-            activestyle="none", borderwidth=0,
-            highlightthickness=1, highlightcolor="#334155", relief="flat",
+            win,
+            font=("Inter", 11),
+            bg="#1e293b",
+            fg="#cbd5e1",
+            selectbackground="#1d4ed8",
+            selectforeground="#ffffff",
+            activestyle="none",
+            borderwidth=0,
+            highlightthickness=1,
+            highlightcolor="#334155",
+            relief="flat",
         )
         lb.pack(fill="both", expand=True)
         for item in items:
@@ -484,11 +534,11 @@ def attach_autocomplete(entry: ctk.CTkEntry, values: list, variable: tk.StringVa
             entry.focus_set()
 
         lb.bind("<ButtonRelease-1>", on_select)
-        lb.bind("<Return>",          on_select)
-        lb.bind("<Tab>",             on_select)
-        lb.bind("<Escape>",          lambda e: _close())
-        lb.bind("<FocusOut>",        lambda e: entry.after(150, _close))
-        win.bind("<FocusOut>",       lambda e: entry.after(150, _close))
+        lb.bind("<Return>", on_select)
+        lb.bind("<Tab>", on_select)
+        lb.bind("<Escape>", lambda e: _close())
+        lb.bind("<FocusOut>", lambda e: entry.after(150, _close))
+        win.bind("<FocusOut>", lambda e: entry.after(150, _close))
 
         _state["win"] = win
         _state["lb"] = lb
@@ -503,8 +553,10 @@ def attach_autocomplete(entry: ctk.CTkEntry, values: list, variable: tk.StringVa
         if any(v.strip().upper() == term for v in values):
             _close()
             return
-        prefix   = [v for v in values if v.upper().startswith(term)]
-        contains = [v for v in values if not v.upper().startswith(term) and term in v.upper()]
+        prefix = [v for v in values if v.upper().startswith(term)]
+        contains = [
+            v for v in values if not v.upper().startswith(term) and term in v.upper()
+        ]
         matches = prefix + contains
         if matches:
             _open(matches)
@@ -548,26 +600,40 @@ def attach_autocomplete(entry: ctk.CTkEntry, values: list, variable: tk.StringVa
             entry.focus_set()
 
     variable.trace_add("write", on_type)
-    entry.bind("<Down>",     on_down)
-    entry.bind("<Escape>",   lambda e: _close())
+    entry.bind("<Down>", on_down)
+    entry.bind("<Escape>", lambda e: _close())
     entry.bind("<FocusOut>", on_focus_out)
-    entry.bind("<Tab>",      on_tab)
+    entry.bind("<Tab>", on_tab)
 
 
 # Keep the class name as an alias so existing imports don't break,
 # but it now just wraps a plain CTkEntry + attach_autocomplete.
 class AutocompleteComboBox(ctk.CTkFrame):
     """Thin shim — use attach_autocomplete() directly for new code."""
-    def __init__(self, parent, values, variable=None, height=40,
-                 placeholder="Type to search...", **kwargs):
+
+    def __init__(
+        self,
+        parent,
+        values,
+        variable=None,
+        height=40,
+        placeholder="Type to search...",
+        **kwargs,
+    ):
         super().__init__(parent, fg_color="transparent", height=height, **kwargs)
         self.pack_propagate(False)
         self._var = variable or tk.StringVar()
-        self._entry = ctk.CTkEntry(self, textvariable=self._var,
-                                   height=height, placeholder_text=placeholder)
+        self._entry = ctk.CTkEntry(
+            self, textvariable=self._var, height=height, placeholder_text=placeholder
+        )
         self._entry.place(relx=0, rely=0, relwidth=1, relheight=1)
         attach_autocomplete(self._entry, values, self._var)
 
-    def get(self): return self._var.get()
-    def set(self, v): self._var.set(v)
-    def bind(self, seq, func, add=None): self._entry.bind(seq, func, add)
+    def get(self):
+        return self._var.get()
+
+    def set(self, v):
+        self._var.set(v)
+
+    def bind(self, seq, func, add=None):
+        self._entry.bind(seq, func, add)
