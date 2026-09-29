@@ -24,10 +24,24 @@ NAV_ICONS = {
     "rate_limiting": "🛑",
 }
 
+# Navigation colors deliberately use explicit light/dark pairs so inactive
+# rows remain visible as controls in either appearance mode.  The active blue
+# is the existing WCAG-AA surface token used throughout the desktop client.
+NAV_IDLE_BG = ("#eef3f8", "#172338")
+NAV_IDLE_HOVER = ("#dde8f2", "#22334d")
+NAV_IDLE_BORDER = ("#d5e0eb", "#2b405c")
+NAV_IDLE_TEXT = ("#24364b", "#dbeafe")
+NAV_ACTIVE_BG = (ModernTheme.PRIMARY_SURFACE, ModernTheme.PRIMARY_SURFACE)
+
 
 class NavigationSidebar(ctk.CTkFrame):
     def __init__(self, parent, user_data, username, callbacks):
-        super().__init__(parent, width=260, corner_radius=0)
+        super().__init__(
+            parent,
+            width=260,
+            corner_radius=0,
+            fg_color=("#f8fafc", "#0b1626"),
+        )
         self.user_data = user_data
         self.username = username
         self.callbacks = callbacks
@@ -80,13 +94,15 @@ class NavigationSidebar(ctk.CTkFrame):
         # ── Logout ──────────────────────────────────────────────────────────
         self.logout_btn = ctk.CTkButton(
             self,
-            text=f"  {tr('dashboard.nav.logout')}",
+            text=f"⏻  {tr('dashboard.nav.logout').upper()}",
             fg_color=ModernTheme.DANGER_SURFACE,
             hover_color=ModernTheme.DANGER_SURFACE_HOVER,
             command=self.callbacks["logout"],
             font=("Segoe UI", 13, "bold"),
-            height=42,
+            height=44,
             corner_radius=8,
+            border_width=1,
+            border_color=(ModernTheme.DANGER_SURFACE, "#ef4444"),
         )
         self.logout_btn.pack(side="bottom", pady=(0, 20), padx=20, fill="x")
         bind_keyboard_activation(
@@ -148,16 +164,17 @@ class NavigationSidebar(ctk.CTkFrame):
 
         self.theme_btn = ctk.CTkButton(
             toggle_fr,
-            text="🌓 Theme",
+            text="🌙  Theme  ⌄",
             command=self.callbacks["toggle_theme"],
-            width=84,
+            width=104,
             height=32,
-            fg_color="transparent",
-            text_color=ModernTheme.TEXT_GRAY,
-            font=("Segoe UI", 13),
-            hover_color=("#d1d8e0", "#2c3e50"),
+            fg_color=("#e6edf5", "#14243a"),
+            text_color=("#334155", "#93c5fd"),
+            font=("Segoe UI", 11, "bold"),
+            hover_color=("#d7e3ef", "#203653"),
+            corner_radius=7,
         )
-        self.theme_btn.pack(side="left", padx=2)
+        self.theme_btn.pack(side="left", fill="x", expand=True, padx=(0, 3))
         bind_keyboard_activation(
             self.theme_btn,
             self.callbacks["toggle_theme"],
@@ -167,15 +184,16 @@ class NavigationSidebar(ctk.CTkFrame):
         current_lang = LocalizationManager()._current_locale.upper()
         self.language_btn = ctk.CTkButton(
             toggle_fr,
-            text=f"🌏 Language: {current_lang}",
+            text=f"🌐  Language: {current_lang}  ⌄",
             command=self.callbacks["toggle_language"],
             height=32,
-            fg_color="transparent",
-            text_color=ModernTheme.TEXT_GRAY,
-            font=("Segoe UI", 10, "bold"),
-            hover_color=("#d1d8e0", "#2c3e50"),
+            fg_color=("#e6edf5", "#14243a"),
+            text_color=("#334155", "#93c5fd"),
+            font=("Segoe UI", 11, "bold"),
+            hover_color=("#d7e3ef", "#203653"),
+            corner_radius=7,
         )
-        self.language_btn.pack(side="left", fill="x", expand=True)
+        self.language_btn.pack(side="left", fill="x", expand=True, padx=(3, 0))
         bind_keyboard_activation(
             self.language_btn,
             self.callbacks["toggle_language"],
@@ -199,6 +217,8 @@ class NavigationSidebar(ctk.CTkFrame):
         from ui.delinquency_dashboard import DelinquencyDashboardPage
         from ui.compliant_dashboard import CompliantDashboardPage
         from ui.portfolio import PortfolioPage
+
+        self._section_label("MAIN")
 
         self._add_nav(
             "dashboard",
@@ -240,7 +260,7 @@ class NavigationSidebar(ctk.CTkFrame):
             )
 
         # ── Section label ────────────────────────────────────────────────────
-        self._section_label("COLLECTION")
+        self._section_label("REPORTS & TOOLS")
 
         if auth.has_permission(self.user_data, "report_view"):
             self._add_nav(
@@ -272,7 +292,7 @@ class NavigationSidebar(ctk.CTkFrame):
             )
 
         # ── Section label ────────────────────────────────────────────────────
-        self._section_label("SYSTEM HELP")
+        self._section_label("SUPPORT")
 
         self._add_nav(
             "help",
@@ -288,9 +308,9 @@ class NavigationSidebar(ctk.CTkFrame):
             self.nav_scroll,
             text=text,
             font=("Segoe UI", 9, "bold"),
-            text_color=("gray50", "gray50"),
+            text_color=("#64748b", "#7890ad"),
             anchor="w",
-        ).pack(fill="x", padx=20, pady=(16, 4))
+        ).pack(fill="x", padx=18, pady=(14, 5))
 
     # -----------------------------------------------------------------------
     # Nav button factory
@@ -304,16 +324,17 @@ class NavigationSidebar(ctk.CTkFrame):
             self.nav_scroll,
             text=full_text,
             anchor="w",
-            fg_color="transparent",
-            text_color=("gray20", "gray80"),
-            hover_color=("gray85", "gray25"),
+            fg_color=NAV_IDLE_BG,
+            text_color=NAV_IDLE_TEXT,
+            hover_color=NAV_IDLE_HOVER,
             font=("Segoe UI", 13),
-            height=40,
+            height=42,
             corner_radius=8,
-            border_width=0,
+            border_width=1,
+            border_color=NAV_IDLE_BORDER,
             command=command,
         )
-        btn.pack(fill="x", padx=10, pady=2)
+        btn.pack(fill="x", padx=14, pady=2)
         bind_keyboard_activation(
             btn,
             command,
@@ -336,9 +357,12 @@ class NavigationSidebar(ctk.CTkFrame):
         if self._active_key and self._active_key in self._nav_items:
             prev = self._nav_items[self._active_key]["btn"]
             prev.configure(
-                fg_color="transparent",
-                text_color=("gray20", "gray80"),
+                fg_color=NAV_IDLE_BG,
+                text_color=NAV_IDLE_TEXT,
+                hover_color=NAV_IDLE_HOVER,
                 font=("Segoe UI", 13),
+                border_width=1,
+                border_color=NAV_IDLE_BORDER,
             )
 
         self._active_key = key
@@ -350,9 +374,12 @@ class NavigationSidebar(ctk.CTkFrame):
 
         # Active style: accent background + white text + bold
         btn.configure(
-            fg_color=(ModernTheme.PRIMARY_SURFACE, ModernTheme.PRIMARY_SURFACE),
+            fg_color=NAV_ACTIVE_BG,
             text_color=("white", "white"),
+            hover_color=(ModernTheme.PRIMARY_SURFACE_HOVER,) * 2,
             font=("Segoe UI", 13, "bold"),
+            border_width=1,
+            border_color=(ModernTheme.PRIMARY, ModernTheme.PRIMARY),
         )
 
     # -----------------------------------------------------------------------

@@ -498,6 +498,36 @@ class LedgerPage:
         self.tree.bind("<<TreeviewSelect>>", self.on_selection_change)
         self.tree.bind("<Double-1>", lambda e: self.open_receipt())
 
+        # A Treeview renders as an unlabelled blank panel when it has no rows.
+        # Keep a lightweight empty-state card above it until a search returns
+        # payment history, then remove the card so the table stays interactive.
+        self.empty_state = ctk.CTkFrame(t_frame, fg_color="transparent")
+        self.empty_state_icon = ctk.CTkLabel(
+            self.empty_state,
+            text="⌕",
+            font=("Segoe UI Symbol", 48, "bold"),
+            text_color="#64748b",
+        )
+        self.empty_state_icon.pack(pady=(0, 4))
+        self.empty_state_title = ctk.CTkLabel(
+            self.empty_state,
+            text="No records to display",
+            font=("Inter", 15, "bold"),
+            text_color=colors["text"],
+        )
+        self.empty_state_title.pack()
+        self.empty_state_message = ctk.CTkLabel(
+            self.empty_state,
+            text=(
+                "Search for a TD number, owner, or OR number "
+                "to view payment history."
+            ),
+            font=("Inter", 11),
+            text_color=colors["muted"],
+        )
+        self.empty_state_message.pack(pady=(5, 0))
+        self._set_empty_state(True)
+
         self.footer = ctk.CTkFrame(
             self.container,
             height=58,
@@ -520,6 +550,27 @@ class LedgerPage:
             text_color="#34d399",
         )
         self.total_lbl.pack(side="right", padx=18, pady=14)
+
+    def _set_empty_state(self, visible, title=None, message=None):
+        """Show useful guidance instead of an unexplained blank ledger."""
+        if title is not None:
+            self.empty_state_title.configure(text=title)
+        if message is not None:
+            self.empty_state_message.configure(text=message)
+
+        if visible:
+            self.empty_state.place(relx=0.5, rely=0.54, anchor="center")
+            self.empty_state.tkraise()
+        else:
+            self.empty_state.place_forget()
+
+    def _handle_ledger_load_error(self, title, error):
+        messagebox.showerror(title, str(error))
+        self._set_empty_state(
+            True,
+            title="Unable to load payment history",
+            message="Check the connection and try the search again.",
+        )
 
     def on_selection_change(self, event=None):
         sel = self.tree.selection()
@@ -624,6 +675,7 @@ class LedgerPage:
 
         for r in self.tree.get_children():
             self.tree.delete(r)
+        self._set_empty_state(False)
 
         def worker():
             try:
@@ -659,7 +711,7 @@ class LedgerPage:
                 )
             except Exception as e:
                 self.container.after(
-                    0, lambda err=e: messagebox.showerror("Error", str(err))
+                    0, lambda err=e: self._handle_ledger_load_error("Error", err)
                 )
             finally:
                 self.is_loading = False
@@ -673,6 +725,14 @@ class LedgerPage:
     def _show_property_selector(self, td_number, matches):
         for match in matches:
             match["duplicate_count"] = len(matches)
+        self._set_empty_state(
+            True,
+            title="Select a property account",
+            message=(
+                f"{len(matches)} accounts use TD {td_number}. "
+                "Choose the correct owner in the selection window."
+            ),
+        )
         PropertyAccountSelectionDialog(
             self.container.winfo_toplevel(),
             td_number,
@@ -697,6 +757,7 @@ class LedgerPage:
 
         for row_id in self.tree.get_children():
             self.tree.delete(row_id)
+        self._set_empty_state(False)
 
         def worker():
             try:
@@ -711,7 +772,8 @@ class LedgerPage:
                 )
             except Exception as exc:
                 self.container.after(
-                    0, lambda err=exc: messagebox.showerror("Ledger", str(err))
+                    0,
+                    lambda err=exc: self._handle_ledger_load_error("Ledger", err),
                 )
             finally:
                 self.is_loading = False
@@ -729,6 +791,7 @@ class LedgerPage:
         self._ledger_receipt_statuses = {}
         self._active_property_context = None
         if rows:
+            self._set_empty_state(False)
             for i, r in enumerate(rows):
                 # r: 0:pay_id, 1:date, 2:or, 3:year, 4:basic, 5:sef, 6:pen,
                 # 7:disc, 8:amt, 9:user, 10:remarks, 11:path, 12:rid
@@ -789,6 +852,24 @@ class LedgerPage:
             # A valid property can have no payment history yet. Preserve its
             # identity so the ledger and Add Payment modal stay connected.
             self._active_property_context = fallback_context
+            if fallback_context:
+                self._set_empty_state(
+                    True,
+                    title="No payments recorded",
+                    message=(
+                        "This property account has no payment history yet. "
+                        "Use Add Payment to record its first collection."
+                    ),
+                )
+            else:
+                self._set_empty_state(
+                    True,
+                    title="No matching records",
+                    message=(
+                        f'No payment history matched "{term}". '
+                        "Check the TD number, owner, or OR number and try again."
+                    ),
+                )
             self.total_lbl.configure(
                 text=tr("ledger.footer.total").replace("{value}", "₱ 0.00")
             )

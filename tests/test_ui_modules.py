@@ -21,7 +21,12 @@ from matplotlib.ticker import FuncFormatter
 customtkinter.set_appearance_mode = MagicMock()
 customtkinter.set_default_color_theme = MagicMock()
 
-from ui.navigation import NavigationSidebar
+from ui.navigation import (
+    NAV_ACTIVE_BG,
+    NAV_IDLE_BG,
+    NAV_IDLE_BORDER,
+    NavigationSidebar,
+)
 from ui.status_bar import ConnectivityStatusBar
 from ui.dashboard_home import (
     DashboardHomePage,
@@ -67,6 +72,16 @@ class TestNavigationSidebar(unittest.TestCase):
         sidebar._add_nav.assert_called_once_with(
             "assessment_roll", "Assessment Roll", callback
         )
+
+    def test_navigation_uses_visible_card_and_accessible_active_surfaces(self):
+        self.assertEqual(NAV_IDLE_BG, ("#eef3f8", "#172338"))
+        self.assertEqual(NAV_IDLE_BORDER, ("#d5e0eb", "#2b405c"))
+        self.assertEqual(NAV_ACTIVE_BG, ("#0369a1", "#0369a1"))
+
+        setup_source = inspect.getsource(NavigationSidebar._setup_nav_links)
+        self.assertIn('_section_label("MAIN")', setup_source)
+        self.assertIn('_section_label("REPORTS & TOOLS")', setup_source)
+        self.assertIn('_section_label("SUPPORT")', setup_source)
 
 
 class TestStatusBar(unittest.TestCase):
@@ -184,6 +199,40 @@ class TestLedgerColumns(unittest.TestCase):
             "self._ledger_receipt_statuses[item_id] = status_code", update_source
         )
         self.assertNotIn("f_r.append(status)", update_source)
+
+    def test_empty_state_can_be_shown_with_guidance_and_hidden_for_rows(self):
+        ledger = object.__new__(LedgerPage)
+        ledger.empty_state = MagicMock()
+        ledger.empty_state_title = MagicMock()
+        ledger.empty_state_message = MagicMock()
+
+        ledger._set_empty_state(
+            True,
+            title="No matching records",
+            message="Check the search and try again.",
+        )
+
+        ledger.empty_state_title.configure.assert_called_once_with(
+            text="No matching records"
+        )
+        ledger.empty_state_message.configure.assert_called_once_with(
+            text="Check the search and try again."
+        )
+        ledger.empty_state.place.assert_called_once_with(
+            relx=0.5, rely=0.54, anchor="center"
+        )
+        ledger.empty_state.tkraise.assert_called_once_with()
+
+        ledger._set_empty_state(False)
+        ledger.empty_state.place_forget.assert_called_once_with()
+
+    def test_ledger_distinguishes_initial_empty_and_no_payment_states(self):
+        setup_source = inspect.getsource(LedgerPage.setup_ui)
+        update_source = inspect.getsource(LedgerPage._update_ui)
+
+        self.assertIn("No records to display", setup_source)
+        self.assertIn("No payments recorded", update_source)
+        self.assertIn("No matching records", update_source)
 
 
 class TestCompliantDashboardLabels(unittest.TestCase):
