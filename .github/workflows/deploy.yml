@@ -20,7 +20,9 @@ jobs:
     env:
       MTO_ENVIRONMENT: test
       ENVIRONMENT: test
-      MTO_JWT_SECRET: ${{ secrets.MTO_JWT_SECRET }}
+      # Tests use a non-production key; never inject a municipal JWT secret
+      # into a CI test runner or depend on that secret being configured.
+      MTO_JWT_SECRET: ci_only_not_for_production_0123456789_ABCDEFGHIJKLMNOPQRSTUVWXYZ
       MTO_DB_PASSWORD: ""
       MTO_API_KEY: test_api_key_ci
 
@@ -64,11 +66,14 @@ jobs:
           -v
 
   # ---------------------------------------------------------------------------
-  # 2. Build and push Docker image — SHA-tagged only, never :latest in prod
+  # 2. Build and push Docker image only for an explicitly requested deployment
   # ---------------------------------------------------------------------------
   build:
     needs: test
     runs-on: ubuntu-latest
+    # Municipal desktop releases use the verified installer and updater.
+    # Tag pushes validate the source; infrastructure deployment is opt-in.
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_production == true
     outputs:
       image: ${{ steps.meta.outputs.image }}
 

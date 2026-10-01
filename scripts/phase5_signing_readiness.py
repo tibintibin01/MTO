@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable
 from urllib.parse import urlparse
 
@@ -200,7 +200,7 @@ def capture_python_runtime(
         "present": True,
         "version": version,
         "architecture_bits": bits,
-        "executable_name": Path(
+        "executable_name": PureWindowsPath(
             str(payload.get("executable_name") or "python.exe")
         ).name,
         "findings": findings,

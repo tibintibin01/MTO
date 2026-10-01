@@ -30,8 +30,8 @@ EXACT_RUNTIME_MINIMUMS = {
 }
 EXACT_FRONTEND_MINIMUMS = {
     "@serwist/next": "9.5.12",
-    "eslint-config-next": "16.3.4",
-    "next": "16.3.4",
+    "eslint-config-next": "16.3.8",
+    "next": "16.3.8",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "serwist": "9.5.12",
@@ -443,6 +443,7 @@ def validate_repository(
             "pip-audit -r requirements.lock",
             "workflow_dispatch:",
             "if: github.event_name == 'workflow_dispatch' && inputs.deploy_production == true",
+            "MTO_JWT_SECRET: ci_only_not_for_production_0123456789_ABCDEFGHIJKLMNOPQRSTUVWXYZ",
         ],
     }
     for path, tokens in required_text.items():
