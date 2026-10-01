@@ -205,7 +205,6 @@ class NavigationSidebar(ctk.CTkFrame):
     # -----------------------------------------------------------------------
 
     def _setup_nav_links(self):
-        from ui.property import PropertyPage
         from ui.ledger import LedgerPage
         from ui.reports import ReportsPage
         from ui.analytics_dashboard import AnalyticsDashboardPage
@@ -228,9 +227,9 @@ class NavigationSidebar(ctk.CTkFrame):
 
         if auth.has_permission(self.user_data, "property_view"):
             self._add_nav(
-                "property",
-                tr("dashboard.nav.property"),
-                lambda: self._navigate("property", PropertyPage),
+                "assessment",
+                tr("dashboard.nav.assessment"),
+                lambda: self._navigate("assessment", AssessmentRollPage),
             )
             self._add_nav(
                 "portfolios",
@@ -272,13 +271,6 @@ class NavigationSidebar(ctk.CTkFrame):
                 "analytics",
                 tr("dashboard.nav.analytics"),
                 lambda: self._navigate("analytics", AnalyticsDashboardPage),
-            )
-
-        if auth.has_permission(self.user_data, "property_view"):
-            self._add_nav(
-                "assessment",
-                tr("dashboard.nav.assessment"),
-                lambda: self._navigate("assessment", AssessmentRollPage),
             )
 
         if any(

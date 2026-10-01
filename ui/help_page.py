@@ -21,8 +21,8 @@ class SystemHelpPage:
                 "View real-time revenue collection charts and protection status.",
             ),
             (
-                "📋 Property Records",
-                "Search, edit, or delete property assessments. Use the 'Export' button to save to Excel.",
+                "📋 Assessment Roll",
+                "Current Records: search, add, edit, import, and move accounts to the Recycle Bin according to your permissions. As-of-Year View: read-only historical assessments with PDF and Excel exports.",
             ),
             (
                 "🏦 Unified Ledger",

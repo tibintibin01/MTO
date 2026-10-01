@@ -7,11 +7,14 @@ from ui_components import LoadingOverlay
 import api_clients.property_service as prop_svc
 import api_clients.api_helper as api
 import api_clients.billing_service as billing
+import api_clients.auth_service as auth
 import shutil
 import os
 from ui.dossier import PropertyDossierModal
 from ui.empty_state import EmptyTableState
 from ui.import_wizard import ImportWizardModal
+from ui.property import PropertyEditModal, BulkBarangayUpdateModal
+from ui.accessibility import bind_keyboard_activation
 import threading
 from utils.assessment_roll_status import assessment_roll_duplicate_status
 
@@ -52,6 +55,9 @@ def assessment_roll_export_dialog_options(path, export_format):
 
 
 class AssessmentRollPage:
+    CURRENT_MODE = "Current Records"
+    HISTORY_MODE = "As-of-Year View"
+
     def __init__(self, parent, user):
         self.parent = parent
         self.user = user
@@ -61,6 +67,9 @@ class AssessmentRollPage:
         self.is_loading = False
         self.all_loaded = False
         self._refresh_generation = 0
+        self.view_mode = self.CURRENT_MODE
+        self._rows_current = False
+        self._loaded_query = None
         self.barangays = [
             "NORTH POBLACION",
             "SOUTH POBLACION",
@@ -109,10 +118,61 @@ class AssessmentRollPage:
         ).pack(anchor="w")
         ctk.CTkLabel(
             title_fr,
-            text="Active property assessments and valuation history",
+            text="Manage current property accounts or review historical assessments",
             font=ModernTheme.BODY_SMALL,
             text_color=ModernTheme.TEXT_GRAY,
         ).pack(anchor="w", pady=(2, 0))
+
+        mode_fr = ctk.CTkFrame(self.container, fg_color="transparent")
+        mode_fr.pack(fill="x", pady=(0, 10))
+        self.mode_control = ctk.CTkSegmentedButton(
+            mode_fr,
+            values=[self.CURRENT_MODE, self.HISTORY_MODE],
+            command=self._change_mode,
+            height=34,
+            font=ModernTheme.BODY_SMALL,
+            selected_color=ModernTheme.PRIMARY_SURFACE,
+            selected_hover_color=ModernTheme.PRIMARY_SURFACE_HOVER,
+            unselected_color="#334155",
+            unselected_hover_color="#475569",
+            text_color="#ffffff",
+        )
+        self.mode_control.set(self.CURRENT_MODE)
+        self.mode_control.pack(side="left")
+        for mode, button in self.mode_control._buttons_dict.items():
+            bind_keyboard_activation(
+                button, lambda value=mode: self._choose_mode(value)
+            )
+        self.mode_hint = ctk.CTkLabel(
+            mode_fr,
+            text="CURRENT RECORDS — Changes affect the live property registry.",
+            font=ModernTheme.BODY_SMALL,
+            text_color=ModernTheme.TEXT_GRAY,
+            wraplength=520,
+            justify="left",
+        )
+        self.mode_hint.pack(side="left", padx=16)
+
+        management_fr = ctk.CTkFrame(self.container, fg_color="transparent")
+        management_fr.pack(fill="x", pady=(0, 10))
+        self.add_btn = self.import_btn = self.cleanup_btn = None
+        if auth.has_permission(self.user, "property_edit"):
+            self.add_btn = self._action_button(
+                management_fr, "ADD PROPERTY", self.open_add_modal, ModernTheme.SUCCESS
+            )
+            self.cleanup_btn = self._action_button(
+                management_fr,
+                "DATA CLEANUP",
+                self.open_bulk_update,
+                ModernTheme.SECONDARY,
+            )
+        if auth.has_permission(self.user, "import_data"):
+            self.import_btn = self._action_button(
+                management_fr,
+                "BULK IMPORT",
+                self.open_import_wizard,
+                ModernTheme.PRIMARY,
+            )
 
         filters_fr = ctk.CTkFrame(
             self.container,
@@ -122,88 +182,107 @@ class AssessmentRollPage:
             border_color=(ModernTheme.BORDER_LIGHT, ModernTheme.BORDER_DARK),
         )
         filters_fr.pack(fill="x", pady=(0, 10))
+        search_fr = ctk.CTkFrame(filters_fr, fg_color="transparent")
+        search_fr.pack(fill="x", padx=12, pady=(8, 0))
+        scope_fr = ctk.CTkFrame(filters_fr, fg_color="transparent")
+        scope_fr.pack(fill="x", padx=12, pady=(0, 6))
 
         ctk.CTkLabel(
-            filters_fr,
+            search_fr,
             text="FIND PROPERTY",
             font=ModernTheme.BUTTON_SMALL,
             text_color=ModernTheme.TEXT_GRAY,
-        ).pack(side="left", padx=(14, 7), pady=10)
+        ).pack(side="left", padx=(0, 7), pady=4)
         self.search_ent = ctk.CTkEntry(
-            filters_fr,
+            search_fr,
             placeholder_text="Search PIN, TD, Former TD, or Owner...",
             width=330,
             height=34,
             font=ModernTheme.BODY_SMALL,
         )
-        self.search_ent.pack(side="left", pady=10)
+        self.search_ent.pack(side="left", fill="x", expand=True, pady=4)
         self.search_ent.bind("<Return>", lambda e: self.refresh_table())
         self.search_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
+        self.search_ent.bind("<KeyRelease>", self._filters_edited, add="+")
 
         ctk.CTkLabel(
-            filters_fr,
+            scope_fr,
             text="BARANGAY",
             font=ModernTheme.BUTTON_SMALL,
             text_color=ModernTheme.TEXT_GRAY,
-        ).pack(side="left", padx=(16, 7), pady=10)
+        ).pack(side="left", padx=(0, 7), pady=4)
         self.brgy_var = tk.StringVar(value="ALL")
         self.brgy_cb = ctk.CTkComboBox(
-            filters_fr,
+            scope_fr,
             values=["ALL"] + sorted(self.barangays),
             variable=self.brgy_var,
-            width=190,
+            width=160,
             height=34,
             font=ModernTheme.BODY_SMALL,
         )
-        self.brgy_cb.pack(side="left", pady=10)
+        self.brgy_cb.pack(side="left", pady=4)
         self.brgy_cb.configure(command=lambda e: self.refresh_table())
         self.brgy_cb.bind("<Return>", lambda e: self.refresh_table())
         self.brgy_cb.bind("<KP_Enter>", lambda e: self.refresh_table())
 
         ctk.CTkLabel(
-            filters_fr,
+            scope_fr,
             text="AS OF YEAR",
             font=ModernTheme.BUTTON_SMALL,
             text_color=ModernTheme.TEXT_GRAY,
-        ).pack(side="left", padx=(16, 7), pady=10)
+        ).pack(side="left", padx=(16, 7), pady=4)
         self.as_of_year_ent = ctk.CTkEntry(
-            filters_fr,
-            width=90,
+            scope_fr,
+            width=80,
             height=34,
             placeholder_text="YYYY",
             font=ModernTheme.BODY_SMALL,
+            state="disabled",
         )
-        self.as_of_year_ent.pack(side="left", pady=10)
+        self.as_of_year_ent.pack(side="left", pady=4)
         self.as_of_year_ent.bind("<Return>", lambda e: self.refresh_table())
         self.as_of_year_ent.bind("<KP_Enter>", lambda e: self.refresh_table())
+        self.as_of_year_ent.bind("<KeyRelease>", self._filters_edited, add="+")
 
-        ctk.CTkButton(
-            filters_fr,
+        ctk.CTkLabel(
+            scope_fr,
+            text="EFFECTIVITY YEAR",
+            font=ModernTheme.BUTTON_SMALL,
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(side="left", padx=(16, 7), pady=4)
+        self.year_from_ent = ctk.CTkEntry(
+            scope_fr, width=75, height=34, placeholder_text="From"
+        )
+        self.year_to_ent = ctk.CTkEntry(
+            scope_fr, width=75, height=34, placeholder_text="To"
+        )
+        for entry in (self.year_from_ent, self.year_to_ent):
+            entry.pack(side="left", padx=(0, 6), pady=4)
+            entry.bind("<Return>", lambda e: self.refresh_table())
+            entry.bind("<KP_Enter>", lambda e: self.refresh_table())
+            entry.bind("<KeyRelease>", self._filters_edited, add="+")
+
+        self.refresh_btn = ctk.CTkButton(
+            search_fr,
             text="REFRESH",
             command=self.refresh_table,
             width=105,
             height=34,
             font=ModernTheme.BUTTON_SMALL,
-            fg_color=ModernTheme.PRIMARY,
-            hover_color=ModernTheme.PRIMARY_HOVER,
-        ).pack(side="left", padx=(12, 8), pady=10)
-
-        ctk.CTkButton(
-            filters_fr,
-            text="BULK IMPORT",
-            command=self.open_import_wizard,
-            fg_color=ModernTheme.SECONDARY,
-            hover_color=ModernTheme.SECONDARY_HOVER,
-            width=125,
-            height=34,
-            font=ModernTheme.BUTTON_SMALL,
-        ).pack(side="right", padx=12, pady=10)
+            fg_color=ModernTheme.PRIMARY_SURFACE,
+            hover_color=ModernTheme.PRIMARY_SURFACE_HOVER,
+            text_color="#ffffff",
+        )
+        self.refresh_btn.pack(side="right", padx=(12, 0), pady=4)
+        bind_keyboard_activation(self.refresh_btn, self.refresh_table)
 
         self._pdf_btn = ctk.CTkButton(
             header,
             text="EXPORT PDF",
             command=self._export_roll_pdf,
-            fg_color=ModernTheme.DANGER,
+            fg_color=ModernTheme.DANGER_SURFACE,
+            hover_color=ModernTheme.DANGER_SURFACE_HOVER,
+            text_color="#ffffff",
             width=125,
             height=34,
             font=ModernTheme.BUTTON_SMALL,
@@ -214,12 +293,22 @@ class AssessmentRollPage:
             header,
             text="EXPORT EXCEL",
             command=self._export_roll_excel,
-            fg_color=ModernTheme.SUCCESS,
+            fg_color="#047857",
+            hover_color="#065f46",
+            text_color="#ffffff",
             width=135,
             height=34,
             font=ModernTheme.BUTTON_SMALL,
         )
         self._excel_btn.pack(side="right")
+        bind_keyboard_activation(self._pdf_btn, self._export_roll_pdf)
+        bind_keyboard_activation(self._excel_btn, self._export_roll_excel)
+        ctk.CTkLabel(
+            self.container,
+            text="Exports cover the complete barangay roll and selected as-of year, not the search or current year range.",
+            font=ModernTheme.BODY_SMALL,
+            text_color=ModernTheme.TEXT_GRAY,
+        ).pack(anchor="w", pady=(0, 6))
 
         duplicate_legend = ctk.CTkFrame(
             self.container,
@@ -311,7 +400,11 @@ class AssessmentRollPage:
         tree_host = tk.Frame(table_fr, bg="#0f172a", bd=0, highlightthickness=0)
         tree_host.pack(fill="both", expand=True, padx=1, pady=1)
         self.tree = ttk.Treeview(
-            tree_host, columns=self.cols, show="headings", style="Roll.Treeview"
+            tree_host,
+            columns=self.cols,
+            show="headings",
+            style="Roll.Treeview",
+            selectmode="browse",
         )
 
         # Column Config
@@ -320,7 +413,7 @@ class AssessmentRollPage:
             "TD NO.": 110,
             "PIN": 130,
             "LOT & BLK": 100,
-            "PROPERTY OWNER": 200,
+            "PROPERTY OWNER": 270,
             "LOCATION": 130,
             "CLASSIFICATION": 120,
             "ASSESSED VALUE": 120,
@@ -387,6 +480,7 @@ class AssessmentRollPage:
             font=ModernTheme.BUTTON_SMALL,
             fg_color=ModernTheme.SECONDARY,
             hover_color=ModernTheme.SECONDARY_HOVER,
+            state="disabled",
         )
         self.prev_btn.pack(side="left", padx=10, pady=8)
 
@@ -407,25 +501,281 @@ class AssessmentRollPage:
             font=ModernTheme.BUTTON_SMALL,
             fg_color=ModernTheme.SECONDARY,
             hover_color=ModernTheme.SECONDARY_HOVER,
+            state="disabled",
         )
         self.next_btn.pack(side="right", padx=10, pady=8)
+
+        self.edit_btn = self.delete_btn = None
+        self.details_btn = self._action_button(
+            self.pag_fr,
+            "VIEW DETAILS",
+            self.open_dossier,
+            ModernTheme.SECONDARY,
+            side="right",
+        )
+        if auth.has_permission(self.user, "property_edit"):
+            self.edit_btn = self._action_button(
+                self.pag_fr,
+                "EDIT",
+                self.open_edit_modal,
+                ModernTheme.PRIMARY,
+                side="right",
+            )
+        if auth.has_permission(self.user, "property_delete"):
+            self.delete_btn = self._action_button(
+                self.pag_fr,
+                "DELETE",
+                self.confirm_delete,
+                ModernTheme.DANGER,
+                side="right",
+            )
+        bind_keyboard_activation(self.prev_btn, self.prev_page)
+        bind_keyboard_activation(self.next_btn, self.next_page)
 
         table_fr.pack(fill="both", expand=True)  # Pack expanding table LAST
 
         self.tree.bind("<Double-1>", lambda e: self.open_dossier())
+        self.tree.bind("<<TreeviewSelect>>", lambda e: self._update_action_states())
+        self._update_action_states()
+
+    def _action_button(self, parent, text, command, color, side="left"):
+        color, hover = {
+            ModernTheme.PRIMARY: (
+                ModernTheme.PRIMARY_SURFACE,
+                ModernTheme.PRIMARY_SURFACE_HOVER,
+            ),
+            ModernTheme.SUCCESS: ("#047857", "#065f46"),
+            ModernTheme.DANGER: (
+                ModernTheme.DANGER_SURFACE,
+                ModernTheme.DANGER_SURFACE_HOVER,
+            ),
+        }.get(color, (color, ModernTheme.SECONDARY_HOVER))
+        button = ctk.CTkButton(
+            parent,
+            text=text,
+            command=command,
+            fg_color=color,
+            hover_color=hover,
+            text_color="#ffffff",
+            width=115,
+            height=34,
+            font=ModernTheme.BUTTON_SMALL,
+        )
+        button.pack(side=side, padx=5, pady=6)
+        bind_keyboard_activation(button, command)
+        return button
+
+    def _choose_mode(self, mode):
+        self.mode_control.set(mode)
+        self._change_mode(mode)
+
+    def _query_as_of_year(self):
+        if self.view_mode == self.CURRENT_MODE:
+            return None
+        year = parse_assessment_roll_as_of_year(self.as_of_year_ent.get())
+        if year is None:
+            raise ValueError(
+                "Enter an As of Year before refreshing or exporting this read-only view."
+            )
+        return year
+
+    def _query_context(self):
+        return (
+            self.view_mode,
+            self.search_ent.get().strip(),
+            self.brgy_var.get(),
+            self._query_as_of_year(),
+            *self._query_year_range(),
+        )
+
+    def _query_year_range(self):
+        if self.view_mode != self.CURRENT_MODE:
+            return None, None
+        years = []
+        for name in ("year_from_ent", "year_to_ent"):
+            entry = getattr(self, name, None)
+            years.append(
+                parse_assessment_roll_as_of_year(entry.get())
+                if entry is not None
+                else None
+            )
+        start, end = years
+        if start is not None and end is not None and start > end:
+            raise ValueError("From year cannot be later than To year.")
+        return start, end
+
+    def _invalidate_selection(self):
+        self._refresh_generation += 1
+        self._rows_current = False
+        self._loaded_query = None
+        self.is_loading = False
+        selected = self.tree.selection()
+        if selected:
+            self.tree.selection_remove(*selected)
+        self.prev_btn.configure(state="disabled")
+        self.next_btn.configure(state="disabled")
+        self._update_action_states()
+
+    def _filters_edited(self, event=None):
+        if event is None or event.keysym not in (
+            "Return",
+            "KP_Enter",
+            "Tab",
+            "Shift_L",
+            "Shift_R",
+        ):
+            self._invalidate_selection()
+
+    def _change_mode(self, mode):
+        if mode not in (self.CURRENT_MODE, self.HISTORY_MODE) or mode == self.view_mode:
+            return
+        self.view_mode = mode
+        self._invalidate_selection()
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self.page_cursors = [None]
+        self.current_page = 0
+        self.all_loaded = False
+        self.page_lbl.configure(text="PAGE 1")
+        historical = mode == self.HISTORY_MODE
+        self.as_of_year_ent.configure(state="normal" if historical else "disabled")
+        for name in ("year_from_ent", "year_to_ent"):
+            entry = getattr(self, name, None)
+            if entry is not None:
+                entry.configure(state="disabled" if historical else "normal")
+        self.mode_hint.configure(
+            text=(
+                "READ ONLY — Assessment values as of the selected year; no record changes."
+                if historical
+                else "CURRENT RECORDS — Changes affect the live property registry."
+            )
+        )
+        self.empty_state.show(
+            (
+                "Enter an As of Year, then press Refresh. Management is disabled here."
+                if historical
+                else "Search by PIN, TD number, previous TD, or owner, then press Refresh."
+            ),
+            title=(
+                "Historical assessment view" if historical else "No records to display"
+            ),
+        )
+        if not historical and (
+            self.search_ent.get().strip() or self.brgy_var.get() != "ALL"
+        ):
+            self.refresh_table()
+
+    def _can_manage(self, permission):
+        return (
+            getattr(self, "view_mode", None) == self.CURRENT_MODE
+            and not getattr(self, "is_loading", False)
+            and auth.has_permission(getattr(self, "user", None), permission)
+        )
+
+    def _selected_property(self):
+        if (
+            getattr(self, "view_mode", None) != self.CURRENT_MODE
+            or getattr(self, "is_loading", False)
+            or not getattr(self, "_rows_current", False)
+        ):
+            return None
+        try:
+            if self._loaded_query != self._query_context():
+                return None
+            selected = self.tree.selection()
+            if len(selected) != 1:
+                return None
+            values = self.tree.item(selected[0])["values"]
+            property_id = int(values[0])
+            if property_id <= 0:
+                return None
+            return property_id, str(values[1]), str(values[4])
+        except (ValueError, TypeError, IndexError, KeyError, tk.TclError):
+            return None
+
+    def _update_action_states(self):
+        selected = self._selected_property() is not None
+        for name, permission, needs_selection in (
+            ("add_btn", "property_edit", False),
+            ("cleanup_btn", "property_edit", False),
+            ("import_btn", "import_data", False),
+            ("edit_btn", "property_edit", True),
+            ("delete_btn", "property_delete", True),
+            ("details_btn", "property_view", True),
+        ):
+            button = getattr(self, name, None)
+            if button is not None:
+                allowed = self._can_manage(permission) and (
+                    selected or not needs_selection
+                )
+                button.configure(state="normal" if allowed else "disabled")
+
+    def open_add_modal(self):
+        if self._can_manage("property_edit"):
+            PropertyEditModal(
+                self.parent, "Add Property", None, self.refresh_table, user=self.user
+            )
+
+    def open_edit_modal(self):
+        selected = self._selected_property()
+        if selected and self._can_manage("property_edit"):
+            # Existing modal fetches the latest account by ID and preserves its version.
+            PropertyEditModal(
+                self.parent,
+                "Edit Property",
+                selected[0],
+                self.refresh_table,
+                user=self.user,
+            )
+
+    def open_bulk_update(self):
+        if self._can_manage("property_edit"):
+            BulkBarangayUpdateModal(self.parent, self.refresh_table)
+
+    def confirm_delete(self):
+        selected = self._selected_property()
+        if not selected or not self._can_manage("property_delete"):
+            return
+        property_id, td_number, owner = selected
+        if not messagebox.askyesno(
+            "Move to Recycle Bin?",
+            f"{owner}\nTD: {td_number}\nAccount ID: {property_id}\n\n"
+            "Only this property account will be moved to the Recycle Bin.\n"
+            "It will not be permanently erased. Continue?",
+            parent=self.container,
+        ):
+            return
+        # A mode/filter/selection change while the confirmation is open must fail closed.
+        if selected != self._selected_property() or not self._can_manage(
+            "property_delete"
+        ):
+            return
+        try:
+            result = prop_svc.delete_property(property_id, user=self.user)
+            if not isinstance(result, dict) or result.get("status") != "deleted":
+                raise ValueError(
+                    "Delete was not confirmed by the server. Refresh before trying again."
+                )
+            self.refresh_table()
+            messagebox.showinfo("Moved to Recycle Bin", f"{owner}\n{td_number}")
+        except Exception as exc:
+            messagebox.showerror("Delete Failed", str(exc))
 
     def _is_current_refresh(self, generation):
         return generation == self._refresh_generation
 
     def refresh_table(self, reset_page=True):
+        self._invalidate_selection()
         try:
-            as_of_year = parse_assessment_roll_as_of_year(self.as_of_year_ent.get())
+            as_of_year = self._query_as_of_year()
+            year_start, year_end = self._query_year_range()
         except ValueError as exc:
-            messagebox.showerror("Invalid As of Year", str(exc))
+            messagebox.showerror("Invalid Year Filter", str(exc))
             return
 
         term = self.search_ent.get().strip()
         brgy = self.brgy_var.get()
+        query_context = self._query_context()
 
         if reset_page:
             self.page_cursors = [None]
@@ -437,6 +787,7 @@ class AssessmentRollPage:
         self._refresh_generation += 1
         request_generation = self._refresh_generation
         self.is_loading = True
+        self._update_action_states()
         overlay = LoadingOverlay(self.container, "Loading Assessment Roll...")
 
         def apply_response(response):
@@ -453,6 +804,8 @@ class AssessmentRollPage:
                 self.page_cursors[page_index + 1] = next_cursor
 
             self.all_loaded = not has_more
+            self._loaded_query = query_context
+            self._rows_current = True
             self._update_table(results, has_more=has_more)
 
         def show_error(error):
@@ -468,6 +821,7 @@ class AssessmentRollPage:
             overlay.hide()
             if self._is_current_refresh(request_generation):
                 self.is_loading = False
+                self._update_action_states()
 
         def worker():
             try:
@@ -477,6 +831,8 @@ class AssessmentRollPage:
                     cursor=cursor_to_use,
                     barangay=brgy if brgy != "ALL" else None,
                     as_of_year=as_of_year,
+                    year_start=year_start,
+                    year_end=year_end,
                 )
                 self.container.after(
                     0, lambda response=response: apply_response(response)
@@ -489,17 +845,21 @@ class AssessmentRollPage:
         threading.Thread(target=worker, daemon=True).start()
 
     def next_page(self):
-        if not self.all_loaded:
+        if self._rows_current and not self.is_loading and not self.all_loaded:
             self.current_page += 1
             self.refresh_table(reset_page=False)
 
     def prev_page(self):
-        if self.current_page > 0:
+        if self._rows_current and not self.is_loading and self.current_page > 0:
             self.current_page -= 1
             self.all_loaded = False
             self.refresh_table(reset_page=False)
 
     def _update_table(self, results, has_more=None):
+        selected = self.tree.selection()
+        if selected:
+            self.tree.selection_remove(*selected)
+        self._update_action_states()
         self.page_lbl.configure(text=f"PAGE {self.current_page + 1}")
         self.prev_btn.configure(state="normal" if self.current_page > 0 else "disabled")
 
@@ -575,7 +935,54 @@ class AssessmentRollPage:
             )
 
     def open_import_wizard(self):
-        ImportWizardModal(self.container.winfo_toplevel(), mode="assessment")
+        if not self._can_manage("import_data"):
+            return
+        chooser = ctk.CTkToplevel(self.container)
+        chooser.title("Choose Bulk Import")
+        chooser.geometry("470x260")
+        chooser.transient(self.container.winfo_toplevel())
+        chooser.grab_set()
+        ctk.CTkLabel(
+            chooser,
+            text="Choose the existing import format",
+            font=ModernTheme.H3,
+        ).pack(pady=(20, 8))
+        ctk.CTkLabel(
+            chooser,
+            text="Both imports can change current accounts.\n"
+            "Use the matching template and review the validation preview.",
+            font=ModernTheme.BODY_SMALL,
+        ).pack(pady=(0, 12))
+        for label, mode in (
+            ("PROPERTY RECORDS TEMPLATE", "property"),
+            ("ASSESSMENT ROLL TEMPLATE", "assessment"),
+        ):
+            button = ctk.CTkButton(
+                chooser,
+                text=label,
+                width=300,
+                fg_color=ModernTheme.PRIMARY_SURFACE,
+                hover_color=ModernTheme.PRIMARY_SURFACE_HOVER,
+                text_color="#ffffff",
+                command=lambda m=mode: self._launch_import(m, chooser),
+            )
+            button.pack(pady=6)
+            bind_keyboard_activation(
+                button, lambda m=mode: self._launch_import(m, chooser)
+            )
+        chooser.bind("<Escape>", lambda e: chooser.destroy())
+
+    def _launch_import(self, mode, chooser):
+        if mode not in ("property", "assessment") or not self._can_manage(
+            "import_data"
+        ):
+            return
+        chooser.destroy()
+        ImportWizardModal(
+            self.container.winfo_toplevel(),
+            mode=mode,
+            on_complete=self.refresh_table,
+        )
 
     def _show_import_summary(self, res):
         if "error" in res:
@@ -590,12 +997,10 @@ class AssessmentRollPage:
         self.refresh_table()
 
     def open_dossier(self):
-        sel = self.tree.selection()
-        if not sel:
+        selected = self._selected_property()
+        if not selected or not self._can_manage("property_view"):
             return
-        vals = self.tree.item(sel[0])["values"]
-        property_id = int(vals[0]) if vals else None
-        td_number = str(vals[1]).strip() if len(vals) > 1 else ""
+        property_id, td_number, _owner = selected
 
         if not td_number:
             messagebox.showwarning(
@@ -621,16 +1026,20 @@ class AssessmentRollPage:
         ).pack(expand=True)
         loading.update()
 
+        def show_dossier(data):
+            loading.destroy()
+            if selected == self._selected_property() and self._can_manage(
+                "property_view"
+            ):
+                PropertyDossierModal(self.parent, data)
+
         def worker():
             try:
                 # Use centralized API helper
                 data = prop_svc.get_property_dossier(property_id)
                 self.container.after(
                     0,
-                    lambda: [
-                        loading.destroy(),
-                        PropertyDossierModal(self.parent, data),
-                    ],
+                    lambda data=data: show_dossier(data),
                 )
             except Exception as e:
                 self.container.after(
@@ -697,7 +1106,7 @@ class AssessmentRollPage:
     def _export_roll_pdf(self):
         brgy = self.brgy_var.get()
         try:
-            as_of_year = parse_assessment_roll_as_of_year(self.as_of_year_ent.get())
+            as_of_year = self._query_as_of_year()
         except ValueError as exc:
             messagebox.showerror("Invalid As of Year", str(exc))
             return
@@ -714,7 +1123,7 @@ class AssessmentRollPage:
     def _export_roll_excel(self):
         brgy = self.brgy_var.get()
         try:
-            as_of_year = parse_assessment_roll_as_of_year(self.as_of_year_ent.get())
+            as_of_year = self._query_as_of_year()
         except ValueError as exc:
             messagebox.showerror("Invalid As of Year", str(exc))
             return

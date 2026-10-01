@@ -176,12 +176,12 @@ class DashboardApp(ctk.CTk):
 
     def open_portfolio_workflow(self, workflow, td_number):
         """Open an existing per-property workflow with its TD already loaded."""
-        from ui.property import PropertyPage
+        from ui.assessment_roll import AssessmentRollPage
         from ui.ledger import LedgerPage
         from ui.delinquency_dashboard import DelinquencyDashboardPage
 
         targets = {
-            "property": ("property", PropertyPage, "refresh_table"),
+            "property": ("assessment", AssessmentRollPage, "refresh_table"),
             "ledger": ("ledger", LedgerPage, "load_ledger"),
             "delinquencies": (
                 "delinquencies",
@@ -311,6 +311,17 @@ class DashboardApp(ctk.CTk):
     def open_command_palette(self):
         CommandPalette(self, self.user_data, self.handle_palette_selection)
 
+    def dispatch_hotkey(self, action):
+        # Modal forms bind their own shortcuts. Never start a second workflow
+        # behind a confirmation/import/editor dialog.
+        if self.grab_current() is not None:
+            return "break"
+        method_name = {"new": "open_add_modal", "save": "save", "cancel": "cancel"}.get(action)
+        handler = getattr(getattr(self, "current_page", None), method_name, None) if method_name else None
+        if callable(handler):
+            handler()
+        return "break"
+
     def _open_help_from_keyboard(self, _event=None):
         self.sidebar._set_active("help")
         self.load_page(SystemHelpPage)
@@ -334,11 +345,20 @@ class DashboardApp(ctk.CTk):
     def _handle_palette_action(self, command):
         mapping = {
             "action:backup": self.trigger_backup_action,
-            "nav:new_property": lambda: [self.load_page(__import__("ui.property", fromlist=["PropertyPage"]).PropertyPage)],
+            "nav:new_property": self._open_new_property,
             "nav:users": lambda: [self.load_page(__import__("ui.system_admin", fromlist=["SystemAdminPage"]).SystemAdminPage)],
             "nav:reports": lambda: [self.load_page(__import__("ui.reports", fromlist=["ReportsPage"]).ReportsPage)]
         }
         if command in mapping: mapping[command]()
+
+    def _open_new_property(self):
+        if not auth.has_permission(self.user_data, "property_edit"):
+            return
+        from ui.assessment_roll import AssessmentRollPage
+        self.sidebar._set_active("assessment")
+        self.load_page(AssessmentRollPage)
+        if isinstance(getattr(self, "current_page", None), AssessmentRollPage):
+            self.current_page.open_add_modal()
 
     def toggle_theme(self):
         current = ctk.get_appearance_mode()
@@ -589,7 +609,7 @@ class SystemHelpPage:
 
         help_text = [
             ("🏠 Dashboard", "View real-time revenue collection charts and protection status."),
-            ("📋 Property Records", "Search, edit, or delete property assessments. Use the 'Export' button to save to Excel."),
+            ("📋 Assessment Roll", "Current Records: search and manage property accounts. As-of-Year View: read-only historical assessments with PDF and Excel exports."),
             ("🏦 Unified Ledger", "View all payment history. Use 'View PDF Copy' to open the retained payment record."),
             ("⌨️ Shortcuts", "Ctrl+F: Quick Search | Ctrl+P: Command Palette | Ctrl+K: Global Search"),
             ("🛡️ Data Protection", "The 'Restore Test' on the dashboard verifies that your backups are 100% healthy."),
