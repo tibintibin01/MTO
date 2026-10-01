@@ -76,6 +76,7 @@ a = Analysis(
         'ui.dashboard_home',
         'ui.delinquency_dashboard',
         'ui.dossier',
+        'ui.empty_state',
         'ui.help_page',
         'ui.import_wizard',
         'ui.ledger',

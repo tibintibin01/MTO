@@ -8,6 +8,7 @@ import api_clients.property_service as prop_svc
 import api_clients.api_helper as api
 import api_clients.auth_service as auth
 from ui.dossier import PropertyDossierModal
+from ui.empty_state import EmptyTableState
 from ui.import_wizard import ImportWizardModal
 from theme_manager import ModernTheme
 from utils import tr, format_curr
@@ -109,6 +110,10 @@ class PropertyPage:
         )
         scrolly.pack(side="right", fill="y", pady=1, padx=(0, 1))
         self.tree.pack(side="left", fill="both", expand=True, padx=1, pady=1)
+        self.empty_state = EmptyTableState(
+            table_fr,
+            "Search by TD number, previous TD, or owner name to view properties.",
+        )
 
         footer = ctk.CTkFrame(self.container, fg_color=colors["panel"], corner_radius=8, border_width=1, border_color=colors["border"])
         footer.pack(fill="x", pady=(12, 0))
@@ -158,7 +163,15 @@ class PropertyPage:
                 self.next_cursor = res.get("next_cursor")
                 has_more = res.get("has_more", False)
                 self.container.after(0, lambda: self._update_table(items, has_more))
-            except Exception as e: self.container.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
+            except Exception as e:
+                def show_error(err=e):
+                    if not self.tree.get_children():
+                        self.empty_state.show(
+                            "Check the connection and try the search again.",
+                            title="Unable to load properties",
+                        )
+                    messagebox.showerror("Error", str(err))
+                self.container.after(0, show_error)
             finally: self.container.after(0, lambda: overlay.hide())
         threading.Thread(target=worker, daemon=True).start()
 
@@ -167,6 +180,14 @@ class PropertyPage:
         self.prev_btn.configure(state="normal" if self.current_page > 0 else "disabled")
         self.next_btn.configure(state="normal" if has_more else "disabled")
         for item in self.tree.get_children(): self.tree.delete(item)
+        if results:
+            self.empty_state.hide()
+        else:
+            self.empty_state.show(
+                "Try another TD number, owner name, barangay, or year filter."
+                if self.current_page == 0 else "Go back a page or change the search filters.",
+                title="No matching properties" if self.current_page == 0 else "No records on this page",
+            )
         td_counts = {}
         for row in results:
             normalized_td = str(row[1] or "").strip().upper()

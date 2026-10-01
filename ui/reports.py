@@ -10,7 +10,8 @@ import api_clients.billing_service as billing
 import api_clients.property_service as prop
 import api_clients.system_service as system
 import api_clients.reports_service as reports_api
-from ui_components import ErrorDialog, show_toast
+from ui_components import show_toast
+from ui.empty_state import EmptyTableState, show_empty_content
 from utils import format_curr, tr
 
 
@@ -88,6 +89,37 @@ class ReportsPage:
             self.loading_bar.pack_forget()
         except Exception:
             pass
+
+    def _show_collection_error(self, error):
+        if not self.coll_tree.get_children():
+            self.coll_empty_state.show(
+                "Check the connection and generate the report again.",
+                title="Unable to load collections",
+            )
+        messagebox.showerror("Error", str(error))
+
+    def _show_barangay_error(self, error):
+        if not self.brgy_tree.get_children():
+            self.brgy_empty_state.show(
+                "Check the connection and refresh the report again.",
+                title="Unable to load barangay report",
+            )
+        messagebox.showerror("Error", str(error))
+
+    @staticmethod
+    def _show_content_error(parent, error, title):
+        for child in parent.winfo_children():
+            child.destroy()
+        show_empty_content(parent, "Check the connection and try again.", title=title)
+        messagebox.showerror("Error", str(error))
+
+    def _show_reconciliation_error(self, error):
+        self._last_reconciliation_payload = None
+        self.recon_export_excel_btn.configure(state="disabled")
+        self.recon_export_pdf_btn.configure(state="disabled")
+        self._show_content_error(
+            self.recon_content, error, "Unable to load reconciliation"
+        )
 
     def _bind_enter(self, widget, callback):
         def submit(_event=None):
@@ -276,6 +308,10 @@ class ReportsPage:
         self.coll_tree.pack(side="left", fill="both", expand=True)
         self.coll_tree.tag_configure("oddrow", background="#162032", foreground="#e2e8f0")
         self.coll_tree.tag_configure("evenrow", background="#1e293b", foreground="#f8fafc")
+        self.coll_empty_state = EmptyTableState(
+            tree_container,
+            "Select a month and year, then generate the collection report.",
+        )
 
         pag_fr = ctk.CTkFrame(
             collection_fr,
@@ -348,10 +384,10 @@ class ReportsPage:
 
         self.receiv_content = ctk.CTkFrame(receiv_fr, fg_color="transparent")
         self.receiv_content.pack(fill="both", expand=True)
-        self.receiv_label = ctk.CTkLabel(
-            self.receiv_content, text=tr("reports.receivables.hint"), font=ModernTheme.BODY, text_color=ModernTheme.TEXT_GRAY
+        show_empty_content(
+            self.receiv_content,
+            "Select a year, then load the receivables report.",
         )
-        self.receiv_label.pack(pady=50)
 
     def setup_barangay_tab(self):
         brgy_fr = ctk.CTkFrame(self.barangay_tab, fg_color="transparent")
@@ -485,6 +521,10 @@ class ReportsPage:
 
         self.brgy_tree.tag_configure("oddrow", background="#162032", foreground="#e2e8f0")
         self.brgy_tree.tag_configure("evenrow", background="#1e293b", foreground="#f8fafc")
+        self.brgy_empty_state = EmptyTableState(
+            tree_host,
+            "Select an as-of year, then refresh the barangay report.",
+        )
 
         self.brgy_summary = ctk.CTkFrame(
             brgy_fr, height=58,
@@ -582,12 +622,10 @@ class ReportsPage:
             scrollbar_button_hover_color="#475569",
         )
         self.recon_content.pack(fill="both", expand=True)
-        ctk.CTkLabel(
+        show_empty_content(
             self.recon_content,
-            text="Select a fiscal year, then load the reconciliation check.",
-            font=ModernTheme.BODY,
-            text_color=ModernTheme.TEXT_GRAY,
-        ).pack(pady=60)
+            "Select a fiscal year, then load the reconciliation check.",
+        )
 
     def generate_reconciliation_report(self):
         year = self.recon_year_cb.get()
@@ -601,7 +639,9 @@ class ReportsPage:
                 brgy_rows = prop.get_receivables_by_barangay(year=int(year))
                 self.container.after(0, lambda: self._update_reconciliation(summary, brgy_rows, metrics, diagnostics))
             except Exception as e:
-                self.container.after(0, lambda err=e: messagebox.showerror("Reconciliation Error", str(err)))
+                self.container.after(
+                    0, lambda err=e: self._show_reconciliation_error(err),
+                )
             finally:
                 self.container.after(0, self._hide_loading)
 
@@ -615,12 +655,11 @@ class ReportsPage:
             self._last_reconciliation_payload = None
             self.recon_export_excel_btn.configure(state="disabled")
             self.recon_export_pdf_btn.configure(state="disabled")
-            ctk.CTkLabel(
+            show_empty_content(
                 self.recon_content,
-                text="No reconciliation data available for the selected year.",
-                font=ModernTheme.BODY,
-                text_color=ModernTheme.TEXT_GRAY,
-            ).pack(pady=60)
+                "Try another fiscal year or check that reconciliation data is available.",
+                title="No reconciliation data",
+            )
             return
 
         year = data.get("report_year", self.recon_year_cb.get())
@@ -1608,7 +1647,7 @@ class ReportsPage:
                 self.container.after(0, lambda: self._update_coll_table(data))
             except Exception as e:
                 self.container.after(
-                    0, lambda err=e: messagebox.showerror("Error", str(err))
+                    0, lambda err=e: self._show_collection_error(err)
                 )
             finally:
                 self.container.after(0, self._hide_loading)
@@ -1640,10 +1679,23 @@ class ReportsPage:
             has_more = False
 
         if not items and self._coll_page == 0:
+            self._coll_has_more = False
+            self.coll_empty_state.show(
+                "Try another month or year, then generate the report again.",
+                title="No collections found",
+            )
             self._coll_page_lbl.configure(text="No results")
             self._coll_prev_btn.configure(state="disabled")
             self._coll_next_btn.configure(state="disabled")
             return
+
+        if items:
+            self.coll_empty_state.hide()
+        else:
+            self.coll_empty_state.show(
+                "Go back a page or change the reporting period.",
+                title="No records on this page",
+            )
 
         # Store next cursor for the next page
         self._coll_has_more = has_more
@@ -1684,7 +1736,9 @@ class ReportsPage:
                 self.container.after(0, lambda: self._update_receiv_summary(data, brgy_rows))
             except Exception as e:
                 self.container.after(
-                    0, lambda err=e: messagebox.showerror("Error", str(err))
+                    0, lambda err=e: self._show_content_error(
+                        self.receiv_content, err, "Unable to load receivables"
+                    ),
                 )
             finally:
                 self.container.after(0, self._hide_loading)
@@ -1696,7 +1750,11 @@ class ReportsPage:
             child.destroy()
 
         if not data:
-            ErrorDialog(self.parent.winfo_toplevel(), tr("reports.tabs.receivables"), tr("reports.errors.no_receivables"))
+            show_empty_content(
+                self.receiv_content,
+                "Try another year or check that receivables data is available.",
+                title="No receivables data",
+            )
             return
 
         # --- DATA PREP ---
@@ -1900,7 +1958,7 @@ class ReportsPage:
                 self.container.after(0, lambda: self._update_brgy_table(data, year))
             except Exception as e:
                 self.container.after(
-                    0, lambda err=e: messagebox.showerror("Error", str(err))
+                    0, lambda err=e: self._show_barangay_error(err)
                 )
             finally:
                 self.container.after(0, self._hide_loading)
@@ -1915,8 +1973,14 @@ class ReportsPage:
         self.brgy_year_lbl.configure(text=year_label)
 
         if not data:
+            self.brgy_empty_state.show(
+                "Try another as-of year, then refresh the report.",
+                title="No barangay records found",
+            )
             self.brgy_total_lbl.configure(text=tr("reports.barangay.total").replace("{value}", "P 0.00"))
             return
+
+        self.brgy_empty_state.hide()
 
         grand_total = 0.0
         for i, row in enumerate(data):

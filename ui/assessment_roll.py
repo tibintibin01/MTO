@@ -10,6 +10,7 @@ import api_clients.billing_service as billing
 import shutil
 import os
 from ui.dossier import PropertyDossierModal
+from ui.empty_state import EmptyTableState
 from ui.import_wizard import ImportWizardModal
 import threading
 from utils.assessment_roll_status import assessment_roll_duplicate_status
@@ -362,6 +363,10 @@ class AssessmentRollPage:
         scrolly.pack(side="right", fill="y")
         scrollx.pack(side="bottom", fill="x")
         self.tree.pack(side="left", fill="both", expand=True)
+        self.empty_state = EmptyTableState(
+            tree_host,
+            "Search by PIN, TD number, previous TD, or owner, then press Refresh.",
+        )
 
         # --- PAGINATION BAR ---
         self.pag_fr = ctk.CTkFrame(
@@ -452,6 +457,11 @@ class AssessmentRollPage:
 
         def show_error(error):
             if self._is_current_refresh(request_generation):
+                if not self.tree.get_children():
+                    self.empty_state.show(
+                        "Check the connection and try Refresh again.",
+                        title="Unable to load assessment roll",
+                    )
                 messagebox.showerror("Error", str(error))
 
         def finish_request():
@@ -501,11 +511,22 @@ class AssessmentRollPage:
         if not results and self.current_page == 0:
             for item in self.tree.get_children():
                 self.tree.delete(item)
+            self.empty_state.show(
+                "Try another PIN, TD, owner, barangay, or as-of year.",
+                title="No matching assessments",
+            )
             return
 
         # Always clear table for true page-by-page pagination
         for item in self.tree.get_children():
             self.tree.delete(item)
+        if results:
+            self.empty_state.hide()
+        else:
+            self.empty_state.show(
+                "Go back a page or change the search filters.",
+                title="No records on this page",
+            )
 
         # Get current row count for zebra tagging
         current_count = len(self.tree.get_children())

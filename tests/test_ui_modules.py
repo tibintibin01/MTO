@@ -34,6 +34,9 @@ from ui.dashboard_home import (
     _recent_payment_display,
 )
 from ui.ledger import LedgerPage
+from ui.empty_state import EmptyTableState
+from ui.property import PropertyPage
+from ui.reports import ReportsPage
 from ui.assessment_roll import (
     AssessmentRollPage,
     assessment_roll_export_dialog_options,
@@ -157,6 +160,7 @@ class TestAssessmentRollFilters(unittest.TestCase):
         page.next_btn = MagicMock()
         page.tree = MagicMock()
         page.tree.get_children.return_value = []
+        page.empty_state = MagicMock()
 
         row = [None] * 25
         row[0] = 9001
@@ -179,6 +183,26 @@ class TestAssessmentRollFilters(unittest.TestCase):
         self.assertEqual(values[0], 9001)
         self.assertEqual(values[-1], VERIFIED_DUPLICATE_LABEL)
         self.assertEqual(insert_call.kwargs["tags"], ("verified_duplicate",))
+        page.empty_state.hide.assert_called_once_with()
+
+    def test_assessment_roll_empty_result_shows_guidance(self):
+        page = object.__new__(AssessmentRollPage)
+        page.current_page = 0
+        page.page_size = 50
+        page.page_lbl = MagicMock()
+        page.prev_btn = MagicMock()
+        page.next_btn = MagicMock()
+        page.tree = MagicMock()
+        page.tree.get_children.return_value = []
+        page.empty_state = MagicMock()
+
+        page._update_table([], has_more=False)
+
+        page.empty_state.show.assert_called_once()
+        self.assertEqual(
+            page.empty_state.show.call_args.kwargs["title"],
+            "No matching assessments",
+        )
 
     def test_duplicate_legend_uses_neutral_authorization_wording(self):
         setup_source = inspect.getsource(AssessmentRollPage.setup_ui)
@@ -186,6 +210,98 @@ class TestAssessmentRollFilters(unittest.TestCase):
         self.assertIn("Authorized duplicate TD accounts", setup_source)
         self.assertNotIn("Assessor-authorized", setup_source)
 
+
+class TestOtherEmptyStates(unittest.TestCase):
+    def test_shared_notice_can_change_message_and_hide(self):
+        icon = MagicMock()
+        title = MagicMock()
+        message = MagicMock()
+        with patch("ui.empty_state.ctk.CTkFrame") as frame_class, patch(
+            "ui.empty_state.ctk.CTkLabel", side_effect=[icon, title, message]
+        ):
+            state = EmptyTableState(MagicMock(), "Search to begin.")
+            state.show("Try another search.", title="No matching records")
+            state.hide()
+
+        self.assertEqual(frame_class.return_value.place.call_count, 2)
+        title.configure.assert_called_with(text="No matching records")
+        message.configure.assert_called_with(text="Try another search.")
+        frame_class.return_value.place_forget.assert_called_once_with()
+
+    def test_property_empty_result_shows_guidance(self):
+        page = object.__new__(PropertyPage)
+        page.current_page = 0
+        page.page_lbl = MagicMock()
+        page.prev_btn = MagicMock()
+        page.next_btn = MagicMock()
+        page.tree = MagicMock()
+        page.tree.get_children.return_value = []
+        page.empty_state = MagicMock()
+        page.on_selection_change = MagicMock()
+
+        page._update_table([], has_more=False)
+
+        page.empty_state.show.assert_called_once()
+        self.assertEqual(
+            page.empty_state.show.call_args.kwargs["title"],
+            "No matching properties",
+        )
+
+    def test_collection_report_hides_empty_state_after_rows_arrive(self):
+        page = object.__new__(ReportsPage)
+        page._coll_page = 0
+        page._coll_cursors = [None]
+        page.coll_tree = MagicMock()
+        page.coll_tree.get_children.return_value = []
+        page.coll_empty_state = MagicMock()
+        page._coll_page_lbl = MagicMock()
+        page._coll_prev_btn = MagicMock()
+        page._coll_next_btn = MagicMock()
+
+        page._update_coll_table({"items": [], "has_more": False})
+        page.coll_empty_state.show.assert_called_once()
+        page._update_coll_table({
+            "items": [["2026-01-01", "OR-1", "TD-1", "Owner", "RPT", 2026, 50]],
+            "has_more": False,
+        })
+        page.coll_empty_state.hide.assert_called_once_with()
+        page.coll_tree.insert.assert_called_once()
+
+    def test_barangay_report_shows_empty_and_hides_for_rows(self):
+        page = object.__new__(ReportsPage)
+        page.brgy_tree = MagicMock()
+        page.brgy_tree.get_children.return_value = []
+        page.brgy_empty_state = MagicMock()
+        page.brgy_year_lbl = MagicMock()
+        page.brgy_total_lbl = MagicMock()
+
+        page._update_brgy_table([], 2026)
+        page.brgy_empty_state.show.assert_called_once()
+        page._update_brgy_table([["NORTH", 1, 2, 3, 4, 5, 6]], 2026)
+        page.brgy_empty_state.hide.assert_called_once_with()
+        page.brgy_tree.insert.assert_called_once()
+
+    def test_receivables_no_data_uses_inline_notice(self):
+        page = object.__new__(ReportsPage)
+        page.receiv_content = MagicMock()
+        page.receiv_content.winfo_children.return_value = []
+        with patch("ui.reports.show_empty_content") as show:
+            page._update_receiv_summary(None)
+        self.assertEqual(show.call_args.kwargs["title"], "No receivables data")
+
+    def test_reconciliation_no_data_disables_exports_and_shows_notice(self):
+        page = object.__new__(ReportsPage)
+        page.recon_content = MagicMock()
+        page.recon_content.winfo_children.return_value = []
+        page.recon_export_excel_btn = MagicMock()
+        page.recon_export_pdf_btn = MagicMock()
+        page._last_reconciliation_payload = {"stale": True}
+        with patch("ui.reports.show_empty_content") as show:
+            page._update_reconciliation(None)
+        self.assertIsNone(page._last_reconciliation_payload)
+        page.recon_export_excel_btn.configure.assert_called_once_with(state="disabled")
+        page.recon_export_pdf_btn.configure.assert_called_once_with(state="disabled")
+        self.assertEqual(show.call_args.kwargs["title"], "No reconciliation data")
 
 class TestLedgerColumns(unittest.TestCase):
     def test_pdf_status_is_internal_and_not_a_visible_column(self):
