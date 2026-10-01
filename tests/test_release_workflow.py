@@ -85,6 +85,7 @@ def test_preparation_is_before_activation_and_finalize_is_separate():
         or "no evidence will be overwritten" in source
     )
     assert "'checks-'" in source
+    assert "Join-Path $script:GateDirectory ($Name + '.json')" in source
     assert "activation_completed = $false" in source
     assert "$script:WorkflowState.activation_completed = $true" in source
 

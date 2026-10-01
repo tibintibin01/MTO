@@ -142,7 +142,7 @@ function Invoke-AuditGate {
     param([string]$Name)
     Invoke-Gate $Name @('-m', 'scripts.phase5_audit_observability_preflight',
         '--require-ready', '--require-active', '--require-live-event',
-        '--output', (Join-Path $script:RunDirectory ($Name + '.json')))
+        '--output', (Join-Path $script:GateDirectory ($Name + '.json')))
 }
 
 function Invoke-OperationsSmoke {
