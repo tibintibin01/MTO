@@ -149,7 +149,12 @@ and contrast-policy checks also passed. Real Windows Tk layout and isolated
 Windows PowerShell parsing, SHA256, manual-acceptance, resume, and operations
 failure-path checks are included in the suite.
 
-The release target is **v2.1.15**. Phase 5 uses the clean, approved release tag
+The release target is **v2.1.16**. The v2.1.15 candidate was not handed off:
+Linux CI exposed Windows-only path and log-encoding assumptions in two test
+fixtures. Those fixtures now exercise native absolute paths and both PowerShell
+log encodings, including explicit failure-reason assertions. No production
+operation was run; the old candidate tag is preserved and must not be deployed.
+Phase 5 uses the clean, approved release tag
 to build the installer, provenance manifest, SBOM, six-file application archive,
 and separate hash-pinned deployment kit. Building or transferring those files
 does not activate production or establish client acceptance. Server activation,

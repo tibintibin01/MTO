@@ -211,27 +211,35 @@ def test_gate_failure_is_retained_and_not_marked_pass(tmp_path):
     """)
     assert result.returncode != 0
     assert "failed-test: PASS" not in result.stdout
-    assert "evidence" in (tmp_path / "failed-test.log").read_text(encoding="utf-16")
+    retained = (tmp_path / "failed-test.log").read_bytes()
+    # Windows PowerShell 5 redirects UTF-16; PowerShell 7 redirects UTF-8.
+    encoding = (
+        "utf-16" if retained.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
+    )
+    assert "evidence" in retained.decode(encoding)
 
 
 @pytest.mark.parametrize(
-    "task_result,health,age,future,expected",
+    "task_result,health,age,future,expected,error",
     [
-        (0, "PASS", 0, 0, True),
-        (2, "PASS", 0, 0, False),
-        (0, "FAIL", 0, 0, False),
-        (0, "PASS", 300, 0, False),
-        (0, "PASS", 0, 300, False),
+        (0, "PASS", 0, 0, True, ""),
+        (2, "PASS", 0, 0, False, "Operations check failed with result 2"),
+        (0, "FAIL", 0, 0, False, "Fresh operations-health report did not pass"),
+        (0, "PASS", 300, 0, False, "A fresh operations-health report was not found"),
+        (0, "PASS", 0, 300, False, "Fresh operations-health report did not pass"),
     ],
 )
 def test_operations_requires_successful_new_run_and_fresh_passing_report(
-    task_result, health, age, future, expected
+    tmp_path, task_result, health, age, future, expected, error
 ):
+    # The mocked scheduler uses host-native absolute paths, so Linux pwsh
+    # exercises the same identity checks instead of failing on Windows syntax.
+    mock_python = tmp_path / "venv" / "Scripts" / "python.exe"
     result = invoke_functions(f"""
         $script:taskStarted=$false
         function Get-ScheduledTask {{param($TaskName,$ErrorAction)
             return [pscustomobject]@{{State='Ready'; Actions=@([pscustomobject]@{{
-                Execute='C:\\mto\\venv\\Scripts\\python.exe'; Arguments='-m scripts.run_operations_health_check --retention-days 400'; WorkingDirectory='C:\\mto'
+                Execute={ps_literal(mock_python)}; Arguments='-m scripts.run_operations_health_check --retention-days 400'; WorkingDirectory={ps_literal(tmp_path)}
             }})}}
         }}
         function Get-ScheduledTaskInfo {{param($TaskName)
@@ -246,7 +254,9 @@ def test_operations_requires_successful_new_run_and_fresh_passing_report(
         function Get-Content {{param($LiteralPath,[switch]$Raw)
             return (@{{report_type='MTO_OPERATIONS_HEALTH'; status='{health}'; timestamp_utc=[datetime]::UtcNow.AddSeconds(1-{age}+{future}).ToString('o')}} | ConvertTo-Json)
         }}
-        Invoke-OperationsSmoke 'C:\\mto' 'C:\\mto\\venv\\Scripts\\python.exe'
+        Invoke-OperationsSmoke {ps_literal(tmp_path)} {ps_literal(mock_python)}
     """)
     assert (result.returncode == 0) is expected, result.stderr
     assert ("operations-smoke: PASS" in result.stdout) is expected
+    if error:
+        assert error in result.stderr
