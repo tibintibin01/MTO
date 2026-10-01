@@ -3,6 +3,13 @@ name: MTO Treasury Deploy
 on:
   push:
     tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      deploy_production:
+        description: 'Explicitly deploy the selected immutable release tag to production'
+        required: true
+        type: boolean
+        default: false
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -168,13 +175,14 @@ jobs:
           https://staging-api.mto-municipal.gov/healthz
 
   # ---------------------------------------------------------------------------
-  # 5. Production deployment — requires manual approval via GitHub environment
+  # 5. Production deployment — requires an explicit manual dispatch from a tag
   # ---------------------------------------------------------------------------
   production:
     needs: staging
     runs-on: ubuntu-latest
-    # The 'production' environment in GitHub settings should require a
-    # manual approval from a designated reviewer before this job runs.
+    # Environment reviewers are not a reliable gate unless configured in
+    # GitHub settings. Never deploy production on the release-tag push.
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_production == true
     environment: production
 
     steps:

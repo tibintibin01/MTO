@@ -19,11 +19,12 @@ EXACT_RUNTIME_MINIMUMS = {
     "cryptography": "50.0.1",
     "fastapi": "0.141.1",
     "pillow": "12.3.0",
-    "pyjwt": "2.13.0",
+    "pyjwt": "2.15.1",
     "pymysql": "1.2.0",
     "python-dotenv": "1.2.3",
     "python-multipart": "0.0.32",
     "requests": "2.34.2",
+    "urllib3": "2.8.0",
     "sentry-sdk": "2.69.1",
     "uvicorn": "0.52.4",
 }
@@ -437,7 +438,12 @@ def validate_repository(
         root
         / ".github"
         / "workflows"
-        / "deploy.yml": ["dev-requirements.lock", "pip-audit -r requirements.lock"],
+        / "deploy.yml": [
+            "dev-requirements.lock",
+            "pip-audit -r requirements.lock",
+            "workflow_dispatch:",
+            "if: github.event_name == 'workflow_dispatch' && inputs.deploy_production == true",
+        ],
     }
     for path, tokens in required_text.items():
         content = path.read_text(encoding="utf-8")

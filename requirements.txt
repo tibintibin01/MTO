@@ -6,16 +6,17 @@ sqlalchemy==2.0.23
 alembic==1.19.2
 pymysql==1.2.0
 python-dotenv==1.2.3
-# Replaced python-jose (unmaintained, CVEs) with PyJWT + cryptography.
-# PyJWT is actively maintained, has no known CVEs, and the API is nearly
-# identical — jwt.encode/decode with the same HS256 algorithm.
-PyJWT==2.13.0
+# Replaced unmaintained python-jose with security-reviewed PyJWT + cryptography.
+# Keep JWT verification fixes pinned and audit the lock before every release.
+PyJWT==2.15.1
 cryptography==50.0.1
 bcrypt==4.2.1
 slowapi==0.1.8
 sentry-sdk[fastapi]==2.69.1
 python-multipart==0.0.32
 requests==2.34.2
+# Explicit security pin for requests/botocore's shared HTTP transport.
+urllib3==2.8.0
 pandas==2.1.3
 openpyxl==3.1.2
 reportlab==4.0.7
