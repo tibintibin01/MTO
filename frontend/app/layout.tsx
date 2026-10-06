@@ -31,7 +31,6 @@ export const viewport: Viewport = {
   themeColor: "#1a3a6b",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
 };
 
 export default function RootLayout({
@@ -42,6 +41,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full">
       <body className={`${inter.className} h-full antialiased bg-[#f0f4f8]`}>
+        <a href="#main-content" className="skip-link">Skip to main content</a>
         <ToastProvider>
           <OfflineBanner />
           <ErrorBoundary>

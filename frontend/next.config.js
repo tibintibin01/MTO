@@ -59,6 +59,7 @@ const securityHeaders = [
 
 const nextConfig = {
   reactStrictMode: true,
+  images: { qualities: [55, 75] },
 
   // The updater builds into a staging directory, then swaps it into .next
   // only after a successful build. Normal npm start continues to use .next.

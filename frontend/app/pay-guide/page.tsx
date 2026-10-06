@@ -1,5 +1,6 @@
 import { MapPin, Clock, Phone, Banknote, Calendar, Percent, AlertCircle, FileText, CheckCircle2 } from "lucide-react";
 import Link from "next/link";
+import {PAYMENT_GUIDANCE} from "../../lib/publicGuidance";
 
 export const metadata = {
   title: "How to Pay | Dipaculao Treasury Portal",
@@ -10,7 +11,7 @@ const steps = [
   {
     n: "1",
     title: "Know your balance",
-    desc: "Search your property on this portal using your TDN or PIN to see your exact outstanding balance per tax year. Download your Statement of Account (SOA) to bring with you.",
+    desc: "Search using your TDN or PIN and check the displayed publication time. The published balance is for inquiry; the office confirms the current computation. If available, bring your inquiry Statement of Account (SOA).",
     icon: FileText,
   },
   {
@@ -28,7 +29,7 @@ const steps = [
   {
     n: "4",
     title: "Keep your receipt",
-    desc: "Your Official Receipt is proof of payment. Your record on this portal will reflect the payment, usually within the same business day.",
+    desc: "Your Official Receipt is proof of payment. Portal records change only after the office publishes a new snapshot. Check its publication time; if a payment is missing, contact the Treasury Office rather than assuming it was not recorded.",
     icon: CheckCircle2,
   },
 ];
@@ -74,29 +75,7 @@ export default function PayGuide() {
             <Percent className="w-4 h-4 text-[#367588]" />
             <h2 className="font-bold text-slate-800">Discounts &amp; Penalties</h2>
           </div>
-          <div className="divide-y divide-slate-100">
-            <div className="px-6 py-4 flex items-start gap-4">
-              <Calendar className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold text-slate-800 text-sm">Advance payment — 20% discount</p>
-                <p className="text-sm text-slate-500">Pay before January 1 of the tax year to earn the maximum discount.</p>
-              </div>
-            </div>
-            <div className="px-6 py-4 flex items-start gap-4">
-              <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold text-slate-800 text-sm">Prompt payment — 10% discount</p>
-                <p className="text-sm text-slate-500">Pay between January 1 and March 31 to qualify for the prompt-payment discount.</p>
-              </div>
-            </div>
-            <div className="px-6 py-4 flex items-start gap-4">
-              <AlertCircle className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-bold text-slate-800 text-sm">Late payment — 2% monthly penalty</p>
-                <p className="text-sm text-slate-500">Payments after March 31 accrue a 2% penalty per month on the outstanding balance, up to a maximum of 72% (36 months), per RA 7160.</p>
-              </div>
-            </div>
-          </div>
+          <p className="px-6 py-5 text-sm leading-6 text-slate-700">{PAYMENT_GUIDANCE}</p>
         </div>
       </section>
 

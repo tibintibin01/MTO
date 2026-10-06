@@ -8,8 +8,8 @@ import { WifiOff, Wifi } from "lucide-react";
  * banner when the network is unavailable.
  *
  * The PWA service worker caches the public portal pages so citizens can
- * still view previously loaded property data while offline — this banner
- * makes that state visible rather than leaving them with silent failures.
+ * use cached informational pages offline. Financial APIs remain NetworkOnly;
+ * a cached page must not be presented as an authoritative current balance.
  */
 export function OfflineBanner() {
   const [isOnline, setIsOnline] = useState(true);
@@ -61,7 +61,7 @@ export function OfflineBanner() {
       className="fixed top-0 inset-x-0 z-50 flex items-center justify-center gap-2 bg-amber-500 text-white text-sm font-semibold py-2 px-4 shadow-md"
     >
       <WifiOff className="w-4 h-4" />
-      You are offline. Cached pages are still available.
+      You are offline. Informational pages may be available; financial records require a connection.
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findSnapshotProperty, loadPortalSnapshot, publicPaymentHistory, PortalSnapshotAmbiguousLookupError, PortalSnapshotConfigError, PortalSnapshotDataError } from "../../../../../../../lib/portalSnapshot";
+import { findSnapshotProperty, loadCurrentPortalSnapshot, publicPaymentHistory, PortalSnapshotAmbiguousLookupError, PortalSnapshotConfigError, PortalSnapshotDataError, PortalSnapshotStaleError, snapshotUnavailablePayload } from "../../../../../../../lib/portalSnapshot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ function json(status: number, body: any) {
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ query: string }> }) {
   const { query: rawQuery } = await params;
-  const query = decodeURIComponent(rawQuery || "").trim();
+  const query = String(rawQuery || "").trim();
   if (!QUERY_PATTERN.test(query)) return json(400, { detail: "Invalid query format." });
   const accountKey = (request.nextUrl.searchParams.get("account") || "").trim().toLowerCase();
   if (accountKey && !ACCOUNT_KEY_PATTERN.test(accountKey)) {
@@ -21,14 +21,19 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   try {
-    const snapshot = await loadPortalSnapshot();
+    const snapshot = await loadCurrentPortalSnapshot();
     if (!snapshot) return json(503, { detail: "Portal data has not been published yet." });
+    const expectedSnapshot = request.nextUrl.searchParams.get("snapshot");
+    if (expectedSnapshot && expectedSnapshot !== snapshot.checksum) {
+      return json(409, {code:"PORTAL_SNAPSHOT_CHANGED",detail:"Published records changed. Refresh this account to load a matching payment history."});
+    }
 
     const record = findSnapshotProperty(snapshot, query, accountKey || undefined);
     if (!record) return json(404, { detail: "Property not found." });
 
     return json(200, publicPaymentHistory(record));
   } catch (error) {
+    if (error instanceof PortalSnapshotStaleError) return json(503, snapshotUnavailablePayload(error));
     if (error instanceof PortalSnapshotAmbiguousLookupError) {
       return json(409, {
         code: "MULTIPLE_PROPERTY_ACCOUNTS",

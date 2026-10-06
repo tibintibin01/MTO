@@ -190,6 +190,19 @@ def _check_minimums(
     return findings
 
 
+def check_frontend_transitive_security(locked_paths: dict, path: Path) -> list[dict[str,str]]:
+    """Keep every nested copy above GHSA-68fv-2mgg-jv7q's patched floor."""
+    results=[]
+    for package_path,metadata in locked_paths.items():
+        if package_path.endswith("node_modules/source-map-js"):
+            actual=metadata.get("version") if isinstance(metadata,dict) else None
+            if not isinstance(actual,str):
+                results.append(finding("FRONTEND_TRANSITIVE_INVALID_VERSION",path,package_path))
+            else:
+                results.extend(_check_minimums({"source-map-js":actual},{"source-map-js":"1.2.2"},path,"FRONTEND_TRANSITIVE"))
+    return results
+
+
 def _check_exact_versions(
     packages: dict[str, str], expected: dict[str, str], path: Path, ecosystem: str
 ) -> list[dict[str, str]]:
@@ -380,6 +393,7 @@ def validate_repository(
                 )
             )
     locked_paths = package_lock.get("packages", {})
+    findings.extend(check_frontend_transitive_security(locked_paths,package_lock_path))
     for forbidden in FORBIDDEN_FRONTEND:
         if f"node_modules/{forbidden}" in locked_paths:
             findings.append(

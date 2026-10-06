@@ -3,10 +3,10 @@ import "server-only";
 import { get, put } from "@vercel/blob";
 import { createHmac } from "crypto";
 import { readFile, stat } from "fs/promises";
+import { snapshotFreshness, publicationDay, type PortalFreshness } from "./portalFreshness";
 
 export const PORTAL_SNAPSHOT_BLOB_PATH = "portal/portal_snapshot_latest.json";
 export const PORTAL_SNAPSHOT_SCHEMA_VERSION = 2;
-const DEFAULT_MAX_SNAPSHOT_AGE_HOURS = 36;
 const BLOB_CACHE_TTL_MS = 30_000;
 
 type SnapshotRecord = Record<string, any>;
@@ -17,6 +17,7 @@ type PortalSnapshot = {
   checksum?: string;
   properties?: SnapshotRecord[];
   owner_lookup_index?: Record<string, number[]>;
+  owner_lookup_version?: number;
 };
 
 export class PortalSnapshotConfigError extends Error {
@@ -31,6 +32,19 @@ export class PortalSnapshotDataError extends Error {
     super(message);
     this.name = "PortalSnapshotDataError";
   }
+}
+
+export class PortalSnapshotStaleError extends PortalSnapshotDataError {
+  freshness: PortalFreshness;
+  constructor(freshness: PortalFreshness) {
+    super("Published portal records are awaiting an update.");
+    this.name = "PortalSnapshotStaleError";
+    this.freshness = freshness;
+  }
+}
+
+export function snapshotUnavailablePayload(error: PortalSnapshotStaleError) {
+  return {code:"PORTAL_SNAPSHOT_STALE",detail:"Published records are awaiting an update. Please contact the Municipal Treasury Office for current figures.",freshness:error.freshness};
 }
 
 export class PortalSnapshotAmbiguousLookupError extends Error {
@@ -79,8 +93,13 @@ export function normalizeLookup(value: string): string {
 }
 
 function ownerTokens(value: string): string[] {
-  return Array.from(new Set(normalizeLookup(value).match(/[A-Z0-9]+/g) || []))
-    .filter((token) => token.length >= 3);
+  return Array.from(new Set(normalizeLookup(value).normalize("NFKC").match(/[\p{L}\p{N}]+/gu) || []))
+    .filter((token) => Array.from(token).length >= 3);
+}
+
+function canonicalTd(value: string): string | null {
+  const digits = normalizeLookup(value).replace(/[-.\s]/g, "");
+  return /^\d{11}$/.test(digits) ? digits : null;
 }
 
 export function lookupHash(value: string, length = 64): string {
@@ -174,6 +193,14 @@ export async function loadPortalSnapshot(): Promise<PortalSnapshot | null> {
   return snapshot;
 }
 
+export async function loadCurrentPortalSnapshot(): Promise<PortalSnapshot | null> {
+  const snapshot = await loadPortalSnapshot();
+  if (!snapshot) return null;
+  const freshness = snapshotFreshness(snapshot.published_at, process.env.MTO_PORTAL_MAX_SNAPSHOT_AGE_HOURS);
+  if (!freshness.ok) throw new PortalSnapshotStaleError(freshness);
+  return snapshot;
+}
+
 export async function storePortalSnapshot(snapshot: PortalSnapshot) {
   validateSnapshot(snapshot, requireLookupSecret());
   const body = JSON.stringify(snapshot);
@@ -236,11 +263,17 @@ export function findSnapshotProperty(
       const indexed = { record, index: recordIndex };
       addLookup(record?.td_lookup_hash, indexed);
       addLookup(record?.pin_lookup_hash, indexed);
+      const digits = canonicalTd(record?.td_number || "");
+      if (digits) addLookup(lookupHash("TD-DIGITS:" + digits), indexed);
     });
     propertyIndexCache.set(snapshot, index);
   }
 
-  const matches = index.get(hash) || [];
+  const digits = canonicalTd(query);
+  const candidates = [...(index.get(hash) || []), ...(digits ? index.get(lookupHash("TD-DIGITS:" + digits)) || [] : [])];
+  // An alias may collide with another account or an exact PIN. Never guess or
+  // merge accounts; preserve the duplicate-account selection contract.
+  const matches = Array.from(new Map(candidates.map(match => [match.index, match])).values());
   if (matches.length === 0) return null;
 
   if (accountKey) {
@@ -270,24 +303,11 @@ export async function portalSnapshotHealth() {
     return { ok: false, status: "missing", detail: "Portal data has not been published yet." };
   }
 
-  const publishedAt = snapshot.published_at ? new Date(snapshot.published_at) : null;
-  const publishedAtMs = publishedAt?.getTime() ?? Number.NaN;
-  const ageHours = Number.isFinite(publishedAtMs)
-    ? Math.max(0, (Date.now() - publishedAtMs) / 3_600_000)
-    : null;
-  const configuredMaxAge = Number(process.env.MTO_PORTAL_MAX_SNAPSHOT_AGE_HOURS);
-  const maxAgeHours = Number.isFinite(configuredMaxAge) && configuredMaxAge > 0
-    ? configuredMaxAge
-    : DEFAULT_MAX_SNAPSHOT_AGE_HOURS;
-  const fresh = ageHours !== null && ageHours <= maxAgeHours;
+  const freshness = snapshotFreshness(snapshot.published_at, process.env.MTO_PORTAL_MAX_SNAPSHOT_AGE_HOURS);
 
   return {
-    ok: fresh,
-    status: fresh ? "ready" : "stale",
+    ...freshness,
     schema_version: snapshot.schema_version,
-    published_at: snapshot.published_at || null,
-    age_hours: ageHours === null ? null : Number(ageHours.toFixed(1)),
-    max_age_hours: maxAgeHours,
     record_count: snapshot.properties?.length || 0,
   };
 }
@@ -310,7 +330,10 @@ export function publicProperty(record: SnapshotRecord, snapshot: PortalSnapshot)
     total_paid: Number(record.total_paid || 0),
     billing_breakdown: Array.isArray(record.billing_breakdown) ? record.billing_breakdown : [],
     last_payment: record.last_payment || null,
-    as_of: snapshot.published_at ? String(snapshot.published_at).slice(0, 10) : null,
+    as_of: publicationDay(snapshot.published_at),
+    published_at: snapshot.published_at || null,
+    snapshot_id: snapshot.checksum || null,
+    freshness: snapshotFreshness(snapshot.published_at, process.env.MTO_PORTAL_MAX_SNAPSHOT_AGE_HOURS),
   };
 }
 

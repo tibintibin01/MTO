@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findOwnerMatches, findResult, loadPortalSnapshot, PortalSnapshotConfigError, PortalSnapshotDataError } from "../../../../../lib/portalSnapshot";
+import { findOwnerMatches, findResult, loadCurrentPortalSnapshot, PortalSnapshotConfigError, PortalSnapshotDataError, PortalSnapshotStaleError, snapshotUnavailablePayload } from "../../../../../lib/portalSnapshot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const NAME_PATTERN = /^[A-Za-z0-9 .'\-ñÑ]{3,60}$/;
-const BARANGAY_PATTERN = /^[A-Za-z0-9 .\-ñÑ]{1,60}$/;
+const NAME_PATTERN = /^[\p{L}\p{N} .'\-]{3,60}$/u;
+const BARANGAY_PATTERN = /^[\p{L}\p{N} .\-]{1,60}$/u;
 
 function json(status: number, body: Record<string, any>) {
   return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
@@ -13,8 +13,8 @@ function json(status: number, body: Record<string, any>) {
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const name = (searchParams.get("name") || "").trim();
-  const barangay = (searchParams.get("barangay") || "").trim();
+  const name = (searchParams.get("name") || "").trim().normalize("NFKC");
+  const barangay = (searchParams.get("barangay") || "").trim().normalize("NFKC");
 
   if (!NAME_PATTERN.test(name)) {
     return json(400, { detail: "Please enter at least 3 valid characters of the owner's name." });
@@ -24,8 +24,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const snapshot = await loadPortalSnapshot();
+    const snapshot = await loadCurrentPortalSnapshot();
     if (!snapshot) return json(503, { detail: "Portal data has not been published yet." });
+    if (/[^\x00-\x7f]/.test(name) && snapshot.owner_lookup_version !== 2) {
+      return json(503, {detail:"The owner-name search index is awaiting an update. Please contact the Municipal Treasury Office for assistance."});
+    }
 
     const matches = findOwnerMatches(snapshot, name, barangay);
     if (matches.length > 10) {
@@ -42,6 +45,7 @@ export async function GET(request: NextRequest) {
       count: matches.length,
     });
   } catch (error) {
+    if (error instanceof PortalSnapshotStaleError) return json(503, snapshotUnavailablePayload(error));
     if (error instanceof PortalSnapshotConfigError || error instanceof PortalSnapshotDataError) {
       return json(503, { detail: "Portal data is temporarily unavailable. Please contact the Municipal Treasury Office." });
     }
