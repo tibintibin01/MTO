@@ -30,16 +30,19 @@ def get_backup_verification_status():
     return api_request("GET", "/system/backup/status", queue_offline=False, timeout=15)
 
 
-def get_audit_logs(username=None, search="", date_from=None, date_to=None, limit=100, cursor=None):
-    params = {
-        "limit": limit,
-        "search": search
-    }
-    if cursor: params["cursor"] = cursor
-    if username: params["username"] = username
-    if date_from: params["date_from"] = date_from
-    if date_to: params["date_to"] = date_to
-    
+def get_audit_logs(
+    username=None, search="", date_from=None, date_to=None, limit=100, cursor=None
+):
+    params = {"limit": limit, "search": search}
+    if cursor:
+        params["cursor"] = cursor
+    if username:
+        params["username"] = username
+    if date_from:
+        params["date_from"] = date_from
+    if date_to:
+        params["date_to"] = date_to
+
     return api_request("GET", "/system/audit-logs", params=params)
 
 
@@ -49,6 +52,7 @@ def get_audit_users():
 
 def validate_import(file_path, mode="property"):
     import os
+
     with open(file_path, "rb") as f:
         files = {"file": (os.path.basename(file_path), f)}
         return api_request("POST", f"/system/import/validate?mode={mode}", files=files)
@@ -133,7 +137,7 @@ def sync_billing_years(dry_run: bool = False):
 def get_job_status(job_id: str):
     """Polls the status of a background job."""
     try:
-        return api_request("GET", f"/jobs/{job_id}")
+        return api_request("GET", f"/jobs/{job_id}", queue_offline=False, timeout=15)
     except Exception:
         return None
 
@@ -144,7 +148,9 @@ def get_tax_policies():
     return result if isinstance(result, list) else []
 
 
-def update_tax_policy(tax_year: int, basic_rate: float, sef_rate: float, penalty_rate: float):
+def update_tax_policy(
+    tax_year: int, basic_rate: float, sef_rate: float, penalty_rate: float
+):
     """Creates or updates the tax policy for a given tax year. Admin only."""
     return api_request(
         "PUT",
@@ -160,14 +166,13 @@ def update_tax_policy(tax_year: int, basic_rate: float, sef_rate: float, penalty
 def sync_billing_years(dry_run=False):
     """Syncs missing billing year records. dry_run=True for preview."""
     return api_request(
-        "POST",
-        f"/system/sync-billing-years?dry_run={'true' if dry_run else 'false'}"
+        "POST", f"/system/sync-billing-years?dry_run={'true' if dry_run else 'false'}"
     )
 
 
 def get_job_status(job_id: str):
     """Polls a background job for its current status and result."""
-    return api_request("GET", f"/jobs/{job_id}")
+    return api_request("GET", f"/jobs/{job_id}", queue_offline=False, timeout=15)
 
 
 def repair_billing_av(dry_run: bool = True):
@@ -218,13 +223,18 @@ def fix_td_numbers(dry_run: bool = True):
     dry_run=False applies the fixes.
     """
     return api_request(
-        "POST",
-        f"/system/td-number-fix?dry_run={'true' if dry_run else 'false'}"
+        "POST", f"/system/td-number-fix?dry_run={'true' if dry_run else 'false'}"
     )
 
-def compute_payment(assessed_value: float, tax_year: int, date_paid: str,
-                    payment_type: str = "annual", quarter: int = 0,
-                    property_id=None):
+
+def compute_payment(
+    assessed_value: float,
+    tax_year: int,
+    date_paid: str,
+    payment_type: str = "annual",
+    quarter: int = 0,
+    property_id=None,
+):
     """
     Smart payment computation.
     Returns discount and penalty amounts based on date_paid vs tax_year deadline.
@@ -251,10 +261,10 @@ def compute_payment(assessed_value: float, tax_year: int, date_paid: str,
     """
     payload = {
         "assessed_value": assessed_value,
-        "tax_year":       tax_year,
-        "date_paid":      date_paid,
-        "payment_type":   payment_type,
-        "quarter":        quarter,
+        "tax_year": tax_year,
+        "date_paid": date_paid,
+        "payment_type": payment_type,
+        "quarter": quarter,
     }
     if property_id:
         payload["property_id"] = property_id
@@ -266,8 +276,9 @@ def shadow_duplicate_cleanup(bad_ids: list):
     Batch soft-deletes shadow duplicate properties (bad TD format) that have no payments.
     Properties with payments are skipped and returned in the 'skipped' list.
     """
-    return api_request("POST", "/system/shadow-duplicate-cleanup",
-                       data={"bad_ids": bad_ids})
+    return api_request(
+        "POST", "/system/shadow-duplicate-cleanup", data={"bad_ids": bad_ids}
+    )
 
 
 def get_rate_limiting_stats():
@@ -285,7 +296,10 @@ def get_rate_limiting_blocks(limit=50, cursor=None):
 
 def reset_rate_limits(identifier: str):
     """Resets rate limit keys/counters for a client IP or username (Admin only)."""
-    return api_request("POST", "/system/rate-limiting/reset", data={"identifier": identifier})
+    return api_request(
+        "POST", "/system/rate-limiting/reset", data={"identifier": identifier}
+    )
+
 
 def preview_portal_snapshot():
     """Generates and saves a sanitized portal snapshot without uploading."""
@@ -298,4 +312,6 @@ def publish_portal_snapshot(dry_run: bool = False):
         "POST",
         "/system/portal-snapshot/publish",
         data={"dry_run": bool(dry_run)},
+        queue_offline=False,
+        timeout=15,
     )

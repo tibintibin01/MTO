@@ -44,6 +44,82 @@ function Get-WorkflowSha256 {
     }
 }
 
+function ConvertTo-NativeArgument {
+    param([AllowEmptyString()][string]$Value)
+    if ($Value.IndexOf([char]0) -ge 0) { throw 'Native arguments cannot contain NUL.' }
+    # Windows CreateProcess/CommandLineToArgvW escaping, including empty values,
+    # embedded quotes, and trailing backslashes. No shell interprets the result.
+    $escaped = [regex]::Replace($Value, '(\\*)"', '$1$1\"')
+    $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
+    return '"' + $escaped + '"'
+}
+
+function Invoke-CapturedNative {
+    param([string]$Executable, [string[]]$Arguments, [string]$Log)
+    $stdoutPath = $Log + '.stdout.log'
+    $stderrPath = $Log + '.stderr.log'
+    foreach ($path in @($Log, $stdoutPath, $stderrPath)) {
+        Assert-NoLinkedPath $path
+        if (Test-Path -LiteralPath $path) { throw 'Native command logs already exist; no evidence will be overwritten.' }
+    }
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = $Executable
+    $start.Arguments = (@($Arguments | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' ')
+    $start.WorkingDirectory = (Get-Location).Path
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    # Only this child receives the encoding override; no production environment
+    # variable or error preference is changed. Raw byte logs are retained.
+    $start.EnvironmentVariables['PYTHONIOENCODING'] = 'utf-8'
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $start
+    $stdoutStream = $null
+    $stderrStream = $null
+    $started = $false
+    $exitCode = $null
+    try {
+        $stdoutStream = [IO.File]::Open($stdoutPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+        $stderrStream = [IO.File]::Open($stderrPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+        $started = $process.Start()
+        if (-not $started) { throw 'Native command could not be started.' }
+        # Drain both pipes concurrently to durable files. Python INFO logs on
+        # stderr are data, not PowerShell NativeCommandError records. Large
+        # output cannot deadlock a process waiting for either pipe to be drained.
+        $stdoutCopy = $process.StandardOutput.BaseStream.CopyToAsync($stdoutStream)
+        $stderrCopy = $process.StandardError.BaseStream.CopyToAsync($stderrStream)
+        $process.WaitForExit()
+        # Windows PowerShell can emit internal VoidTaskResult values from these
+        # awaiters. Suppress them so the function returns only the exit code.
+        [void]$stdoutCopy.GetAwaiter().GetResult()
+        [void]$stderrCopy.GetAwaiter().GetResult()
+        $stdoutStream.Flush()
+        $stderrStream.Flush()
+        $exitCode = $process.ExitCode
+    } finally {
+        if ($started -and -not $process.HasExited) {
+            # Stop only this helper-owned child if its capture failed; never
+            # stop the API/scheduled task or another operator's Python process.
+            $process.Kill()
+            $process.WaitForExit()
+        }
+        if ($stdoutStream) { $stdoutStream.Dispose() }
+        if ($stderrStream) { $stderrStream.Dispose() }
+        $process.Dispose()
+    }
+    $combined = "[STDOUT]`r`n" + [IO.File]::ReadAllText($stdoutPath, [Text.Encoding]::UTF8) +
+        "`r`n[STDERR]`r`n" + [IO.File]::ReadAllText($stderrPath, [Text.Encoding]::UTF8) +
+        "`r`nExit code: $exitCode`r`n"
+    $encoding = New-Object Text.UTF8Encoding($false)
+    $logStream = [IO.File]::Open($Log, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+    try {
+        $bytes = $encoding.GetBytes($combined)
+        $logStream.Write($bytes, 0, $bytes.Length)
+    } finally { $logStream.Dispose() }
+    return $exitCode
+}
+
 function Assert-NoLinkedPath {
     param([string]$Path)
     $candidate = [IO.Path]::GetFullPath($Path)
@@ -131,9 +207,9 @@ function Invoke-Gate {
     Write-WorkflowState $script:WorkflowState $script:StatePath
     $log = Join-Path $script:GateDirectory ($Name + '.log')
     Write-Host "Checking $Name..."
-    & $script:Python @Arguments *> $log
-    if ($LASTEXITCODE -ne 0) {
-        throw "$Name blocked (exit $LASTEXITCODE). Full output retained: $log"
+    $exitCode = Invoke-CapturedNative $script:Python $Arguments $log
+    if ($exitCode -ne 0) {
+        throw "$Name blocked (exit $exitCode). Full output retained: $log"
     }
     Write-Host "$Name`: PASS"
 }
@@ -208,6 +284,14 @@ function Get-CertificationArguments {
 function Invoke-PostChecks {
     Assert-Checkout $script:ResolvedProject $ExpectedCommit
     Assert-ReleaseIdentity $ReleaseTag $ExpectedCommit $script:ResolvedDistribution
+    if($ReleaseTag -eq 'v2.1.17'){
+        # Native child process: preserve its actual exit code, not an unset
+        # LASTEXITCODE from calling a normally-returning PowerShell script.
+        Invoke-CheckedNative (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') @(
+            '-NoProfile','-ExecutionPolicy','Bypass','-File',
+            (Join-Path $script:ResolvedProject 'scripts\install_guarded_portal_task.ps1'),
+            '-ExpectedCommit',$ExpectedCommit)
+    }
     # Retain each attempt instead of overwriting evidence from an earlier failed run.
     $attempt = 'checks-' + [datetime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $script:GateDirectory = Join-Path $script:RunDirectory $attempt

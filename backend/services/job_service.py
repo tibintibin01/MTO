@@ -84,6 +84,7 @@ SLOW_JOB_TYPES = frozenset({
     "sync_billing_years",
     "retention_run",
     "accrue_penalties",   # Monthly penalty accrual for delinquent accounts
+    "portal_publish",    # Guarded, read-only export; shared publisher lock
 })
 
 ALL_JOB_TYPES = FAST_JOB_TYPES | SLOW_JOB_TYPES
@@ -273,6 +274,8 @@ def _run_job(job: Job):
             _handle_retention_run(job, payload)
         elif job.job_type == "accrue_penalties":
             _handle_accrue_penalties(job, payload)
+        elif job.job_type == "portal_publish":
+            _handle_portal_publish(job, payload)
         else:
             raise ValueError(f"Unknown job type: {job.job_type}")
 
@@ -292,6 +295,21 @@ def _run_job(job: Job):
 # ---------------------------------------------------------------------------
 # Job handlers — each uses its own DB session
 # ---------------------------------------------------------------------------
+
+
+def _handle_portal_publish(job: Job, payload: dict):
+    from backend.services.guarded_portal_publish_service import run_guarded_publication
+
+    _update_job(job.id, progress=10, progress_message="Checking guarded publisher approval...")
+    result = run_guarded_publication("operator")
+    verified = result.get("verification") or {}
+    ok = (result.get("status") == "VERIFIED" and verified.get("checksum_readback_verified") is True
+          and verified.get("expanded_bytes_readback_verified") is True)
+    code = result.get("reason_code", "PUBLICATION_NOT_VERIFIED")
+    _update_job(job.id, status="COMPLETED" if ok else "FAILED", result=json.dumps(result),
+                error=None if ok else f"Portal publication blocked: {code}",
+                progress=100 if ok else 10, completed_at=datetime.now(timezone.utc),
+                progress_message="Website checksum and exact bytes verified." if ok else f"Publication blocked: {code}")
 
 def _handle_sync_billing_years(job: Job, payload: dict):
     from backend.services.billing_sync_service import sync_billing_years

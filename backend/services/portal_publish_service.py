@@ -19,7 +19,6 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
-import requests
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -38,7 +37,6 @@ from backend.services.assessment_value_service import (
 )
 from backend.services.billing_service import calculate_current_billing_amounts
 from utils.config import config as mto_config
-from utils.logger import mto_logger
 
 DATA_START_YEAR = 2023
 SNAPSHOT_SCHEMA_VERSION = 2
@@ -456,71 +454,24 @@ def save_portal_snapshot(snapshot: dict) -> dict:
 
 
 def publish_portal_snapshot(db_session: Session, dry_run: bool = False) -> dict:
-    """
-    Generates, saves, and optionally uploads the public portal snapshot.
+    """Compatibility entry: real publication uses the shared guarded publisher.
 
-    Upload only runs when MTO_PORTAL_PUBLISH_URL and MTO_PORTAL_PUBLISH_TOKEN
-    are configured. This keeps the initial rollout safe and reviewable.
+    Preview remains local only. The legacy full-body HTTP upload is retired;
+    publishing failure must never overwrite local latest files before approval.
     """
+    if not dry_run:
+        from backend.services.guarded_portal_publish_service import (
+            run_guarded_publication,
+        )
+
+        return run_guarded_publication("operator")
     snapshot = generate_portal_snapshot(db_session)
     file_info = save_portal_snapshot(snapshot)
-
-    result = {
-        "status": "preview" if dry_run else "saved",
+    return {
+        "status": "preview",
         "uploaded": False,
         "record_count": snapshot["record_count"],
         "checksum": snapshot["checksum"],
         "published_at": snapshot["published_at"],
         **file_info,
     }
-
-    if dry_run:
-        return result
-
-    publish_url = getattr(mto_config, "PORTAL_PUBLISH_URL", "") or ""
-    publish_token = getattr(mto_config, "PORTAL_PUBLISH_TOKEN", "") or ""
-    if not publish_url or not publish_token:
-        missing_configuration = []
-        if not publish_url:
-            missing_configuration.append("MTO_PORTAL_PUBLISH_URL")
-        if not publish_token:
-            missing_configuration.append("MTO_PORTAL_PUBLISH_TOKEN")
-        result["status"] = "saved_not_uploaded"
-        result["missing_configuration"] = missing_configuration
-        result["message"] = (
-            "Snapshot saved locally. Missing server configuration: "
-            + ", ".join(missing_configuration)
-            + ". Run python scripts/configure_portal_publish.py on the API server, "
-            "then restart the API."
-        )
-        return result
-
-    with open(file_info["latest_gzip_path"], "rb") as f:
-        upload_payload = f.read()
-    payload_hash = hashlib.sha256(upload_payload).hexdigest()
-
-    response = requests.post(
-        publish_url,
-        data=upload_payload,
-        headers={
-            "Authorization": f"Bearer {publish_token}",
-            "Content-Type": "application/json",
-            "Content-Encoding": "gzip",
-            "X-MTO-Snapshot-Checksum": snapshot["checksum"],
-            "X-MTO-Snapshot-Records": str(snapshot["record_count"]),
-            "X-MTO-Payload-Sha256": payload_hash,
-        },
-        timeout=60,
-    )
-    if response.status_code >= 400:
-        mto_logger.error(
-            f"Portal snapshot upload failed: HTTP {response.status_code} {response.text[:300]}"
-        )
-        result["status"] = "upload_failed"
-        result["message"] = f"Upload failed: HTTP {response.status_code}"
-        return result
-
-    result["status"] = "uploaded"
-    result["uploaded"] = True
-    result["message"] = "Portal snapshot uploaded successfully."
-    return result
