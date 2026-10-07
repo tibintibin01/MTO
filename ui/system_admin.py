@@ -12,6 +12,7 @@ from utils import tr
 # Module-level variable — survives page navigation because the module
 # stays loaded even when SystemAdminPage is destroyed and recreated.
 _active_sync_job_id: str | None = None
+_active_portal_job_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -46,37 +47,42 @@ def _make_premium_dialog(parent, width=460, height=None):
 
 
 
-def _show_portal_publish_result(parent, title, message, accent="#10b981"):
+def _show_portal_publish_result(parent, title, message, accent="#10b981", outcome="success"):
     """Shows a clear publish result without relying on native message boxes."""
-    dialog, outer = _make_premium_dialog(parent, width=500, height=290)
+    dialog, outer = _make_premium_dialog(parent, width=520, height=min(440, max(300, parent.winfo_screenheight()-100)))
 
     ctk.CTkFrame(outer, height=5, fg_color=accent, corner_radius=0).pack(fill="x")
 
+    # Reserve the close action first. Long messages scroll instead of squeezing
+    # the footer out of the fixed-size window, including high-DPI displays.
+    btn_fr = ctk.CTkFrame(outer, fg_color="transparent")
+    btn_fr.pack(side="bottom", fill="x", padx=20, pady=14)
+    ctk.CTkButton(btn_fr, text="DONE", command=dialog.destroy, fg_color=accent, hover_color=accent, text_color="white", font=("Segoe UI", 12, "bold"), height=36, corner_radius=8, width=120).pack(side="right")
     body = ctk.CTkFrame(outer, fg_color="transparent")
     body.pack(fill="both", expand=True, padx=26, pady=(22, 12))
 
     icon = ctk.CTkFrame(body, width=58, height=58, corner_radius=29, fg_color="#122033", border_width=2, border_color=accent)
     icon.pack(pady=(0, 12))
     icon.pack_propagate(False)
-    ctk.CTkLabel(icon, text="OK", font=("Segoe UI", 15, "bold"), text_color=accent).place(relx=0.5, rely=0.5, anchor="center")
+    icon_text = "OK" if outcome == "success" else "!"
+    ctk.CTkLabel(icon, text=icon_text, font=("Segoe UI", 15, "bold"), text_color=accent).place(relx=0.5, rely=0.5, anchor="center")
 
     ctk.CTkLabel(body, text=title, font=("Segoe UI", 17, "bold"), text_color="white").pack()
+    message_area = ctk.CTkScrollableFrame(body, fg_color="transparent", height=160)
+    message_area.pack(fill="both", expand=True, pady=(10, 0))
     ctk.CTkLabel(
-        body,
+        message_area,
         text=message,
         font=("Segoe UI", 11),
         text_color="#a8b3c7",
         justify="center",
-        wraplength=430,
+        wraplength=420,
     ).pack(pady=(10, 0))
 
-    ctk.CTkFrame(outer, height=1, fg_color="#2c3e50").pack(fill="x")
-    btn_fr = ctk.CTkFrame(outer, fg_color="transparent")
-    btn_fr.pack(fill="x", padx=20, pady=14)
-    ctk.CTkButton(btn_fr, text="DONE", command=dialog.destroy, fg_color=accent, hover_color=accent, text_color="white", font=("Segoe UI", 12, "bold"), height=36, corner_radius=8, width=120).pack(side="right")
     dialog.bind("<Return>", lambda e: dialog.destroy())
     dialog.bind("<Escape>", lambda e: dialog.destroy())
     dialog.focus_force()
+    return dialog
 
 
 def _confirm_portal_publish(parent) -> bool:
@@ -551,6 +557,8 @@ class SystemAdminPage:
                 args=(_active_sync_job_id,),
                 daemon=True
             ).start()
+        if _active_portal_job_id:
+            self.container.after(0, lambda: self._monitor_portal_job(_active_portal_job_id))
 
         # Status Panel
         status_fr = ctk.CTkFrame(
@@ -699,84 +707,95 @@ class SystemAdminPage:
 
     def publish_portal_snapshot(self):
         import threading
+        global _active_portal_job_id
 
         if self.portal_publish_btn.cget("state") == "disabled":
             return
-
-        proceed = _confirm_portal_publish(self.container.winfo_toplevel())
-        if not proceed:
+        if _active_portal_job_id:
+            self._monitor_portal_job(_active_portal_job_id)
             return
+        if not _confirm_portal_publish(self.container.winfo_toplevel()):
+            return
+        self.portal_publish_btn.configure(state="disabled", text="QUEUING PUBLICATION...")
+        self.portal_publish_status_lbl.configure(text="Portal publish: requesting guarded background job...", text_color="#38bdf8")
 
-        self.portal_publish_btn.configure(state="disabled", text="PUBLISHING...")
-        self.portal_publish_status_lbl.configure(
-            text="Portal publish: generating snapshot and uploading...",
-            text_color="#38bdf8",
-        )
-
-        def run():
+        def submit():
+            global _active_portal_job_id
             try:
                 import api_clients.system_service as system_svc
-                res = system_svc.publish_portal_snapshot(dry_run=False) or {}
-                status = str(res.get("status") or "unknown")
-                uploaded = bool(res.get("uploaded")) or status == "uploaded"
-                checksum = str(res.get("checksum") or "")
-                short_checksum = checksum[:12] if checksum else "None"
-                records = int(res.get("record_count") or 0)
-                saved_path = res.get("latest_path") or res.get("snapshot_path") or "Unknown"
-                published_at = res.get("published_at") or "Unknown"
-                server_msg = res.get("message", "Snapshot prepared successfully.")
-
-                if uploaded:
-                    title = "Uploaded to Web Portal"
-                    accent = "#10b981"
-                    status_text = f"Portal publish: uploaded | {records:,} records | checksum {short_checksum}"
-                    detail = (
-                        f"The public portal received the latest read-only data.\n\n"
-                        f"Records: {records:,}\nChecksum: {short_checksum}\nPublished: {published_at}"
-                    )
-                elif status == "saved_not_uploaded":
-                    missing = res.get("missing_configuration") or []
-                    missing_text = ", ".join(str(item) for item in missing) or "publish URL/token"
-                    title = "Saved Locally Only"
-                    accent = "#f59e0b"
-                    status_text = f"Portal publish: saved locally only | {records:,} records | checksum {short_checksum}"
-                    detail = (
-                        "The snapshot was created, but it was not pushed to the web portal because "
-                        f"the API server is missing: {missing_text}.\n\n"
-                        f"Saved file: {saved_path}\n\n"
-                        "On the server, run:\n"
-                        "python scripts/configure_portal_publish.py\n\n"
-                        "Add the displayed secrets to the Vercel project, redeploy the portal, "
-                        f"and restart the API server.\n\n{server_msg}"
-                    )
+                response = system_svc.publish_portal_snapshot(dry_run=False) or {}
+                job_id = response.get("job_id")
+                if job_id:
+                    _active_portal_job_id = str(job_id)
+                    if self.container.winfo_exists():
+                        self.container.after(0, lambda: self._monitor_portal_job(str(job_id)))
                 else:
-                    title = "Portal Upload Failed"
-                    accent = "#ef4444"
-                    status_text = f"Portal publish: failed | status {status}"
-                    detail = (
-                        f"The snapshot may have been saved locally, but the web portal did not confirm upload.\n\n"
-                        f"Status: {status}\nRecords: {records:,}\nChecksum: {short_checksum}\n\n{server_msg}"
-                    )
-
-                def done():
-                    self.portal_publish_btn.configure(state="normal", text="PUBLISH PORTAL")
-                    self.portal_publish_status_lbl.configure(text=status_text, text_color=accent)
-                    _show_portal_publish_result(self.container.winfo_toplevel(), title, detail, accent=accent)
-
+                    # An older server acknowledgment is not cryptographic proof.
+                    if self.container.winfo_exists():
+                        self.container.after(0, lambda: self._finish_portal_publication(response))
+            except Exception:
                 if self.container.winfo_exists():
-                    self.container.after(0, done)
-            except Exception as exc:
-                err = str(exc)
+                    self.container.after(0, lambda: self._finish_portal_publication({
+                        "status": "BLOCKED", "reason_code": "PUBLISH_REQUEST_NOT_CONFIRMED",
+                    }))
 
-                def failed():
-                    self.portal_publish_btn.configure(state="normal", text="PUBLISH PORTAL")
-                    self.portal_publish_status_lbl.configure(text="Portal publish: request failed", text_color="#ef4444")
-                    ErrorDialog(self.container.winfo_toplevel(), "Portal Publish Failed", err)
+        threading.Thread(target=submit, daemon=True).start()
 
-                if self.container.winfo_exists():
-                    self.container.after(0, failed)
+    def _monitor_portal_job(self, job_id):
+        import threading
+        import time
+        if getattr(self, "_portal_monitoring", False):
+            return
+        self._portal_monitoring = True
+        self.portal_publish_btn.configure(state="disabled", text="PUBLICATION IN PROGRESS...")
 
-        threading.Thread(target=run, daemon=True).start()
+        def monitor():
+            global _active_portal_job_id
+            deadline = time.monotonic() + 1800
+            while time.monotonic() < deadline:
+                if not self.container.winfo_exists():
+                    self._portal_monitoring = False
+                    return  # keep job ID so page navigation can resume monitoring
+                try:
+                    import api_clients.system_service as system_svc
+                    job = system_svc.get_job_status(job_id) or {}
+                    status = str(job.get("status") or "").upper()
+                    progress = max(0, min(100, int(job.get("progress") or 0)))
+                    message = str(job.get("progress_message") or "Publication queued...")
+                    if status in {"COMPLETED", "FAILED"}:
+                        result = job.get("result") or {
+                            "status": "BLOCKED", "reason_code": "PUBLICATION_JOB_FAILED",
+                        }
+                        _active_portal_job_id = None
+                        self._portal_monitoring = False
+                        if self.container.winfo_exists():
+                            self.container.after(0, lambda value=result: self._finish_portal_publication(value))
+                        return
+                    if self.container.winfo_exists():
+                        self.container.after(0, lambda p=progress, m=message: self.portal_publish_status_lbl.configure(
+                            text=f"Portal publish: {p}% | {m[:100]}", text_color="#38bdf8",
+                        ))
+                except Exception:
+                    pass  # poll transient status failures; never enqueue again
+                time.sleep(2)
+            # Preserve the job ID: reopening the page checks this SAME job.
+            self._portal_monitoring = False
+            if self.container.winfo_exists():
+                self.container.after(0, lambda: self._finish_portal_publication({
+                    "status": "BLOCKED", "reason_code": "JOB_MONITORING_TIMEOUT_RECHECK_SAME_JOB",
+                }))
+
+        threading.Thread(target=monitor, daemon=True).start()
+
+    def _finish_portal_publication(self, result):
+        from ui.portal_publish_feedback import publication_feedback
+        feedback = publication_feedback(result)
+        self.portal_publish_btn.configure(state="normal", text="PUBLISH PORTAL")
+        self.portal_publish_status_lbl.configure(text=feedback["status_text"], text_color=feedback["accent"])
+        _show_portal_publish_result(
+            self.container.winfo_toplevel(), feedback["title"], feedback["detail"],
+            accent=feedback["accent"], outcome=feedback["outcome"],
+        )
 
     def _finalize_backup(self, success, msg):
         self.backup_btn.configure(

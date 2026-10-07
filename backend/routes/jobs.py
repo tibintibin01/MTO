@@ -69,6 +69,14 @@ async def get_job_status(
     job = get_job(job_id, db_session=db_session)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found.")
+    if (
+        job.get("job_type") == "portal_publish"
+        and str(current_user.get("role", "")).lower() != "admin"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Portal publication status requires administrator access.",
+        )
     return job
 
 

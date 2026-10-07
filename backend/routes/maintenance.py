@@ -78,18 +78,45 @@ async def preview_portal_snapshot(
     return publish_portal_snapshot(db_session=db_session, dry_run=True)
 
 
-@router.post("/system/portal-snapshot/publish", dependencies=[Depends(admin_only)])
+@router.post(
+    "/system/portal-snapshot/publish",
+    status_code=202,
+    dependencies=[Depends(admin_only)],
+)
 async def publish_portal_snapshot(
     request: PortalPublishRequest = PortalPublishRequest(),
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
-    """One-way publish of sanitized read-only data for the public web portal."""
-    from backend.services.portal_publish_service import (
-        publish_portal_snapshot as _publish,
-    )
+    """Queue the shared guarded publisher, not a legacy full-body upload."""
+    if request.dry_run:
+        from backend.services.portal_publish_service import (
+            publish_portal_snapshot as preview,
+        )
 
-    return _publish(db_session=db_session, dry_run=request.dry_run)
+        return preview(db_session=db_session, dry_run=True)
+    from backend.services.job_service import submit_job
+    from backend.models import Job
+
+    active = (
+        db_session.query(Job)
+        .filter(
+            Job.job_type == "portal_publish", Job.status.in_(("PENDING", "RUNNING"))
+        )
+        .order_by(Job.created_at.asc())
+        .first()
+    )
+    job_id = (
+        active.id
+        if active
+        else submit_job("portal_publish", submitted_by=current_user["username"])
+    )
+    return {
+        "status": "publish_queued",
+        "job_id": job_id,
+        "uploaded": False,
+        "message": "Publication queued. Completion requires hosted checksum and exact-byte verification.",
+    }
 
 
 @router.get("/system/backup/status", dependencies=[Depends(read_only)])
