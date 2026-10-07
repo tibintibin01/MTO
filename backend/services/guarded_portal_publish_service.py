@@ -7,6 +7,8 @@ neither an HTTP request nor a job payload can supply code, paths or credentials.
 
 from contextlib import redirect_stderr, redirect_stdout
 import hashlib
+import importlib.machinery
+import importlib.util
 import io
 import json
 import os
@@ -52,9 +54,18 @@ def _namespace():
         hashlib.sha256(source).hexdigest().upper() == HELPER_SHA256,
         "GUARDED_PUBLISHER_IDENTITY_MISMATCH",
     )
-    namespace = {"__name__": "installed_guarded_publisher", "__file__": str(HELPER)}
-    exec(compile(source, str(HELPER), "exec"), namespace)
-    return namespace
+
+    class VerifiedLoader(importlib.machinery.SourceFileLoader):
+        def get_code(self, fullname):
+            # Compile exactly the buffer whose hash was checked, never re-read
+            # the path or accept cached bytecode between check and import.
+            return self.source_to_code(source, str(HELPER))
+
+    loader = VerifiedLoader("installed_guarded_publisher", str(HELPER))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module.__dict__
 
 
 def _protected_roots():

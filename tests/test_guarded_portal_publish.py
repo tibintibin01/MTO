@@ -29,6 +29,37 @@ def verified():
     }
 
 
+def test_loader_uses_only_hash_verified_buffer(tmp_path, monkeypatch):
+    import hashlib
+
+    helper = tmp_path / "synthetic_helper.py"
+    original = b"VALUE = 'SYNTHETIC_VERIFIED'\n"
+    helper.write_bytes(original)
+    monkeypatch.setattr(bridge, "HELPER", helper)
+    monkeypatch.setattr(
+        bridge, "HELPER_SHA256", hashlib.sha256(original).hexdigest().upper()
+    )
+    real_loader = bridge.importlib.machinery.SourceFileLoader
+
+    class ReplacePathAfterCheck(real_loader):
+        def __init__(self, *args, **kwargs):
+            helper.write_bytes(b"raise RuntimeError('UNVERIFIED_SOURCE_EXECUTED')\n")
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(
+        bridge.importlib.machinery, "SourceFileLoader", ReplacePathAfterCheck
+    )
+    assert bridge._namespace()["VALUE"] == "SYNTHETIC_VERIFIED"
+
+
+def test_altered_helper_never_loads(tmp_path, monkeypatch):
+    helper = tmp_path / "altered_helper.py"
+    helper.write_text("raise RuntimeError('MUST_NOT_EXECUTE')", encoding="utf-8")
+    monkeypatch.setattr(bridge, "HELPER", helper)
+    with pytest.raises(bridge.GuardedPublicationBlocked, match="IDENTITY_MISMATCH"):
+        bridge._namespace()
+
+
 @pytest.mark.parametrize(
     "key",
     [
