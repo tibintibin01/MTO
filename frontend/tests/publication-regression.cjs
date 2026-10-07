@@ -56,6 +56,12 @@ async function reject(promise,code){await assert.rejects(promise,error=>error in
  const wrong=fake(missingBytes),wrongPrep=await api.preparePublication(missingBytes.manifest,wrong.io);
  wrong.records.set('portal/publication-staging/'+missingBytes.manifest.upload_id+'.json.gz',Buffer.alloc(missingBytes.compressed.length));
  await reject(api.commitPublication(wrongPrep.ticket,wrong.io),'PAYLOAD_HASH_MISMATCH');check(wrong.writes()===0,'Corrupted payload is not promoted');
+ const inspection=await api.inspectPublication(wrongPrep.ticket,wrong.io);
+ check(inspection.payload_validation_code==='PAYLOAD_HASH_MISMATCH'&&inspection.read_only,'Read-only inspection distinguishes corruption');
+ check(wrong.writes()===0&&wrong.removed.length===0,'Inspection never commits or deletes');
+ const expiredInspection=await api.inspectPublication(wrongPrep.ticket,wrong.io,Date.now()+21*60*1000);
+ check(expiredInspection.expired&&expiredInspection.code==='TICKET_EXPIRED','Expired authenticated ticket may only be inspected');
+ check(wrong.writes()===0,'Expired inspection cannot write');
  for(const [name,mutate,code] of [['owner',s=>s.properties[0].owner_name='RAW OWNER','UNMASKED_OWNER_REJECTED'],['receipt',s=>s.properties[0].payment_history[0].or_number='1234567','UNMASKED_RECEIPT_REJECTED'],['pin',s=>s.properties[0].pin_masked='RAW PIN','UNMASKED_PIN_REJECTED'],['account',s=>s.properties[1].public_account_key=s.properties[0].public_account_key,'ACCOUNT_ISOLATION_FAILED']]){
   const data=snapshot();mutate(data);const item=descriptor(data),fakeStore=fake(item),prep=await api.preparePublication(item.manifest,fakeStore.io);
   fakeStore.records.set('portal/publication-staging/'+item.manifest.upload_id+'.json.gz',item.compressed);await reject(api.commitPublication(prep.ticket,fakeStore.io),code);check(fakeStore.writes()===0,name+' unsafe data never promoted');
