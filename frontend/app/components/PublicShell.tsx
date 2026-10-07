@@ -3,6 +3,8 @@
 import { usePathname } from "next/navigation";
 import Image from "next/image";
 import { ArrowRight, Clock3, Landmark, MapPin } from "lucide-react";
+import {SnapshotStatus} from "./SnapshotStatus";
+import {MotionConfig} from "framer-motion";
 
 /**
  * Wraps the public header + footer.
@@ -18,7 +20,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="min-h-full flex flex-col">
+    <MotionConfig reducedMotion="user"><div className="min-h-full flex flex-col">
 
       {/* ── Top bar ── */}
       <div className="bg-[#0f2a5e] text-white text-xs py-1.5 text-center tracking-widest font-medium">
@@ -26,8 +28,8 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* ── Main header ── */}
-      <header className="bg-gradient-to-r from-[#1a3a6b] via-[#1f4e78] to-[#1a3a6b] text-white shadow-xl">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between gap-4">
+      <header className="portal-header bg-gradient-to-r from-[#1a3a6b] via-[#1f4e78] to-[#1a3a6b] text-white shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <a href="/" className="flex items-center gap-4 group">
             {/* White circle badge — standard government seal presentation */}
             <div className="relative w-14 h-14 flex-shrink-0 rounded-full bg-white shadow-lg ring-2 ring-white/30 overflow-hidden">
@@ -37,48 +39,50 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
                 fill
                 className="object-contain p-0.5"
                 priority
+                sizes="56px"
               />
             </div>
             <div>
               <p className="text-xs font-semibold tracking-widest text-blue-200 uppercase">
                 Republic of the Philippines
               </p>
-              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight leading-tight">
+              <p className="text-lg sm:text-2xl font-extrabold tracking-tight leading-tight">
                 Bayan ng Dipaculao
-              </h1>
-              <p className="text-sm text-blue-200 font-medium tracking-wide">
+              </p>
+              <p className="text-xs sm:text-sm text-blue-200 font-medium tracking-wide">
                 Municipal Treasury Office — Aurora
               </p>
             </div>
           </a>
 
-          <nav className="hidden sm:flex items-center gap-6 text-sm font-semibold">
-            <div className="flex items-center gap-1 px-5 py-2.5 rounded-2xl"
+          <nav aria-label="Main navigation" className="flex flex-wrap items-center text-sm font-semibold">
+            <div className="flex flex-wrap items-center gap-1 px-1 py-1 rounded-xl"
               style={{
                 background:"rgba(255,255,255,0.1)",
                 backdropFilter:"blur(12px)",
                 WebkitBackdropFilter:"blur(12px)",
                 border:"1px solid rgba(255,255,255,0.15)",
               }}>
-              <a href="/" className="flex items-center gap-2 text-white/80 hover:text-white transition-colors px-3 py-1">
+              <a href="/" aria-current={pathname==="/"?"page":undefined} className="flex min-h-11 items-center gap-2 text-white hover:bg-white/10 rounded-lg transition-colors px-2 sm:px-3 py-2">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
                 </svg>
-                Property Search
+                Search
               </a>
-              <div className="w-px h-4 bg-white/20 mx-1" />
-              <a href="/help" className="flex items-center gap-2 text-white/80 hover:text-white transition-colors px-3 py-1">
+              <a href="/pay-guide" aria-current={pathname==="/pay-guide"?"page":undefined} className="flex min-h-11 items-center text-white hover:bg-white/10 rounded-lg px-2 sm:px-3 py-2">How to pay</a>
+              <a href="/help" aria-current={pathname==="/help"?"page":undefined} className="flex min-h-11 items-center gap-2 text-white hover:bg-white/10 rounded-lg transition-colors px-2 sm:px-3 py-2">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>
                 </svg>
-                Help &amp; Support
+                Help
               </a>
             </div>
           </nav>
         </div>
       </header>
+      <SnapshotStatus/>
 
-      <main className="flex-1">
+      <main id="main-content" tabIndex={-1} className="flex-1">
         {children}
       </main>
 
@@ -118,6 +122,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
                   alt="Logo of Dipaculao"
                   fill
                   className="object-contain p-0.5"
+                  sizes="48px"
                 />
               </div>
               <div>
@@ -136,6 +141,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
             <ul className="space-y-3 text-sm text-blue-100">
               <li><a href="/" className="group flex items-center gap-2 hover:text-yellow-300 transition-colors"><Landmark className="h-4 w-4" /> Property Search</a></li>
               <li><a href="/help" className="group flex items-center gap-2 hover:text-yellow-300 transition-colors"><ArrowRight className="h-4 w-4" /> Help &amp; Support</a></li>
+              <li><a href="/pay-guide" className="group flex items-center gap-2 hover:text-yellow-300 transition-colors"><ArrowRight className="h-4 w-4" /> How to Pay</a></li>
             </ul>
           </div>
 
@@ -157,6 +163,6 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
         </div>
       </footer>
 
-    </div>
+    </div></MotionConfig>
   );
 }

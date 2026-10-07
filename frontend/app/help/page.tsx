@@ -1,4 +1,5 @@
 import { MapPin, Clock, Phone, HelpCircle, FileText, AlertCircle, CheckCircle, Search } from "lucide-react";
+import {PAYMENT_GUIDANCE} from "../../lib/publicGuidance";
 
 export const metadata = {
   title: "Help & Support | Dipaculao Treasury Portal",
@@ -8,7 +9,7 @@ export const metadata = {
 const faqs = [
   {
     q: "What is a Tax Declaration Number (TDN)?",
-    a: "A Tax Declaration Number (TDN) is a unique identifier assigned to every real property in the municipality. It follows the format 06-XXXX-XXXXX (e.g. 06-0012-01379). You can find it on your official receipt, tax declaration form, or assessment notice issued by the Municipal Assessor's Office.",
+    a: "A Tax Declaration Number (TDN) identifies a property declaration. Some authorized separate accounts can share a TDN; select the correct property if multiple matches appear. A common format is 06-XXXX-XXXXX (e.g. 06-0012-01379). Find it on your receipt, tax declaration or assessment notice.",
   },
   {
     q: "Where can I find my TDN if I lost my receipt?",
@@ -16,15 +17,15 @@ const faqs = [
   },
   {
     q: "What does 'Delinquent' status mean?",
-    a: "A property is marked Delinquent when there is an outstanding unpaid balance on one or more tax years. Under RA 7160 (Local Government Code), unpaid real property taxes accrue a 2% monthly penalty starting February 1 of the tax year. The longer the balance remains unpaid, the higher the total amount due.",
+    a: "The published record shows an unpaid balance on one or more tax years. Check the publication date and confirm the current amount and applicable penalties with the Municipal Treasury Office.",
   },
   {
     q: "What does 'Compliant' status mean?",
-    a: "A property is Compliant when all tax years on record have been fully paid — meaning the total amount paid equals or exceeds the total amount due across all billing years.",
+    a: "The published record shows no outstanding balance across the billed tax years. Excess payments remain attached to their tax year and do not automatically settle another year's balance. This inquiry result does not replace an official tax clearance.",
   },
   {
     q: "What are the payment deadlines and discounts?",
-    a: "Annual RPT is due on January 31 of each year. Payments made before January 1 of the tax year (advance payment) qualify for a 20% discount. Payments made January 1 to March 31 qualify for a 10% prompt payment discount. Payments made after March 31 are subject to a 2% monthly penalty. Discounts apply to the basic tax and SEF only.",
+    a: PAYMENT_GUIDANCE,
   },
   {
     q: "Can I pay my real property tax online?",
@@ -40,8 +41,9 @@ const faqs = [
   },
   {
     q: "I searched my TDN but it says 'No property found'. What should I do?",
-    a: "This may mean your property has not yet been encoded in the system, or your TDN format is slightly different. Try searching without dashes (e.g. 060012001379) or visit the Municipal Treasury Office for assistance.",
+    a: "Check your TDN or PIN against the document. For example, TDN 06-0012-01379 can also be entered as 06001201379. Use the exact PIN printed on your document. If records are awaiting an update or a search error appears, that does not mean your property is absent; contact the office for assistance.",
   },
+  {q:"How current is the portal?",a:"This portal uses a read-only snapshot published by the office. The publication time is shown in Philippine time. Records beyond the freshness limit are withheld until the office publishes an update. Your receipt remains proof of payment; contact the Treasury Office for current figures or corrections."},
 ];
 
 export default function HelpPage() {
@@ -131,7 +133,7 @@ export default function HelpPage() {
             <div>
               <p className="font-bold text-slate-800 text-sm">Penalty Reminder</p>
               <p className="text-slate-500 text-xs mt-1 leading-relaxed">
-                Unpaid RPT accrues <strong>2% monthly penalty</strong> starting February 1. Pay before March 31 for a 10% discount.
+                {PAYMENT_GUIDANCE}
               </p>
             </div>
           </div>

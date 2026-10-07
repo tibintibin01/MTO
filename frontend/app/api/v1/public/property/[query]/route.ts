@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { findSnapshotProperty, loadPortalSnapshot, publicProperty, PortalSnapshotAmbiguousLookupError, PortalSnapshotConfigError, PortalSnapshotDataError } from "../../../../../../lib/portalSnapshot";
+import { findSnapshotProperty, loadCurrentPortalSnapshot, publicProperty, PortalSnapshotAmbiguousLookupError, PortalSnapshotConfigError, PortalSnapshotDataError, PortalSnapshotStaleError, snapshotUnavailablePayload } from "../../../../../../lib/portalSnapshot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +13,8 @@ function json(status: number, body: Record<string, any>) {
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ query: string }> }) {
   const { query: rawQuery } = await params;
-  const query = decodeURIComponent(rawQuery || "").trim();
+  // Next.js has already decoded the route parameter. Do not decode twice.
+  const query = String(rawQuery || "").trim();
   if (!QUERY_PATTERN.test(query)) {
     return json(400, { detail: "Invalid query format. Use your TDN or PIN." });
   }
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   try {
-    const snapshot = await loadPortalSnapshot();
+    const snapshot = await loadCurrentPortalSnapshot();
     if (!snapshot) return json(503, { detail: "Portal data has not been published yet." });
 
     const record = findSnapshotProperty(snapshot, query, accountKey || undefined);
@@ -31,6 +32,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     return json(200, publicProperty(record, snapshot));
   } catch (error) {
+    if (error instanceof PortalSnapshotStaleError) return json(503, snapshotUnavailablePayload(error));
     if (error instanceof PortalSnapshotAmbiguousLookupError) {
       return json(409, {
         code: "MULTIPLE_PROPERTY_ACCOUNTS",

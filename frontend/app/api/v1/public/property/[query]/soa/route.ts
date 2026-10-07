@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import { findSnapshotProperty, loadPortalSnapshot, publicProperty, PortalSnapshotAmbiguousLookupError, PortalSnapshotConfigError, PortalSnapshotDataError } from "../../../../../../../lib/portalSnapshot";
+import { findSnapshotProperty, loadCurrentPortalSnapshot, publicProperty, PortalSnapshotAmbiguousLookupError, PortalSnapshotConfigError, PortalSnapshotDataError, PortalSnapshotStaleError } from "../../../../../../../lib/portalSnapshot";
+import {formatPublishedAt} from "../../../../../../../lib/portalFreshness";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -159,7 +160,7 @@ function html(data: any): string {
       <div class="doc-meta">
         <span>Document reference</span>
         <strong>${escapeHtml(reference)}</strong>
-        <span>Statement date: ${escapeHtml(data.as_of || "")}</span>
+        <span>Records published: ${escapeHtml(formatPublishedAt(data.published_at))}</span>
       </div>
     </header>
 
@@ -217,7 +218,7 @@ function html(data: any): string {
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ query: string }> }) {
   const { query: rawQuery } = await params;
-  const query = decodeURIComponent(rawQuery || "").trim();
+  const query = String(rawQuery || "").trim();
   if (!QUERY_PATTERN.test(query)) {
     return new Response("Invalid query format.", { status: 400, headers: { "Cache-Control": "no-store" } });
   }
@@ -227,7 +228,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   try {
-    const snapshot = await loadPortalSnapshot();
+    const snapshot = await loadCurrentPortalSnapshot();
     if (!snapshot) return new Response("Portal data has not been published yet.", { status: 503, headers: { "Cache-Control": "no-store" } });
 
     const record = findSnapshotProperty(snapshot, query, accountKey || undefined);
@@ -241,6 +242,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       },
     });
   } catch (error) {
+    if(error instanceof PortalSnapshotStaleError)return new Response("Statement unavailable: published records are awaiting an update. Last published: "+formatPublishedAt(error.freshness.published_at)+". Please contact the Municipal Treasury Office for current figures.",{status:503,headers:{"Cache-Control":"no-store"}});
     if (error instanceof PortalSnapshotAmbiguousLookupError) {
       return new Response("More than one property account matches this TDN or PIN. Please contact the Municipal Treasury Office.", { status: 409, headers: { "Cache-Control": "no-store" } });
     }

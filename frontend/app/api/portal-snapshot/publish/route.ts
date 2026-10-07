@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHash, timingSafeEqual } from "crypto";
+import { createHash } from "crypto";
 import { gunzipSync } from "zlib";
 import { storePortalSnapshot } from "../../../../lib/portalSnapshot";
+import { authorizePublication, boundedBytes, PublicationError } from "../../../../lib/portalPublication";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const MAX_DECOMPRESSED_BYTES = 60 * 1024 * 1024;
 
@@ -15,27 +17,10 @@ function json(status: number, body: Record<string, any>) {
   });
 }
 
-function safeEqual(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  return left.length === right.length && timingSafeEqual(left, right);
-}
-
-function bearerToken(request: NextRequest): string {
-  const header = request.headers.get("authorization") || "";
-  return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-}
-
 export async function POST(request: NextRequest) {
-  const configuredToken = process.env.MTO_PORTAL_PUBLISH_TOKEN?.trim();
-  if (!configuredToken) {
-    return json(503, { ok: false, detail: "MTO_PORTAL_PUBLISH_TOKEN is not configured on the portal." });
-  }
-  if (!safeEqual(bearerToken(request), configuredToken)) {
-    return json(401, { ok: false, detail: "Unauthorized." });
-  }
-
-  const compressedPayload = Buffer.from(await request.arrayBuffer());
+  try {
+  authorizePublication(request);
+  const compressedPayload = await boundedBytes(request.body, 4_400_000);
   const expectedPayloadHash = request.headers.get("x-mto-payload-sha256")?.trim().toLowerCase();
   const actualPayloadHash = createHash("sha256").update(compressedPayload).digest("hex");
   if (expectedPayloadHash && expectedPayloadHash !== actualPayloadHash) {
@@ -44,7 +29,7 @@ export async function POST(request: NextRequest) {
 
   const encoding = request.headers.get("content-encoding") || "";
   const payload = encoding.toLowerCase().includes("gzip")
-    ? gunzipSync(compressedPayload)
+    ? gunzipSync(compressedPayload, { maxOutputLength: MAX_DECOMPRESSED_BYTES })
     : compressedPayload;
 
   if (payload.byteLength > MAX_DECOMPRESSED_BYTES) {
@@ -86,4 +71,8 @@ export async function POST(request: NextRequest) {
     published_at: snapshot.published_at,
     blob_path: blob.pathname,
   });
+  } catch (error) {
+    return json(error instanceof PublicationError ? error.status : 503,
+      { ok: false, code: error instanceof PublicationError ? error.code : "PUBLICATION_STORAGE_UNAVAILABLE" });
+  }
 }

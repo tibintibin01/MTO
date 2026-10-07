@@ -154,11 +154,17 @@ jobs:
       working-directory: frontend
 
     - name: 🔒 Audit frontend dependencies for CVEs
-      run: npm audit --audit-level=moderate
+      run: npm run audit:security
       working-directory: frontend
 
     - name: 📏 Lint Next.js
       run: npm run lint
+      working-directory: frontend
+
+    - name: Verify private publication protocol with synthetic storage
+      run: |
+        npm run test:audit-policy
+        npm run test:publication
       working-directory: frontend
 
     - name: 🏗️ Build Next.js

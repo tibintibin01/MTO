@@ -27,6 +27,9 @@ frontend/.mto-built-tree
 frontend/public/sw.js
 frontend/public/swe-worker-*.js
 frontend/public/workbox-*.js
+*.tsbuildinfo
+portal-verification/
+portal-test-temp-*/
 
 # Offline cloud-backup recovery keys must never enter source control
 mto_backup_recovery_key*.txt
@@ -88,3 +91,7 @@ migrations/archive/*.sql
 
 # Local frontend environment — contains server IP, varies per deployment
 frontend/.env.local
+
+# Local validation caches, never runtime data or source
+.tmp/
+portal-validation-*/

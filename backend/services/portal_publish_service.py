@@ -14,6 +14,7 @@ import json
 import os
 import re
 import tempfile
+import unicodedata
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
@@ -91,8 +92,8 @@ def _owner_lookup_values(owner_name: str) -> set[str]:
     """
     if not owner_name:
         return set()
-    normalized = str(owner_name).upper()
-    tokens = re.findall(r"[A-Z0-9]+", normalized)
+    normalized = unicodedata.normalize("NFKC", str(owner_name).upper())
+    tokens = re.findall(r"[^\W_]+", normalized, flags=re.UNICODE)
     values: set[str] = set()
     for token in tokens:
         if len(token) < 3:
@@ -374,7 +375,9 @@ def generate_portal_snapshot(db_session: Session) -> dict:
                 # Opaque public selector used only after a duplicate TDN/PIN
                 # lookup. It prevents exposing the internal database ID while
                 # keeping every account's billing and payments isolated.
-                "public_account_key": _lookup_hash(f"PROPERTY:{prop.id}", lookup_secret),
+                "public_account_key": _lookup_hash(
+                    f"PROPERTY:{prop.id}", lookup_secret
+                ),
                 "td_lookup_hash": _lookup_hash(prop.td_number, lookup_secret),
                 "pin_masked": _mask_pin(prop.pin),
                 "pin_lookup_hash": _lookup_hash(prop.pin, lookup_secret),
@@ -416,6 +419,7 @@ def generate_portal_snapshot(db_session: Session) -> dict:
         "owner_lookup_index": {
             key: value for key, value in sorted(owner_lookup_index.items())
         },
+        "owner_lookup_version": 2,
     }
     checksum = _snapshot_checksum(snapshot)
     snapshot["checksum"] = checksum

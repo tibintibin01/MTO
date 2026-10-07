@@ -11,6 +11,9 @@ import Link from "next/link";
 import Image from "next/image";
 import { motion } from "framer-motion";
 import { useToast } from "../../components/ToastProvider";
+import {formatPublishedAt,unavailableMessage} from "../../../lib/portalFreshness";
+import {checkedHistory} from "../../../lib/publicHistory";
+import {PAYMENT_GUIDANCE} from "../../../lib/publicGuidance";
 
 /* ─── Design tokens (matched from reference screenshot) ─────────────────── */
 const C = {
@@ -25,7 +28,7 @@ const C = {
   delinqText:  "#e05a2b",           // orange-red delinquent text
   delinqBg:    "#fff5f2",           // delinquent stat card bg
   delinqBorder:"#ffd5c8",
-  paidGreen:   "#16a34a",
+  paidGreen:   "#15803d",
   paidBg:      "#f0fdf4",
   paidBorder:  "#bbf7d0",
   totalPaidTxt:"#1a3a6b",          // navy for total paid value
@@ -78,38 +81,44 @@ function PropertyDetail() {
   const [retrying, setRetrying] = useState(false);
   const [copied,   setCopied]   = useState(false);
   const [billingOpen, setBillingOpen] = useState(false);
+  const [historyState,setHistoryState]=useState<"loading"|"ready"|"error">("loading");
+  const [historyError,setHistoryError]=useState("");
+  const [refresh,setRefresh]=useState(0);
+  const [loadedFor,setLoadedFor]=useState("");
+  const requestKey=id+accountQuery;
 
-  const load = async () => {
-    setError("");
-    try {
-      const r = await fetch(`/api/public/property/${id}${accountQuery}`, { cache: "no-store" });
-      if (r.status === 404) { setError("Property not found. Check your TDN or PIN."); return; }
-      if (r.status === 429) { setError("Too many requests. Please wait and try again."); return; }
-      if (!r.ok)            { setError("Unable to load property data. Please try again."); return; }
+  useEffect(()=>{
+    const controller=new AbortController();
+    async function get(url:string){
+      const child=new AbortController(),abort=()=>child.abort();
+      controller.signal.addEventListener("abort",abort,{once:true});
+      const timeout=setTimeout(abort,15_000);
+      try{const response=await fetch(url,{cache:"no-store",signal:child.signal});return{response,payload:await response.json()};}
+      finally{clearTimeout(timeout);controller.signal.removeEventListener("abort",abort);}
+    }
+    async function load(){
+      setError("");setData(null);setHistory([]);setHistoryState("loading");setHistoryError("");setLoading(true);setLoadedFor("");
+      try{
+        const {response,payload}=await get(`/api/public/property/${encodeURIComponent(id)}${accountQuery}`);
+        if(controller.signal.aborted)return;
+        if(!response.ok){setError(unavailableMessage(payload,response.status===404?"Property not found. Check your TDN or PIN.":"Property data is temporarily unavailable. Please try again."));return;}
+        if(!payload||typeof payload.td_number!=="string"||typeof payload.balance!=="number"||!Number.isFinite(payload.balance))throw new Error("Invalid property");
+        setData(payload);setLoadedFor(requestKey);setLoading(false);
+        try{
+          const params=new URLSearchParams();if(accountKey)params.set("account",accountKey);if(payload.snapshot_id)params.set("snapshot",payload.snapshot_id);
+          const suffix=params.size?"?"+params.toString():"";
+          const h=await get(`/api/public/property/${encodeURIComponent(id)}/history${suffix}`);
+          if(controller.signal.aborted)return;
+          if(!h.response.ok){setHistoryState("error");setHistoryError(unavailableMessage(h.payload,"Payment history could not be loaded. Retry to refresh this account and its history."));return;}
+          setHistory(checkedHistory(h.payload));setHistoryState("ready");
+        }catch{if(!controller.signal.aborted){setHistoryState("error");setHistoryError("Payment history could not be loaded. Check your connection and retry.");}}
+      }catch{if(!controller.signal.aborted)setError("The record could not be loaded. Check your connection and try again.");}
+      finally{if(!controller.signal.aborted){setLoading(false);setRetrying(false);}}
+    }
+    void load();return()=>controller.abort();
+  },[id,accountKey,accountQuery,requestKey,refresh]);
 
-      const text = await r.text();
-      if (!text || !text.trim()) { setError("Server returned an empty response. Please try again."); return; }
-      let json: any;
-      try { json = JSON.parse(text); }
-      catch { setError("Invalid response from server. Please try again."); return; }
-      setData(json);
-
-      try {
-        const h = await fetch(`/api/public/property/${id}/history${accountQuery}`, { cache: "no-store" });
-        if (h.ok) {
-          const ht = await h.text();
-          if (ht && ht.trim()) setHistory(JSON.parse(ht));
-        } else {
-          toast("Payment history could not be loaded.", "info");
-        }
-      } catch { toast("Payment history temporarily unavailable.", "info"); }
-    } catch { setError("Network error. Check your connection and try again."); }
-    finally  { setLoading(false); setRetrying(false); }
-  };
-
-  useEffect(() => { load(); }, [id, accountKey]);
-
-  const retry = () => { setLoading(true); setRetrying(true); load(); };
+  const retry = () => {setRetrying(true);setRefresh(value=>value+1);};
   const copy  = () => {
     if (data?.td_number) {
       navigator.clipboard.writeText(data.td_number);
@@ -124,7 +133,7 @@ function PropertyDetail() {
       <div className="text-center px-4">
         <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
         <h2 className="text-xl font-bold text-slate-800 mb-2">Could not load property</h2>
-        <p className="text-slate-500 mb-6">{error}</p>
+        <p role="alert" className="text-slate-700 mb-6">{error}</p>
         <div className="flex justify-center gap-3">
           <button onClick={retry} disabled={retrying}
             className="flex items-center gap-2 px-5 py-2.5 text-white rounded-lg font-semibold text-sm disabled:opacity-50"
@@ -139,6 +148,8 @@ function PropertyDetail() {
       </div>
     </div>
   );
+
+  if(!data||loadedFor!==requestKey)return <Skeleton/>;
 
   const isDelinquent = data.status === "DELINQUENT";
   const isPending    = data.status === "PENDING";
@@ -162,7 +173,7 @@ function PropertyDetail() {
         {/* Municipal Hall photo — far right, very subtle */}
         <div className="absolute inset-0 flex justify-end pointer-events-none">
           <div className="relative w-1/3 h-full opacity-20">
-            <Image src="/municipal-hall.png" alt="" fill className="object-cover object-center" priority />
+            <Image src="/municipal-hall.png" alt="" fill sizes="33vw" quality={55} className="object-cover object-center" />
             <div className="absolute inset-0" style={{background:"linear-gradient(to right,#0a1628 0%,transparent 60%)"}} />
           </div>
         </div>
@@ -213,15 +224,15 @@ function PropertyDetail() {
               <h1 className="text-4xl sm:text-5xl font-black text-white tracking-tight leading-none mb-3">
                 {data.td_number}
               </h1>
-              <div className="flex items-center gap-4 text-white/40 text-sm">
+              <div className="flex items-center gap-4 text-blue-100 text-sm">
                 {data.pin && <span>PIN: {data.pin}</span>}
                 <button onClick={copy} className="flex items-center gap-1 hover:text-white/80 transition-colors text-xs">
                   {copied ? <Check className="w-3.5 h-3.5" style={{color:"#4ade80"}} /> : <Copy className="w-3.5 h-3.5" />}
                   {copied ? "Copied!" : "Copy TDN"}
                 </button>
               </div>
-              <p className="text-white/25 text-xs mt-3 uppercase tracking-widest">
-                As of {new Date().toLocaleDateString("en-PH",{year:"numeric",month:"long",day:"numeric"})}
+              <p className="text-blue-100 text-xs mt-3 leading-5">
+                Records published: {formatPublishedAt(data.published_at)}
               </p>
             </div>
 
@@ -335,7 +346,7 @@ function PropertyDetail() {
                 style={{color: isDelinquent ? C.delinqText : C.paidGreen}}>
                 {isPending ? "—" : peso(balance)}
               </p>
-              <p className="text-xs text-slate-400 mt-1.5">
+              <p className="text-xs text-slate-600 mt-1.5">
                 {isDelinquent
                   ? `Outstanding across ${breakdown.length} tax year(s) · as of ${data.as_of ?? ""}`
                   : isPending
@@ -377,11 +388,11 @@ function PropertyDetail() {
               <CheckCircle2 className="w-6 h-6" style={{color:C.paidGreen}} />
             </div>
             <div>
-              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Total Paid</p>
+              <p className="text-xs text-slate-600 font-bold uppercase tracking-wider">Total Paid</p>
               <p className="text-xl font-black" style={{color:C.totalPaidTxt}}>
-                {peso(data.total_paid ?? totalPaid)}
+                {typeof data.total_paid==="number"?peso(data.total_paid):historyState==="ready"?peso(totalPaid):"Unavailable"}
               </p>
-              <p className="text-xs text-slate-400">{history.length} payment(s) on record</p>
+              <p className="text-xs text-slate-600">{historyState==="ready"?`${history.length} payment(s) on record`:historyState==="error"?"Payment history unavailable":"Loading payment history…"}</p>
             </div>
           </motion.div>
 
@@ -392,11 +403,11 @@ function PropertyDetail() {
               <FileText className="w-6 h-6" style={{color:"#2563eb"}} />
             </div>
             <div>
-              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Total Billed</p>
+              <p className="text-xs text-slate-600 font-bold uppercase tracking-wider">Total Billed</p>
               <p className="text-xl font-black" style={{color:C.totalPaidTxt}}>
                 {peso(data.total_due ?? 0)}
               </p>
-              <p className="text-xs text-slate-400">{breakdown.length} tax year(s)</p>
+              <p className="text-xs text-slate-600">{breakdown.length} tax year(s)</p>
             </div>
           </motion.div>
 
@@ -407,9 +418,9 @@ function PropertyDetail() {
               <Calendar className="w-6 h-6" style={{color:C.teal}} />
             </div>
             <div>
-              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Last Payment</p>
+              <p className="text-xs text-slate-600 font-bold uppercase tracking-wider">Last Payment</p>
               <p className="text-xl font-black" style={{color:C.lastPayTxt}}>{data.last_payment?.period ?? sorted[0]?.period ?? "—"}</p>
-              <p className="text-xs text-slate-400">{data.last_payment?.date_paid ?? sorted[0]?.date_paid ?? "No payments recorded"}</p>
+              <p className="text-xs text-slate-600">{data.last_payment?.date_paid ?? sorted[0]?.date_paid ?? (historyState==="ready"?"No payments recorded":"History details unavailable")}</p>
             </div>
           </motion.div>
 
@@ -431,13 +442,13 @@ function PropertyDetail() {
               </div>
               <div>
                 <h2 className="font-bold text-slate-800">Billing Breakdown</h2>
-                <p className="text-xs text-slate-400">{breakdown.length} tax year(s) · Basic + SEF + Penalty − Discount</p>
+                <p className="text-xs text-slate-600">{breakdown.length} tax year(s) · Basic + SEF + Penalty − Discount</p>
               </div>
               <div className="ml-auto flex items-center gap-3">
                 <span className="text-sm font-black" style={{color:balance > 0 ? C.delinqText : C.paidGreen}}>
                   {balance > 0 ? `${peso(balance)} due` : "Fully paid"}
                 </span>
-                <ChevronDown className={`w-5 h-5 text-slate-400 transition-transform ${billingOpen ? "rotate-180" : ""}`} />
+                <ChevronDown className={`w-5 h-5 text-slate-600 transition-transform ${billingOpen ? "rotate-180" : ""}`} />
               </div>
             </button>
 
@@ -448,7 +459,7 @@ function PropertyDetail() {
                 <thead>
                   <tr className="border-b border-slate-100" style={{background:"#f8fafc"}}>
                     {["Year","Assessed","Basic","SEF","Penalty","Discount","Due","Paid","Credit","Balance"].map((h,i) => (
-                      <th key={h} className={`px-4 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider ${i===0?"text-left":"text-right"}`}>{h}</th>
+                      <th key={h} className={`px-4 py-3 text-xs font-bold text-slate-600 uppercase tracking-wider ${i===0?"text-left":"text-right"}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -514,7 +525,7 @@ function PropertyDetail() {
                 <FileText className="w-4 h-4" style={{color:C.teal}} />
                 <h2 className="font-bold text-slate-800">Payment History</h2>
               </div>
-              <span className="flex w-fit items-center gap-1.5 rounded-full border border-slate-100 bg-slate-50 px-3 py-1 text-xs text-slate-400">
+              <span className="flex w-fit items-center gap-1.5 rounded-full border border-slate-100 bg-slate-50 px-3 py-1 text-xs text-slate-600">
                 <Calendar className="w-3 h-3" /> From 2023 onwards
               </span>
             </div>
@@ -526,13 +537,17 @@ function PropertyDetail() {
               </p>
             </div>
 
-            {sorted.length > 0 ? (
+            {historyState==="loading"?<p role="status" className="p-6 text-sm text-slate-700">Loading payment history…</p>:historyState==="error"?<div className="p-6">
+              <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{historyError}</p>
+              <button onClick={retry} disabled={retrying} className="mt-3 min-h-11 rounded-lg bg-blue-800 px-4 py-3 text-sm font-bold text-white disabled:opacity-60">Retry payment history</button>
+              <p className="mt-2 text-xs text-slate-600">An unavailable history does not mean there are no payments.</p>
+            </div>:sorted.length > 0 ? (
               <>
               <table className="hidden w-full text-sm sm:table">
                 <thead>
                   <tr className="border-b border-slate-100" style={{background:"#f8fafc"}}>
                     {["Period","OR Number","Date Paid","Amount","Status"].map(h => (
-                      <th key={h} className={`px-5 py-3 text-xs font-bold text-slate-400 uppercase tracking-wider ${h==="Amount"||h==="Status"?"text-right":"text-left"}`}>{h}</th>
+                      <th key={h} className={`px-5 py-3 text-xs font-bold text-slate-600 uppercase tracking-wider ${h==="Amount"||h==="Status"?"text-right":"text-left"}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -543,7 +558,7 @@ function PropertyDetail() {
                         <div className="flex items-center gap-2">
                           <div className="w-0.5 h-7 rounded-full" style={{background:C.teal}} />
                           <div className="flex items-center gap-1.5">
-                            <Calendar className="w-3.5 h-3.5 text-slate-300" />
+                            <Calendar className="w-3.5 h-3.5 text-slate-600" />
                             <span className="font-bold text-slate-800">{p.period}</span>
                           </div>
                         </div>
@@ -579,7 +594,7 @@ function PropertyDetail() {
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-2">
                         <div className="h-8 w-0.5 flex-shrink-0 rounded-full" style={{background:C.teal}} />
-                        <Calendar className="h-4 w-4 flex-shrink-0 text-slate-300" />
+                        <Calendar className="h-4 w-4 flex-shrink-0 text-slate-600" />
                         <span className="truncate font-bold text-slate-800">{p.period}</span>
                       </div>
                       <span className="inline-flex flex-shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold"
@@ -590,15 +605,15 @@ function PropertyDetail() {
 
                     <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-slate-100 pt-3">
                       <div className="min-w-0">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">OR Number</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600">OR Number</p>
                         <p className="mt-1 truncate font-mono text-xs text-slate-600">{p.or_number}</p>
                       </div>
                       <div className="min-w-0 text-right">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Date Paid</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Date Paid</p>
                         <p className="mt-1 truncate text-xs text-slate-600">{p.date_paid}</p>
                       </div>
                       <div className="col-span-2 flex items-end justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Amount Paid</p>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Amount Paid</p>
                         <p className="text-base font-black text-slate-900">{peso(p.amount)}</p>
                       </div>
                     </div>
@@ -613,8 +628,8 @@ function PropertyDetail() {
             ) : (
               <div className="py-14 text-center">
                 <FileText className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-                <p className="text-slate-400 font-medium">No payment records found</p>
-                <p className="text-slate-300 text-xs mt-1">Records available from January 2023 onwards</p>
+                <p className="text-slate-700 font-medium">No payment records found</p>
+                <p className="text-slate-600 text-xs mt-1">Records available from January 2023 onwards</p>
               </div>
             )}
           </div>
@@ -675,7 +690,7 @@ function PropertyDetail() {
                 <span>💡</span> Payment Reminder
               </p>
               <p className="text-xs leading-relaxed" style={{color:"#78350f"}}>
-                Pay before <strong>March 31</strong> for a <strong>10% discount</strong>. Advance payment earns <strong>20%</strong>. Late payments accrue <strong>2% monthly penalty</strong> from February 1.
+                {PAYMENT_GUIDANCE}
               </p>
             </div>
           </div>
@@ -684,7 +699,7 @@ function PropertyDetail() {
 
       {/* Footer note */}
       <div className="border-t py-4 text-center" style={{background:"#ffffff",borderColor:"#e2e8f0"}}>
-        <p className="text-xs text-slate-400 flex items-center justify-center gap-2">
+        <p className="text-xs text-slate-600 flex items-center justify-center gap-2">
           🔒 Official Website — Municipal Treasury Office of Dipaculao, Aurora
         </p>
       </div>

@@ -1,0 +1,18 @@
+{
+  "format_version": 1,
+  "status": "APPROVED",
+  "advisory": "GHSA-vfj7-8cjw-p6xm",
+  "affected_package": "braces",
+  "distribution_scope": "PUBLIC_PORTAL_TRUSTED_BUILD_ONLY",
+  "approved_at_utc": "2026-10-07T02:14:58Z",
+  "review_due_date": "2026-10-14",
+  "expires_at": "2026-10-14T23:59:59+08:00",
+  "approval_evidence": "Human user replied 'approve' in this Codex conversation to the explicitly scoped, temporary build-only exception.",
+  "conditions": [
+    "Only this advisory and its transitive findings in development-only dependencies may be accepted.",
+    "All production findings remain blocking; unrelated moderate/high/critical development advisories remain blocking.",
+    "Build tools process trusted repository source/patterns only; fork or pull_request_target contexts cannot use the exception.",
+    "The exception expires after the stated review date and must not renew automatically.",
+    "This is not acceptance of runtime exposure, a security certification, or a change to financial/supply-chain risk acceptance."
+  ]
+}
