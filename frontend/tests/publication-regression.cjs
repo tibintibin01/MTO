@@ -5,6 +5,7 @@ const originalLoad=Module._load;
 Module._load=function(name,parent,isMain){if(name==='server-only')return {};return originalLoad.call(this,name,parent,isMain);};
 require.extensions['.ts']=function(module,file){const code=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText;module._compile(code,file);};
 const api=require('../lib/portalPublication.ts');
+const {BlobPreconditionFailedError}=require('@vercel/blob');
 const SECRET='synthetic-publish-token-only-not-real-0123456789';
 delete process.env.VERCEL_ENV;
 process.env.MTO_PORTAL_PUBLISH_TOKEN=SECRET;process.env.MTO_PORTAL_LOOKUP_SECRET='synthetic-lookup-token-only-not-real-0123456789';
@@ -17,16 +18,16 @@ function snapshot(){return {schema_version:2,owner_lookup_version:2,record_count
 function descriptor(data,id='f'.repeat(32)){const raw=Buffer.from(JSON.stringify(data)),compressed=gzipSync(raw);return {raw,compressed,
  manifest:{protocol:api.PUBLICATION_PROTOCOL,upload_id:id,compressed_bytes:compressed.length,expanded_bytes:raw.length,
  payload_sha256:sha(compressed),expanded_payload_sha256:sha(raw),checksum:data.checksum,record_count:data.record_count,published_at:data.published_at}};}
-function fake(bytes){
- let current=Buffer.from('{"previous":"Keep serving this"}'),etag='original-etag',writes=0,removed=[];const records=new Map();
+function fake(bytes,options={}){
+ let current=Buffer.from('{"previous":"Keep serving this"}'),etag='"original-storage-etag"',writes=0,removed=[];const records=new Map();
  const io={
    head:async()=>({etag}),
-   get:async(name,options)=>{check(options.access==='private'&&options.useCache===false,'Private origin read required');const data=name.includes('staging')?records.get(name):current;if(!data)return null;return {statusCode:200,stream:new ReadableStream({start(c){c.enqueue(data);c.close();}}),blob:{size:data.length,etag}};},
+   get:async(name,readOptions)=>{check(readOptions.access==='private'&&readOptions.useCache===false,'Private origin read required');const data=name.includes('staging')?records.get(name):current;if(!data)return null;return {statusCode:200,stream:new ReadableStream({start(c){c.enqueue(data);c.close();}}),blob:{size:options.noContentLength?0:data.length,etag:options.weakHttpEtag?'W/'+etag:etag}};},
    put:async()=>{throw Error('Unexpected direct write')},
    del:async name=>{assert.ok(/^portal\/publication-staging\/[a-f0-9]{32}\.json\.gz$/.test(name));removed.push(name);records.delete(name);},
    issueSignedToken:async options=>{check(options.operations.length===1&&options.operations[0]==='put','Only PUT delegated');check(options.maximumSizeInBytes===bytes.compressed.length,'Exact signed upload size');check(!options.pathname.includes('*'),'No wildcard scope');check(options.allowedContentTypes[0]==='application/gzip','Gzip-only upload');return {fake:options.pathname};},
    presignUrl:async(token,options)=>{check(options.access==='private'&&!options.allowOverwrite&&!options.addRandomSuffix,'Private immutable staging');check(options.pathname===token.fake,'Exact file scope');return {presignedUrl:'https://vercel.com/api/blob/?pathname='+encodeURIComponent(options.pathname)+'&vercel-blob-signature=SYNTHETIC'};},
-   store:async(data,options)=>{check(options.ifMatch===etag,'Atomic conditional write');check(options.rawBody.equals(bytes.raw),'Exact original JSON bytes');writes++;current=options.rawBody;etag='committed-etag';return {pathname:'portal/portal_snapshot_latest.json'};}
+   store:async(data,writeOptions)=>{check(writeOptions.ifMatch===etag,'Atomic conditional write');check(writeOptions.rawBody.equals(bytes.raw),'Exact original JSON bytes');if(options.conflictAtWrite)throw new BlobPreconditionFailedError();writes++;current=writeOptions.rawBody;etag='committed-etag';return {pathname:'portal/portal_snapshot_latest.json'};}
  };
  return {io,records,current:()=>current,writes:()=>writes,removed,change:()=>{etag='newer-publication';}};
 }
@@ -53,6 +54,26 @@ async function reject(promise,code){await assert.rejects(promise,error=>error in
  await reject(api.commitPublication(missingPrep.ticket,missing.io),'UPLOAD_NOT_COMPLETE');check(missing.writes()===0,'Incomplete upload does not replace current data');
  const changed=fake(missingBytes),changedPrep=await api.preparePublication(missingBytes.manifest,changed.io);changed.change();
  await reject(api.commitPublication(changedPrep.ticket,changed.io),'PUBLICATION_CHANGED_REVIEW_REQUIRED');check(changed.writes()===0,'Newer publication is preserved');
+ for(const options of [{weakHttpEtag:true},{noContentLength:true},{weakHttpEtag:true,noContentLength:true}]){
+  const realistic=fake(missingBytes,options),prep=await api.preparePublication(missingBytes.manifest,realistic.io);
+  realistic.records.set('portal/publication-staging/'+missingBytes.manifest.upload_id+'.json.gz',missingBytes.compressed);
+  const diagnostic=await api.inspectPublication(prep.ticket,realistic.io);
+  check(diagnostic.code==='READY_FOR_COMMIT_REVIEW'&&diagnostic.head_etag_matches_ticket,'Inspection follows authoritative storage version and measured length');
+  if(options.weakHttpEtag)check(!diagnostic.get_etag_matches_ticket&&diagnostic.get_etag_weak,'Real weak HTTP ETag mismatch reproduced');
+  const published=await api.commitPublication(prep.ticket,realistic.io);
+  check(published.uploaded&&realistic.writes()===1,'HTTP representation/length metadata cannot falsely block complete valid upload');
+ }
+ const racing=fake(missingBytes,{weakHttpEtag:true,conflictAtWrite:true}),racePrep=await api.preparePublication(missingBytes.manifest,racing.io);
+ racing.records.set('portal/publication-staging/'+missingBytes.manifest.upload_id+'.json.gz',missingBytes.compressed);
+ await reject(api.commitPublication(racePrep.ticket,racing.io),'PUBLICATION_CHANGED_REVIEW_REQUIRED');
+ check(racing.writes()===0&&racing.removed.length===0,'Conflict after precheck remains atomic and retains staging');
+ const stale=fake(missingBytes,{weakHttpEtag:true}),stalePrep=await api.preparePublication(missingBytes.manifest,stale.io);stale.change();
+ await reject(api.commitPublication(stalePrep.ticket,stale.io),'PUBLICATION_CHANGED_REVIEW_REQUIRED');check(stale.writes()===0,'Weak HTTP mismatch does not hide a genuine storage change');
+ const truncated=fake(missingBytes,{noContentLength:true}),truncatedPrep=await api.preparePublication(missingBytes.manifest,truncated.io);
+ truncated.records.set('portal/publication-staging/'+missingBytes.manifest.upload_id+'.json.gz',missingBytes.compressed.subarray(0,-1));
+ await reject(api.commitPublication(truncatedPrep.ticket,truncated.io),'PAYLOAD_HASH_MISMATCH');check(truncated.writes()===0,'Actual incomplete stream cannot pass without Content-Length');
+ const weakHead=fake(missingBytes);weakHead.io.head=async()=>({etag:'W/weak-storage-version'});
+ await reject(api.preparePublication(missingBytes.manifest,weakHead.io),'BASELINE_UNAVAILABLE');
  const wrong=fake(missingBytes),wrongPrep=await api.preparePublication(missingBytes.manifest,wrong.io);
  wrong.records.set('portal/publication-staging/'+missingBytes.manifest.upload_id+'.json.gz',Buffer.alloc(missingBytes.compressed.length));
  await reject(api.commitPublication(wrongPrep.ticket,wrong.io),'PAYLOAD_HASH_MISMATCH');check(wrong.writes()===0,'Corrupted payload is not promoted');
