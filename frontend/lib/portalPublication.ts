@@ -59,7 +59,7 @@ export type Manifest = {
   record_count: number; published_at: string;
 };
 type Ticket = Manifest & { expires_at_ms: number; baseline_etag: string };
-export function validateManifest(value: any, now = Date.now()): Manifest {
+export function validateManifest(value: any, now = Date.now(), checkFreshness = true): Manifest {
   need(value && typeof value === "object" && !Array.isArray(value), "INVALID_MANIFEST");
   const allowed = ["protocol", "upload_id", "compressed_bytes", "expanded_bytes", "payload_sha256",
     "expanded_payload_sha256", "checksum", "record_count", "published_at"];
@@ -73,7 +73,8 @@ export function validateManifest(value: any, now = Date.now()): Manifest {
   for (const key of ["payload_sha256", "expanded_payload_sha256", "checksum"]) need(typeof value[key] === "string" && HASH.test(value[key]), "INVALID_HASH");
   need(typeof value.published_at === "string" && /(?:Z|[+-]\d{2}:\d{2})$/.test(value.published_at), "INVALID_PUBLICATION_TIME");
   const date = Date.parse(value.published_at);
-  need(Number.isFinite(date) && date <= now + 120000 && date >= now - 60 * 60 * 1000, "PUBLICATION_NOT_CURRENT");
+  need(Number.isFinite(date), "INVALID_PUBLICATION_TIME");
+  if (checkFreshness) need(date <= now + 120000 && date >= now - 60 * 60 * 1000, "PUBLICATION_NOT_CURRENT");
   return value;
 }
 function encodeTicket(value: Ticket, secret: string) {
@@ -81,7 +82,7 @@ function encodeTicket(value: Ticket, secret: string) {
   const mac = createHmac("sha256", secret).update("MTO-PORTAL-DIRECT-V1\0" + payload).digest("hex");
   return payload + "." + mac;
 }
-export function decodeTicket(ticket: unknown, secret: string, now = Date.now()): Ticket {
+export function decodeTicket(ticket: unknown, secret: string, now = Date.now(), inspectionOnly = false): Ticket {
   need(typeof ticket === "string" && ticket.length < 4096 && /^[A-Za-z0-9_-]+\.[a-f0-9]{64}$/.test(ticket), "INVALID_TICKET");
   const [payload, mac] = ticket.split(".");
   const expected = createHmac("sha256", secret).update("MTO-PORTAL-DIRECT-V1\0" + payload).digest("hex");
@@ -89,8 +90,9 @@ export function decodeTicket(ticket: unknown, secret: string, now = Date.now()):
   let value: Ticket;
   try { value = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")); } catch { throw new PublicationError("INVALID_TICKET"); }
   const { expires_at_ms, baseline_etag, ...manifest } = value;
-  validateManifest(manifest, now);
-  need(Number.isInteger(expires_at_ms) && expires_at_ms > now && expires_at_ms <= now + LIFETIME_MS + 120000, "TICKET_EXPIRED", 409);
+  validateManifest(manifest, now, !inspectionOnly);
+  need(Number.isInteger(expires_at_ms) && expires_at_ms > 0 && expires_at_ms <= now + LIFETIME_MS + 120000, "INVALID_TICKET");
+  if (!inspectionOnly) need(expires_at_ms > now, "TICKET_EXPIRED", 409);
   need(typeof baseline_etag === "string" && baseline_etag.length > 0 && baseline_etag.length <= 256, "INVALID_BASELINE");
   return value;
 }
@@ -183,4 +185,49 @@ export async function commitPublication(ticketInput: unknown, io: IO = storage, 
     checksum: ticket.checksum, payload_sha256: ticket.payload_sha256,
     expanded_payload_sha256: ticket.expanded_payload_sha256, replay_verified: replay,
     staging_removed: stagingRemoved };
+}
+
+/** Inspection never calls store, put, signing or deletion. Expired MAC-valid
+ * tickets may be inspected, but commit always uses the original expiry guard. */
+export async function inspectPublication(ticketInput: unknown, io: IO = storage, now = Date.now()) {
+  const ticket = decodeTicket(ticketInput, publishSecret(), now, true);
+  const pathname = stagingPath(ticket.upload_id);
+  const currentHead = await io.head(PORTAL_SNAPSHOT_BLOB_PATH);
+  const current = await io.get(PORTAL_SNAPSHOT_BLOB_PATH, { access: "private", useCache: false });
+  need(current?.statusCode === 200, "BASELINE_UNAVAILABLE", 503);
+  const currentRaw = await boundedBytes(current.stream, MAX_EXPANDED_BYTES);
+  let metadata: any;
+  try { metadata = JSON.parse(currentRaw.toString("utf8")); } catch { throw new PublicationError("INVALID_CURRENT_SNAPSHOT", 503); }
+  const staged = await io.get(pathname, { access: "private", useCache: false });
+  let storedBytes = 0, bytesMatch = false, expandedMatch = false, validationCode: string | null = null;
+  if (staged?.statusCode === 200) {
+    const compressed = await boundedBytes(staged.stream, MAX_COMPRESSED_BYTES);
+    storedBytes = compressed.length; bytesMatch = sha256(compressed) === ticket.payload_sha256;
+    try { validatePayload(compressed, ticket); expandedMatch = true; }
+    catch (error) { validationCode = error instanceof PublicationError ? error.code : "PAYLOAD_VALIDATION_UNAVAILABLE"; }
+  }
+  const currentMatches = sha256(currentRaw) === ticket.expanded_payload_sha256;
+  const etagMatches = current.blob.etag === ticket.baseline_etag;
+  const sizeMatches = staged?.statusCode === 200 && staged.blob.size === ticket.compressed_bytes;
+  const expired = ticket.expires_at_ms <= now;
+  const code = expired ? "TICKET_EXPIRED" : currentMatches ? "CURRENT_BYTES_MATCH_CANDIDATE" :
+    !etagMatches ? "PUBLICATION_CHANGED_REVIEW_REQUIRED" : !sizeMatches ? "UPLOAD_NOT_COMPLETE" :
+    validationCode || "READY_FOR_COMMIT_REVIEW";
+  return { ok: true, report_type: "MTO_PRIVATE_PUBLICATION_INSPECTION", read_only: true, code,
+    expired, record_count: ticket.record_count, candidate_published_at: ticket.published_at,
+    current_record_count: metadata.record_count, current_published_at: metadata.published_at,
+    current_bytes_match_candidate: currentMatches,
+    head_etag_matches_ticket: currentHead.etag === ticket.baseline_etag,
+    get_etag_matches_ticket: etagMatches,
+    head_etag_fingerprint: sha256(currentHead.etag).slice(0,16),
+    get_etag_fingerprint: sha256(current.blob.etag).slice(0,16),
+    ticket_etag_fingerprint: sha256(ticket.baseline_etag).slice(0,16),
+    head_etag_quoted: currentHead.etag.startsWith('"'),
+    get_etag_quoted: current.blob.etag.startsWith('"'),
+    get_etag_weak: current.blob.etag.startsWith('W/'),
+    staged_present: staged?.statusCode === 200,
+    staged_reported_bytes: staged?.statusCode === 200 ? staged.blob.size : null,
+    staged_actual_bytes: storedBytes, expected_compressed_bytes: ticket.compressed_bytes,
+    staged_payload_hash_matches: bytesMatch, staged_expanded_integrity_matches: expandedMatch,
+    payload_validation_code: validationCode };
 }
