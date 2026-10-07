@@ -6,6 +6,7 @@ import { PORTAL_SNAPSHOT_BLOB_PATH, storePortalSnapshot } from "./portalSnapshot
 
 export const PORTAL_RELEASE = "20261007-capacity-ux";
 export const PUBLICATION_PROTOCOL = "private-direct-v1";
+export const COMMIT_REVISION = "20261007-storage-etag-cas-r1";
 export const MAX_COMPRESSED_BYTES = 32 * 1024 * 1024;
 export const MAX_EXPANDED_BYTES = 60 * 1024 * 1024;
 export const MAX_CONTROL_BYTES = 16 * 1024;
@@ -93,7 +94,8 @@ export function decodeTicket(ticket: unknown, secret: string, now = Date.now(), 
   validateManifest(manifest, now, !inspectionOnly);
   need(Number.isInteger(expires_at_ms) && expires_at_ms > 0 && expires_at_ms <= now + LIFETIME_MS + 120000, "INVALID_TICKET");
   if (!inspectionOnly) need(expires_at_ms > now, "TICKET_EXPIRED", 409);
-  need(typeof baseline_etag === "string" && baseline_etag.length > 0 && baseline_etag.length <= 256, "INVALID_BASELINE");
+  need(typeof baseline_etag === "string" && baseline_etag.length > 0 && baseline_etag.length <= 256 &&
+    !baseline_etag.startsWith("W/"), "INVALID_BASELINE");
   return value;
 }
 function stagingPath(id: string) { need(ID.test(id), "INVALID_UPLOAD_ID"); return STAGING_PREFIX + id + ".json.gz"; }
@@ -106,7 +108,7 @@ export async function preparePublication(body: unknown, io: IO = storage, now = 
   const manifest = validateManifest(body, now), secret = publishSecret(), pathname = stagingPath(manifest.upload_id);
   // Never issue a wildcard/store-wide credential or rights to read/delete other files.
   const baseline = await io.head(PORTAL_SNAPSHOT_BLOB_PATH);
-  need(baseline.etag, "BASELINE_UNAVAILABLE", 503);
+  need(baseline.etag && !baseline.etag.startsWith("W/"), "BASELINE_UNAVAILABLE", 503);
   const expires = now + LIFETIME_MS;
   const token = await io.issueSignedToken({ pathname, operations: ["put"], validUntil: expires,
     allowedContentTypes: ["application/gzip"], maximumSizeInBytes: manifest.compressed_bytes });
@@ -164,9 +166,16 @@ export async function commitPublication(ticketInput: unknown, io: IO = storage, 
     replay = true;
   }
   if (!replay) {
-    need(current.blob.etag === ticket.baseline_etag, "PUBLICATION_CHANGED_REVIEW_REQUIRED", 409);
+    // head() returns the storage version used by conditional put(). get() can
+    // return a different, weak HTTP representation tag for identical bytes.
+    // Compare like-for-like, without stripping quotes or weakening ifMatch.
+    const currentHead = await io.head(PORTAL_SNAPSHOT_BLOB_PATH);
+    need(currentHead.etag && !currentHead.etag.startsWith("W/"), "BASELINE_UNAVAILABLE", 503);
+    need(currentHead.etag === ticket.baseline_etag, "PUBLICATION_CHANGED_REVIEW_REQUIRED", 409);
     const staged = await io.get(pathname, { access: "private", useCache: false });
-    need(staged?.statusCode === 200 && staged.blob.size === ticket.compressed_bytes, "UPLOAD_NOT_COMPLETE", 409);
+    need(staged?.statusCode === 200, "UPLOAD_NOT_COMPLETE", 409);
+    // HTTP Content-Length may be absent. The bounded stream's actual length
+    // and both signed hashes remain mandatory in validatePayload().
     const compressed = await boundedBytes(staged.stream, MAX_COMPRESSED_BYTES);
     const { raw, snapshot } = validatePayload(compressed, ticket);
     // Conditional write closes the race with another publisher. Preserve exact
@@ -208,12 +217,14 @@ export async function inspectPublication(ticketInput: unknown, io: IO = storage,
   }
   const currentMatches = sha256(currentRaw) === ticket.expanded_payload_sha256;
   const etagMatches = current.blob.etag === ticket.baseline_etag;
-  const sizeMatches = staged?.statusCode === 200 && staged.blob.size === ticket.compressed_bytes;
+  const storageEtagMatches = currentHead.etag === ticket.baseline_etag;
+  const sizeMatches = staged?.statusCode === 200 && storedBytes === ticket.compressed_bytes;
   const expired = ticket.expires_at_ms <= now;
   const code = expired ? "TICKET_EXPIRED" : currentMatches ? "CURRENT_BYTES_MATCH_CANDIDATE" :
-    !etagMatches ? "PUBLICATION_CHANGED_REVIEW_REQUIRED" : !sizeMatches ? "UPLOAD_NOT_COMPLETE" :
+    !storageEtagMatches ? "PUBLICATION_CHANGED_REVIEW_REQUIRED" : !sizeMatches ? "UPLOAD_NOT_COMPLETE" :
     validationCode || "READY_FOR_COMMIT_REVIEW";
   return { ok: true, report_type: "MTO_PRIVATE_PUBLICATION_INSPECTION", read_only: true, code,
+    commit_revision: COMMIT_REVISION,
     expired, record_count: ticket.record_count, candidate_published_at: ticket.published_at,
     current_record_count: metadata.record_count, current_published_at: metadata.published_at,
     current_bytes_match_candidate: currentMatches,
