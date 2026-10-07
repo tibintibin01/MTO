@@ -18,13 +18,21 @@ async function freePort(){const server=net.createServer();await new Promise(reso
  const fixture=path.join(temp,'snapshot.json');await fs.writeFile(fixture,JSON.stringify(snapshot()));
  const output=path.join(ROOT,'..','portal-verification');await fs.mkdir(output,{recursive:true});
  const port=await freePort(),base='http://127.0.0.1:'+port;
- const child=spawn(process.execPath,[path.join(ROOT,'node_modules/next/dist/bin/next'),'start','--hostname','127.0.0.1','--port',String(port)],{cwd:ROOT,windowsHide:true,env:{...process.env,NODE_ENV:'production',MTO_PORTAL_LOOKUP_SECRET:SECRET,MTO_PORTAL_SNAPSHOT_PATH:fixture,MTO_PORTAL_MAX_SNAPSHOT_AGE_HOURS:'36'}});
+ const child=spawn(process.execPath,[path.join(ROOT,'node_modules/next/dist/bin/next'),'start','--hostname','127.0.0.1','--port',String(port)],{cwd:ROOT,windowsHide:true,env:{...process.env,NODE_ENV:'production',MTO_PORTAL_LOOKUP_SECRET:SECRET,MTO_PORTAL_PUBLISH_TOKEN:SECRET,MTO_PORTAL_SNAPSHOT_PATH:fixture,MTO_PORTAL_MAX_SNAPSHOT_AGE_HOURS:'36'}});
  let serverLog='';child.stdout.on('data',d=>serverLog+=d);child.stderr.on('data',d=>serverLog+=d);
  let browser;
  try{
   for(let i=0;i<80;i++){try{const r=await fetch(base+'/');if(r.ok)break;}catch{}await new Promise(r=>setTimeout(r,200));if(i===79)throw new Error('Local server did not start: '+serverLog);}
   async function api(route){const r=await fetch(base+route);return {status:r.status,headers:r.headers,body:await r.json()};}
   let r=await api('/api/health');check(r.status===200&&r.body.ok,'Fresh snapshot must be ready');
+  check(r.body.publication_protocol.name==='private-direct-v1'&&r.body.publication_protocol.max_compressed_bytes===33554432,'Increased transport capacity advertised');
+  check(/^[a-f0-9]{64}$/.test(r.body.expanded_payload_sha256),'Health exposes actual JSON-byte hash');
+  for(const endpoint of ['prepare','commit']){
+   const response=await fetch(base+'/api/portal-snapshot/'+endpoint,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+   check(response.status===401,'Unauthenticated '+endpoint+' cannot access storage');check(response.headers.get('cache-control')==='no-store','No cached publication controls');
+  }
+  let privateResponse=await fetch(base+'/api/portal-snapshot/commit',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+SECRET},body:'{"ticket":"bad"}'});
+  check(privateResponse.status===400,'Invalid ticket rejected before storage access');
   for(const prefix of ['/api/public','/api/v1/public']){
    r=await api(prefix+'/property/06-0001-00001');check(r.status===409&&r.body.matches.length===2,'Duplicate accounts preserved');
    r=await api(prefix+'/property/06000100001');check(r.status===409&&r.body.matches.length===2,'Undashed TDN must preserve ambiguity');

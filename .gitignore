@@ -91,3 +91,7 @@ migrations/archive/*.sql
 
 # Local frontend environment — contains server IP, varies per deployment
 frontend/.env.local
+
+# Local validation caches, never runtime data or source
+.tmp/
+portal-validation-*/

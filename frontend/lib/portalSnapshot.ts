@@ -1,7 +1,7 @@
 import "server-only";
 
 import { get, put } from "@vercel/blob";
-import { createHmac } from "crypto";
+import { createHmac, createHash } from "crypto";
 import { readFile, stat } from "fs/promises";
 import { snapshotFreshness, publicationDay, type PortalFreshness } from "./portalFreshness";
 
@@ -79,6 +79,7 @@ let blobSnapshotCache: {
 type IndexedSnapshotRecord = { record: SnapshotRecord; index: number };
 
 const propertyIndexCache = new WeakMap<object, Map<string, IndexedSnapshotRecord[]>>();
+const rawSnapshotHashes = new WeakMap<object, string>();
 
 function requireLookupSecret(): string {
   const secret = process.env.MTO_PORTAL_LOOKUP_SECRET?.trim();
@@ -146,7 +147,9 @@ function validateSnapshot(snapshot: PortalSnapshot, lookupSecret: string): Porta
 
 function parseSnapshot(raw: string, lookupSecret: string): PortalSnapshot {
   try {
-    return validateSnapshot(JSON.parse(raw), lookupSecret);
+    const snapshot = validateSnapshot(JSON.parse(raw), lookupSecret);
+    rawSnapshotHashes.set(snapshot, createHash("sha256").update(raw, "utf8").digest("hex"));
+    return snapshot;
   } catch (error) {
     if (error instanceof PortalSnapshotDataError) throw error;
     throw new PortalSnapshotDataError("Portal snapshot contains invalid JSON.");
@@ -201,14 +204,15 @@ export async function loadCurrentPortalSnapshot(): Promise<PortalSnapshot | null
   return snapshot;
 }
 
-export async function storePortalSnapshot(snapshot: PortalSnapshot) {
+export async function storePortalSnapshot(snapshot: PortalSnapshot, options: { rawBody?: Buffer; ifMatch?: string } = {}) {
   validateSnapshot(snapshot, requireLookupSecret());
-  const body = JSON.stringify(snapshot);
+  const body = options.rawBody || JSON.stringify(snapshot);
   const result = await put(PORTAL_SNAPSHOT_BLOB_PATH, body, {
     access: "private",
     allowOverwrite: true,
     contentType: "application/json; charset=utf-8",
     cacheControlMaxAge: 60,
+    ...(options.ifMatch ? { ifMatch: options.ifMatch } : {}),
   });
   blobSnapshotCache = null;
   return result;
@@ -309,6 +313,8 @@ export async function portalSnapshotHealth() {
     ...freshness,
     schema_version: snapshot.schema_version,
     record_count: snapshot.properties?.length || 0,
+    checksum: snapshot.checksum || null,
+    expanded_payload_sha256: rawSnapshotHashes.get(snapshot) || null,
   };
 }
 

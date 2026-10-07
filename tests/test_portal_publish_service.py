@@ -24,7 +24,10 @@ from backend.services.portal_publish_service import (
 )
 
 
-@pytest.mark.parametrize("name,token",[("Peña","PEÑA"),("Nuñez","NUÑEZ"),("PEN\u0303A","PEÑA"),("José","JOSÉ")])
+@pytest.mark.parametrize(
+    "name,token",
+    [("Peña", "PEÑA"), ("Nuñez", "NUÑEZ"), ("PEN\u0303A", "PEÑA"), ("José", "JOSÉ")],
+)
 def test_unicode_owner_tokens_are_indexed_without_disclosing_names(name, token):
     values = _owner_lookup_values(name)
     assert token in values
@@ -32,14 +35,19 @@ def test_unicode_owner_tokens_are_indexed_without_disclosing_names(name, token):
 
 
 def test_unicode_owner_snapshot_keeps_names_masked(db, monkeypatch):
-    db.add(Property(td_number="06-0001-00001",owner_name="PEÑA",assessed_value=100_000))
+    db.add(
+        Property(td_number="06-0001-00001", owner_name="PEÑA", assessed_value=100_000)
+    )
     db.flush()
-    monkeypatch.setattr("backend.services.portal_publish_service.mto_config.PORTAL_LOOKUP_SECRET","test-secret")
+    monkeypatch.setattr(
+        "backend.services.portal_publish_service.mto_config.PORTAL_LOOKUP_SECRET",
+        "test-secret",
+    )
     snapshot = generate_portal_snapshot(db)
     assert snapshot["owner_lookup_version"] == 2
-    assert _owner_lookup_hash("PEÑA","test-secret") in snapshot["owner_lookup_index"]
+    assert _owner_lookup_hash("PEÑA", "test-secret") in snapshot["owner_lookup_index"]
     assert snapshot["properties"][0]["owner_name"] == "P***"
-    assert "PEÑA" not in json.dumps(snapshot,ensure_ascii=False)
+    assert "PEÑA" not in json.dumps(snapshot, ensure_ascii=False)
 
 
 @pytest.fixture()

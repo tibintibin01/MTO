@@ -13,16 +13,30 @@ from scripts.check_dependency_policy import (
 
 
 def test_indexed_source_map_vulnerability_is_rejected_in_nested_copies():
-    findings=check_frontend_transitive_security({"node_modules/next/node_modules/source-map-js":{"version":"1.2.1"}},Path("package-lock.json"))
-    assert [row["code"] for row in findings]==["FRONTEND_TRANSITIVE_SECURITY_FLOOR"]
+    findings = check_frontend_transitive_security(
+        {"node_modules/next/node_modules/source-map-js": {"version": "1.2.1"}},
+        Path("package-lock.json"),
+    )
+    assert [row["code"] for row in findings] == ["FRONTEND_TRANSITIVE_SECURITY_FLOOR"]
 
 
 def test_patched_source_map_dependency_is_accepted():
-    assert check_frontend_transitive_security({"node_modules/source-map-js":{"version":"1.2.2"}},Path("package-lock.json"))==[]
+    assert (
+        check_frontend_transitive_security(
+            {"node_modules/source-map-js": {"version": "1.2.2"}},
+            Path("package-lock.json"),
+        )
+        == []
+    )
 
 
 def test_unversioned_source_map_dependency_fails_closed():
-    assert check_frontend_transitive_security({"node_modules/source-map-js":{}},Path("package-lock.json"))[0]["code"]=="FRONTEND_TRANSITIVE_INVALID_VERSION"
+    assert (
+        check_frontend_transitive_security(
+            {"node_modules/source-map-js": {}}, Path("package-lock.json")
+        )[0]["code"]
+        == "FRONTEND_TRANSITIVE_INVALID_VERSION"
+    )
 
 
 def test_repository_dependency_policy_passes():

@@ -1,0 +1,24 @@
+const assert=require('node:assert/strict'),{evaluate}=require('../scripts/audit-policy.cjs');
+const clean={auditReportVersion:2,vulnerabilities:{}};
+const advisory={url:'https://github.com/advisories/GHSA-vfj7-8cjw-p6xm',name:'braces',dependency:'braces',range:'<=3.0.3'};
+const full={auditReportVersion:2,vulnerabilities:{braces:{severity:'high',via:[advisory],nodes:['node_modules/braces']},
+ tailwindcss:{severity:'high',via:['braces'],nodes:['node_modules/tailwindcss']}}};
+const lock={packages:{'node_modules/braces':{dev:true},'node_modules/tailwindcss':{dev:true}}};
+const risk=require('../../governance/accepted-risks/public-portal-build-only-braces-20261007.json');
+const options={now:Date.parse('2026-10-08T00:00:00Z'),trustedSource:true};let passed=0;
+const verify=(value)=>{assert.ok(value);passed++;};
+verify(evaluate(full,clean,lock,risk,options).status==='PASS_WITH_ACCEPTED_BUILD_RISK');
+verify(evaluate(full,clean,lock,risk,{...options,trustedSource:false}).status==='BLOCKED');
+verify(evaluate(full,clean,lock,risk,{...options,now:Date.parse('2026-10-15T00:00:00Z')}).status==='BLOCKED');
+verify(evaluate(full,clean,lock,{...risk,status:'PENDING'},options).status==='BLOCKED');
+verify(evaluate(full,full,lock,risk,options).blocking.includes('PRODUCTION_VULNERABILITIES'));
+verify(evaluate(full,clean,{packages:{...lock.packages,'node_modules/braces':{dev:false}}},risk,options).status==='BLOCKED');
+const unrelated=structuredClone(full);unrelated.vulnerabilities.braces.via.push({...advisory,url:'https://github.com/advisories/GHSA-other'});
+verify(evaluate(unrelated,clean,lock,risk,options).status==='BLOCKED');
+const missing=structuredClone(full);delete missing.vulnerabilities.braces;
+verify(evaluate(missing,clean,lock,risk,options).status==='BLOCKED');
+const loop=structuredClone(full);loop.vulnerabilities.braces.via=['tailwindcss'];
+verify(evaluate(loop,clean,lock,risk,options).status==='BLOCKED');
+assert.throws(()=>evaluate({},clean,lock,risk,options));passed++;
+verify(evaluate(clean,clean,lock,risk,options).status==='PASS');
+console.log(JSON.stringify({passed,scope:'Synthetic approval, expiry, runtime and advisory-graph tests'}));
