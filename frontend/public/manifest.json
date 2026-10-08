@@ -12,16 +12,28 @@
   "lang": "en",
   "icons": [
     {
-      "src": "/icons/logo.png",
+      "src": "/icons/portal-20261008/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
-      "src": "/icon.png",
-      "sizes": "1024x1024",
+      "src": "/icons/portal-20261008/icon-512.png",
+      "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/portal-20261008/maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/portal-20261008/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ],
   "screenshots": [],
@@ -31,7 +43,7 @@
       "short_name": "Search",
       "description": "Look up a property by TDN or PIN",
       "url": "/",
-      "icons": [{ "src": "/icons/logo.png", "sizes": "192x192" }]
+      "icons": [{ "src": "/icons/portal-20261008/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }
