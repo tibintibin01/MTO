@@ -55,7 +55,15 @@ function digest(data) { return createHash('sha256').update(data).digest('hex'); 
     const frame = ico.subarray(offset, offset + length);
     check(ico[entry] === size && ico[entry + 1] === size &&
       offset >= 54 && offset + length <= ico.length, `ICO ${size}px directory bounds`);
-    check(frame.equals(await renderPng(size, 'any')), `ICO ${size}px approved PNG frame`);
+    // PNG compression/container bytes can vary across libvips platform builds.
+    // The actual dimensions, format and every decoded RGBA pixel must match.
+    const frameMetadata = await sharp(frame).metadata();
+    const framePixels = await sharp(frame).ensureAlpha().raw().toBuffer();
+    const expectedPixels = await sharp(await renderPng(size, 'any'))
+      .ensureAlpha().raw().toBuffer();
+    check(frameMetadata.format === 'png' && frameMetadata.width === size &&
+      frameMetadata.height === size && framePixels.equals(expectedPixels),
+    `ICO ${size}px approved PNG pixels and dimensions`);
   }
   const manifest = JSON.parse(await fs.readFile(path.join(ROOT, 'public/manifest.json'), 'utf8'));
   check(manifest.name === 'Public Treasury Web Portal' &&
