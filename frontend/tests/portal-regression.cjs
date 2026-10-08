@@ -25,6 +25,19 @@ async function freePort(){const server=net.createServer();await new Promise(reso
   for(let i=0;i<80;i++){try{const r=await fetch(base+'/');if(r.ok)break;}catch{}await new Promise(r=>setTimeout(r,200));if(i===79)throw new Error('Local server did not start: '+serverLog);}
   async function api(route){const r=await fetch(base+route);return {status:r.status,headers:r.headers,body:await r.json()};}
   let r=await api('/api/health');check(r.status===200&&r.body.ok,'Fresh snapshot must be ready');
+  const iconManifestResponse=await fetch(base+'/manifest.json');
+  const iconManifest=await iconManifestResponse.json();
+  check(iconManifestResponse.ok&&iconManifest.icons.length===4,'Manifest serves four regular/maskable exports');
+  for(const icon of iconManifest.icons){
+   check(icon.src.startsWith('/icons/portal-20261008/'),'Installed-app icon URL is versioned');
+   const response=await fetch(base+icon.src);
+   check(response.ok&&response.headers.get('content-type').includes('image/png'),'Manifest icon is served as PNG');
+   const hosted=Buffer.from(await response.arrayBuffer());
+   check(hosted.equals(await fs.readFile(path.join(ROOT,'public',icon.src.slice(1)))),'Served icon matches checked asset bytes');
+  }
+  const faviconResponse=await fetch(base+'/favicon.ico');
+  check(faviconResponse.ok&&Buffer.from(await faviconResponse.arrayBuffer()).equals(
+   await fs.readFile(path.join(ROOT,'app/favicon.ico'))),'Next favicon endpoint serves approved ICO');
   check(r.body.publication_protocol.name==='private-direct-v1'&&r.body.publication_protocol.max_compressed_bytes===33554432,'Increased transport capacity advertised');
   check(/^[a-f0-9]{64}$/.test(r.body.expanded_payload_sha256),'Health exposes actual JSON-byte hash');
   for(const endpoint of ['prepare','commit']){
@@ -63,6 +76,16 @@ async function freePort(){const server=net.createServer();await new Promise(reso
   for(const width of [320,390,1440]){
    const c=await browser.newContext({viewport:{width,height:width===320?700:844},serviceWorkers:'block'}),p=await c.newPage();
    await p.goto(base,{waitUntil:'networkidle'});await p.waitForTimeout(400);
+   if(width===390){
+    const iconLinks=await p.locator('link[rel="icon"]').evaluateAll(items=>items.map(item=>item.getAttribute('href')));
+    const appleLinks=await p.locator('link[rel="apple-touch-icon"]').evaluateAll(items=>items.map(item=>({href:item.getAttribute('href'),sizes:item.getAttribute('sizes')})));
+    check(iconLinks.length>0&&iconLinks.every(href=>href.startsWith('/icons/portal-20261008/')||href.startsWith('/icon.png')||href.startsWith('/favicon.ico')),'Rendered browser metadata has no old seal icon link');
+    check(appleLinks.length>0&&appleLinks.every(item=>item.sizes==='180x180'),'Rendered Apple touch icons declare actual 180px exports');
+    for(const item of appleLinks){
+     const response=await fetch(base+item.href);
+     check(response.ok&&Buffer.from(await response.arrayBuffer()).equals(await fs.readFile(path.join(ROOT,'app/apple-icon.png'))),'Rendered Apple touch URL serves the approved mark');
+    }
+   }
    const input=p.getByRole('textbox',{name:'Tax Declaration Number or PIN'}),button=p.getByRole('button',{name:'Search property',exact:true});
    const box=await button.boundingBox();
    await p.screenshot({path:path.join(output,'initial-'+width+'.png')});

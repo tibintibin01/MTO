@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "test:portal": "node tests/portal-regression.cjs",
     "test:property-workspace": "node tests/property-design.cjs --contracts-only",
+    "test:icons": "node tests/portal-icons.cjs",
     "test:publication": "node tests/publication-regression.cjs",
     "test:audit-policy": "node tests/audit-policy.cjs",
     "audit:security": "node scripts/audit-policy.cjs",
