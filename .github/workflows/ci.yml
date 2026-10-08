@@ -171,3 +171,20 @@ jobs:
       run: npm run build
       working-directory: frontend
 
+    - name: Prepare browser test dependencies for the supported runner Chrome
+      run: npx --no-install playwright install-deps chromium
+      working-directory: frontend
+
+    - name: Verify public lookup and property-workspace contracts with synthetic records
+      timeout-minutes: 10
+      env:
+        # The hosted Ubuntu image permits sandboxing for its packaged Chrome.
+        # Keep chromiumSandbox enabled; do not weaken host namespace protections.
+        MTO_TEST_BROWSER_EXECUTABLE: /opt/google/chrome/chrome
+      run: |
+        test -x "$MTO_TEST_BROWSER_EXECUTABLE"
+        "$MTO_TEST_BROWSER_EXECUTABLE" --version
+        npm run test:portal
+        npm run test:property-workspace
+      working-directory: frontend
+

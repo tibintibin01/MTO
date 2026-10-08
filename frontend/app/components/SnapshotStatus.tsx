@@ -25,7 +25,7 @@ export function SnapshotStatus(){
     return()=>{current.abort();clearInterval(timer);window.removeEventListener("focus",refresh);};
   },[check]);
   const ready=health?.ok===true;
-  return <aside aria-label="Published record status" className={`border-b px-4 py-3 text-sm ${ready?"border-slate-200 bg-slate-50 text-slate-700":"border-amber-300 bg-amber-50 text-amber-950"}`}>
+  return <aside aria-label="Published record status" className={`portal-publication-status border-b px-4 py-3 text-sm ${ready?"border-slate-200 bg-slate-50 text-slate-700":"border-amber-300 bg-amber-50 text-amber-950"}`}>
     <div className="mx-auto max-w-6xl" role="status" aria-live="polite">
       {pending&&!health&&!failed?"Checking publication status…":ready?
         <p className="text-xs leading-5">Office records published: <strong>{formatPublicationShort(health.published_at)}</strong></p>:<>
