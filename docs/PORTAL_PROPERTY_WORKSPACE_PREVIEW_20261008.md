@@ -96,7 +96,11 @@ source checkout under `work/design-preview/property-workspace-20261008`.
 At this implementation checkpoint, no GitHub push, PR, merge, public deployment,
 office update, or new application release has been performed for this design.
 The PR pipeline now runs the original portal regressions and baseline-independent
-property contracts after building and installing the lockfile-pinned browser.
+property contracts after building, installing browser OS dependencies through
+the locked Playwright CLI, and selecting the hosted runner's packaged Chrome.
+The first Linux run rejected the standalone downloaded Chromium's user-namespace
+sandbox under Ubuntu AppArmor. The test browser remains sandboxed; no host
+namespace/AppArmor setting or application protection is disabled for the repair.
 Use `npm run test:property-workspace` for those synthetic contracts. Full local
 performance comparisons still use the saved baseline and are not simulated in CI.
 Do not run server deployment or financial maintenance commands for this website
