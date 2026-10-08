@@ -20,19 +20,19 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <MotionConfig reducedMotion="user"><div className="min-h-full flex flex-col">
+    <MotionConfig reducedMotion="user"><div className={`min-h-full flex flex-col ${pathname==="/"||pathname.startsWith("/property/")?"portal-shell-coastal":""}`}>
 
       {/* ── Top bar ── */}
-      <div className="bg-[#0f2a5e] text-white text-xs py-1.5 text-center tracking-widest font-medium">
+      <div className="portal-official-bar bg-[#0f2a5e] text-white text-xs py-1.5 text-center tracking-widest font-medium">
         OFFICIAL WEBSITE — MUNICIPAL TREASURY OFFICE OF DIPACULAO, AURORA
       </div>
 
       {/* ── Main header ── */}
       <header className="portal-header bg-gradient-to-r from-[#1a3a6b] via-[#1f4e78] to-[#1a3a6b] text-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <a href="/" className="flex items-center gap-4 group">
+          <a href="/" className="portal-brand flex items-center gap-4 group">
             {/* White circle badge — standard government seal presentation */}
-            <div className="relative w-14 h-14 flex-shrink-0 rounded-full bg-white shadow-lg ring-2 ring-white/30 overflow-hidden">
+            <div className="portal-seal relative w-14 h-14 flex-shrink-0 rounded-full bg-white shadow-lg ring-2 ring-white/30 overflow-hidden">
               <Image
                 src="/dipaculao-logo.png"
                 alt="Official Logo of Dipaculao, Aurora"
@@ -56,7 +56,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
           </a>
 
           <nav aria-label="Main navigation" className="flex flex-wrap items-center text-sm font-semibold">
-            <div className="flex flex-wrap items-center gap-1 px-1 py-1 rounded-xl"
+            <div className="portal-navigation-links flex flex-wrap items-center gap-1 px-1 py-1 rounded-xl"
               style={{
                 background:"rgba(255,255,255,0.1)",
                 backdropFilter:"blur(12px)",
@@ -87,7 +87,7 @@ export function PublicShell({ children }: { children: React.ReactNode }) {
       </main>
 
       {/* ── Footer ── */}
-      <footer className="relative mt-auto overflow-hidden bg-gradient-to-b from-[#173d70] to-[#0b2450] text-white">
+      <footer className="portal-footer relative mt-auto overflow-hidden bg-gradient-to-b from-[#173d70] to-[#0b2450] text-white">
         <div className="absolute inset-0 opacity-[0.035]" style={{backgroundImage:"radial-gradient(circle,#fff 1px,transparent 1px)",backgroundSize:"24px 24px"}} />
 
         <div className="relative border-b border-white/10">

@@ -171,3 +171,13 @@ jobs:
       run: npm run build
       working-directory: frontend
 
+    - name: Install the locked Playwright Chromium for local-only UI tests
+      run: npx --no-install playwright install --with-deps chromium
+      working-directory: frontend
+
+    - name: Verify public lookup and property-workspace contracts with synthetic records
+      run: |
+        npm run test:portal
+        npm run test:property-workspace
+      working-directory: frontend
+
