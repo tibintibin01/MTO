@@ -281,16 +281,44 @@ function Get-CertificationArguments {
     return $arguments
 }
 
+function Enter-PortalPublisherMaintenanceLock {
+    param([string]$Root='C:\ProgramData\MTO\portal-publication')
+    Assert-NoLinkedPath $Root
+    Assert-ProtectedEvidenceRoot $Root
+    $ownerPath=Join-Path $Root 'owner.json'
+    $pendingPath=Join-Path $Root 'pending.json'
+    $payloadPath=Join-Path $Root 'pending.snapshot.json.gz'
+    $path=Join-Path $Root 'publisher.lock'
+    foreach($item in @($ownerPath,$pendingPath,$payloadPath,$path)){Assert-NoLinkedPath $item}
+    if((Get-Content -LiteralPath $ownerPath -Raw -Encoding UTF8|ConvertFrom-Json).owner -cne 'MTO_PORTAL_PUBLICATION_20261007'){
+        throw 'Publisher root ownership mismatch.'
+    }
+    $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+    try {
+        if($stream.Length -lt 1){throw 'Publisher mutex is empty.'}
+        $stream.Lock(0,1)
+        # Recheck AFTER taking the same byte-range mutex used by R4 msvcrt.
+        if((Test-Path -LiteralPath $pendingPath) -or (Test-Path -LiteralPath $payloadPath)){
+            throw 'Pending portal publication requires review before activation.'
+        }
+    } catch {
+        $stream.Dispose()
+        throw
+    }
+    Write-Host 'Owned portal publisher mutex held for source activation.'
+    return $stream
+}
+
 function Invoke-PostChecks {
     Assert-Checkout $script:ResolvedProject $ExpectedCommit
     Assert-ReleaseIdentity $ReleaseTag $ExpectedCommit $script:ResolvedDistribution
-    if($ReleaseTag -eq 'v2.1.17'){
+    if($ReleaseTag -in @('v2.1.17','v2.1.18')){
         # Native child process: preserve its actual exit code, not an unset
         # LASTEXITCODE from calling a normally-returning PowerShell script.
         Invoke-CheckedNative (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') @(
             '-NoProfile','-ExecutionPolicy','Bypass','-File',
             (Join-Path $script:ResolvedProject 'scripts\install_guarded_portal_task.ps1'),
-            '-ExpectedCommit',$ExpectedCommit)
+            '-ExpectedCommit',$ExpectedCommit,'-ReleaseTag',$ReleaseTag,'-PreviousCommit',$PreviousCommit)
     }
     # Retain each attempt instead of overwriting evidence from an earlier failed run.
     $attempt = 'checks-' + [datetime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
@@ -439,7 +467,13 @@ try {
             $updaterArguments += @('-InternalOnlyUnsignedRisk', '-RiskAcceptance', $script:ResolvedRisk)
         }
         # Interactive unsigned-release approval remains in the existing updater.
-        Invoke-CheckedNative (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') $updaterArguments
+        $portalActivationLock=$null
+        try {
+            if($ReleaseTag -in @('v2.1.17','v2.1.18')){$portalActivationLock=Enter-PortalPublisherMaintenanceLock}
+            Invoke-CheckedNative (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') $updaterArguments
+        } finally {
+            if($portalActivationLock){$portalActivationLock.Unlock(0,1);$portalActivationLock.Dispose()}
+        }
         $script:WorkflowState.activation_completed = $true
         Write-WorkflowState $script:WorkflowState $script:StatePath
     } else {

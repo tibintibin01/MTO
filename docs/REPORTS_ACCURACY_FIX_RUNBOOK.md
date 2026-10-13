@@ -65,6 +65,8 @@ Exit 2 means `REVIEW_REQUIRED`, not a request to repair data. `NO_FLAGGED_CASES`
 
 Normal receipt posting can refresh cached billing totals for the affected billing rows, as it already did before this change. The corrected aggregation applies there too. No activation step silently recalculates the entire historical database.
 
+The v2.1.18 workflow holds the existing publisher byte-range mutex during source activation, then explicitly reapproves v2.1.18 for the immutable R4 transport. It requires the previously verified v2.1.17 bridge, keeps that original migration intent unchanged, uses a separate release-specific intent and evidence folder, and tests both a demand-only SYSTEM task and the real daily publisher. Its four triggers and unchanged action are preserved. Verify/Finalize recognize an already completed reapproval without uploading again. Approval remains an operator prompt, not a release HTTP parameter.
+
 ## Validation boundaries
 
 Regression tests use synthetic in-memory databases and actual export functions. Excel output is inspected and rendered, and PDF output is rendered and extracted. The synthetic performance benchmark uses FK-equivalent indexes in SQLite; it is not a MariaDB production performance certification. The real server, native Excel pilot, historical impact population, and release activation require subsequent verification.
