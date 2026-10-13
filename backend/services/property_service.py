@@ -1404,6 +1404,16 @@ def _sync_financial_records(prop_id, data, db_session: Session):
 
     if should_pay:
         allocated = billing.allocate_payment_amount(billing_rows, paid)
+        if (pen or disc) and any(
+            float(row.get("applied_amount", 0) or 0) <= 0 for row in allocated
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "A receipt with penalty or discount includes a tax year receiving no payment. "
+                    "Remove unallocated years or post the years separately; the app will not guess their adjustments."
+                ),
+            )
 
         # Every legitimate installment is immutable and receives its own
         # Payment row. Previously this code reused a row by property + OR +
@@ -1746,151 +1756,79 @@ def get_assessment_roll(limit=100, cursor=None, db_session: Session = None):
 
 
 def get_receivables_by_barangay(
-    report_year: int = None, data_start_year: int = 2023, db_session: Session = None
+    report_year: int = None,
+    data_start_year: int = 2023,
+    db_session: Session = None,
+    *,
+    fiscal_year=None,
+    include_credits=False,
 ):
-    """
-    Returns receivables breakdown by barangay.
+    """Positive receivables and separate credits, never netted across accounts.
 
-    Parameters
-    ----------
-    report_year : int, optional
-        Show cumulative receivables up to and including this year.
-        If None, shows all-time totals.
-    data_start_year : int
-        The earliest year to include in the report. Defaults to 2023.
-        Billing records before this year (created by the sync from old
-        effectivity_date values) are excluded.
+    The legacy default is today's allocated balances for billing years through
+    report_year, with the existing 2023 data floor. Reports may explicitly request
+    a fiscal-year cutoff and all available billing years to match the summary.
     """
-    close_session = False
-    if not db_session:
+    close_session = db_session is None
+    if close_session:
         from backend.database import SessionLocal
 
         db_session = SessionLocal()
-        close_session = True
-
     try:
-        from backend.models import PaymentBilling
+        from backend.models import TaxPolicy
+        from backend.services.billing_service import (
+            _billing_effective_amount_exprs,
+            _paid_to_billing_expr,
+        )
+        from utils.db_compat import greatest
 
-        year_filter = str(report_year) if report_year else None
-
-        # 1. Total Due per barangay — sum all billing records up to report_year
-        # Join TaxPolicy per billing year so the rate reflects any policy changes.
-        # Uses COALESCE to fall back to 1%+1%=2% if no policy row exists for a year.
-        from backend.models import TaxPolicy as _TaxPolicy
-
-        tp_alias = db_session.query(_TaxPolicy).subquery()
-
-        due_query = (
+        effective = _billing_effective_amount_exprs(db_session, year_lte=fiscal_year)
+        paid = _paid_to_billing_expr(db_session, year_lte=fiscal_year)
+        rate = func.coalesce(TaxPolicy.basic_rate, 0.01) + func.coalesce(
+            TaxPolicy.sef_rate, 0.01
+        )
+        due = (
+            PropertyBilling.assessed_value * rate
+            + effective["penalty"]
+            - effective["discount"]
+        )
+        barangay = func.coalesce(
+            func.nullif(func.trim(Property.barangay), ""), "UNSPECIFIED"
+        )
+        positive = greatest(due - paid, 0)
+        credit = greatest(paid - due, 0)
+        query = (
             db_session.query(
-                func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
-                func.sum(PropertyBilling.assessed_value).label("total_assessed"),
-                func.sum(
-                    (
-                        PropertyBilling.assessed_value
-                        * func.coalesce(
-                            db_session.query(
-                                _TaxPolicy.basic_rate + _TaxPolicy.sef_rate
-                            )
-                            .filter(_TaxPolicy.tax_year == PropertyBilling.tax_year)
-                            .correlate(PropertyBilling)
-                            .scalar_subquery(),
-                            0.02,
-                        )
-                    )
-                    + PropertyBilling.penalty
-                    - PropertyBilling.discount
-                ).label("total_due"),
-                func.sum(PropertyBilling.penalty).label("total_penalty"),
-                func.sum(PropertyBilling.discount).label("total_discount"),
+                barangay,
+                func.coalesce(func.sum(PropertyBilling.assessed_value), 0),
+                func.coalesce(func.sum(due), 0),
+                func.coalesce(func.sum(effective["penalty"]), 0),
+                func.coalesce(func.sum(effective["discount"]), 0),
+                func.coalesce(func.sum(paid), 0),
+                func.coalesce(func.sum(positive), 0),
+                func.coalesce(func.sum(credit), 0),
             )
-            .join(PropertyBilling, PropertyBilling.property_id == Property.id)
+            .join(Property, Property.id == PropertyBilling.property_id)
+            .outerjoin(TaxPolicy, TaxPolicy.tax_year == PropertyBilling.tax_year)
             .filter(Property.deleted_at == None)
         )
-        if year_filter:
-            due_query = due_query.filter(PropertyBilling.tax_year <= year_filter)
-        # Always apply the data start year floor to exclude pre-data billing records
-        due_query = due_query.filter(PropertyBilling.tax_year >= str(data_start_year))
-
-        due_results = due_query.group_by(Property.barangay).all()
-
-        # 2. Total Collected per barangay.
-        #
-        # Keep this on the same basis as Total Due: billing tax years. Using
-        # Payment.date_paid here mixes cash posting date with billing-year due,
-        # which lets future-year prepayments or imported date mistakes distort
-        # receivable balances by barangay.
-        coll_query = (
-            db_session.query(
-                func.coalesce(Property.barangay, "UNSPECIFIED").label("barangay"),
-                func.sum(PaymentBilling.amount_paid).label("total_collected"),
-            )
-            .join(PropertyBilling, PropertyBilling.property_id == Property.id)
-            .join(PaymentBilling, PaymentBilling.billing_id == PropertyBilling.id)
-            .filter(Property.deleted_at == None)
+        if report_year is not None:
+            query = query.filter(PropertyBilling.tax_year <= int(report_year))
+        if data_start_year is not None:
+            query = query.filter(PropertyBilling.tax_year >= int(data_start_year))
+        rows = (
+            query.group_by(barangay).order_by(func.sum(positive).desc(), barangay).all()
         )
-        if year_filter:
-            coll_query = coll_query.filter(PropertyBilling.tax_year <= year_filter)
-        # Also apply data_start_year floor to collections
-        coll_query = coll_query.filter(PropertyBilling.tax_year >= str(data_start_year))
-
-        coll_results = coll_query.group_by(Property.barangay).all()
-
-        # Merge into a single dict keyed by barangay
-        data = {}
-        for r in due_results:
-            brgy = r[0] or "UNSPECIFIED"
-            data[brgy] = {
-                "barangay": brgy,
-                "total_assessed": float(r[1] or 0),
-                "total_due": float(r[2] or 0),
-                "total_penalty": float(r[3] or 0),
-                "total_discount": float(r[4] or 0),
-                "total_collected": 0.0,
-            }
-
-        for r in coll_results:
-            brgy = r[0] or "UNSPECIFIED"
-            if brgy not in data:
-                data[brgy] = {
-                    "barangay": brgy,
-                    "total_assessed": 0.0,
-                    "total_due": 0.0,
-                    "total_penalty": 0.0,
-                    "total_discount": 0.0,
-                    "total_collected": 0.0,
-                }
-            data[brgy]["total_collected"] = float(r[1] or 0)
-
-        # Build result tuples: (brgy, assessed, due, penalty, discount, collected, receivable)
-        results = []
-        for brgy, d in sorted(
-            data.items(),
-            key=lambda x: x[1]["total_due"]
-            - x[1]["total_discount"]
-            - x[1]["total_collected"],
-            reverse=True,
-        ):
-            # Correct formula: Total Due already has discount subtracted in the SQL
-            # (assessed*0.02 + penalty - discount), so receivable = total_due - collected
-            # BUT total_due in the query is: (assessed*0.02) + penalty - discount
-            # so discount is already baked in. The displayed "Total Discount" column
-            # is informational. Receivable = total_due - total_collected is correct.
-            # However the sort should use the same formula for consistency.
-            receivable = d["total_due"] - d["total_collected"]
-            results.append(
-                (
-                    brgy,
-                    d["total_assessed"],
-                    d["total_due"],
-                    d["total_penalty"],
-                    d["total_discount"],
-                    d["total_collected"],
-                    receivable,
-                )
+        return [
+            (
+                row[0],
+                *(
+                    float(value or 0)
+                    for value in row[1 : (8 if include_credits else 7)]
+                ),
             )
-
-        return results
-
+            for row in rows
+        ]
     finally:
         if close_session:
             db_session.close()

@@ -232,6 +232,11 @@ async def export_coa_rcd(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers=headers,
         )
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
     except Exception as e:
         db.rollback()
         import traceback

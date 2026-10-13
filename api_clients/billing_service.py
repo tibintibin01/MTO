@@ -112,6 +112,13 @@ def get_rpt_receivables_summary(year):
     return api_request("GET", "/billing/receivables-summary", params={"year": year})
 
 
+def get_receivables_report(year=None, *, diagnostics=False, full_details=False):
+    params = {"diagnostics": diagnostics, "full_details": full_details}
+    if year is not None:
+        params["year"] = year
+    return api_request("GET", "/billing/receivables-report", params=params)
+
+
 def get_reconciliation_metrics(year):
     return api_request("GET", "/billing/reconciliation-metrics", params={"year": year})
 

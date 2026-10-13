@@ -7,7 +7,6 @@ import shutil
 import os
 from theme_manager import ModernTheme
 import api_clients.billing_service as billing
-import api_clients.property_service as prop
 import api_clients.system_service as system
 import api_clients.reports_service as reports_api
 from ui_components import show_toast
@@ -20,6 +19,8 @@ class ReportsPage:
         self.parent = parent
         self.user = user
         self._last_reconciliation_payload = None
+        self._report_generations = {}
+        self._report_pending = set()
         self.setup_ui()
 
     def setup_ui(self):
@@ -90,20 +91,47 @@ class ReportsPage:
         except Exception:
             pass
 
+    def _start_report_request(self, kind):
+        generations = getattr(self, "_report_generations", {})
+        self._report_generations = generations
+        token = generations.get(kind, 0) + 1
+        generations[kind] = token
+        pending = getattr(self, "_report_pending", set())
+        self._report_pending = pending
+        pending.add((kind, token))
+        self._show_loading()
+        return token
+
+    def _post_report_result(self, kind, token, callback):
+        def apply():
+            if self._report_generations.get(kind) == token:
+                callback()
+        self.container.after(0, apply)
+
+    def _finish_report_request(self, kind, token):
+        self._report_pending.discard((kind, token))
+        if kind == "collection" and self._report_generations.get(kind) == token:
+            self._coll_loading = False
+        if not self._report_pending:
+            self._hide_loading()
+
     def _show_collection_error(self, error):
-        if not self.coll_tree.get_children():
-            self.coll_empty_state.show(
-                "Check the connection and generate the report again.",
-                title="Unable to load collections",
-            )
+        for item in self.coll_tree.get_children():
+            self.coll_tree.delete(item)
+        self._coll_has_more = False
+        self.coll_empty_state.show(
+            "No current results. Check the connection and generate the report again.",
+            title="Unable to load collections",
+        )
         messagebox.showerror("Error", str(error))
 
     def _show_barangay_error(self, error):
-        if not self.brgy_tree.get_children():
-            self.brgy_empty_state.show(
-                "Check the connection and refresh the report again.",
-                title="Unable to load barangay report",
-            )
+        for item in self.brgy_tree.get_children():
+            self.brgy_tree.delete(item)
+        self.brgy_empty_state.show(
+            "No current results. Check the connection and refresh the report again.",
+            title="Unable to load barangay report",
+        )
         messagebox.showerror("Error", str(error))
 
     @staticmethod
@@ -445,21 +473,23 @@ class ReportsPage:
             hover_color=ModernTheme.PRIMARY_HOVER,
         ).pack(side="left", padx=(0, 8), pady=10)
 
-        ctk.CTkButton(
+        self.brgy_export_pdf_btn = ctk.CTkButton(
             filter_fr,
             text="EXPORT PDF",
             command=self._export_brgy_pdf,
             width=125, height=34, font=ModernTheme.BUTTON_SMALL,
             fg_color=ModernTheme.DANGER,
-        ).pack(side="left", padx=(0, 8), pady=10)
+        )
+        self.brgy_export_pdf_btn.pack(side="left", padx=(0, 8), pady=10)
 
-        ctk.CTkButton(
+        self.brgy_export_excel_btn = ctk.CTkButton(
             filter_fr,
             text="EXPORT EXCEL",
             command=self._export_brgy_excel,
             width=135, height=34, font=ModernTheme.BUTTON_SMALL,
             fg_color=ModernTheme.SUCCESS,
-        ).pack(side="left", padx=(0, 12), pady=10)
+        )
+        self.brgy_export_excel_btn.pack(side="left", padx=(0, 12), pady=10)
 
         info_fr = ctk.CTkFrame(
             brgy_fr, fg_color=("#e0f2fe", "#132238"), corner_radius=8,
@@ -469,8 +499,9 @@ class ReportsPage:
         ctk.CTkLabel(
             info_fr,
             text=(
-                "Cumulative receivables include unpaid balances from prior years "
-                "carried forward into the selected year."
+                "Selected year: balances at December 31, matching the fiscal summary. "
+                "All available billing years are included; credits never offset another account's debt. "
+                "All Years includes all recorded payment dates."
             ),
             font=ModernTheme.BODY_SMALL,
             text_color=("#0369a1", "#7dd3fc"),
@@ -492,6 +523,7 @@ class ReportsPage:
             tr("reports.barangay.table.discount"),
             tr("reports.barangay.table.collected"),
             tr("reports.barangay.table.receivable"),
+            "Separate Credit",
         )
         tree_host = tk.Frame(t_container, bg="#0f172a", bd=0, highlightthickness=0)
         tree_host.pack(fill="both", expand=True, padx=1, pady=1)
@@ -629,21 +661,17 @@ class ReportsPage:
 
     def generate_reconciliation_report(self):
         year = self.recon_year_cb.get()
-        self._show_loading()
+        token = self._start_report_request("reconciliation")
 
         def worker():
             try:
-                summary = billing.get_rpt_receivables_summary(year)
-                metrics = billing.get_reconciliation_metrics(year)
-                diagnostics = billing.get_reconciliation_diagnostics(year, limit=25)
-                brgy_rows = prop.get_receivables_by_barangay(year=int(year))
-                self.container.after(0, lambda: self._update_reconciliation(summary, brgy_rows, metrics, diagnostics))
+                report = billing.get_receivables_report(year, diagnostics=True)
+                self._post_report_result("reconciliation", token, lambda: self._update_reconciliation(
+                    report["summary"], report["barangays"], report["metrics"], report["diagnostics"]))
             except Exception as e:
-                self.container.after(
-                    0, lambda err=e: self._show_reconciliation_error(err),
-                )
+                self._post_report_result("reconciliation", token, lambda err=e: self._show_reconciliation_error(err))
             finally:
-                self.container.after(0, self._hide_loading)
+                self.container.after(0, lambda: self._finish_report_request("reconciliation", token))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -707,10 +735,9 @@ class ReportsPage:
         equation_variance = total_collectible - (treasury_total + delinquency_total)
         tracker_variance = float(diagnostics.get("tracker_variance", tracker_total - expected_unpaid) or 0)
         raw_tracker_variance = float(diagnostics.get("raw_tracker_variance", tracker_variance) or 0)
-        variance = equation_variance if abs(equation_variance) > 1.0 else tracker_variance
+        variance = equation_variance if abs(equation_variance) > 0.005 else tracker_variance
         abs_variance = max(abs(equation_variance), abs(tracker_variance))
-        tolerance = 1.0
-        balanced = abs_variance <= tolerance
+        balanced = self._build_reconciliation_payload(data, brgy_rows, metrics, diagnostics)["balanced"]
         collection_rate = (treasury_total / total_collectible * 100) if total_collectible > 0 else 0
         delinquency_rate = (expected_unpaid / total_collectible * 100) if total_collectible > 0 else 0
 
@@ -793,7 +820,7 @@ class ReportsPage:
             "Collection data",
             ModernTheme.SUCCESS,
             (
-                ("Basic tax collected / credited", money(treasury.get("basic_tax_collected", 0)), ModernTheme.SUCCESS),
+                ("Basic principal applied / credited", money(treasury.get("basic_tax_collected", 0)), ModernTheme.SUCCESS),
                 ("Cash collected this fiscal year", money(cash_collected_this_year), "#f8fafc"),
                 ("Current-year tax prepaid before year", money(prepaid_current_year), "#38bdf8"),
                 ("Future prepayments excluded", money(future_year_prepayments), "#f59e0b"),
@@ -905,9 +932,9 @@ class ReportsPage:
         result.pack(fill="x", pady=(0, 14))
         result_text = "Balanced - ready for Accounting review" if balanced else "Needs review before submission"
         detail_text = (
-            "The accounting equation and RPT tracker agree within the system tolerance."
+            "Equation and tracker agree to the cent; no allocation or payment-sequence issues were detected."
             if balanced else
-            "Review the diagnostic rows before certification. Timing rows are usually advance or late-posted payments; link gaps and credit rows need data cleanup before Accounting/COA reporting."
+            "Review allocation and payment-sequence issues against receipt evidence. Timing differences and genuine credits can be legitimate. Do not delete or repair records just to make the report balance."
         )
         ctk.CTkLabel(result, text=result_text, font=("Inter", 14, "bold"), text_color=result_color).pack(anchor="w", padx=18, pady=(16, 4))
         ctk.CTkLabel(result, text=f"Variance: {money(variance)}", font=("Consolas", 18, "bold"), text_color=result_color).pack(anchor="w", padx=18)
@@ -1044,6 +1071,16 @@ class ReportsPage:
             diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), scope, item.get("amount", 0)))
         for item in take(diagnostics.get("payment_link_mismatches"), 8):
             diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("difference", 0)))
+        for item in take(diagnostics.get("receipt_allocation_mismatches"), 10):
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"),
+                              f"Payment {item.get('payment_id')} | Wrong-account links: {item.get('wrong_account_links', 0)}",
+                              item.get("difference", 0)))
+        for item in take(diagnostics.get("undated_billing_adjustments"), 10):
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"),
+                              "Recorded-charge basis requires evidence review", item.get("amount", 0)))
+        for item in take(diagnostics.get("receipts_without_dates"), 10):
+            diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"),
+                              "Date unavailable", item.get("amount", 0)))
         for item in take(diagnostics.get("overpaid_or_credit_rows"), 8):
             diag_rows.append((item.get("issue"), item.get("td_number"), item.get("tax_year"), item.get("barangay"), item.get("balance", 0)))
         for item in take(diagnostics.get("payment_sequence_gaps"), 20):
@@ -1103,8 +1140,16 @@ class ReportsPage:
         equation_variance = total_collectible - (treasury_total + delinquency_total)
         tracker_variance = float(diagnostics.get("tracker_variance", tracker_total - expected_unpaid) or 0)
         raw_tracker_variance = float(diagnostics.get("raw_tracker_variance", tracker_variance) or 0)
-        variance = equation_variance if abs(equation_variance) > 1.0 else tracker_variance
-        balanced = max(abs(equation_variance), abs(tracker_variance)) <= 1.0
+        variance = equation_variance if abs(equation_variance) > 0.005 else tracker_variance
+        link_issues = int(diagnostics.get("payment_link_issue_count",
+            len(diagnostics.get("payment_link_mismatches", [])) + len(diagnostics.get("unlinked_payments", []))
+            + len(diagnostics.get("receipt_allocation_mismatches", []))))
+        sequence_gaps = int(diagnostics.get("payment_sequence_gap_count", len(diagnostics.get("payment_sequence_gaps", []))))
+        cash_difference = float(treasury.get("cash_allocation_difference", 0) or 0)
+        undated_count = int(diagnostics.get("undated_adjustment_count", 0) or 0)
+        missing_date_count = int(diagnostics.get("missing_receipt_date_count", 0) or 0)
+        balanced = (max(abs(equation_variance), abs(tracker_variance), abs(cash_difference)) <= 0.005
+                    and link_issues == 0 and sequence_gaps == 0 and undated_count == 0 and missing_date_count == 0)
 
         top_barangays = []
         for row in sorted(brgy_rows, key=lambda item: float(item[6] or 0), reverse=True)[:20]:
@@ -1119,6 +1164,8 @@ class ReportsPage:
             "prepared_at": datetime.now().strftime("%Y-%m-%d %I:%M %p"),
             "status": "BALANCED" if balanced else "NEEDS REVIEW",
             "balanced": balanced,
+            "adjustment_basis": data.get("adjustment_basis", "Equal shares across linked billing rows (legacy convention)"),
+            "details_complete": diagnostics.get("details_complete", False),
             "assessor": {
                 "total_assessed_value": float(assessor.get("total_assessed_value", 0) or 0),
                 "basic_tax_rate": float(assessor.get("tax_rate_percent", 0) or 0),
@@ -1132,6 +1179,8 @@ class ReportsPage:
             "treasury": {
                 "basic_tax_collected": float(treasury.get("basic_tax_collected", 0) or 0),
                 "cash_collected_this_year": cash_collected_this_year,
+                "cash_allocation_difference": cash_difference,
+                "closed_account_cash_this_year": float(treasury.get("closed_account_cash_this_year", 0) or 0),
                 "calendar_applicable_collections": calendar_applicable_collections,
                 "prepaid_current_year": prepaid_current_year,
                 "future_year_prepayments": future_year_prepayments,
@@ -1160,8 +1209,10 @@ class ReportsPage:
                 "receivable_rate": (expected_unpaid / total_collectible * 100) if total_collectible > 0 else 0,
             },
             "diagnostic_counts": {
-                "payment_link_issues": len(diagnostics.get("payment_link_mismatches", [])) + len(diagnostics.get("unlinked_payments", [])),
-                "overpaid_credits": len(diagnostics.get("overpaid_or_credit_rows", [])),
+                "payment_link_issues": link_issues,
+                "overpaid_credits": int(diagnostics.get("overpaid_credit_count", len(diagnostics.get("overpaid_or_credit_rows", [])))),
+                "undated_adjustments": undated_count,
+                "missing_receipt_dates": missing_date_count,
                 "payment_year_gaps": int(diagnostics.get("payment_sequence_gap_count", len(diagnostics.get("payment_sequence_gaps", []))) or 0),
                 "timing_prepayment_groups": len(diagnostics.get("prior_year_collections", [])) + len(diagnostics.get("future_year_collections", [])) + len(diagnostics.get("current_year_paid_outside_selected_year", [])),
             },
@@ -1170,12 +1221,9 @@ class ReportsPage:
         }
 
     def _fetch_reconciliation_export_payload(self, year):
-        summary = billing.get_rpt_receivables_summary(year)
-        metrics = billing.get_reconciliation_metrics(year)
-        diagnostics = billing.get_reconciliation_diagnostics(year, limit=500)
-        brgy_rows = prop.get_receivables_by_barangay(year=int(year))
+        report = billing.get_receivables_report(year, diagnostics=True, full_details=True)
         return self._build_reconciliation_payload(
-            summary, brgy_rows, metrics, diagnostics, full_diagnostics=True
+            report["summary"], report["barangays"], report["metrics"], report["diagnostics"], full_diagnostics=True
         )
 
     def _export_reconciliation_excel(self):
@@ -1394,7 +1442,7 @@ class ReportsPage:
         for cell_range, title in section_headers:
             merge_label(ws, cell_range, title, fill_color=blue, size=10)
         sections = [
-            ("Total assessed value", payload["assessor"]["total_assessed_value"], "money", "Basic tax collected", payload["treasury"]["basic_tax_collected"], "money", "Prior-year receivables", payload["delinquency"]["prior_year_receivables"], "money"),
+            ("Total assessed value", payload["assessor"]["total_assessed_value"], "money", "Basic principal applied", payload["treasury"]["basic_tax_collected"], "money", "Prior-year receivables", payload["delinquency"]["prior_year_receivables"], "money"),
             ("Basic tax rate", payload["assessor"]["basic_tax_rate"] / 100, "percent", "Cash collected this year", payload["treasury"]["cash_collected_this_year"], "money", "Current year receivables", payload["delinquency"]["current_year_receivables"], "money"),
             ("Total RPT rate", payload["assessor"]["total_rpt_rate"] / 100, "percent", "Current-year prepayments", payload["treasury"]["prepaid_current_year"], "money", "Delinquent accounts", payload["delinquency"]["delinquent_accounts"], "number"),
             ("Taxable properties", payload["assessor"]["taxable_properties"], "number", "Future prepayments excluded", payload["treasury"]["future_year_prepayments"], "money", "Penalties and interest", payload["delinquency"]["penalties_interest"], "money"),
@@ -1445,7 +1493,8 @@ class ReportsPage:
         ])
         border_range(diag, "A8:H8")
         fill_range(diag, "A8:H8", pale_blue)
-        diag.append([])
+        diag.append(["Undated adjustments", payload["diagnostic_counts"].get("undated_adjustments", 0),
+                     "Missing receipt dates", payload["diagnostic_counts"].get("missing_receipt_dates", 0)])
         diag.append(["Issue", "TD / Group", "Year", "Barangay / Scope", "Amount"])
         for row in payload["diagnostic_rows"]:
             diag.append(list(row))
@@ -1526,15 +1575,23 @@ class ReportsPage:
                     if cell.font == Font():
                         cell.font = Font(name="Calibri", size=10, color=dark)
 
+        # This report contains computed values, not spreadsheet formulas.
+        # Preserve potentially hostile taxpayer strings as literal text.
+        for sheet in wb.worksheets:
+            for row in sheet.iter_rows():
+                for cell in row:
+                    if cell.data_type == "f":
+                        cell.data_type = "s"
         wb.save(dest)
         return dest
 
     def _write_reconciliation_pdf(self, payload, dest):
+        from xml.sax.saxutils import escape
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4, landscape
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import mm
-        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
         doc = SimpleDocTemplate(dest, pagesize=landscape(A4), rightMargin=12 * mm, leftMargin=12 * mm, topMargin=10 * mm, bottomMargin=10 * mm)
         styles = getSampleStyleSheet()
@@ -1548,12 +1605,13 @@ class ReportsPage:
         story = [
             Paragraph("INTER-DEPARTMENT RECONCILIATION WORKING PAPER", title_style),
             Paragraph(f"Fiscal Year {payload['year']} | Generated {payload['prepared_at']} | Status: <b>{payload['status']}</b>", small),
+            Paragraph(escape(payload.get("adjustment_basis", "Equal shares across linked billing rows (legacy convention)")), small),
             Spacer(1, 5),
         ]
 
         summary_rows = [
             ["Total Collectible (A)", money(payload["equation"]["total_collectible"]), "Collections / Credits (B)", money(payload["equation"]["collections"]), "Ending Receivable (C)", money(payload["equation"]["ending_receivable"])],
-            ["Equation", f"{money(payload['equation']['total_collectible'])} = {money(payload['equation']['collections'])} + {money(payload['equation']['ending_receivable'])}", "Variance", money(payload["equation"]["variance"]), "Review Status", payload["status"]],
+            ["Equation", Paragraph(escape(f"{money(payload['equation']['total_collectible'])} = {money(payload['equation']['collections'])} + {money(payload['equation']['ending_receivable'])}"), small), "Variance", money(payload["equation"]["variance"]), "Review Status", payload["status"]],
         ]
         story.append(Table(summary_rows, colWidths=[38 * mm, 42 * mm, 38 * mm, 42 * mm, 38 * mm, 42 * mm], style=TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e2e8f0")),
@@ -1567,10 +1625,11 @@ class ReportsPage:
         story.append(Paragraph("Department Data", header))
         department_rows = [
             ["Assessor's Office", "Value", "Treasurer's Office", "Value", "RPT Tracker", "Value"],
-            ["Total assessed value", money(payload["assessor"]["total_assessed_value"]), "Basic tax collected", money(payload["treasury"]["basic_tax_collected"]), "Prior-year receivables", money(payload["delinquency"]["prior_year_receivables"])],
+            ["Total assessed value", money(payload["assessor"]["total_assessed_value"]), "Basic principal applied", money(payload["treasury"]["basic_tax_collected"]), "Prior-year receivables", money(payload["delinquency"]["prior_year_receivables"])],
             ["Taxable properties", f"{payload['assessor']['taxable_properties']:,}", "Accounts paid", f"{payload['treasury']['accounts_paid']:,}", "Current year receivables", money(payload["delinquency"]["current_year_receivables"])],
             ["Current year levy", money(payload["assessor"]["current_levy"]), "Applied collections / credits", money(payload["treasury"]["total_collected"]), "Ending receivable", money(payload["delinquency"]["ending_receivable"])],
             ["Penalties / discounts", f"{money(payload['assessor']['current_penalty'])} / -{money(payload['assessor']['current_discount'])}", "Future prepayments excluded", money(payload["treasury"]["future_year_prepayments"]), "Delinquent accounts", f"{payload['delinquency']['delinquent_accounts']:,}"],
+            ["Ledger cash (all accounts)", money(payload["treasury"]["cash_collected_this_year"]), "Closed-account cash", money(payload["treasury"].get("closed_account_cash_this_year", 0)), "Cash/allocation difference", money(payload["treasury"].get("cash_allocation_difference", 0))],
         ]
         story.append(Table(department_rows, colWidths=[35 * mm, 42 * mm, 38 * mm, 42 * mm, 38 * mm, 42 * mm], repeatRows=1, style=TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e40af")),
@@ -1585,6 +1644,7 @@ class ReportsPage:
         diag_count_rows = [
             ["Payment link issues", payload["diagnostic_counts"]["payment_link_issues"], "Overpaid / credits", payload["diagnostic_counts"]["overpaid_credits"]],
             ["Payment-year gaps", payload["diagnostic_counts"]["payment_year_gaps"], "Timing / prepayment groups", payload["diagnostic_counts"]["timing_prepayment_groups"]],
+            ["Undated adjustments", payload["diagnostic_counts"].get("undated_adjustments", 0), "Missing receipt dates", payload["diagnostic_counts"].get("missing_receipt_dates", 0)],
         ]
         story.append(Table(diag_count_rows, colWidths=[58 * mm, 24 * mm, 58 * mm, 24 * mm], style=TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#94a3b8")),
@@ -1592,14 +1652,16 @@ class ReportsPage:
             ("FONTSIZE", (0, 0), (-1, -1), 8),
         ])))
         story.append(Spacer(1, 4))
+        if not payload.get("details_complete", False):
+            story.append(Paragraph("Diagnostic detail is sampled. Full issue counts may exceed the rows shown.", small))
 
         diag_rows = [["Issue", "TD / Group", "Year", "Barangay / Scope", "Amount"]]
-        for issue, td, tax_year, scope, amount in payload["diagnostic_rows"][:40]:
+        for issue, td, tax_year, scope, amount in payload["diagnostic_rows"]:
             diag_rows.append([
-                Paragraph(str(issue or ""), small),
-                str(td or ""),
+                Paragraph(escape(str(issue or "")), small),
+                Paragraph(escape(str(td or "")), small),
                 str(tax_year or ""),
-                Paragraph(str(scope or ""), small),
+                Paragraph(escape(str(scope or "")), small),
                 money(amount),
             ])
         story.append(Table(diag_rows, colWidths=[70 * mm, 32 * mm, 18 * mm, 70 * mm, 30 * mm], repeatRows=1, style=TableStyle([
@@ -1608,20 +1670,24 @@ class ReportsPage:
             ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#94a3b8")),
             ("FONTSIZE", (0, 0), (-1, -1), 7),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
         ])))
         story.append(Spacer(1, 8))
 
-        story.append(Paragraph("Certification", header))
         sign_rows = [
             ["Prepared by / Date", "", "Reviewed by / Date", "", "Noted by / Date", ""],
             ["", "", "", "", "", ""],
         ]
-        story.append(Table(sign_rows, colWidths=[35 * mm, 45 * mm, 35 * mm, 45 * mm, 35 * mm, 45 * mm], rowHeights=[8 * mm, 14 * mm], style=TableStyle([
+        story.append(KeepTogether([Paragraph("Prepared and reviewed", header), Table(sign_rows, colWidths=[35 * mm, 45 * mm, 35 * mm, 45 * mm, 35 * mm, 45 * mm], rowHeights=[8 * mm, 14 * mm], style=TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#94a3b8")),
             ("FONTSIZE", (0, 0), (-1, -1), 8),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ])))
-        doc.build(story)
+        ]))]))
+        def footer(canvas, document):
+            canvas.setFont("Helvetica", 8)
+            canvas.drawRightString(285 * mm, 5 * mm, f"Page {document.page}")
+        doc.build(story, onFirstPage=footer, onLaterPages=footer)
         return dest
 
     def generate_collection_report(self):
@@ -1635,7 +1701,9 @@ class ReportsPage:
         month = self.month_cb.get()
         year = self.year_cb.get()
         cursor = self._coll_cursors[self._coll_page]
-        self._show_loading()
+        token = self._start_report_request("collection")
+        self._coll_loading = True
+        page = self._coll_page
 
         def worker():
             try:
@@ -1644,23 +1712,25 @@ class ReportsPage:
                     limit=self._coll_page_size,
                     cursor=cursor,
                 )
-                self.container.after(0, lambda: self._update_coll_table(data))
+                def apply():
+                    if (month, year) == (self.month_cb.get(), self.year_cb.get()):
+                        self._coll_page = page
+                        self._update_coll_table(data)
+                self._post_report_result("collection", token, apply)
             except Exception as e:
-                self.container.after(
-                    0, lambda err=e: self._show_collection_error(err)
-                )
+                self._post_report_result("collection", token, lambda err=e: self._show_collection_error(err))
             finally:
-                self.container.after(0, self._hide_loading)
+                self.container.after(0, lambda: self._finish_report_request("collection", token))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _coll_next_page(self):
-        if self._coll_has_more:
+        if self._coll_has_more and not getattr(self, "_coll_loading", False):
             self._coll_page += 1
             self._coll_load_page()
 
     def _coll_prev_page(self):
-        if self._coll_page > 0:
+        if self._coll_page > 0 and not getattr(self, "_coll_loading", False):
             self._coll_page -= 1
             self._coll_load_page()
 
@@ -1727,21 +1797,18 @@ class ReportsPage:
 
     def generate_receivables_report(self):
         year = self.receiv_year_cb.get()
-        self._show_loading()
+        token = self._start_report_request("receivables")
 
         def worker():
             try:
-                data = billing.get_rpt_receivables_summary(year)
-                brgy_rows = prop.get_receivables_by_barangay(year=int(year))
-                self.container.after(0, lambda: self._update_receiv_summary(data, brgy_rows))
+                report = billing.get_receivables_report(year)
+                self._post_report_result("receivables", token, lambda: self._update_receiv_summary(report["summary"], report["barangays"]))
             except Exception as e:
-                self.container.after(
-                    0, lambda err=e: self._show_content_error(
+                self._post_report_result("receivables", token, lambda err=e: self._show_content_error(
                         self.receiv_content, err, "Unable to load receivables"
-                    ),
-                )
+                    ))
             finally:
-                self.container.after(0, self._hide_loading)
+                self.container.after(0, lambda: self._finish_report_request("receivables", token))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1764,6 +1831,8 @@ class ReportsPage:
         curr_penalty = float(data.get("current_year_penalty", 0))
         curr_discount = float(data.get("current_year_discount", 0))
         coll = float(data.get("collections", 0))
+        prepaid = float(data.get("prepaid_current_year", 0))
+        applied = coll + prepaid
         adj = float(data.get("adjustments", 0))
         end = float(data.get("ending_receivable", 0))
         year = data.get("report_year", "N/A")
@@ -1771,7 +1840,7 @@ class ReportsPage:
 
         # Collection efficiency = collections divided by collectible amount.
         total_target = beg + curr + adj
-        efficiency = (coll / total_target * 100) if total_target > 0 else 0
+        efficiency = (applied / total_target * 100) if total_target > 0 else 0
         uncollected_rate = (end / total_target * 100) if total_target > 0 else 0
 
         def money(value):
@@ -1821,7 +1890,7 @@ class ReportsPage:
         eff_color = ModernTheme.SUCCESS if efficiency >= 70 else ModernTheme.WARNING if efficiency >= 40 else ModernTheme.DANGER
         ctk.CTkLabel(
             header_fr,
-            text=f"Collection Efficiency: {efficiency:.1f}%",
+            text=f"Applied Cash/Credit Coverage: {efficiency:.1f}%",
             font=ModernTheme.H3,
             text_color=eff_color,
         ).pack(side="right")
@@ -1834,15 +1903,25 @@ class ReportsPage:
             corner_radius=8,
         )
         formula_fr.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(
+            self.receiv_content,
+            text="Current non-deleted registry; recorded charges, not a live SOA estimate. "
+                 + data.get("adjustment_basis", "Equal shares across linked billing years (legacy convention)."),
+            font=ModernTheme.BODY_SMALL, text_color=ModernTheme.TEXT_GRAY,
+            wraplength=900, justify="left",
+        ).pack(anchor="w", pady=(0, 8))
         formula = (
             f"{money(beg)} beginning + {money(curr_levy)} current levy "
             f"+ {money(curr_penalty)} penalties - {money(curr_discount)} discounts "
-            f"+ {money(adj)} adjustments - {money(coll)} collections = {money(end)} ending receivable"
+            f"+ {money(adj)} prior-year/credit movements - {money(coll)} cash applied "
+            f"- {money(prepaid)} prepaid credits = {money(end)} ending receivable"
         )
         ctk.CTkLabel(
             formula_fr,
             text=formula,
             font=("Inter", 12, "bold"),
+            wraplength=1100,
+            justify="left",
             text_color=("#1e293b", "#cbd5e1"),
         ).pack(anchor="w", padx=14, pady=10)
 
@@ -1854,10 +1933,10 @@ class ReportsPage:
         metric_card(grid, "Beginning Balance", beg, "#94a3b8", "Prior-year unpaid balance").grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 8))
         metric_card(grid, "Current Year Levy", curr_levy, ModernTheme.PRIMARY, "Assessed value x RPT rate").grid(row=0, column=1, sticky="nsew", padx=4, pady=(0, 8))
         metric_card(grid, "Net Current Collectible", curr, "#f59e0b", "Levy + penalties - discounts").grid(row=0, column=2, sticky="nsew", padx=(8, 0), pady=(0, 8))
-        metric_card(grid, "Collections", coll, ModernTheme.SUCCESS, f"{efficiency:.1f}% of collectible amount").grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(0, 8))
+        metric_card(grid, "Applied Cash / Credits", applied, ModernTheme.SUCCESS, f"Cash {money(coll)} + prepayments {money(prepaid)}").grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(0, 8))
         metric_card(grid, "Penalties / Interest", curr_penalty, "#f97316", "Shown separately from levy").grid(row=1, column=1, sticky="nsew", padx=4, pady=(0, 8))
         metric_card(grid, "Discounts", curr_discount, "#22c55e", "Deducted from collectible").grid(row=1, column=2, sticky="nsew", padx=(8, 0), pady=(0, 8))
-        metric_card(grid, "Adjustments", adj, "#a855f7", "Corrections and adjustments").grid(row=2, column=0, sticky="nsew", padx=(0, 8))
+        metric_card(grid, "Prior-Year / Credit Movements", adj, "#a855f7", f"Separate ending credit: {money(data.get('ending_credit', 0))}").grid(row=2, column=0, sticky="nsew", padx=(0, 8))
         metric_card(grid, "Total Collectible", total_target, "#f59e0b", "Beginning + net current + adjustments").grid(row=2, column=1, sticky="nsew", padx=4)
         metric_card(grid, "Ending Receivable", end, ModernTheme.DANGER, f"{uncollected_rate:.1f}% remains uncollected").grid(row=2, column=2, sticky="nsew", padx=(8, 0))
 
@@ -1887,7 +1966,7 @@ class ReportsPage:
         prog_bar.set(min(1.0, max(0.0, efficiency / 100)))
         prog_bar.configure(progress_color=eff_color)
 
-        remaining = max(0.0, total_target - coll)
+        remaining = max(0.0, total_target - applied)
         status_text = (
             "Healthy collection pace" if efficiency >= 70
             else "Needs collection follow-up" if efficiency >= 40
@@ -1902,7 +1981,7 @@ class ReportsPage:
         ).pack(anchor="w", padx=16, pady=(6, 4))
         ctk.CTkLabel(
             progress_fr,
-            text="Efficiency is collections divided by beginning receivable plus current assessment and adjustments.",
+            text="Coverage includes cash applied and prepaid credits. Separate credits do not settle another account's debt.",
             font=("Inter", 10),
             text_color=ModernTheme.TEXT_GRAY,
             wraplength=430,
@@ -1948,20 +2027,22 @@ class ReportsPage:
             )
 
     def generate_barangay_receivables(self):
-        self._show_loading()
         selected = self.brgy_year_cb.get()
-        year = None if selected == "All Years" else int(selected)
+        try:
+            year = None if selected == "All Years" else int(selected)
+        except ValueError:
+            messagebox.showerror("Invalid Year", "Select a fiscal year or All Years.")
+            return
+        token = self._start_report_request("barangay")
 
         def worker():
             try:
-                data = prop.get_receivables_by_barangay(year=year)
-                self.container.after(0, lambda: self._update_brgy_table(data, year))
+                report = billing.get_receivables_report(year)
+                self._post_report_result("barangay", token, lambda: self._update_brgy_table(report["barangays"], year))
             except Exception as e:
-                self.container.after(
-                    0, lambda err=e: self._show_barangay_error(err)
-                )
+                self._post_report_result("barangay", token, lambda err=e: self._show_barangay_error(err))
             finally:
-                self.container.after(0, self._hide_loading)
+                self.container.after(0, lambda: self._finish_report_request("barangay", token))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1969,7 +2050,7 @@ class ReportsPage:
         for item in self.brgy_tree.get_children():
             self.brgy_tree.delete(item)
 
-        year_label = f"Cumulative as of {year}" if year else "All-time totals"
+        year_label = f"Fiscal-year ending: December 31, {year}" if year else "All billing years / all recorded payment dates"
         self.brgy_year_lbl.configure(text=year_label)
 
         if not data:
@@ -1992,7 +2073,7 @@ class ReportsPage:
                 pass
 
             if len(f_row) >= 7:
-                for idx in range(1, 7):
+                for idx in range(1, len(f_row)):
                     f_row[idx] = format_curr(f_row[idx])
 
             tag = "evenrow" if i % 2 == 0 else "oddrow"
@@ -2000,6 +2081,7 @@ class ReportsPage:
 
         self.brgy_total_lbl.configure(
             text=tr("reports.barangay.total").replace("{value}", f"P {grand_total:,.2f}")
+                 + f"  |  Separate credits: P {sum(float(row[7] or 0) for row in data if len(row) > 7):,.2f}"
         )
 
     # ── Export helpers ────────────────────────────────────────────────────────
@@ -2072,52 +2154,38 @@ class ReportsPage:
 
     def _export_brgy_pdf(self):
         selected = self.brgy_year_cb.get()
-        year = None if selected == "All Years" else int(selected)
-        btn = None
-        # Walk the widget tree to find our PDF button
         try:
-            tab_children = self.barangay_tab.winfo_children()
-            for w in tab_children:
-                for w2 in w.winfo_children():
-                    for w3 in w2.winfo_children():
-                        if hasattr(w3, "cget") and "Export PDF" in str(w3.cget("text")):
-                            btn = w3
-        except Exception:
-            pass
-        if btn is None:
-            btn = ctk.CTkButton(self.barangay_tab, text="")
-
+            year = None if selected == "All Years" else int(selected)
+        except ValueError:
+            messagebox.showerror("Invalid Year", "Select a fiscal year or All Years.")
+            return
         self._export_with_feedback(
-            btn,
-            lambda: billing.download_receivables_by_barangay_pdf(year=year)
+            self.brgy_export_pdf_btn,
+            lambda: billing.download_receivables_by_barangay_pdf(year=year),
         )
 
     def _export_brgy_excel(self):
         selected = self.brgy_year_cb.get()
-        year_str = selected if selected != "All Years" else "All"
-        btn = None
-        try:
-            tab_children = self.barangay_tab.winfo_children()
-            for w in tab_children:
-                for w2 in w.winfo_children():
-                    for w3 in w2.winfo_children():
-                        if hasattr(w3, "cget") and "Export Excel" in str(w3.cget("text")):
-                            btn = w3
-        except Exception:
-            pass
-        if btn is None:
-            btn = ctk.CTkButton(self.barangay_tab, text="")
-
+        year = selected if selected != "All Years" else "All"
         self._export_with_feedback(
-            btn,
-            lambda: billing.export_report_excel("receivables_by_barangay", year=year_str),
+            self.brgy_export_excel_btn,
+            lambda: billing.export_report_excel("receivables_by_barangay", year=year),
         )
 
     def open_manage_deposits(self):
-        start_date, end_date = self.get_selected_date_range()
+        try:
+            start_date, end_date = self.get_selected_date_range()
+        except ValueError as error:
+            messagebox.showerror("Select Reporting Period", str(error))
+            return
         ManageDepositsModal(self.container, start_date, end_date)
 
     def open_export_signatories(self):
+        try:
+            self.get_selected_date_range()
+        except ValueError as error:
+            messagebox.showerror("Select Reporting Period", str(error))
+            return
         default_officer = self.user.get("full_name", "") if isinstance(self.user, dict) else ""
         SignatoriesModal(self.container, default_officer, self.export_coa_rcd)
 
@@ -2165,14 +2233,21 @@ class ReportsPage:
         year = self.year_cb.get()
         
         import calendar
-        now = datetime.now()
-        y = int(year) if year != "All" else now.year
+        if year == "All":
+            if month != "All":
+                raise ValueError("Select a year to export or manage deposits for a specific month.")
+            return "1000-01-01", "9999-12-31"
+        y = int(year)
+        if not 1900 <= y <= 2100:
+            raise ValueError("Select a valid year between 1900 and 2100.")
         
         if month == "All":
             start_date = f"{y}-01-01"
             end_date = f"{y}-12-31"
         else:
             m = int(month)
+            if not 1 <= m <= 12:
+                raise ValueError("Select a month from 01 to 12, or All.")
             _, last_day = calendar.monthrange(y, m)
             start_date = f"{y}-{m:02d}-01"
             end_date = f"{y}-{m:02d}-{last_day:02d}"
