@@ -6,9 +6,11 @@ tested as fail-closed functions extracted through the PowerShell parser.
 
 import json
 import hashlib
+import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -94,6 +96,60 @@ def test_script_parses_in_windows_powershell():
     result = invoke_functions("Write-Output 'PARSE PASS'")
     assert result.returncode == 0, result.stderr
     assert "PARSE PASS" in result.stdout
+
+
+@pytest.mark.skipif(os.name != "nt", reason="R4 uses Windows msvcrt byte-range locks")
+def test_activation_mutex_blocks_r4_publisher_and_releases_afterward(tmp_path):
+    (tmp_path / "owner.json").write_text(
+        json.dumps({"owner": "MTO_PORTAL_PUBLICATION_20261007"})
+    )
+    lock_path = tmp_path / "publisher.lock"
+    lock_path.write_bytes(b"0")
+    probe = """import msvcrt,sys
+with open(sys.argv[1],'r+b') as handle:
+    try:
+        msvcrt.locking(handle.fileno(),msvcrt.LK_NBLCK,1)
+    except OSError:
+        print('MUTEX:BLOCKED')
+    else:
+        msvcrt.locking(handle.fileno(),msvcrt.LK_UNLCK,1)
+        print('MUTEX:FREE')
+"""
+    result = invoke_functions(f"""
+        function Assert-NoLinkedPath {{param($Path)}}
+        function Assert-ProtectedEvidenceRoot {{param($Path)}}
+        $held=Enter-PortalPublisherMaintenanceLock {ps_literal(tmp_path)}
+        try {{ & {ps_literal(sys.executable)} -c {ps_literal(probe)} {ps_literal(lock_path)} }}
+        finally {{ $held.Unlock(0,1);$held.Dispose() }}
+        & {ps_literal(sys.executable)} -c {ps_literal(probe)} {ps_literal(lock_path)}
+    """)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("MUTEX:BLOCKED") == 1
+    assert result.stdout.count("MUTEX:FREE") == 1
+
+
+def test_activation_mutex_rejects_pending_evidence_and_checks_under_lock(tmp_path):
+    (tmp_path / "owner.json").write_text(
+        json.dumps({"owner": "MTO_PORTAL_PUBLICATION_20261007"})
+    )
+    (tmp_path / "publisher.lock").write_bytes(b"0")
+    (tmp_path / "pending.json").write_text("{}")
+    result = invoke_functions(f"""
+        function Assert-NoLinkedPath {{param($Path)}}
+        function Assert-ProtectedEvidenceRoot {{param($Path)}}
+        $held=Enter-PortalPublisherMaintenanceLock {ps_literal(tmp_path)}
+        Write-Output 'WRONG PASS'
+    """)
+    assert result.returncode != 0
+    assert "Pending portal publication requires review" in result.stderr
+    assert "WRONG PASS" not in result.stdout
+    text = SCRIPT.read_text(encoding="utf-8")
+    body = text.split("function Enter-PortalPublisherMaintenanceLock", 1)[1].split(
+        "function Invoke-PostChecks", 1
+    )[0]
+    assert body.index("$stream.Lock(0,1)") < body.index(
+        "Test-Path -LiteralPath $pendingPath"
+    )
 
 
 def test_workflow_sha256_matches_python_without_cmdlet_autoload(tmp_path):

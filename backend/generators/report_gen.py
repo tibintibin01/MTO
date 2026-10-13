@@ -144,7 +144,7 @@ def generate_receivables_by_barangay_pdf(rows, year_label, base_dir):
     Parameters
     ----------
     rows : list of list/tuple
-        Each row: [barangay, assessed, due, penalty, discount, collected, receivable]
+        Each row: [barangay, assessed, due, penalty, discount, collected, receivable, credit]
     year_label : str
         Human-readable year string, e.g. "2025" or "All Years"
     base_dir : str
@@ -160,18 +160,19 @@ def generate_receivables_by_barangay_pdf(rows, year_label, base_dir):
     file_name = f"Receivables_by_Barangay_{date_part}.pdf"
     output_path = os.path.join(out_dir, file_name)
 
-    width, height = A4
+    width, height = landscape(A4)
     margin_x = 15 * mm
-    c = canvas.Canvas(output_path, pagesize=A4)
+    c = canvas.Canvas(output_path, pagesize=landscape(A4))
 
     columns = [
         ("Barangay", 48 * mm),
-        ("Assessed\nValue", 26 * mm),
-        ("Total Due", 26 * mm),
-        ("Penalty", 22 * mm),
-        ("Discount", 22 * mm),
-        ("Collected", 26 * mm),
-        ("Total\nReceivable", 27 * mm),
+        ("Assessed\nValue", 32 * mm),
+        ("Total Due", 32 * mm),
+        ("Penalty", 26 * mm),
+        ("Discount", 26 * mm),
+        ("Applied Cash", 32 * mm),
+        ("Positive\nReceivable", 34 * mm),
+        ("Separate\nCredit", 32 * mm),
     ]
 
     def new_page():
@@ -181,7 +182,15 @@ def generate_receivables_by_barangay_pdf(rows, year_label, base_dir):
         sub_y = height - 47 * mm
         c.setFont("Helvetica", 9)
         c.setFillColor(_TEXT_GRAY)
-        c.drawString(margin_x, sub_y, f"Report Year: {year_label}")
+        c.drawString(
+            margin_x,
+            sub_y,
+            (
+                f"Fiscal-year ending: {year_label}"
+                if not str(year_label).startswith("All")
+                else "All billing years / all recorded payment dates"
+            ),
+        )
         generated = datetime.now(timezone.utc).strftime("%B %d, %Y — %I:%M %p UTC")
         c.drawRightString(width - margin_x, sub_y, f"Generated: {generated}")
         c.setStrokeColor(_BORDER)
@@ -192,6 +201,7 @@ def generate_receivables_by_barangay_pdf(rows, year_label, base_dir):
     cur_y = _draw_table_header_row(c, margin_x, cur_y, columns)
 
     grand_total = 0.0
+    grand_credit = 0.0
     for i, row in enumerate(rows or []):
         if cur_y < 30 * mm:
             c.showPage()
@@ -206,9 +216,11 @@ def generate_receivables_by_barangay_pdf(rows, year_label, base_dir):
             fmt_currency(row[4]),  # Discount
             fmt_currency(row[5]),  # Collected
             fmt_currency(row[6]),  # Receivable
+            fmt_currency(row[7] if len(row) > 7 else 0),
         ]
         try:
             grand_total += float(row[6] or 0)
+            grand_credit += float(row[7] or 0) if len(row) > 7 else 0
         except (TypeError, ValueError, IndexError):
             pass
 
@@ -218,7 +230,16 @@ def generate_receivables_by_barangay_pdf(rows, year_label, base_dir):
     if cur_y < 20 * mm:
         c.showPage()
         cur_y = new_page()
-    blank_vals = ["GRAND TOTAL", "", "", "", "", "", fmt_currency(grand_total)]
+    blank_vals = [
+        "GRAND TOTAL",
+        "",
+        "",
+        "",
+        "",
+        "",
+        fmt_currency(grand_total),
+        fmt_currency(grand_credit),
+    ]
     _draw_totals_row(c, margin_x, cur_y, columns, blank_vals)
 
     # Footer

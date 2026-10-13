@@ -1,6 +1,7 @@
 import os
 import asyncio
-from typing import Optional, List
+from typing import Optional, List, Literal
+from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
@@ -17,6 +18,10 @@ import backend.services.property_service as prop_svc
 import backend.services.system_service as sys_svc
 import backend.services.payment_service as pay_svc
 import backend.services.analytics_service as analytics
+from backend.services.report_payload_service import (
+    build_receivables_report,
+    report_read_session,
+)
 from backend.generators import (
     soa_gen,
     computation_gen,
@@ -65,6 +70,24 @@ def _fetch_all_assessment_roll_items(
         cursor = batch[-1][0]
 
     return items
+
+
+def _fetch_all_collection_items(db_session, month="All", year="All"):
+    items, cursor = [], None
+    with report_read_session(db_session) as report_db:
+        while True:
+            page = bill_svc.get_report_details(
+                month, year, limit=500, cursor=cursor, db_session=report_db
+            )
+            items.extend(page["items"])
+            if not page["has_more"]:
+                return items
+            next_cursor = page["next_cursor"]
+            if next_cursor is None or next_cursor == cursor:
+                raise ValueError(
+                    "Collection export stopped: pagination did not advance."
+                )
+            cursor = next_cursor
 
 
 @router.get("/billing/summary")
@@ -117,6 +140,22 @@ def get_receivables_summary(
     db_session: Session = Depends(get_db),
 ):
     return bill_svc.get_rpt_receivables_summary(year, db_session=db_session)
+
+
+@router.get("/billing/receivables-report")
+def get_receivables_report(
+    year: Optional[int] = Query(None, ge=1900, le=2100),
+    diagnostics: bool = False,
+    full_details: bool = False,
+    current_user: dict = Depends(read_only),
+    db_session: Session = Depends(get_db),
+):
+    try:
+        return build_receivables_report(
+            year, db_session, diagnostics=diagnostics, full_details=full_details
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.get("/billing/reconciliation-metrics")
@@ -274,7 +313,7 @@ async def export_receivables_by_barangay_pdf(
     Generates a print-ready PDF of the Receivables by Barangay report
     for the requested year (or all years when year is omitted).
     """
-    rows = prop_svc.get_receivables_by_barangay(report_year=year, db_session=db_session)
+    rows = build_receivables_report(year, db_session)["barangays"]
     if barangay and barangay != "ALL":
         rows = [r for r in rows if r[0] == barangay]
 
@@ -787,9 +826,13 @@ async def serve_analytics_dashboard():
 class ExportReportRequest(BaseModel):
     month: str = "All"
     year: str = "All"
-    report_type: str = (
-        "collections"  # collections | delinquents | assessment_roll | receivables
-    )
+    report_type: Literal[
+        "collections",
+        "delinquents",
+        "assessment_roll",
+        "receivables",
+        "receivables_by_barangay",
+    ] = "collections"  # collections | delinquents | assessment_roll | receivables
     barangay: Optional[str] = None
     year_start: Optional[int] = None
     year_end: Optional[int] = None
@@ -862,73 +905,65 @@ async def export_billing_excel(
         # ── Report: Collections ───────────────────────────────────────────────
         if data.report_type == "collections":
             ws.title = "Collections"
-            ws["A1"] = "MUNICIPAL TREASURY OFFICE — COLLECTION REPORT"
+            ws["A1"] = "MUNICIPAL TREASURY OFFICE - COLLECTION REGISTER"
             ws["A1"].font = title_font
-            ws["A2"] = f"Period: {data.month} / {data.year}    Generated: {date_str}"
+            ws["A2"] = (
+                f"Receipt-date period: {data.month} / {data.year}    Generated: {date_str}"
+            )
             ws["A2"].font = Font(italic=True, size=10)
-            ws.merge_cells("A1:I1")
-            ws.merge_cells("A2:I2")
-            ws["A1"].alignment = center_align
-            ws["A2"].alignment = center_align
-
+            ws.merge_cells("A1:H1")
+            ws.merge_cells("A2:H2")
+            ws["A3"] = (
+                "All recorded receipt accounts, including properties later removed from the registry."
+            )
+            ws.merge_cells("A3:H3")
+            ws["A3"].font = Font(italic=True, size=9)
             headers = [
+                "Date Paid",
+                "OR Number",
                 "TD Number",
                 "Owner Name",
-                "Barangay",
+                "Property Kind",
                 "Tax Year",
-                "OR Number",
-                "Date Paid",
-                "Basic",
-                "SEF",
-                "Total Paid",
+                "Cash Received",
+                "Posted By",
             ]
-            for col_idx, h in enumerate(headers, 1):
-                ws.cell(row=4, column=col_idx, value=h)
+            for col_idx, header in enumerate(headers, 1):
+                ws.cell(row=4, column=col_idx, value=header)
             style_header_row(ws, 4, len(headers))
+            rows = _fetch_all_collection_items(db_session, data.month, data.year)
+            total_paid = Decimal("0.00")
+            for row_idx, row in enumerate(rows, start=5):
+                values = list(row)
+                if len(values) != 8:
+                    raise ValueError(
+                        "Collection export stopped: unexpected row schema."
+                    )
+                values[6] = float(values[6] or 0)
+                if isinstance(values[0], str) and values[0]:
+                    from datetime import datetime as _datetime
 
-            rows = bill_svc.get_report_details(
-                data.month, data.year, limit=10000, cursor=None, db_session=db_session
-            )
-            if isinstance(rows, dict) and "items" in rows:
-                rows = rows["items"]
-
-            total_basic = total_sef = total_paid = 0.0
-            for row_idx, row in enumerate(rows or [], start=5):
-                if isinstance(row, dict):
-                    vals = [
-                        row.get("td_number", ""),
-                        row.get("owner_name", ""),
-                        row.get("barangay", ""),
-                        row.get("tax_year", ""),
-                        row.get("or_number", ""),
-                        row.get("date_paid", ""),
-                        float(row.get("basic_amount", 0) or 0),
-                        float(row.get("sef_amount", 0) or 0),
-                        float(row.get("amount_paid", 0) or 0),
-                    ]
-                else:
-                    vals = list(row) + [""] * max(0, 9 - len(row))
-
-                for col_idx, val in enumerate(vals, 1):
-                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                    values[0] = _datetime.fromisoformat(values[0])
+                for col_idx, value in enumerate(values, 1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=value)
                     cell.border = thin_border
-                    if col_idx >= 7:
+                    if isinstance(value, str):
+                        cell.data_type = "s"
+                    if col_idx == 1:
+                        cell.number_format = "yyyy-mm-dd"
+                    elif col_idx == 7:
                         cell.number_format = currency_fmt
                         cell.alignment = right_align
-
-                if len(vals) >= 9:
-                    total_basic += float(vals[6] or 0)
-                    total_sef += float(vals[7] or 0)
-                    total_paid += float(vals[8] or 0)
-
-            # Totals row
-            total_row = len(rows or []) + 5
-            ws.cell(row=total_row, column=6, value="TOTAL").font = Font(bold=True)
-            for col_idx, total in [(7, total_basic), (8, total_sef), (9, total_paid)]:
-                cell = ws.cell(row=total_row, column=col_idx, value=total)
-                cell.font = Font(bold=True)
-                cell.number_format = currency_fmt
-                cell.alignment = right_align
+                total_paid += Decimal(str(values[6]))
+            total_row = len(rows) + 5
+            ws.cell(row=total_row, column=6, value="TOTAL CASH RECEIVED").font = Font(
+                bold=True
+            )
+            cell = ws.cell(row=total_row, column=7, value=float(total_paid))
+            cell.font = Font(bold=True)
+            cell.number_format = currency_fmt
+            cell.alignment = right_align
+            ws.freeze_panes = "A5"
 
         # ── Report: Delinquents ───────────────────────────────────────────────
         elif data.report_type == "delinquents":
@@ -1011,9 +1046,14 @@ async def export_billing_excel(
             style_header_row(ws, 4, 2)
 
             # Single computation path — same service the on-screen view uses.
-            summary = bill_svc.get_rpt_receivables_summary(
-                data.year, db_session=db_session
+            summary = build_receivables_report(int(data.year), db_session)["summary"]
+            ws["A3"] = (
+                "Fiscal-year cutoff. Credits are separate; adjustments follow the linked-year equal-share convention."
             )
+            ws.merge_cells("A3:B3")
+            ws["A3"].font = Font(italic=True, size=9)
+            ws["A3"].alignment = Alignment(wrap_text=True)
+            ws.row_dimensions[3].height = 30
 
             line_items = [
                 (
@@ -1021,12 +1061,31 @@ async def export_billing_excel(
                     float(summary.get("beginning_receivable", 0) or 0),
                 ),
                 (
-                    "Current-Year Assessment",
+                    "Current-Year Charge (levy + penalty - discount)",
                     float(summary.get("current_year_assessment", 0) or 0),
                 ),
-                ("Collections", float(summary.get("collections", 0) or 0)),
-                ("Adjustments", float(summary.get("adjustments", 0) or 0)),
+                (
+                    "Less: Calendar-Year Collections Applied",
+                    float(summary.get("collections", 0) or 0),
+                ),
+                (
+                    "Less: Prepaid Credits Applied",
+                    float(summary.get("prepaid_current_year", 0) or 0),
+                ),
+                (
+                    "Prior-Year Penalty/Discount Movements",
+                    float(summary.get("prior_year_adjustments", 0) or 0),
+                ),
+                (
+                    "Credit Movement (separate from debt)",
+                    float(summary.get("credit_movement", 0) or 0),
+                ),
                 ("Ending Receivable", float(summary.get("ending_receivable", 0) or 0)),
+                (
+                    "Ending Credit (not netted against other accounts)",
+                    float(summary.get("ending_credit", 0) or 0),
+                ),
+                ("Equation Variance", float(summary.get("equation_variance", 0) or 0)),
             ]
 
             for offset, (label, amount) in enumerate(line_items):
@@ -1054,7 +1113,7 @@ async def export_billing_excel(
             )
             brgy_lbl = f"Barangay: {brgy_filter}" if brgy_filter else "All Barangays"
             ws["A2"] = (
-                f"As of Year: {data.year}  ·  {brgy_lbl}    Generated: {date_str}"
+                f"Fiscal-year ending: {data.year}  ·  {brgy_lbl}    Generated: {date_str}"
             )
             ws["A2"].font = Font(italic=True, size=10)
             ws.merge_cells("A1:G1")
@@ -1069,7 +1128,8 @@ async def export_billing_excel(
                 "Penalty",
                 "Discount",
                 "Collected",
-                "Total Receivable",
+                "Positive Receivable",
+                "Separate Credit",
             ]
             for col_idx, h in enumerate(headers, 1):
                 ws.cell(row=4, column=col_idx, value=h)
@@ -1080,9 +1140,7 @@ async def export_billing_excel(
                 if data.year == "All" or data.year == "All Years"
                 else int(data.year)
             )
-            rows = prop_svc.get_receivables_by_barangay(
-                report_year=y_val, db_session=db_session
-            )
+            rows = build_receivables_report(y_val, db_session)["barangays"]
 
             if brgy_filter:
                 rows = [r for r in rows if r[0] == brgy_filter]
@@ -1097,6 +1155,7 @@ async def export_billing_excel(
                     float(row[4] or 0),
                     float(row[5] or 0),
                     float(row[6] or 0),
+                    float(row[7] or 0),
                 ]
                 for col_idx, val in enumerate(vals, 1):
                     cell = ws.cell(row=row_idx, column=col_idx, value=val)
@@ -1113,6 +1172,13 @@ async def export_billing_excel(
             cell.font = Font(bold=True)
             cell.number_format = currency_fmt
             cell.alignment = right_align
+
+            credit_cell = ws.cell(
+                row=total_row, column=8, value=sum(float(row[7]) for row in rows)
+            )
+            credit_cell.font = Font(bold=True)
+            credit_cell.number_format = currency_fmt
+            ws.freeze_panes = "B5"
 
         # ── Report: Assessment Roll ───────────────────────────────────────────
         else:
@@ -1191,13 +1257,24 @@ async def export_billing_excel(
 
         auto_width(ws)
 
+        # This exporter writes values, not calculation formulas. Keep user
+        # strings (names, ORs, usernames) literal instead of executable cells.
+        for sheet in wb.worksheets:
+            for row in sheet.iter_rows():
+                for cell in row:
+                    if cell.data_type == "f":
+                        cell.data_type = "s"
+
         buf = io.BytesIO()
         wb.save(buf)
         buf.seek(0)
         return buf.read()
 
     # Run the CPU-bound workbook build in a thread to avoid blocking the event loop
-    excel_bytes = await asyncio.to_thread(_build_workbook)
+    try:
+        excel_bytes = await asyncio.to_thread(_build_workbook)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
     report_label = data.report_type.replace("_", "-")
     period_label = (

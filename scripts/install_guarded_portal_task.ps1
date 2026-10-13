@@ -1,7 +1,12 @@
 # Reapprove only the installed R4 transport for this immutable app release and
 # migrate the owned daily action to the same CLI used by the desktop job.
-param([Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{40}$')][string]$ExpectedCommit)
+param(
+    [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{40}$')][string]$ExpectedCommit,
+    [ValidateSet('v2.1.17','v2.1.18')][string]$ReleaseTag='v2.1.17',
+    [ValidatePattern('^$|^[a-f0-9]{40}$')][string]$PreviousCommit=''
+)
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
+$productVersion=$ReleaseTag.Substring(1)
 $project='C:\mto';$root='C:\ProgramData\MTO\portal-publication';$name='MTO Public Portal Publisher';$smokeName='MTO Public Portal App Bridge Smoke'
 $common='C:\ProgramData\MTO\release-tools\portal-publication-20261007-r4\publication_common.ps1'
 if((Get-FileHash -Algorithm SHA256 -LiteralPath $common).Hash -cne 'C44DF4A1F7C5D25967C980267CD4EF469D9AA87E4C0E81E459931884634BD46A'){throw 'Installed publication utility changed.'}
@@ -35,7 +40,29 @@ function Wait-Smoke {
     if(-not $done -or $info.LastTaskResult -ne 0){throw 'SYSTEM bridge publication blocked. Keep pending files, tasks and evidence.'}
     return $info
 }
-$statePath=Join-Path $root 'publisher-state.json';$markerPath=Join-Path $root 'schedule-state.json';$intentPath=Join-Path $root 'app-bridge-migration.json';$lock=$null
+function Assert-PreviousBridgeApproval {
+    param($State,$PriorIntent,[string]$BeforeCommit)
+    if($BeforeCommit -cnotmatch '^[a-f0-9]{40}$' -or
+        $State.approved_source_commit -cne $BeforeCommit -or
+        $State.approved_product_version -cne '2.1.17' -or
+        $State.approved_bridge_revision -cne 'app-guarded-publish-v1' -or
+        $PriorIntent.owner -cne 'MTO_PORTAL_PUBLICATION_20261007' -or
+        $PriorIntent.status -cne 'VERIFIED' -or $PriorIntent.expected_commit -cne $BeforeCommit){
+        throw 'Previous verified bridge approval does not match the required release.'
+    }
+}
+function Assert-MigrationIntent {
+    param($Intent,[string]$Owner,[string]$Commit,[string]$Tag,[string]$BeforeCommit)
+    if($Intent.owner -cne $Owner -or $Intent.expected_commit -cne $Commit -or
+        $Intent.status -cnotin @('IN_PROGRESS','VERIFIED')){throw 'Foreign migration intent exists.'}
+    if($Tag -ne 'v2.1.17' -and
+        ($Intent.release_tag -cne $Tag -or $Intent.previous_commit -cne $BeforeCommit)){
+        throw 'Release-specific migration intent does not match the approved transition.'
+    }
+}
+$statePath=Join-Path $root 'publisher-state.json';$markerPath=Join-Path $root 'schedule-state.json';$lock=$null
+$intentFile=if($ReleaseTag -eq 'v2.1.17'){'app-bridge-migration.json'}else{'app-bridge-migration-'+$ReleaseTag+'.json'}
+$intentPath=Join-Path $root $intentFile
 $oldExecute=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $oldArgs='-NoProfile -ExecutionPolicy Bypass -File "C:\ProgramData\MTO\release-tools\portal-publication-20261007-r4\Run-MTO-Portal-Publisher.ps1" -Scheduled'
 $newExecute='C:\mto\venv\Scripts\python.exe';$newArgs='-B -m scripts.publish_guarded_portal --mode scheduled'
@@ -47,7 +74,8 @@ try{
     $helper='C:\ProgramData\MTO\release-tools\portal-publication-20261007-r4\publish_portal_snapshot.py';Assert-NoLinkedPath $helper
     if((Get-WorkflowSha256 $helper) -cne 'A9626C2731BC5502A71EB680441F0A7A5A66E245344BE5179997061658FC5FCA'){throw 'Installed R4 transport changed.'}
     $head=(& git -C $project rev-parse HEAD);if($LASTEXITCODE -ne 0 -or $head.Trim() -cne $ExpectedCommit){throw 'Approved app source is not active.'}
-    $tag=(& git -C $project rev-parse 'refs/tags/v2.1.17^{commit}');if($LASTEXITCODE -ne 0 -or $tag.Trim() -cne $ExpectedCommit){throw 'Immutable app tag mismatch.'}
+    $tag=(& git -C $project rev-parse ('refs/tags/'+$ReleaseTag+'^{commit}'));if($LASTEXITCODE -ne 0 -or $tag.Trim() -cne $ExpectedCommit){throw 'Immutable app tag mismatch.'}
+    $version=(& $newExecute -B -c "import runpy; print(runpy.run_path('C:/mto/mto_version.py')['PRODUCT_VERSION'])");if($LASTEXITCODE -ne 0 -or $version.Trim() -cne $productVersion){throw 'Active product version mismatch.'}
     $dirty=(& git -C $project status --porcelain --untracked-files=all|Out-String).Trim();if($LASTEXITCODE -ne 0 -or $dirty){throw 'App source is not clean.'}
     $lockPath=Join-Path $root 'schedule-upgrade.lock';Assert-NoLinkedPath $lockPath
     $lock=[IO.File]::Open($lockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
@@ -56,28 +84,46 @@ try{
     $marker=Get-Content -LiteralPath $markerPath -Raw -Encoding UTF8|ConvertFrom-Json
     if($state.owner -ne 'MTO_PORTAL_PUBLICATION_20261007' -or $marker.owner -ne $state.owner -or $state.schedule_approved -ne $true -or $state.scheduled_tools_revision -ne '20261007-r4'){throw 'Verified R4 owner/approval missing.'}
     if($marker.status -ne 'INSTALLED' -or -not (($marker.executable -ceq $oldExecute -and $marker.arguments -ceq $oldArgs) -or ($marker.executable -ceq $newExecute -and $marker.arguments -ceq $newArgs))){throw 'Publisher schedule marker changed.'}
-    $intent=$null;if(Test-Path -LiteralPath $intentPath){$intent=Get-Content -LiteralPath $intentPath -Raw -Encoding UTF8|ConvertFrom-Json;if($intent.owner -ne $state.owner -or $intent.expected_commit -cne $ExpectedCommit){throw 'Foreign migration intent exists.'}}
+    if($ReleaseTag -eq 'v2.1.18' -and ($marker.executable -cne $newExecute -or $marker.arguments -cne $newArgs -or $marker.bridge_revision -cne 'app-guarded-publish-v1')){throw 'Previous app bridge schedule marker mismatch.'}
+    $intent=$null;if(Test-Path -LiteralPath $intentPath){$intent=Get-Content -LiteralPath $intentPath -Raw -Encoding UTF8|ConvertFrom-Json;Assert-MigrationIntent $intent $state.owner $ExpectedCommit $ReleaseTag $PreviousCommit}
     $task=Get-ScheduledTask -TaskName $name -TaskPath '\';$actual=@($task.Actions)[0]
-    if($actual.Execute -ceq $newExecute -and $actual.Arguments -ceq $newArgs){if(-not $intent){throw 'New action has no approved migration intent.'};Assert-TaskIdentity $task $newExecute $newArgs $true}
+    if($actual.Execute -ceq $newExecute -and $actual.Arguments -ceq $newArgs){
+        if(-not $intent){
+            if($ReleaseTag -ne 'v2.1.18'){throw 'New action has no approved migration intent.'}
+            $priorPath=Join-Path $root 'app-bridge-migration.json';Assert-NoLinkedPath $priorPath
+            $priorIntent=Get-Content -LiteralPath $priorPath -Raw -Encoding UTF8|ConvertFrom-Json
+            Assert-PreviousBridgeApproval $state $priorIntent $PreviousCommit
+            $priorTag=(& git -C $project rev-parse 'refs/tags/v2.1.17^{commit}');if($LASTEXITCODE -ne 0 -or $priorTag.Trim() -cne $PreviousCommit){throw 'Previous bridge tag mismatch.'}
+        }
+        Assert-TaskIdentity $task $newExecute $newArgs $true
+    }
     else{Assert-TaskIdentity $task $oldExecute $oldArgs $true}
+    if($ReleaseTag -eq 'v2.1.18' -and ($actual.Execute -cne $newExecute -or $actual.Arguments -cne $newArgs)){throw 'Reports release requires the previously verified app bridge action.'}
+    if($ReleaseTag -eq 'v2.1.18' -and $intent -and $intent.status -eq 'IN_PROGRESS'){
+        $priorPath=Join-Path $root 'app-bridge-migration.json';Assert-NoLinkedPath $priorPath
+        $priorIntent=Get-Content -LiteralPath $priorPath -Raw -Encoding UTF8|ConvertFrom-Json
+        if($state.approved_source_commit -ceq $PreviousCommit){Assert-PreviousBridgeApproval $state $priorIntent $PreviousCommit}
+        elseif($state.approved_source_commit -cne $ExpectedCommit -or $state.approved_product_version -cne $productVersion -or $state.approved_bridge_revision -cne 'app-guarded-publish-v1' -or $priorIntent.owner -cne $state.owner -or $priorIntent.status -cne 'VERIFIED' -or $priorIntent.expected_commit -cne $PreviousCommit){throw 'Interrupted reapproval state is inconsistent.'}
+    }
     if($intent -and $intent.status -eq 'VERIFIED'){
         Assert-TaskIdentity $task $newExecute $newArgs $true
-        if($marker.executable -cne $newExecute -or $marker.arguments -cne $newArgs -or $state.approved_source_commit -cne $ExpectedCommit -or $state.approved_product_version -ne '2.1.17' -or $state.approved_bridge_revision -ne 'app-guarded-publish-v1'){throw 'Completed bridge approval does not match current state.'}
+        if($marker.executable -cne $newExecute -or $marker.arguments -cne $newArgs -or $state.approved_source_commit -cne $ExpectedCommit -or $state.approved_product_version -cne $productVersion -or $state.approved_bridge_revision -ne 'app-guarded-publish-v1'){throw 'Completed bridge approval does not match current state.'}
         Write-Host 'APP PORTAL BRIDGE MIGRATION: ALREADY VERIFIED. No new activation or upload.';exit 0
     }
     if([string]$task.State -eq 'Running'){throw 'Daily publisher is running. Wait; it was not stopped.'}
-    Write-Host 'This approves only v2.1.17 source for the immutable R4 transport and migrates the owned daily publisher action.'
+    Write-Host "This approves only $ReleaseTag source for the immutable R4 transport and verifies the owned daily publisher action."
     Write-Host 'Four daily triggers, original tools/evidence, API, financial records, secrets, backup and operations tasks are preserved.'
-    if((Read-Host 'Type APPROVE APP PORTAL BRIDGE v2.1.17').Trim() -cne 'APPROVE APP PORTAL BRIDGE v2.1.17'){throw 'Source migration approval not supplied.'}
+    if((Read-Host "Type APPROVE APP PORTAL BRIDGE $ReleaseTag").Trim() -cne "APPROVE APP PORTAL BRIDGE $ReleaseTag"){throw 'Source migration approval not supplied.'}
     if(-not $intent){
-        $folder=Join-Path $root ('app-bridge-v2.1.17-'+[datetime]::UtcNow.ToString('yyyyMMddTHHmmssZ')+'-'+[guid]::NewGuid().ToString('N').Substring(0,8));Assert-NoLinkedPath $folder;New-Item -ItemType Directory -Path $folder|Out-Null
+        $folder=Join-Path $root ('app-bridge-'+$ReleaseTag+'-'+[datetime]::UtcNow.ToString('yyyyMMddTHHmmssZ')+'-'+[guid]::NewGuid().ToString('N').Substring(0,8));Assert-NoLinkedPath $folder;New-Item -ItemType Directory -Path $folder|Out-Null
         [IO.File]::Copy($statePath,(Join-Path $folder 'publisher-state-before.json'),$false);[IO.File]::Copy($markerPath,(Join-Path $folder 'schedule-state-before.json'),$false)
         [IO.File]::WriteAllText((Join-Path $folder 'publisher-before.xml'),(Export-ScheduledTask -TaskName $name -TaskPath '\'),(New-Object Text.UTF8Encoding($false)))
-        $intent=[pscustomobject]@{owner=$state.owner;expected_commit=$ExpectedCommit;status='IN_PROGRESS';approved_utc=[datetime]::UtcNow.ToString('o');evidence=$folder;smoke_owned=$false};Write-PublicationJson $intent $intentPath
+        $intent=[pscustomobject]@{owner=$state.owner;expected_commit=$ExpectedCommit;release_tag=$ReleaseTag;previous_commit=$PreviousCommit;status='IN_PROGRESS';approved_utc=[datetime]::UtcNow.ToString('o');evidence=$folder;smoke_owned=$false};Write-PublicationJson $intent $intentPath
     }
     $folder=[IO.Path]::GetFullPath($intent.evidence)
-    if((Split-Path -Parent $folder) -ne $root -or (Split-Path -Leaf $folder) -notmatch '^app-bridge-v2\.1\.17-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}$'){throw 'Migration evidence escaped its owned root.'};Assert-NoLinkedPath $folder
-    foreach($pair in @(@('approved_source_commit',$ExpectedCommit),@('approved_product_version','2.1.17'),@('approved_bridge_revision','app-guarded-publish-v1'))){$state|Add-Member -NotePropertyName $pair[0] -NotePropertyValue $pair[1] -Force};Write-PublicationJson $state $statePath
+    $folderPattern='^app-bridge-'+[regex]::Escape($ReleaseTag)+'-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}$'
+    if((Split-Path -Parent $folder) -ne $root -or (Split-Path -Leaf $folder) -notmatch $folderPattern){throw 'Migration evidence escaped its owned root.'};Assert-NoLinkedPath $folder
+    foreach($pair in @(@('approved_source_commit',$ExpectedCommit),@('approved_product_version',$productVersion),@('approved_bridge_revision','app-guarded-publish-v1'))){$state|Add-Member -NotePropertyName $pair[0] -NotePropertyValue $pair[1] -Force};Write-PublicationJson $state $statePath
     $smoke=Get-ScheduledTask -TaskName $smokeName -TaskPath '\' -ErrorAction SilentlyContinue
     if($smoke){if(-not $intent.smoke_owned){throw 'Foreign bridge smoke exists.'};Assert-TaskIdentity $smoke $newExecute $newArgs $false;if([string]$smoke.State -eq 'Running'){throw 'Owned smoke still running.'}}
     else{$intent.smoke_owned=$true;Write-PublicationJson $intent $intentPath;$action=New-ScheduledTaskAction -Execute $newExecute -Argument $newArgs -WorkingDirectory $project;$principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest;$settings=New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::FromMinutes(10));Register-ScheduledTask -TaskName $smokeName -TaskPath '\' -Action $action -Principal $principal -Settings $settings|Out-Null}
@@ -85,12 +131,12 @@ try{
     Assert-Receipt (Get-Content -LiteralPath $statePath -Raw -Encoding UTF8|ConvertFrom-Json) $started
     $task=Get-ScheduledTask -TaskName $name -TaskPath '\';if([string]$task.State -eq 'Running'){throw 'Daily task started concurrently; preserve evidence and recheck.'}
     if(@($task.Actions)[0].Execute -ceq $newExecute){Assert-TaskIdentity $task $newExecute $newArgs $true}else{Assert-TaskIdentity $task $oldExecute $oldArgs $true}
-    Set-ScheduledTask -TaskName $name -TaskPath '\' -Action (New-ScheduledTaskAction -Execute $newExecute -Argument $newArgs -WorkingDirectory $project)|Out-Null
+    if(@($task.Actions)[0].Execute -cne $newExecute -or @($task.Actions)[0].Arguments -cne $newArgs){Set-ScheduledTask -TaskName $name -TaskPath '\' -Action (New-ScheduledTaskAction -Execute $newExecute -Argument $newArgs -WorkingDirectory $project)|Out-Null}
     Assert-TaskIdentity (Get-ScheduledTask -TaskName $name -TaskPath '\') $newExecute $newArgs $true
     $before=(Get-ScheduledTaskInfo -TaskName $name -TaskPath '\').LastRunTime;$started=[datetime]::UtcNow;Start-ScheduledTask -TaskName $name -TaskPath '\';$info=Wait-Smoke $name $before
     Assert-Receipt (Get-Content -LiteralPath $statePath -Raw -Encoding UTF8|ConvertFrom-Json) $started
     $marker.executable=$newExecute;$marker.arguments=$newArgs;$marker|Add-Member -NotePropertyName bridge_revision -NotePropertyValue 'app-guarded-publish-v1' -Force;Write-PublicationJson $marker $markerPath
     $smoke=Get-ScheduledTask -TaskName $smokeName -TaskPath '\';Assert-TaskIdentity $smoke $newExecute $newArgs $false;if([string]$smoke.State -eq 'Running'){throw 'Smoke still running; not removed.'};Unregister-ScheduledTask -TaskName $smokeName -TaskPath '\' -Confirm:$false
     $intent.status='VERIFIED';Write-PublicationJson $intent $intentPath
-    [pscustomobject]@{Status='V2.1.17 APP PORTAL BRIDGE: SYSTEM-VERIFIED';SourceCommit=$ExpectedCommit;LastTaskResult=$info.LastTaskResult;FourDailyTriggersPreserved=$true;OriginalR4ToolsPreserved=$true;FinancialRecordsChanged=$false;OtherTasksChanged=$false;Evidence=$folder}|Format-List
+    [pscustomobject]@{Status=($ReleaseTag.ToUpperInvariant()+' APP PORTAL BRIDGE: SYSTEM-VERIFIED');SourceCommit=$ExpectedCommit;LastTaskResult=$info.LastTaskResult;FourDailyTriggersPreserved=$true;OriginalR4ToolsPreserved=$true;FinancialRecordsChanged=$false;OtherTasksChanged=$false;Evidence=$folder}|Format-List
 }catch{[Console]::Error.WriteLine('APP BRIDGE MIGRATION: BLOCKED - '+$_.Exception.Message);[Console]::Error.WriteLine('Keep pending files, tasks and evidence. No automatic rollback or financial repair was performed.');exit 2}finally{if($lock){$lock.Dispose()}}
