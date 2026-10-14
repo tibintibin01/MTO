@@ -33,6 +33,12 @@ from backend.routes import billing as routes
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "clients" / "desktop"))
 from ui.reports import ReportsPage
 import ui.reports as reports_ui
+from utils.report_labels import (
+    RECEIVABLES_COVERAGE_LABEL,
+    RECEIVABLES_COVERAGE_HELP,
+    RECORDED_CREDIT_BALANCE_LABEL,
+    RECORDED_CREDIT_BALANCE_HELP,
+)
 
 
 @pytest.fixture
@@ -381,7 +387,8 @@ def test_actual_barangay_export_keeps_credits_separate(db):
     receipt(db, prop, row, 2500, datetime(2026, 5, 1))
     sheet = asyncio.run(exported_workbook(db, "receivables_by_barangay")).active
     assert sheet["G4"].value == "Positive Receivable"
-    assert sheet["H4"].value == "Separate Credit"
+    assert sheet["H4"].value == RECORDED_CREDIT_BALANCE_LABEL
+    assert sheet["A3"].value == RECORDED_CREDIT_BALANCE_HELP
     assert sheet["G5"].value == sheet["G6"].value == 2000
     assert sheet["H5"].value == sheet["H6"].value == 500
 
@@ -532,7 +539,8 @@ def test_summary_screen_explains_prepaid_credits(db):
         page._update_receiv_summary(summary, [])
     equation = next(text for text in labels if "ending receivable" in text)
     assert "2,000.00 prepaid credits" in equation
-    assert any("Coverage: 100.0%" in text for text in labels)
+    assert any(f"{RECEIVABLES_COVERAGE_LABEL}: 100.0%" in text for text in labels)
+    assert RECEIVABLES_COVERAGE_HELP in labels
     assert not any("Remaining target: 2,000" in text for text in labels)
 
 

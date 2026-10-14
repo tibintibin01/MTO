@@ -4,6 +4,10 @@ from typing import Optional, List, Literal
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, RedirectResponse
+from utils.report_labels import (
+    RECORDED_CREDIT_BALANCE_LABEL,
+    RECORDED_CREDIT_BALANCE_HELP,
+)
 from pydantic import BaseModel, Field
 from backend.deps import (
     get_current_user,
@@ -1082,7 +1086,7 @@ async def export_billing_excel(
                 ),
                 ("Ending Receivable", float(summary.get("ending_receivable", 0) or 0)),
                 (
-                    "Ending Credit (not netted against other accounts)",
+                    f"{RECORDED_CREDIT_BALANCE_LABEL} (not netted against unpaid balances)",
                     float(summary.get("ending_credit", 0) or 0),
                 ),
                 ("Equation Variance", float(summary.get("equation_variance", 0) or 0)),
@@ -1129,7 +1133,7 @@ async def export_billing_excel(
                 "Discount",
                 "Collected",
                 "Positive Receivable",
-                "Separate Credit",
+                RECORDED_CREDIT_BALANCE_LABEL,
             ]
             for col_idx, h in enumerate(headers, 1):
                 ws.cell(row=4, column=col_idx, value=h)
@@ -1141,6 +1145,11 @@ async def export_billing_excel(
                 else int(data.year)
             )
             rows = build_receivables_report(y_val, db_session)["barangays"]
+            ws["A3"] = RECORDED_CREDIT_BALANCE_HELP
+            ws.merge_cells("A3:H3")
+            ws["A3"].font = Font(italic=True, size=9)
+            ws["A3"].alignment = Alignment(wrap_text=True, vertical="center")
+            ws.row_dimensions[3].height = 30
 
             if brgy_filter:
                 rows = [r for r in rows if r[0] == brgy_filter]

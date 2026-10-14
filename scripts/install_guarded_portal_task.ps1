@@ -2,7 +2,7 @@
 # migrate the owned daily action to the same CLI used by the desktop job.
 param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{40}$')][string]$ExpectedCommit,
-    [ValidateSet('v2.1.17','v2.1.18')][string]$ReleaseTag='v2.1.17',
+    [ValidateSet('v2.1.17','v2.1.18','v2.1.19')][string]$ReleaseTag='v2.1.17',
     [ValidatePattern('^$|^[a-f0-9]{40}$')][string]$PreviousCommit=''
 )
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
@@ -41,14 +41,33 @@ function Wait-Smoke {
     return $info
 }
 function Assert-PreviousBridgeApproval {
-    param($State,$PriorIntent,[string]$BeforeCommit)
+    param($State,$PriorIntent,[string]$BeforeCommit,[ValidateSet('2.1.17','2.1.18')][string]$BeforeVersion='2.1.17')
     if($BeforeCommit -cnotmatch '^[a-f0-9]{40}$' -or
         $State.approved_source_commit -cne $BeforeCommit -or
-        $State.approved_product_version -cne '2.1.17' -or
+        $State.approved_product_version -cne $BeforeVersion -or
         $State.approved_bridge_revision -cne 'app-guarded-publish-v1' -or
         $PriorIntent.owner -cne 'MTO_PORTAL_PUBLICATION_20261007' -or
         $PriorIntent.status -cne 'VERIFIED' -or $PriorIntent.expected_commit -cne $BeforeCommit){
         throw 'Previous verified bridge approval does not match the required release.'
+    }
+    if($BeforeVersion -eq '2.1.18' -and $PriorIntent.release_tag -cne 'v2.1.18'){
+        throw 'Previous verified bridge intent has the wrong release tag.'
+    }
+}
+function Get-PreviousBridgeReleaseTag {
+    param([ValidateSet('v2.1.17','v2.1.18','v2.1.19')][string]$Tag)
+    switch($Tag){'v2.1.17'{return ''};'v2.1.18'{return 'v2.1.17'};'v2.1.19'{return 'v2.1.18'}}
+}
+function Assert-InterruptedBridgeApproval {
+    param($State,$PriorIntent,[string]$BeforeCommit,[string]$BeforeVersion,[string]$Commit,[string]$Version)
+    if($State.approved_source_commit -ceq $BeforeCommit){Assert-PreviousBridgeApproval $State $PriorIntent $BeforeCommit $BeforeVersion;return}
+    if($BeforeCommit -cnotmatch '^[a-f0-9]{40}$' -or
+        $State.approved_source_commit -cne $Commit -or $State.approved_product_version -cne $Version -or
+        $State.approved_bridge_revision -cne 'app-guarded-publish-v1' -or
+        $PriorIntent.owner -cne 'MTO_PORTAL_PUBLICATION_20261007' -or $PriorIntent.status -cne 'VERIFIED' -or
+        $PriorIntent.expected_commit -cne $BeforeCommit -or
+        ($BeforeVersion -eq '2.1.18' -and $PriorIntent.release_tag -cne 'v2.1.18')){
+        throw 'Interrupted reapproval state is inconsistent.'
     }
 }
 function Assert-MigrationIntent {
@@ -63,6 +82,9 @@ function Assert-MigrationIntent {
 $statePath=Join-Path $root 'publisher-state.json';$markerPath=Join-Path $root 'schedule-state.json';$lock=$null
 $intentFile=if($ReleaseTag -eq 'v2.1.17'){'app-bridge-migration.json'}else{'app-bridge-migration-'+$ReleaseTag+'.json'}
 $intentPath=Join-Path $root $intentFile
+$previousReleaseTag=Get-PreviousBridgeReleaseTag $ReleaseTag
+$previousVersion=if($previousReleaseTag){$previousReleaseTag.Substring(1)}else{''}
+$priorIntentFile=if($previousReleaseTag -eq 'v2.1.17'){'app-bridge-migration.json'}else{'app-bridge-migration-'+$previousReleaseTag+'.json'}
 $oldExecute=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $oldArgs='-NoProfile -ExecutionPolicy Bypass -File "C:\ProgramData\MTO\release-tools\portal-publication-20261007-r4\Run-MTO-Portal-Publisher.ps1" -Scheduled'
 $newExecute='C:\mto\venv\Scripts\python.exe';$newArgs='-B -m scripts.publish_guarded_portal --mode scheduled'
@@ -84,26 +106,27 @@ try{
     $marker=Get-Content -LiteralPath $markerPath -Raw -Encoding UTF8|ConvertFrom-Json
     if($state.owner -ne 'MTO_PORTAL_PUBLICATION_20261007' -or $marker.owner -ne $state.owner -or $state.schedule_approved -ne $true -or $state.scheduled_tools_revision -ne '20261007-r4'){throw 'Verified R4 owner/approval missing.'}
     if($marker.status -ne 'INSTALLED' -or -not (($marker.executable -ceq $oldExecute -and $marker.arguments -ceq $oldArgs) -or ($marker.executable -ceq $newExecute -and $marker.arguments -ceq $newArgs))){throw 'Publisher schedule marker changed.'}
-    if($ReleaseTag -eq 'v2.1.18' -and ($marker.executable -cne $newExecute -or $marker.arguments -cne $newArgs -or $marker.bridge_revision -cne 'app-guarded-publish-v1')){throw 'Previous app bridge schedule marker mismatch.'}
+    if($previousReleaseTag -and ($marker.executable -cne $newExecute -or $marker.arguments -cne $newArgs -or $marker.bridge_revision -cne 'app-guarded-publish-v1')){throw 'Previous app bridge schedule marker mismatch.'}
+    if($previousReleaseTag){
+        $priorTag=(& git -C $project rev-parse ('refs/tags/'+$previousReleaseTag+'^{commit}'));if($LASTEXITCODE -ne 0 -or $priorTag.Trim() -cne $PreviousCommit){throw 'Previous bridge tag mismatch.'}
+    }
     $intent=$null;if(Test-Path -LiteralPath $intentPath){$intent=Get-Content -LiteralPath $intentPath -Raw -Encoding UTF8|ConvertFrom-Json;Assert-MigrationIntent $intent $state.owner $ExpectedCommit $ReleaseTag $PreviousCommit}
     $task=Get-ScheduledTask -TaskName $name -TaskPath '\';$actual=@($task.Actions)[0]
     if($actual.Execute -ceq $newExecute -and $actual.Arguments -ceq $newArgs){
         if(-not $intent){
-            if($ReleaseTag -ne 'v2.1.18'){throw 'New action has no approved migration intent.'}
-            $priorPath=Join-Path $root 'app-bridge-migration.json';Assert-NoLinkedPath $priorPath
+            if(-not $previousReleaseTag){throw 'New action has no approved migration intent.'}
+            $priorPath=Join-Path $root $priorIntentFile;Assert-NoLinkedPath $priorPath
             $priorIntent=Get-Content -LiteralPath $priorPath -Raw -Encoding UTF8|ConvertFrom-Json
-            Assert-PreviousBridgeApproval $state $priorIntent $PreviousCommit
-            $priorTag=(& git -C $project rev-parse 'refs/tags/v2.1.17^{commit}');if($LASTEXITCODE -ne 0 -or $priorTag.Trim() -cne $PreviousCommit){throw 'Previous bridge tag mismatch.'}
+            Assert-PreviousBridgeApproval $state $priorIntent $PreviousCommit $previousVersion
         }
         Assert-TaskIdentity $task $newExecute $newArgs $true
     }
     else{Assert-TaskIdentity $task $oldExecute $oldArgs $true}
-    if($ReleaseTag -eq 'v2.1.18' -and ($actual.Execute -cne $newExecute -or $actual.Arguments -cne $newArgs)){throw 'Reports release requires the previously verified app bridge action.'}
-    if($ReleaseTag -eq 'v2.1.18' -and $intent -and $intent.status -eq 'IN_PROGRESS'){
-        $priorPath=Join-Path $root 'app-bridge-migration.json';Assert-NoLinkedPath $priorPath
+    if($previousReleaseTag -and ($actual.Execute -cne $newExecute -or $actual.Arguments -cne $newArgs)){throw 'Reports release requires the previously verified app bridge action.'}
+    if($previousReleaseTag -and $intent -and $intent.status -eq 'IN_PROGRESS'){
+        $priorPath=Join-Path $root $priorIntentFile;Assert-NoLinkedPath $priorPath
         $priorIntent=Get-Content -LiteralPath $priorPath -Raw -Encoding UTF8|ConvertFrom-Json
-        if($state.approved_source_commit -ceq $PreviousCommit){Assert-PreviousBridgeApproval $state $priorIntent $PreviousCommit}
-        elseif($state.approved_source_commit -cne $ExpectedCommit -or $state.approved_product_version -cne $productVersion -or $state.approved_bridge_revision -cne 'app-guarded-publish-v1' -or $priorIntent.owner -cne $state.owner -or $priorIntent.status -cne 'VERIFIED' -or $priorIntent.expected_commit -cne $PreviousCommit){throw 'Interrupted reapproval state is inconsistent.'}
+        Assert-InterruptedBridgeApproval $state $priorIntent $PreviousCommit $previousVersion $ExpectedCommit $productVersion
     }
     if($intent -and $intent.status -eq 'VERIFIED'){
         Assert-TaskIdentity $task $newExecute $newArgs $true

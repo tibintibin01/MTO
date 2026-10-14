@@ -192,7 +192,7 @@ def test_reports_reapproval_preserves_old_intent_and_does_not_rewrite_unchanged_
 
 def test_reports_workflow_reapproves_before_checks_and_serializes_source_activation():
     text = (SCRIPT.parent / "run_release_workflow.ps1").read_text(encoding="utf-8")
-    assert "@('v2.1.17','v2.1.18')" in text
+    assert "@('v2.1.17','v2.1.18','v2.1.19')" in text
     assert "'-ReleaseTag',$ReleaseTag,'-PreviousCommit',$PreviousCommit" in text
     assert text.index(
         "$portalActivationLock=Enter-PortalPublisherMaintenanceLock"
@@ -200,3 +200,97 @@ def test_reports_workflow_reapproves_before_checks_and_serializes_source_activat
         "'System32\\WindowsPowerShell\\v1.0\\powershell.exe') $updaterArguments"
     )
     assert "$portalActivationLock.Unlock(0,1);$portalActivationLock.Dispose()" in text
+
+
+@pytest.mark.parametrize(
+    "tag,previous", [("v2.1.17", ""), ("v2.1.18", "v2.1.17"), ("v2.1.19", "v2.1.18")]
+)
+def test_bridge_transition_requires_the_immediate_supported_predecessor(tag, previous):
+    result = functions(f"Get-PreviousBridgeReleaseTag '{tag}'")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == previous
+
+
+def test_unreviewed_future_bridge_transition_is_rejected():
+    result = functions(
+        "Get-PreviousBridgeReleaseTag 'v2.1.20';Write-Output 'WRONG PASS'"
+    )
+    assert result.returncode != 0
+    assert "WRONG PASS" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "case", ["valid", "version", "tag", "commit", "owner", "status", "empty"]
+)
+def test_hotfix_requires_verified_v218_approval_and_release_specific_intent(case):
+    before = "a" * 40
+    state = {
+        "approved_source_commit": before,
+        "approved_product_version": "2.1.18",
+        "approved_bridge_revision": "app-guarded-publish-v1",
+    }
+    intent = {
+        "owner": "MTO_PORTAL_PUBLICATION_20261007",
+        "status": "VERIFIED",
+        "expected_commit": before,
+        "release_tag": "v2.1.18",
+    }
+    if case == "version":
+        state["approved_product_version"] = "2.1.17"
+    elif case == "tag":
+        intent["release_tag"] = "v2.1.17"
+    elif case == "commit":
+        intent["expected_commit"] = "b" * 40
+    elif case == "owner":
+        intent["owner"] = "FOREIGN"
+    elif case == "status":
+        intent["status"] = "IN_PROGRESS"
+    elif case == "empty":
+        before = ""
+    result = functions(
+        f"$s='{json.dumps(state)}'|ConvertFrom-Json;"
+        f"$i='{json.dumps(intent)}'|ConvertFrom-Json;"
+        f"Assert-PreviousBridgeApproval $s $i '{before}' '2.1.18'"
+    )
+    assert (result.returncode == 0) == (case == "valid"), result.stderr
+
+
+@pytest.mark.parametrize(
+    "case", ["old", "new", "foreign", "version", "prior_tag", "prior_status"]
+)
+def test_hotfix_interrupted_reapproval_accepts_only_old_or_approved_new_state(case):
+    before, after = "a" * 40, "b" * 40
+    state = {
+        "approved_source_commit": before if case == "old" else after,
+        "approved_product_version": "2.1.18" if case == "old" else "2.1.19",
+        "approved_bridge_revision": "app-guarded-publish-v1",
+    }
+    intent = {
+        "owner": "MTO_PORTAL_PUBLICATION_20261007",
+        "status": "VERIFIED",
+        "expected_commit": before,
+        "release_tag": "v2.1.18",
+    }
+    if case == "foreign":
+        state["approved_source_commit"] = "c" * 40
+    elif case == "version":
+        state["approved_product_version"] = "2.1.18"
+    elif case == "prior_tag":
+        intent["release_tag"] = "v2.1.17"
+    elif case == "prior_status":
+        intent["status"] = "IN_PROGRESS"
+    result = functions(
+        f"$s='{json.dumps(state)}'|ConvertFrom-Json;"
+        f"$i='{json.dumps(intent)}'|ConvertFrom-Json;"
+        f"Assert-InterruptedBridgeApproval $s $i '{before}' '2.1.18' '{after}' '2.1.19'"
+    )
+    assert (result.returncode == 0) == (case in {"old", "new"}), result.stderr
+
+
+def test_hotfix_prior_tag_is_checked_before_new_or_resumed_approval():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "'refs/tags/'+$previousReleaseTag+'^{commit}'" in text
+    assert text.index("Previous bridge tag mismatch") < text.index("$intent=$null")
+    assert "$priorPath=Join-Path $root $priorIntentFile" in text
+    assert "Assert-InterruptedBridgeApproval $state $priorIntent" in text
+    assert "Write-PublicationJson $priorIntent" not in text
