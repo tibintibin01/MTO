@@ -1,4 +1,4 @@
-# Reports workspace redesign (local implementation)
+# Reports workspace redesign — v2.1.20
 
 This builds on the completed v2.1.19 Reports hotfix. It is not a new deployed
 release or production certification. The immutable v2.1.19 package, workflow
@@ -60,9 +60,12 @@ Exports preserve their existing format and financial calculation. They reread
 the selected period and can include postings made after the screen capture.
 Excel/PDF remain format-specific. No office data was used in development tests.
 
-Public push, PR, merge, version bump, packaging and deployment still require
-separate explicit approval for this redesign. Do not re-activate v2.1.19 to apply
-it. A future release must use a fresh backup, the existing guarded updater,
+The human approved publishing this redesign's source, creating its PR, merging
+after checks, and preparing a new internal release on October 14, 2026. This is
+not approval to activate the office server now. Do not re-activate v2.1.19 to
+apply it. v2.1.20 requires the verified v2.1.19 source/publisher approval and uses
+its own release-specific intent while preserving historical evidence. It must
+use a fresh backup, the existing guarded updater,
 automated financial invariants, a genuine client Reports/credit/export pilot,
 restore/operations evidence and final certification. Copy, never Cut, installer
 artifacts from the server's immutable distribution folder.

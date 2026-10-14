@@ -88,6 +88,8 @@ a = Analysis(
         'ui.rate_limiting',
         'ui.recycle',
         'ui.reports',
+        'ui.report_credit_accounts',
+        'ui.report_workspace_state',
         'ui.status_bar',
         'ui.system_admin',
         'ui.system_health',
