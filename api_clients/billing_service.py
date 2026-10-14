@@ -92,10 +92,25 @@ def get_assessment_roll():
     return api_request("GET", "/billing/assessment-roll")
 
 
-def get_report_details(month="All", year="All", limit=100, cursor=None):
+def get_report_details(
+    month="All",
+    year="All",
+    limit=100,
+    cursor=None,
+    *,
+    search="",
+    anchor=None,
+    order="newest",
+):
     params = {"month": month, "year": year, "limit": limit}
     if cursor is not None:
         params["cursor"] = cursor
+    if search:
+        params["search"] = search
+    if anchor is not None:
+        params["anchor"] = anchor
+    if order != "newest":
+        params["order"] = order
     result = api_request("GET", "/billing/report-details", params=params)
     # Return the full paginated dict so the UI can read next_cursor / has_more.
     # Fallback to a wrapped list for any legacy response shape.
@@ -106,6 +121,31 @@ def get_report_details(month="All", year="All", limit=100, cursor=None):
         "has_more": False,
         "next_cursor": None,
     }
+
+
+def get_credit_accounts(
+    year=None, *, barangay=None, search="", limit=100, offset=0, expected_signature=None
+):
+    params = {"search": search, "limit": limit, "offset": offset}
+    for key, value in {
+        "year": year,
+        "barangay": barangay,
+        "expected_signature": expected_signature,
+    }.items():
+        if value is not None:
+            params[key] = value
+    return api_request("GET", "/billing/credit-accounts", params=params)
+
+
+def get_credit_account_ledger(property_id, year=None, *, expected_signature=None):
+    params = {}
+    if year is not None:
+        params["year"] = year
+    if expected_signature:
+        params["expected_signature"] = expected_signature
+    return api_request(
+        "GET", f"/billing/credit-accounts/{int(property_id)}/ledger", params=params
+    )
 
 
 def get_rpt_receivables_summary(year):

@@ -25,6 +25,12 @@ import backend.services.analytics_service as analytics
 from backend.services.report_payload_service import (
     build_receivables_report,
     report_read_session,
+    build_collection_report,
+)
+from backend.services.report_credit_service import (
+    build_credit_accounts_report,
+    build_credit_account_ledger,
+    CreditScopeChanged,
 )
 from backend.generators import (
     soa_gen,
@@ -77,12 +83,19 @@ def _fetch_all_assessment_roll_items(
 
 
 def _fetch_all_collection_items(db_session, month="All", year="All"):
-    items, cursor = [], None
+    items, cursor, anchor = [], None, None
     with report_read_session(db_session) as report_db:
         while True:
             page = bill_svc.get_report_details(
-                month, year, limit=500, cursor=cursor, db_session=report_db
+                month,
+                year,
+                limit=500,
+                cursor=cursor,
+                db_session=report_db,
+                anchor=anchor,
+                include_totals=False,
             )
+            anchor = page.get("anchor", anchor)
             items.extend(page["items"])
             if not page["has_more"]:
                 return items
@@ -129,12 +142,72 @@ def get_report_details(
     year: str = "All",
     limit: int = 200,
     cursor: Optional[int] = None,
+    search: str = Query("", max_length=100),
+    anchor: Optional[int] = Query(None, ge=0),
+    order: Literal["newest", "oldest"] = "newest",
     current_user: dict = Depends(get_current_user),
     db_session: Session = Depends(get_db),
 ):
-    return bill_svc.get_report_details(
-        month, year, limit=limit, cursor=cursor, db_session=db_session
-    )
+    try:
+        if month != "All" and not 1 <= int(month) <= 12:
+            raise ValueError("Select a month between 1 and 12 or All.")
+        if year != "All" and not 1900 <= int(year) <= 2100:
+            raise ValueError("Select a year between 1900 and 2100 or All.")
+        return build_collection_report(
+            month,
+            year,
+            db_session,
+            limit=limit,
+            cursor=cursor,
+            search=search,
+            anchor=anchor,
+            order=order,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.get("/billing/credit-accounts")
+def get_credit_accounts(
+    year: Optional[int] = Query(None, ge=1900, le=2100),
+    barangay: Optional[str] = Query(None, max_length=150),
+    search: str = Query("", max_length=100),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    expected_signature: Optional[str] = Query(None, min_length=64, max_length=64),
+    current_user: dict = Depends(read_only),
+    db_session: Session = Depends(get_db),
+):
+    try:
+        return build_credit_accounts_report(
+            year,
+            db_session,
+            barangay=barangay,
+            search=search,
+            limit=limit,
+            offset=offset,
+            expected_signature=expected_signature,
+        )
+    except CreditScopeChanged as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.get("/billing/credit-accounts/{property_id}/ledger")
+def get_credit_account_ledger(
+    property_id: int,
+    year: Optional[int] = Query(None, ge=1900, le=2100),
+    expected_signature: Optional[str] = Query(None, min_length=64, max_length=64),
+    current_user: dict = Depends(read_only),
+    db_session: Session = Depends(get_db),
+):
+    try:
+        return build_credit_account_ledger(
+            property_id, year, db_session, expected_signature
+        )
+    except CreditScopeChanged as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.get("/billing/receivables-summary")

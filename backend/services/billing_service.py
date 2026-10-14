@@ -1684,8 +1684,15 @@ def get_report_details(
     limit=200,
     cursor=None,
     db_session: Session = None,
+    *,
+    search="",
+    anchor=None,
+    order="newest",
+    include_totals=True,
 ):
     safe_limit = min(max(1, int(limit)), 500)
+    if order not in ("newest", "oldest"):
+        raise ValueError("Choose newest or oldest posted receipt order.")
 
     query = db_session.query(
         Payment.id,
@@ -1703,10 +1710,36 @@ def get_report_details(
         query = query.filter(month_of(Payment.date_paid) == int(selected_month))
     if selected_year != "All":
         query = query.filter(year_of(Payment.date_paid) == int(selected_year))
+    search = str(search or "").strip()
+    if len(search) > 100:
+        raise ValueError("Search is limited to 100 characters.")
+    if search:
+        query = query.filter(
+            or_(
+                Payment.or_number.contains(search, autoescape=True),
+                Property.td_number.contains(search, autoescape=True),
+                Property.owner_name.contains(search, autoescape=True),
+            )
+        )
+    if anchor is None:
+        anchor = query.with_entities(func.max(Payment.id)).scalar() or 0
+    query = query.filter(Payment.id <= int(anchor))
+    totals = {}
+    if include_totals:
+        total_count, cash_total = query.with_entities(
+            func.count(Payment.id), func.coalesce(func.sum(Payment.amount), 0)
+        ).one()
+        totals = {"total_count": total_count, "cash_total": str(cash_total)}
     if cursor:
-        query = query.filter(Payment.id < int(cursor))
+        query = query.filter(
+            Payment.id < int(cursor) if order == "newest" else Payment.id > int(cursor)
+        )
 
-    rows = query.order_by(Payment.id.desc()).limit(safe_limit + 1).all()
+    rows = (
+        query.order_by(Payment.id.desc() if order == "newest" else Payment.id.asc())
+        .limit(safe_limit + 1)
+        .all()
+    )
 
     has_more = len(rows) > safe_limit
     items = rows[:safe_limit]
@@ -1717,6 +1750,12 @@ def get_report_details(
         "next_cursor": next_cursor,
         "has_more": has_more,
         "count": len(items),
+        **totals,
+        "anchor": anchor,
+        "month": selected_month,
+        "year": selected_year,
+        "search": search,
+        "order": order,
         "scope": "All recorded receipt accounts, including closed registry accounts",
     }
 

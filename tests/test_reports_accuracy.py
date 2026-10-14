@@ -534,6 +534,7 @@ def test_summary_screen_explains_prepaid_credits(db):
         patch.object(reports_ui.ctk, "CTkFrame", return_value=MagicMock()),
         patch.object(reports_ui.ctk, "CTkLabel", side_effect=label),
         patch.object(reports_ui.ctk, "CTkProgressBar", return_value=MagicMock()),
+        patch.object(reports_ui.ctk, "CTkButton", return_value=MagicMock()),
         patch.object(reports_ui.ttk, "Treeview", return_value=MagicMock()),
     ):
         page._update_receiv_summary(summary, [])

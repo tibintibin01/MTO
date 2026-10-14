@@ -11,6 +11,7 @@ import api_clients.system_service as system
 import api_clients.reports_service as reports_api
 from ui_components import show_toast
 from ui.empty_state import EmptyTableState, show_empty_content
+from ui.report_workspace_state import ReportViewState, period_label, captured_time_label
 from utils import format_curr, tr
 from utils.report_labels import (
     RECEIVABLES_COVERAGE_LABEL,
@@ -53,6 +54,9 @@ class ReportsPage:
         self._last_reconciliation_payload = None
         self._report_generations = {}
         self._report_pending = set()
+        self._workspace_states = {}
+        self._workspace_labels = {}
+        self._workspace_exports = {}
         self.setup_ui()
 
     def setup_ui(self):
@@ -81,7 +85,7 @@ class ReportsPage:
             border_width=0,
             fg_color="transparent",
             segmented_button_fg_color="#334155",
-            segmented_button_selected_color=ModernTheme.PRIMARY,
+            segmented_button_selected_color=ModernTheme.PRIMARY_SURFACE,
             segmented_button_selected_hover_color="#0284c7",
             segmented_button_unselected_color="#334155",
             segmented_button_unselected_hover_color="#475569",
@@ -96,18 +100,185 @@ class ReportsPage:
 
         # Keep all report destinations visually balanced and comfortably clickable.
         self.tabview._segmented_button.configure(
-            width=1040,
+            width=760,
             height=42,
             corner_radius=6,
             border_width=1,
             font=("Inter", 12, "bold"),
             dynamic_resizing=False,
         )
+        self.container.bind("<Configure>", self._fit_report_navigation)
 
         self.setup_collection_tab()
         self.setup_receivables_tab()
         self.setup_barangay_tab()
         self.setup_reconciliation_tab()
+
+    def _fit_report_navigation(self, event):
+        width = max(300, int(event.width / self.tabview._get_widget_scaling()) - 20)
+        button = self.tabview._segmented_button
+        if button.cget("width") != width:
+            button.configure(width=width)
+
+    @staticmethod
+    def _wrap_report_label(label, width, minimum=120):
+        target = max(minimum, int(width / label._get_widget_scaling()))
+        if label.cget("wraplength") != target:
+            label.configure(wraplength=target)
+
+    def _selected_filters(self, kind):
+        if kind == "collection":
+            search = self.coll_search.get().strip() if hasattr(self, "coll_search") else ""
+            order = self.coll_order_cb.get() if hasattr(self, "coll_order_cb") else "Newest posted"
+            return (self.month_cb.get(), self.year_cb.get(), search, order)
+        widget = getattr(self, {"receivables": "receiv_year_cb", "barangay": "brgy_year_cb",
+                  "reconciliation": "recon_year_cb"}[kind])
+        return (widget.get(),)
+
+    def _workspace_register(self, kind, parent, widgets, exports):
+        state = ReportViewState(selected=self._selected_filters(kind))
+        self._workspace_states[kind] = state
+        self._workspace_exports[kind] = exports
+        label = ctk.CTkLabel(parent, text="", anchor="w", justify="left",
+                             font=ModernTheme.BODY_SMALL, wraplength=900)
+        label.pack(fill="x", pady=(0, 10))
+        label.bind("<Configure>", lambda e: self._wrap_report_label(label, e.width))
+        self._workspace_labels[kind] = label
+        for widget in widgets:
+            variable = tk.StringVar(value=widget.get())
+            if isinstance(widget, ctk.CTkComboBox):
+                widget.configure(variable=variable)
+            else:
+                widget.configure(textvariable=variable)
+            variable.trace_add("write", lambda *args, k=kind: self._workspace_filters_changed(k))
+            widget._workspace_variable = variable
+        self._sync_workspace(kind)
+
+    def _workspace_filters_changed(self, kind):
+        state = self._workspace_states[kind]
+        filters = self._selected_filters(kind)
+        if filters != state.selected:
+            self._report_generations[kind] = self._report_generations.get(kind, 0) + 1
+            state.select(filters)
+            if kind == "collection":
+                self._coll_loading = False
+                self._coll_prev_btn.configure(state="disabled")
+                self._coll_next_btn.configure(state="disabled")
+        self._sync_workspace(kind)
+
+    def _sync_workspace(self, kind):
+        state = getattr(self, "_workspace_states", {}).get(kind)
+        if state is None:
+            return
+        descriptions = {
+            "ready": "Ready · Select filters, then generate the report.",
+            "loading": "Loading · Reading a consistent report snapshot…",
+            "empty": "No matches · Try another reporting period or search.",
+            "error": "Unable to load · Check the connection, then try again.",
+            "changed": "Filters changed · Refresh required. Figures below still belong to the loaded period.",
+            "loaded": "Loaded",
+        }
+        text = descriptions[state.status]
+        if state.loaded:
+            text += "\n" + period_label(kind, state.loaded)
+            if state.captured_at:
+                text += " · Captured " + captured_time_label(state.captured_at)
+        self._workspace_labels[kind].configure(text=text, text_color=("#92400e", "#fbbf24") if state.status in ("changed", "error") else (ModernTheme.TEXT_SUB_LIGHT, ModernTheme.TEXT_SUB_DARK))
+        for button in self._workspace_exports[kind]:
+            if not getattr(button, "_workspace_export_busy", False):
+                valid = state.can_export and not (kind == "collection" and state.selected[2])
+                button.configure(state="normal" if valid else "disabled")
+
+    def _workspace_accept(self, kind, report, render, has_rows=True):
+        state = getattr(self, "_workspace_states", {}).get(kind)
+        if state is not None:
+            if not state.accept(state.selected, report, has_rows=has_rows):
+                return
+        render()
+        self._sync_workspace(kind)
+
+    def _workspace_fail(self, kind):
+        state = getattr(self, "_workspace_states", {}).get(kind)
+        if state is not None:
+            state.fail()
+            self._sync_workspace(kind)
+
+    def _workspace_export_allowed(self, kind):
+        state = getattr(self, "_workspace_states", {}).get(kind)
+        if state is None:
+            return True  # Legacy test/view callers without workspace controls.
+        if state.selected != self._selected_filters(kind) or not state.can_export or (kind == "collection" and state.selected[2]):
+            messagebox.showinfo("Refresh required", "Load the report for the selected filters before exporting.")
+            return False
+        return True
+
+    def _view_credit_accounts(self, kind, barangay=None):
+        state = self._workspace_states.get(kind)
+        if not state or not state.can_export or not state.payload.get("credit_scope"):
+            messagebox.showinfo("Refresh required", "Load the report before reviewing credit accounts.")
+            return
+        from ui.report_credit_accounts import CreditAccountsWindow
+        year = state.payload.get("report_year")
+        self._configure_report_tree_style("CreditReport.Treeview")
+        CreditAccountsWindow(self.container, year, state.payload["credit_scope"], barangay)
+
+    def _selected_barangay_credits(self):
+        selection = self.brgy_tree.selection()
+        if not selection:
+            messagebox.showinfo("Select a barangay", "Select a barangay row to review its credit accounts.")
+            return
+        values = self.brgy_tree.item(selection[0], "values")
+        self._view_credit_accounts("barangay", values[0])
+
+    def _sort_barangays(self, column):
+        rows = getattr(self, "_brgy_rows", [])
+        self._brgy_sort_reverse = not getattr(self, "_brgy_sort_reverse", False)
+        ordered = sorted(rows, key=lambda row: str(row[0]).casefold() if column == 0 else float(row[column] or 0), reverse=self._brgy_sort_reverse)
+        self._update_brgy_table(ordered, getattr(self, "_brgy_loaded_year", None))
+
+    def _toggle_barangay_columns(self):
+        self._brgy_all_columns = not self._brgy_all_columns
+        cols = self._brgy_columns
+        self.brgy_tree.configure(displaycolumns=cols if self._brgy_all_columns else (cols[0], cols[2], cols[5], cols[6], cols[7]))
+        self.brgy_columns_btn.configure(text="Key columns" if self._brgy_all_columns else "Show all columns")
+
+    @staticmethod
+    def _metric_cards(parent, entries):
+        grid = ctk.CTkFrame(parent, fg_color="transparent")
+        grid.pack(fill="x", pady=(0, 12))
+        grid.grid_columnconfigure((0, 1, 2), weight=1, uniform="report_metrics")
+        labels = []
+        for column, (title, value, subtitle) in enumerate(entries):
+            card = ctk.CTkFrame(grid, corner_radius=10, border_width=1,
+                                fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK),
+                                border_color=(ModernTheme.BORDER_LIGHT, ModernTheme.BORDER_DARK))
+            card.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 4, 0 if column == 2 else 4))
+            ctk.CTkLabel(card, text=title, anchor="w", font=ModernTheme.BODY_SMALL).pack(fill="x", padx=12, pady=(12, 4))
+            label = ctk.CTkLabel(card, text=value, anchor="w", font=("Inter", 20, "bold"))
+            label.pack(fill="x", padx=12)
+            sub = ctk.CTkLabel(card, text=subtitle, anchor="w", justify="left", font=ModernTheme.BODY_SMALL, wraplength=230)
+            sub.pack(fill="x", padx=12, pady=(4, 12))
+            sub.bind("<Configure>", lambda e, w=sub: ReportsPage._wrap_report_label(w, e.width))
+            labels.append(label)
+        return labels
+
+    @staticmethod
+    def _disclosure_frame(parent, title):
+        wrapper = ctk.CTkFrame(parent, fg_color="transparent")
+        wrapper.pack(fill="x", pady=(0, 12))
+        body = ctk.CTkFrame(wrapper, fg_color="transparent")
+        def toggle():
+            if body.winfo_manager():
+                body.pack_forget()
+                button.configure(text="+ " + title)
+            else:
+                body.pack(fill="x", pady=(10, 0))
+                button.configure(text="− " + title)
+        button = ctk.CTkButton(wrapper, text="+ " + title, command=toggle,
+                               anchor="w", fg_color=ModernTheme.PRIMARY_SURFACE,
+                               hover_color=ModernTheme.PRIMARY_SURFACE_HOVER)
+        button.pack(fill="x")
+        return body
 
     def _show_loading(self):
         try:
@@ -131,14 +302,27 @@ class ReportsPage:
         pending = getattr(self, "_report_pending", set())
         self._report_pending = pending
         pending.add((kind, token))
+        state = getattr(self, "_workspace_states", {}).get(kind)
+        if state is not None:
+            state.begin(self._selected_filters(kind))
+            self._sync_workspace(kind)
         self._show_loading()
         return token
 
     def _post_report_result(self, kind, token, callback):
         def apply():
-            if self._report_generations.get(kind) == token:
+            if self._report_generations.get(kind) == token and getattr(self.container, "winfo_exists", lambda: True)():
                 callback()
-        self.container.after(0, apply)
+        try:
+            self.container.after(0, apply)
+        except (tk.TclError, RuntimeError):
+            pass  # Page closed while the read-only request was in flight.
+
+    def _schedule_report_finish(self, kind, token):
+        try:
+            self.container.after(0, lambda: self._finish_report_request(kind, token))
+        except (tk.TclError, RuntimeError):
+            self._report_pending.discard((kind, token))
 
     def _finish_report_request(self, kind, token):
         self._report_pending.discard((kind, token))
@@ -148,6 +332,14 @@ class ReportsPage:
             self._hide_loading()
 
     def _show_collection_error(self, error):
+        self._workspace_fail("collection")
+        for label in getattr(self, "coll_metrics", []):
+            label.configure(text="—")
+        for name in ("_coll_prev_btn", "_coll_next_btn"):
+            if hasattr(self, name):
+                getattr(self, name).configure(state="disabled")
+        if hasattr(self, "_coll_page_lbl"):
+            self._coll_page_lbl.configure(text="Unavailable")
         for item in self.coll_tree.get_children():
             self.coll_tree.delete(item)
         self._coll_has_more = False
@@ -158,6 +350,10 @@ class ReportsPage:
         messagebox.showerror("Error", str(error))
 
     def _show_barangay_error(self, error):
+        self._workspace_fail("barangay")
+        if hasattr(self, "brgy_year_lbl"):
+            self.brgy_year_lbl.configure(text="No current report")
+            self.brgy_total_lbl.configure(text="Totals unavailable")
         for item in self.brgy_tree.get_children():
             self.brgy_tree.delete(item)
         self.brgy_empty_state.show(
@@ -174,6 +370,7 @@ class ReportsPage:
         messagebox.showerror("Error", str(error))
 
     def _show_reconciliation_error(self, error):
+        self._workspace_fail("reconciliation")
         self._last_reconciliation_payload = None
         self.recon_export_excel_btn.configure(state="disabled")
         self.recon_export_pdf_btn.configure(state="disabled")
@@ -248,6 +445,8 @@ class ReportsPage:
                 arrowcolor="#cbd5e1",
                 relief="flat",
             )
+        if ctk.get_appearance_mode() == "Light":
+            style.configure(style_name, background="#ffffff", fieldbackground="#ffffff", foreground="#1e293b")
 
     def setup_collection_tab(self):
         collection_fr = ctk.CTkFrame(self.collection_tab, fg_color="transparent")
@@ -302,25 +501,50 @@ class ReportsPage:
         ctk.CTkButton(
             filter_fr, text=tr("reports.collection.btn_generate"),
             command=self.generate_collection_report,
-            font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.PRIMARY,
-            hover_color=ModernTheme.PRIMARY_HOVER, height=34, width=110,
+            font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.PRIMARY_SURFACE,
+            hover_color=ModernTheme.PRIMARY_SURFACE_HOVER, height=34, width=110,
         ).pack(side="left", padx=(0, 8), pady=10)
 
+        actions_fr = ctk.CTkFrame(collection_fr, fg_color="transparent")
+        actions_fr.pack(fill="x", pady=(0, 10))
+        search_fr = ctk.CTkFrame(actions_fr, fg_color="transparent")
+        search_fr.grid(row=0, column=0, sticky="w")
+        utility_fr = ctk.CTkFrame(actions_fr, fg_color="transparent")
+        utility_fr.grid(row=0, column=1, sticky="e")
+        actions_fr.grid_columnconfigure(0, weight=1)
+        def fit_actions(event):
+            narrow = event.width / actions_fr._get_widget_scaling() < 700
+            if getattr(actions_fr, "_workspace_narrow", None) != narrow:
+                actions_fr._workspace_narrow = narrow
+                utility_fr.grid(row=1 if narrow else 0, column=0 if narrow else 1, sticky="e", pady=(8, 0) if narrow else 0)
+        actions_fr.bind("<Configure>", fit_actions)
+        self.coll_search = ctk.CTkEntry(search_fr, placeholder_text="Search OR, TD or owner", width=210, height=34)
+        self.coll_search.pack(side="left", padx=(0, 8))
+        self._bind_enter(self.coll_search, self.generate_collection_report)
+        self.coll_order_cb = ctk.CTkComboBox(search_fr, values=["Newest posted", "Oldest posted"], width=120, height=34, state="readonly")
+        self.coll_order_cb.set("Newest posted")
+        self.coll_order_cb.pack(side="left")
+        self._bind_enter(self.coll_order_cb, self.generate_collection_report)
+
         self.manage_dep_btn = ctk.CTkButton(
-            filter_fr, text="MANAGE DEPOSITS", command=self.open_manage_deposits,
+            utility_fr, text="MANAGE DEPOSITS", command=self.open_manage_deposits,
             font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.SECONDARY,
             hover_color=ModernTheme.SECONDARY_HOVER, height=34, width=150,
         )
-        self.manage_dep_btn.pack(side="left", padx=(0, 8), pady=10)
+        self.manage_dep_btn.pack(side="right", padx=(8, 0))
 
         self.export_rcd_btn = ctk.CTkButton(
-            filter_fr, text="EXPORT COA RCD", command=self.open_export_signatories,
+            utility_fr, text="EXPORT COA RCD", command=self.open_export_signatories,
             font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.WARNING,
             height=34, width=150,
         )
         role = str(self.user.get("role", "")).strip().lower() if isinstance(self.user, dict) else ""
         if role == "admin":
-            self.export_rcd_btn.pack(side="left", padx=(0, 12), pady=10)
+            self.export_rcd_btn.pack(side="right", padx=(8, 0))
+
+        self._workspace_register("collection", collection_fr, (self.month_cb, self.year_cb, self.coll_search, self.coll_order_cb), (self.export_rcd_btn,))
+        self.coll_metrics = self._metric_cards(collection_fr, (("Recorded cash", "—", "Whole selected period / search"), ("Receipts", "—", "Whole selected period / search"), ("This page", "—", "Up to 100 receipts; chosen posted order")))
+        ctk.CTkLabel(collection_fr, text="COA RCD exports the whole period. Clear the search before exporting it.", anchor="w", font=ModernTheme.BODY_SMALL).pack(fill="x", pady=(0, 8))
 
         self._coll_page_size = 100
         self._coll_cursors = [None]
@@ -365,12 +589,14 @@ class ReportsPage:
             self.coll_tree.heading(col, text=col.upper())
             self.coll_tree.column(col, width=110, anchor="center")
         self.coll_tree.column(tr("reports.collection.table.owner"), width=180, anchor="w")
+        self.coll_tree.column(tr("reports.collection.table.amount"), anchor="e")
         self.coll_tree.pack(side="left", fill="both", expand=True)
         self.coll_tree.tag_configure("oddrow", background="#162032", foreground="#e2e8f0")
         self.coll_tree.tag_configure("evenrow", background="#1e293b", foreground="#f8fafc")
         self.coll_empty_state = EmptyTableState(
             tree_container,
             "Select a month and year, then generate the collection report.",
+            title="Ready to generate",
         )
 
         pag_fr = ctk.CTkFrame(
@@ -403,6 +629,8 @@ class ReportsPage:
     def setup_receivables_tab(self):
         receiv_fr = ctk.CTkFrame(self.receivables_tab, fg_color="transparent")
         receiv_fr.pack(fill="both", expand=True, padx=10, pady=10)
+        ctk.CTkLabel(receiv_fr, text="RPT RECEIVABLES SUMMARY", font=ModernTheme.H3, text_color=ModernTheme.PRIMARY).pack(anchor="w")
+        ctk.CTkLabel(receiv_fr, text="Year-end balances, applied payments and separate recorded credits", font=ModernTheme.BODY_SMALL).pack(anchor="w", pady=(2, 10))
 
         filter_fr = ctk.CTkFrame(receiv_fr, fg_color="transparent")
         filter_fr.pack(fill="x", pady=(0, 12))
@@ -417,7 +645,7 @@ class ReportsPage:
 
         ctk.CTkButton(
             filter_fr, text=tr("reports.receivables.btn_load"), command=self.generate_receivables_report,
-            font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY, height=34
+            font=ModernTheme.BUTTON, fg_color=ModernTheme.PRIMARY_SURFACE, height=34
         ).pack(side="left", padx=(8, 0))
 
         self.receiv_export_excel_btn = ctk.CTkButton(
@@ -425,7 +653,7 @@ class ReportsPage:
             text="EXPORT EXCEL",
             command=self._export_receivables_excel,
             font=ModernTheme.BUTTON,
-            fg_color=ModernTheme.SUCCESS,
+            fg_color="#047857",
             height=34,
             width=130,
         )
@@ -440,13 +668,15 @@ class ReportsPage:
             height=34,
             width=130,
         )
-        self.receiv_export_brgy_btn.pack(side="right")
+        # Barangay PDF belongs in the Barangay report, not the fiscal summary.
+        self._workspace_register("receivables", receiv_fr, (self.receiv_year_cb,), (self.receiv_export_excel_btn,))
 
-        self.receiv_content = ctk.CTkFrame(receiv_fr, fg_color="transparent")
+        self.receiv_content = ctk.CTkScrollableFrame(receiv_fr, fg_color="transparent")
         self.receiv_content.pack(fill="both", expand=True)
         show_empty_content(
             self.receiv_content,
             "Select a year, then load the receivables report.",
+            title="Ready to generate",
         )
 
     def setup_barangay_tab(self):
@@ -490,7 +720,6 @@ class ReportsPage:
             width=130,
             height=34,
             font=ModernTheme.BODY_SMALL,
-            command=lambda _: self.generate_barangay_receivables(),
         )
         self.brgy_year_cb.set(str(curr_y))
         self.brgy_year_cb.pack(side="left", padx=(0, 10), pady=10)
@@ -501,30 +730,41 @@ class ReportsPage:
             text=tr("reports.barangay.btn_refresh").upper(),
             command=self.generate_barangay_receivables,
             width=160, height=34, font=ModernTheme.BUTTON_SMALL,
-            fg_color=ModernTheme.PRIMARY,
-            hover_color=ModernTheme.PRIMARY_HOVER,
+            fg_color=ModernTheme.PRIMARY_SURFACE,
+            hover_color=ModernTheme.PRIMARY_SURFACE_HOVER,
         ).pack(side="left", padx=(0, 8), pady=10)
 
+        export_fr = ctk.CTkFrame(brgy_fr, fg_color="transparent")
+        export_fr.pack(fill="x", pady=(0, 8))
         self.brgy_export_pdf_btn = ctk.CTkButton(
-            filter_fr,
+            export_fr,
             text="EXPORT PDF",
             command=self._export_brgy_pdf,
             width=125, height=34, font=ModernTheme.BUTTON_SMALL,
-            fg_color=ModernTheme.DANGER,
+            fg_color=ModernTheme.SECONDARY,
         )
-        self.brgy_export_pdf_btn.pack(side="left", padx=(0, 8), pady=10)
+        self.brgy_export_pdf_btn.pack(side="right", padx=(0, 12), pady=10)
 
         self.brgy_export_excel_btn = ctk.CTkButton(
-            filter_fr,
+            export_fr,
             text="EXPORT EXCEL",
             command=self._export_brgy_excel,
             width=135, height=34, font=ModernTheme.BUTTON_SMALL,
-            fg_color=ModernTheme.SUCCESS,
+            fg_color="#047857",
         )
-        self.brgy_export_excel_btn.pack(side="left", padx=(0, 12), pady=10)
+        self.brgy_export_excel_btn.pack(side="right", padx=(0, 8), pady=10)
+        self._workspace_register("barangay", brgy_fr, (self.brgy_year_cb,), (self.brgy_export_pdf_btn, self.brgy_export_excel_btn))
 
+        credit_actions = ctk.CTkFrame(brgy_fr, fg_color="transparent")
+        credit_actions.pack(fill="x", pady=(0, 8))
+        ctk.CTkButton(credit_actions, text="View all credit accounts", command=lambda: self._view_credit_accounts("barangay"), fg_color=ModernTheme.PRIMARY_SURFACE).pack(side="left")
+        ctk.CTkButton(credit_actions, text="Selected barangay credits", command=self._selected_barangay_credits, fg_color=ModernTheme.PRIMARY_SURFACE).pack(side="left", padx=8)
+        self.brgy_columns_btn = ctk.CTkButton(credit_actions, text="Show all columns", command=self._toggle_barangay_columns, width=125, fg_color=ModernTheme.SECONDARY)
+        self.brgy_columns_btn.pack(side="right")
+
+        basis_body = self._disclosure_frame(brgy_fr, "Reporting basis and credit explanation")
         info_fr = ctk.CTkFrame(
-            brgy_fr, fg_color=("#e0f2fe", "#132238"), corner_radius=8,
+            basis_body, fg_color=("#e0f2fe", "#132238"), corner_radius=8,
             border_width=1, border_color=("#bae6fd", "#1e3a5f"),
         )
         info_fr.pack(fill="x", pady=(0, 10))
@@ -569,10 +809,17 @@ class ReportsPage:
         )
         for col in cols:
             self.brgy_tree.heading(col, text=col.upper())
-            self.brgy_tree.column(col, width=120, anchor="center")
+            self.brgy_tree.column(col, width=120, anchor="e")
 
         self.brgy_tree.column(cols[0], width=180, anchor="w")
         self.brgy_tree.column(cols[-1], width=200, minwidth=180)
+        self._brgy_columns = cols
+        self._brgy_all_columns = False
+        self.brgy_tree.configure(displaycolumns=(cols[0], cols[2], cols[5], cols[6], cols[7]))
+        self.brgy_tree.bind("<Double-1>", lambda e: self._selected_barangay_credits())
+        self.brgy_tree.bind("<Return>", lambda e: self._selected_barangay_credits())
+        for index, col in enumerate(cols):
+            self.brgy_tree.heading(col, command=lambda i=index: self._sort_barangays(i))
 
         scrolly = ttk.Scrollbar(
             tree_host, orient="vertical", command=self.brgy_tree.yview,
@@ -592,6 +839,7 @@ class ReportsPage:
         self.brgy_empty_state = EmptyTableState(
             tree_host,
             "Select an as-of year, then refresh the barangay report.",
+            title="Ready to generate",
         )
 
         self.brgy_summary = ctk.CTkFrame(
@@ -608,15 +856,17 @@ class ReportsPage:
             font=ModernTheme.BODY_SMALL,
             text_color=ModernTheme.TEXT_GRAY,
         )
-        self.brgy_year_lbl.pack(side="left", padx=16, pady=12)
+        self.brgy_year_lbl.pack(anchor="w", padx=16, pady=(8, 2))
 
         self.brgy_total_lbl = ctk.CTkLabel(
             self.brgy_summary,
             text=tr("reports.barangay.total").replace("{value}", "P 0.00"),
             font=("Inter", 16, "bold"),
             text_color=ModernTheme.PRIMARY,
+            wraplength=700, justify="right",
         )
-        self.brgy_total_lbl.pack(side="right", padx=18, pady=12)
+        self.brgy_total_lbl.pack(fill="x", padx=16, pady=(0, 8))
+        self.brgy_summary.bind("<Configure>", lambda e: self._wrap_report_label(self.brgy_total_lbl, e.width - 32))
 
     def setup_reconciliation_tab(self):
         rec_fr = ctk.CTkFrame(self.reconciliation_tab, fg_color="transparent")
@@ -626,11 +876,11 @@ class ReportsPage:
         top_fr.pack(fill="x", pady=(0, 12))
 
         title_fr = ctk.CTkFrame(top_fr, fg_color="transparent")
-        title_fr.pack(side="left", fill="x", expand=True)
+        title_fr.pack(fill="x", expand=True)
         ctk.CTkLabel(
             title_fr,
             text="INTER-DEPARTMENT RECONCILIATION",
-            font=ModernTheme.H2,
+            font=ModernTheme.H3,
             text_color=ModernTheme.PRIMARY,
         ).pack(anchor="w")
         ctk.CTkLabel(
@@ -641,7 +891,7 @@ class ReportsPage:
         ).pack(anchor="w", pady=(2, 0))
 
         controls = ctk.CTkFrame(top_fr, fg_color="transparent")
-        controls.pack(side="right")
+        controls.pack(fill="x", pady=(10, 0))
         curr_y = datetime.now().year
         self.recon_year_cb = ctk.CTkComboBox(
             controls,
@@ -656,7 +906,7 @@ class ReportsPage:
             text="LOAD CHECK",
             command=self.generate_reconciliation_report,
             font=ModernTheme.BUTTON,
-            fg_color=ModernTheme.PRIMARY,
+            fg_color=ModernTheme.PRIMARY_SURFACE,
             height=34,
             width=130,
         ).pack(side="left")
@@ -665,7 +915,7 @@ class ReportsPage:
             text="EXPORT EXCEL",
             command=self._export_reconciliation_excel,
             font=ModernTheme.BUTTON,
-            fg_color=ModernTheme.SUCCESS,
+            fg_color="#047857",
             height=34,
             width=130,
             state="disabled",
@@ -673,15 +923,16 @@ class ReportsPage:
         self.recon_export_excel_btn.pack(side="left", padx=(8, 0))
         self.recon_export_pdf_btn = ctk.CTkButton(
             controls,
-            text="PRINT PDF",
+            text="EXPORT PDF",
             command=self._export_reconciliation_pdf,
             font=ModernTheme.BUTTON,
-            fg_color=ModernTheme.DANGER,
+            fg_color=ModernTheme.SECONDARY,
             height=34,
             width=110,
             state="disabled",
         )
         self.recon_export_pdf_btn.pack(side="left", padx=(8, 0))
+        self._workspace_register("reconciliation", rec_fr, (self.recon_year_cb,), (self.recon_export_excel_btn, self.recon_export_pdf_btn))
 
         self.recon_content = ctk.CTkScrollableFrame(
             rec_fr,
@@ -693,6 +944,7 @@ class ReportsPage:
         show_empty_content(
             self.recon_content,
             "Select a fiscal year, then load the reconciliation check.",
+            title="Ready to generate",
         )
 
     def generate_reconciliation_report(self):
@@ -702,12 +954,12 @@ class ReportsPage:
         def worker():
             try:
                 report = billing.get_receivables_report(year, diagnostics=True)
-                self._post_report_result("reconciliation", token, lambda: self._update_reconciliation(
-                    report["summary"], report["barangays"], report["metrics"], report["diagnostics"]))
+                self._post_report_result("reconciliation", token, lambda: self._workspace_accept("reconciliation", report, lambda: self._update_reconciliation(
+                    report["summary"], report["barangays"], report["metrics"], report["diagnostics"])))
             except Exception as e:
                 self._post_report_result("reconciliation", token, lambda err=e: self._show_reconciliation_error(err))
             finally:
-                self.container.after(0, lambda: self._finish_report_request("reconciliation", token))
+                self._schedule_report_finish("reconciliation", token)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -829,7 +1081,15 @@ class ReportsPage:
             ctk.CTkLabel(footer, text=footer_label, font=("Inter", 11), text_color="#bfdbfe").pack(side="left")
             ctk.CTkLabel(footer, text=footer_value, font=("Consolas", 13, "bold"), text_color=accent).pack(side="right")
 
-        department_grid = ctk.CTkFrame(self.recon_content, fg_color="transparent")
+        grid = ctk.CTkFrame(self.recon_content, fg_color="transparent")
+        grid.pack(fill="x", pady=(0, 14))
+        grid.grid_columnconfigure((0, 1, 2), weight=1)
+        stat_card(grid, 0, "Total Collectible (A)", money(total_collectible), ModernTheme.PRIMARY, f"Beginning {money(beginning)} + net current {money(current_net)} + adjustments {money(adjustments)}")
+        stat_card(grid, 1, "Collections / Credits (B)", money(treasury_total), ModernTheme.SUCCESS, f"Cash applied {money(calendar_applicable_collections)} + prepayments {money(prepaid_current_year)}")
+        stat_card(grid, 2, "Ending Receivable (C)", money(delinquency_total), ModernTheme.DANGER, f"Receivable rate: {delinquency_rate:.1f}%")
+        ctk.CTkButton(self.recon_content, text="View recorded credit accounts (separate from debt)", command=lambda: self._view_credit_accounts("reconciliation"), fg_color=ModernTheme.PRIMARY_SURFACE).pack(anchor="w", pady=(0, 12))
+        department_body = self._disclosure_frame(self.recon_content, "Department working papers")
+        department_grid = ctk.CTkFrame(department_body, fg_color="transparent")
         department_grid.pack(fill="x", pady=(0, 14))
         department_grid.grid_columnconfigure((0, 1, 2), weight=1)
         department_card(
@@ -881,13 +1141,6 @@ class ReportsPage:
             "Ending receivable",
             money(delinquency_total),
         )
-        grid = ctk.CTkFrame(self.recon_content, fg_color="transparent")
-        grid.pack(fill="x", pady=(0, 14))
-        grid.grid_columnconfigure((0, 1, 2), weight=1)
-        stat_card(grid, 0, "Total Collectible (A)", money(total_collectible), ModernTheme.PRIMARY, f"Beginning {money(beginning)} + net current {money(current_net)} + adjustments {money(adjustments)}")
-        stat_card(grid, 1, "Collections / Credits (B)", money(treasury_total), ModernTheme.SUCCESS, f"Cash applied {money(calendar_applicable_collections)} + prepayments {money(prepaid_current_year)}")
-        stat_card(grid, 2, "Ending Receivable (C)", money(delinquency_total), ModernTheme.DANGER, f"Receivable rate: {delinquency_rate:.1f}%")
-
         equation = ctk.CTkFrame(
             self.recon_content,
             fg_color=("#dbeafe", "#070b1a"),
@@ -941,7 +1194,8 @@ class ReportsPage:
             text_color=status_color,
         ).pack(side="right")
 
-        details = ctk.CTkFrame(self.recon_content, fg_color="transparent")
+        equation_details = self._disclosure_frame(self.recon_content, "Calculation and timing details")
+        details = ctk.CTkFrame(equation_details, fg_color="transparent")
         details.pack(fill="x", pady=(0, 14))
         rows = (
             ("Equation substitution (A = B + C)", f"{money(total_collectible)} = {money(treasury_total)} + {money(delinquency_total)}"),
@@ -976,7 +1230,8 @@ class ReportsPage:
         ctk.CTkLabel(result, text=f"Variance: {money(variance)}", font=("Consolas", 18, "bold"), text_color=result_color).pack(anchor="w", padx=18)
         ctk.CTkLabel(result, text=detail_text, font=("Inter", 11), text_color="#cbd5e1", wraplength=900, justify="left").pack(anchor="w", padx=18, pady=(6, 16))
 
-        diag = ctk.CTkFrame(self.recon_content, fg_color=("#e2e8f0", "#111827"), corner_radius=8, border_width=1, border_color=("#cbd5e1", "#243244"))
+        diagnostic_body = self._disclosure_frame(self.recon_content, "Diagnostic samples — full details are included in exports")
+        diag = ctk.CTkFrame(diagnostic_body, fg_color=("#e2e8f0", "#111827"), corner_radius=8, border_width=1, border_color=("#cbd5e1", "#243244"))
         diag.pack(fill="x", pady=(0, 14))
         ctk.CTkLabel(diag, text="RECONCILIATION DIAGNOSTIC", font=("Inter", 11, "bold"), text_color=ModernTheme.TEXT_GRAY).pack(anchor="w", padx=16, pady=(14, 4))
         ctk.CTkLabel(
@@ -1003,9 +1258,9 @@ class ReportsPage:
 
         diag_chip(diag_summary, 0, "Equation variance", money(equation_variance), status_color)
         diag_chip(diag_summary, 1, "All-time vs as-of", money(raw_tracker_variance), "#f59e0b")
-        link_issue_count = len(diagnostics.get("payment_link_mismatches", [])) + len(diagnostics.get("unlinked_payments", []))
+        link_issue_count = diagnostics.get("payment_link_issue_count", len(diagnostics.get("payment_link_mismatches", [])) + len(diagnostics.get("unlinked_payments", [])))
         diag_chip(diag_summary, 2, "Payment link issues", str(link_issue_count), "#f59e0b")
-        diag_chip(diag_summary, 3, "Overpaid / credits", str(len(diagnostics.get("overpaid_or_credit_rows", []))), "#22c55e")
+        diag_chip(diag_summary, 3, "Credit diagnostic rows", str(diagnostics.get("overpaid_credit_count", len(diagnostics.get("overpaid_or_credit_rows", [])))), "#22c55e")
         diag_chip(diag_summary, 4, "Payment-year gaps", str(diagnostics.get("payment_sequence_gap_count", len(diagnostics.get("payment_sequence_gaps", []))) or 0), "#ef4444")
         diag_chip(diag_summary, 5, "Timing/prepayment groups", str(len(diagnostics.get("prior_year_collections", [])) + len(diagnostics.get("future_year_collections", [])) + len(diagnostics.get("current_year_paid_outside_selected_year", []))), "#38bdf8")
 
@@ -1263,6 +1518,8 @@ class ReportsPage:
         )
 
     def _export_reconciliation_excel(self):
+        if not self._workspace_export_allowed("reconciliation"):
+            return
         year = self.recon_year_cb.get()
         dest = filedialog.asksaveasfilename(
             title="Save Reconciliation Working Paper",
@@ -1280,6 +1537,8 @@ class ReportsPage:
         )
 
     def _export_reconciliation_pdf(self):
+        if not self._workspace_export_allowed("reconciliation"):
+            return
         year = self.recon_year_cb.get()
         dest = filedialog.asksaveasfilename(
             title="Save Reconciliation PDF",
@@ -1291,14 +1550,20 @@ class ReportsPage:
             return
         self._run_reconciliation_export(
             self.recon_export_pdf_btn,
-            "PRINT PDF",
+            "EXPORT PDF",
             lambda: self._write_reconciliation_pdf(self._fetch_reconciliation_export_payload(year), dest),
             dest,
         )
 
     def _run_reconciliation_export(self, button, original_text, worker_fn, dest):
+        button._workspace_export_busy = True
         button.configure(text="GENERATING...", state="disabled")
         self._show_loading()
+
+        def restore():
+            button._workspace_export_busy = False
+            button.configure(text=original_text, state="normal")
+            self._sync_workspace("reconciliation")
 
         def worker():
             try:
@@ -1306,7 +1571,7 @@ class ReportsPage:
 
                 def done():
                     self._hide_loading()
-                    button.configure(text=original_text, state="normal")
+                    restore()
                     if messagebox.askyesno("Export Successful", f"Reconciliation report saved to:\n{dest}\n\nOpen it now?"):
                         self._open_file(dest)
 
@@ -1316,7 +1581,7 @@ class ReportsPage:
                     0,
                     lambda e=exc: (
                         self._hide_loading(),
-                        button.configure(text=original_text, state="normal"),
+                        restore(),
                         messagebox.showerror("Export Failed", str(e)),
                     ),
                 )
@@ -1736,6 +2001,10 @@ class ReportsPage:
     def _coll_load_page(self):
         month = self.month_cb.get()
         year = self.year_cb.get()
+        search = self.coll_search.get().strip() if hasattr(self, "coll_search") else ""
+        order_label = self.coll_order_cb.get() if hasattr(self, "coll_order_cb") else "Newest posted"
+        order = "oldest" if order_label == "Oldest posted" else "newest"
+        anchor = getattr(self, "_coll_anchor", None) if self._coll_page > 0 else None
         cursor = self._coll_cursors[self._coll_page]
         token = self._start_report_request("collection")
         self._coll_loading = True
@@ -1747,26 +2016,34 @@ class ReportsPage:
                     month, year,
                     limit=self._coll_page_size,
                     cursor=cursor,
+                    search=search,
+                    anchor=anchor,
+                    order=order,
                 )
                 def apply():
-                    if (month, year) == (self.month_cb.get(), self.year_cb.get()):
+                    current_search = self.coll_search.get().strip() if hasattr(self, "coll_search") else ""
+                    current_order = self.coll_order_cb.get() if hasattr(self, "coll_order_cb") else "Newest posted"
+                    if (month, year, search, order_label) == (self.month_cb.get(), self.year_cb.get(), current_search, current_order):
                         self._coll_page = page
-                        self._update_coll_table(data)
+                        self._coll_anchor = data.get("anchor")
+                        self._workspace_accept("collection", data, lambda: self._update_coll_table(data), has_rows=bool(data.get("items", data.get("total_count", 1))))
                 self._post_report_result("collection", token, apply)
             except Exception as e:
                 self._post_report_result("collection", token, lambda err=e: self._show_collection_error(err))
             finally:
-                self.container.after(0, lambda: self._finish_report_request("collection", token))
+                self._schedule_report_finish("collection", token)
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _coll_next_page(self):
-        if self._coll_has_more and not getattr(self, "_coll_loading", False):
+        state = getattr(self, "_workspace_states", {}).get("collection")
+        if self._coll_has_more and not getattr(self, "_coll_loading", False) and (state is None or state.status == "loaded"):
             self._coll_page += 1
             self._coll_load_page()
 
     def _coll_prev_page(self):
-        if self._coll_page > 0 and not getattr(self, "_coll_loading", False):
+        state = getattr(self, "_workspace_states", {}).get("collection")
+        if self._coll_page > 0 and not getattr(self, "_coll_loading", False) and (state is None or state.status == "loaded"):
             self._coll_page -= 1
             self._coll_load_page()
 
@@ -1783,6 +2060,10 @@ class ReportsPage:
             items = data or []
             next_cursor = None
             has_more = False
+
+        if hasattr(self, "coll_metrics") and isinstance(data, dict):
+            for label, value in zip(self.coll_metrics, (format_curr(data.get("cash_total", 0)), f"{data.get('total_count', len(items)):,}", f"{len(items):,}")):
+                label.configure(text=value)
 
         if not items and self._coll_page == 0:
             self._coll_has_more = False
@@ -1838,17 +2119,40 @@ class ReportsPage:
         def worker():
             try:
                 report = billing.get_receivables_report(year)
-                self._post_report_result("receivables", token, lambda: self._update_receiv_summary(report["summary"], report["barangays"]))
+                self._post_report_result("receivables", token, lambda: self._workspace_accept("receivables", report, lambda: self._update_receiv_summary(report["summary"], report["barangays"])))
             except Exception as e:
-                self._post_report_result("receivables", token, lambda err=e: self._show_content_error(
-                        self.receiv_content, err, "Unable to load receivables"
-                    ))
+                self._post_report_result("receivables", token, lambda err=e: self._show_receivables_error(err))
             finally:
-                self.container.after(0, lambda: self._finish_report_request("receivables", token))
+                self._schedule_report_finish("receivables", token)
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _show_receivables_error(self, error):
+        self._workspace_fail("receivables")
+        self._show_content_error(self.receiv_content, error, "Unable to load receivables")
+
     def _update_receiv_summary(self, data, brgy_rows=None):
+        for child in self.receiv_content.winfo_children():
+            child.destroy()
+        if not data:
+            show_empty_content(self.receiv_content, "Try another fiscal year.", title="No receivables data")
+            return
+        applied = float(data.get("collections", 0) or 0) + float(data.get("prepaid_current_year", 0) or 0)
+        self._metric_cards(self.receiv_content, (
+            ("Ending receivable", format_curr(data.get("ending_receivable", 0)), "Positive unpaid balances; credits not netted"),
+            ("Cash + advances applied", format_curr(applied), "Includes earlier payments applied to this year"),
+            (RECORDED_CREDIT_BALANCE_LABEL, format_curr(data.get("ending_credit", 0)), "Separate positive credit on each billing"),
+        ))
+        ctk.CTkButton(self.receiv_content, text="View credit accounts · read only", command=lambda: self._view_credit_accounts("receivables"), fg_color=ModernTheme.PRIMARY_SURFACE).pack(anchor="w", pady=(0, 12))
+        details = self._disclosure_frame(self.receiv_content, "Calculation basis, coverage and barangay comparison")
+        original = self.receiv_content
+        try:
+            self.receiv_content = details
+            self._update_receiv_summary_details(data, brgy_rows)
+        finally:
+            self.receiv_content = original
+
+    def _update_receiv_summary_details(self, data, brgy_rows=None):
         for child in self.receiv_content.winfo_children():
             child.destroy()
 
@@ -2077,15 +2381,16 @@ class ReportsPage:
         def worker():
             try:
                 report = billing.get_receivables_report(year)
-                self._post_report_result("barangay", token, lambda: self._update_brgy_table(report["barangays"], year))
+                self._post_report_result("barangay", token, lambda: self._workspace_accept("barangay", report, lambda: self._update_brgy_table(report["barangays"], year), has_rows=bool(report["barangays"])))
             except Exception as e:
                 self._post_report_result("barangay", token, lambda err=e: self._show_barangay_error(err))
             finally:
-                self.container.after(0, lambda: self._finish_report_request("barangay", token))
+                self._schedule_report_finish("barangay", token)
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _update_brgy_table(self, data, year=None):
+        self._brgy_rows, self._brgy_loaded_year = data, year
         for item in self.brgy_tree.get_children():
             self.brgy_tree.delete(item)
 
@@ -2142,7 +2447,14 @@ class ReportsPage:
     def _export_with_feedback(self, btn, worker_fn, export_format):
         """Generate in a thread, then save on the UI thread in the chosen format."""
         original_text = btn.cget("text")
+        btn._workspace_export_busy = True
         btn.configure(text="⏳ Generating...", state="disabled")
+
+        def restore():
+            btn._workspace_export_busy = False
+            btn.configure(text=original_text, state="normal")
+            for kind in getattr(self, "_workspace_states", {}):
+                self._sync_workspace(kind)
 
         def _run():
             try:
@@ -2165,20 +2477,22 @@ class ReportsPage:
                     except Exception as exc:
                         messagebox.showerror("Export Failed", str(exc))
                     finally:
-                        btn.configure(text=original_text, state="normal")
+                        restore()
 
                 self.container.after(0, _save)
             except Exception as exc:
                 self.container.after(
                     0, lambda e=exc: (
                         messagebox.showerror("Export Failed", str(e)),
-                        btn.configure(text=original_text, state="normal"),
+                        restore(),
                     )
                 )
 
         threading.Thread(target=_run, daemon=True).start()
 
     def _export_receivables_excel(self):
+        if not self._workspace_export_allowed("receivables"):
+            return
         year = self.receiv_year_cb.get()
         self._export_with_feedback(
             self.receiv_export_excel_btn,
@@ -2187,6 +2501,8 @@ class ReportsPage:
         )
 
     def _export_receivables_barangay_pdf(self):
+        if not self._workspace_export_allowed("receivables"):
+            return
         year = int(self.receiv_year_cb.get())
         self._export_with_feedback(
             self.receiv_export_brgy_btn,
@@ -2195,6 +2511,8 @@ class ReportsPage:
         )
 
     def _export_brgy_pdf(self):
+        if not self._workspace_export_allowed("barangay"):
+            return
         selected = self.brgy_year_cb.get()
         try:
             year = None if selected == "All Years" else int(selected)
@@ -2208,6 +2526,8 @@ class ReportsPage:
         )
 
     def _export_brgy_excel(self):
+        if not self._workspace_export_allowed("barangay"):
+            return
         selected = self.brgy_year_cb.get()
         year = selected if selected != "All Years" else "All"
         self._export_with_feedback(
@@ -2225,6 +2545,8 @@ class ReportsPage:
         ManageDepositsModal(self.container, start_date, end_date)
 
     def open_export_signatories(self):
+        if not self._workspace_export_allowed("collection"):
+            return
         try:
             self.get_selected_date_range()
         except ValueError as error:

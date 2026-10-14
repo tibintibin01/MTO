@@ -63,4 +63,16 @@ def build_receivables_report(
                 summary=result["summary"],
                 metrics=result["metrics"],
             )
+        from backend.services.report_credit_service import credit_scope
+
+        result["credit_scope"] = credit_scope(report_db, year)
+        return result
+
+
+def build_collection_report(month, year, db_session, **options):
+    with report_read_session(db_session) as report_db:
+        result = billing.get_report_details(
+            month, year, db_session=report_db, **options
+        )
+        result["captured_at_utc"] = datetime.now(timezone.utc).isoformat()
         return result

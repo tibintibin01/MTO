@@ -192,7 +192,7 @@ def test_reports_reapproval_preserves_old_intent_and_does_not_rewrite_unchanged_
 
 def test_reports_workflow_reapproves_before_checks_and_serializes_source_activation():
     text = (SCRIPT.parent / "run_release_workflow.ps1").read_text(encoding="utf-8")
-    assert "@('v2.1.17','v2.1.18','v2.1.19')" in text
+    assert "@('v2.1.17','v2.1.18','v2.1.19','v2.1.20')" in text
     assert "'-ReleaseTag',$ReleaseTag,'-PreviousCommit',$PreviousCommit" in text
     assert text.index(
         "$portalActivationLock=Enter-PortalPublisherMaintenanceLock"
@@ -203,7 +203,13 @@ def test_reports_workflow_reapproves_before_checks_and_serializes_source_activat
 
 
 @pytest.mark.parametrize(
-    "tag,previous", [("v2.1.17", ""), ("v2.1.18", "v2.1.17"), ("v2.1.19", "v2.1.18")]
+    "tag,previous",
+    [
+        ("v2.1.17", ""),
+        ("v2.1.18", "v2.1.17"),
+        ("v2.1.19", "v2.1.18"),
+        ("v2.1.20", "v2.1.19"),
+    ],
 )
 def test_bridge_transition_requires_the_immediate_supported_predecessor(tag, previous):
     result = functions(f"Get-PreviousBridgeReleaseTag '{tag}'")
@@ -213,10 +219,68 @@ def test_bridge_transition_requires_the_immediate_supported_predecessor(tag, pre
 
 def test_unreviewed_future_bridge_transition_is_rejected():
     result = functions(
-        "Get-PreviousBridgeReleaseTag 'v2.1.20';Write-Output 'WRONG PASS'"
+        "Get-PreviousBridgeReleaseTag 'v2.1.21';Write-Output 'WRONG PASS'"
     )
     assert result.returncode != 0
     assert "WRONG PASS" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "case", ["valid", "wrong_tag", "wrong_version", "wrong_commit", "unverified"]
+)
+def test_workspace_requires_exact_verified_v219_publisher_approval(case):
+    before = "a" * 40
+    state = {
+        "approved_source_commit": before,
+        "approved_product_version": "2.1.19",
+        "approved_bridge_revision": "app-guarded-publish-v1",
+    }
+    intent = {
+        "owner": "MTO_PORTAL_PUBLICATION_20261007",
+        "status": "VERIFIED",
+        "expected_commit": before,
+        "release_tag": "v2.1.19",
+    }
+    if case == "wrong_tag":
+        intent["release_tag"] = "v2.1.18"
+    elif case == "wrong_version":
+        state["approved_product_version"] = "2.1.18"
+    elif case == "wrong_commit":
+        intent["expected_commit"] = "b" * 40
+    elif case == "unverified":
+        intent["status"] = "IN_PROGRESS"
+    result = functions(
+        f"$s='{json.dumps(state)}'|ConvertFrom-Json;$i='{json.dumps(intent)}'|ConvertFrom-Json;Assert-PreviousBridgeApproval $s $i '{before}' '2.1.19'"
+    )
+    assert (result.returncode == 0) == (case == "valid"), result.stderr
+
+
+@pytest.mark.parametrize(
+    "case", ["old", "new", "wrong_prior_tag", "wrong_prior_commit", "wrong_new_version"]
+)
+def test_workspace_interrupted_reapproval_requires_the_v219_v220_transition(case):
+    before, after = "a" * 40, "b" * 40
+    state = {
+        "approved_source_commit": before if case == "old" else after,
+        "approved_product_version": "2.1.19" if case == "old" else "2.1.20",
+        "approved_bridge_revision": "app-guarded-publish-v1",
+    }
+    intent = {
+        "owner": "MTO_PORTAL_PUBLICATION_20261007",
+        "status": "VERIFIED",
+        "expected_commit": before,
+        "release_tag": "v2.1.19",
+    }
+    if case == "wrong_prior_tag":
+        intent["release_tag"] = "v2.1.18"
+    elif case == "wrong_prior_commit":
+        intent["expected_commit"] = "c" * 40
+    elif case == "wrong_new_version":
+        state["approved_product_version"] = "2.1.19"
+    result = functions(
+        f"$s='{json.dumps(state)}'|ConvertFrom-Json;$i='{json.dumps(intent)}'|ConvertFrom-Json;Assert-InterruptedBridgeApproval $s $i '{before}' '2.1.19' '{after}' '2.1.20'"
+    )
+    assert (result.returncode == 0) == (case in {"old", "new"}), result.stderr
 
 
 @pytest.mark.parametrize(
