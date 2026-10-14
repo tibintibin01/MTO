@@ -12,6 +12,38 @@ import api_clients.reports_service as reports_api
 from ui_components import show_toast
 from ui.empty_state import EmptyTableState, show_empty_content
 from utils import format_curr, tr
+from utils.report_labels import (
+    RECEIVABLES_COVERAGE_LABEL,
+    RECEIVABLES_COVERAGE_HELP,
+    RECORDED_CREDIT_BALANCE_LABEL,
+    RECORDED_CREDIT_BALANCE_HELP,
+)
+
+
+def report_export_dialog_options(path, export_format):
+    """Offer only the format selected by the button, without converting bytes."""
+    formats = {
+        "excel": (".xlsx", "Excel workbook (*.xlsx)", "*.xlsx"),
+        "pdf": (".pdf", "PDF document (*.pdf)", "*.pdf"),
+    }
+    try:
+        extension, label, pattern = formats[str(export_format).strip().lower()]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported report export format: {export_format}") from exc
+
+    source_name = os.path.basename(path)
+    stem, source_extension = os.path.splitext(source_name)
+    if source_extension.lower() != extension:
+        raise ValueError(
+            f"The generated report does not match the selected {label.split(' (', 1)[0]} format. "
+            "No file was saved."
+        )
+    return {
+        "title": f"Save Report as {label.split(' (', 1)[0]}",
+        "initialfile": f"{stem}{extension}",
+        "defaultextension": extension,
+        "filetypes": [(label, pattern)],
+    }
 
 
 class ReportsPage:
@@ -496,17 +528,21 @@ class ReportsPage:
             border_width=1, border_color=("#bae6fd", "#1e3a5f"),
         )
         info_fr.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(
+        brgy_note = ctk.CTkLabel(
             info_fr,
             text=(
                 "Selected year: balances at December 31, matching the fiscal summary. "
-                "All available billing years are included; credits never offset another account's debt. "
-                "All Years includes all recorded payment dates."
+                "All available billing years are included. All Years includes all recorded payment dates.\n"
+                f"{RECORDED_CREDIT_BALANCE_LABEL}: {RECORDED_CREDIT_BALANCE_HELP}"
             ),
             font=ModernTheme.BODY_SMALL,
             text_color=("#0369a1", "#7dd3fc"),
             anchor="w",
-        ).pack(padx=14, pady=9, anchor="w")
+            justify="left",
+            wraplength=900,
+        )
+        brgy_note.pack(fill="x", padx=14, pady=9, anchor="w")
+        info_fr.bind("<Configure>", lambda event: brgy_note.configure(wraplength=max(240, event.width - 28)))
 
         t_container = ctk.CTkFrame(
             brgy_fr, fg_color="#0f172a", corner_radius=8,
@@ -523,7 +559,7 @@ class ReportsPage:
             tr("reports.barangay.table.discount"),
             tr("reports.barangay.table.collected"),
             tr("reports.barangay.table.receivable"),
-            "Separate Credit",
+            RECORDED_CREDIT_BALANCE_LABEL,
         )
         tree_host = tk.Frame(t_container, bg="#0f172a", bd=0, highlightthickness=0)
         tree_host.pack(fill="both", expand=True, padx=1, pady=1)
@@ -536,7 +572,7 @@ class ReportsPage:
             self.brgy_tree.column(col, width=120, anchor="center")
 
         self.brgy_tree.column(cols[0], width=180, anchor="w")
-        self.brgy_tree.column(cols[-1], width=150)
+        self.brgy_tree.column(cols[-1], width=200, minwidth=180)
 
         scrolly = ttk.Scrollbar(
             tree_host, orient="vertical", command=self.brgy_tree.yview,
@@ -1838,7 +1874,8 @@ class ReportsPage:
         year = data.get("report_year", "N/A")
         brgy_rows = brgy_rows or []
 
-        # Collection efficiency = collections divided by collectible amount.
+        # Coverage includes cash applied and earlier payments applied to this
+        # year's billings. It is not a current-year-only cash collection rate.
         total_target = beg + curr + adj
         efficiency = (applied / total_target * 100) if total_target > 0 else 0
         uncollected_rate = (end / total_target * 100) if total_target > 0 else 0
@@ -1885,15 +1922,17 @@ class ReportsPage:
             text=f"FISCAL YEAR {year} RECEIVABLES PERFORMANCE",
             font=ModernTheme.H2,
             text_color=ModernTheme.PRIMARY,
-        ).pack(side="left")
+        ).pack(anchor="w")
 
         eff_color = ModernTheme.SUCCESS if efficiency >= 70 else ModernTheme.WARNING if efficiency >= 40 else ModernTheme.DANGER
         ctk.CTkLabel(
             header_fr,
-            text=f"Applied Cash/Credit Coverage: {efficiency:.1f}%",
+            text=f"{RECEIVABLES_COVERAGE_LABEL}: {efficiency:.1f}%",
             font=ModernTheme.H3,
             text_color=eff_color,
-        ).pack(side="right")
+            wraplength=900,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 0))
 
         formula_fr = ctk.CTkFrame(
             self.receiv_content,
@@ -1933,10 +1972,10 @@ class ReportsPage:
         metric_card(grid, "Beginning Balance", beg, "#94a3b8", "Prior-year unpaid balance").grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 8))
         metric_card(grid, "Current Year Levy", curr_levy, ModernTheme.PRIMARY, "Assessed value x RPT rate").grid(row=0, column=1, sticky="nsew", padx=4, pady=(0, 8))
         metric_card(grid, "Net Current Collectible", curr, "#f59e0b", "Levy + penalties - discounts").grid(row=0, column=2, sticky="nsew", padx=(8, 0), pady=(0, 8))
-        metric_card(grid, "Applied Cash / Credits", applied, ModernTheme.SUCCESS, f"Cash {money(coll)} + prepayments {money(prepaid)}").grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(0, 8))
+        metric_card(grid, "Cash + Advance Payments Applied", applied, ModernTheme.SUCCESS, f"Cash {money(coll)} + earlier advance payments {money(prepaid)}").grid(row=1, column=0, sticky="nsew", padx=(0, 8), pady=(0, 8))
         metric_card(grid, "Penalties / Interest", curr_penalty, "#f97316", "Shown separately from levy").grid(row=1, column=1, sticky="nsew", padx=4, pady=(0, 8))
         metric_card(grid, "Discounts", curr_discount, "#22c55e", "Deducted from collectible").grid(row=1, column=2, sticky="nsew", padx=(8, 0), pady=(0, 8))
-        metric_card(grid, "Prior-Year / Credit Movements", adj, "#a855f7", f"Separate ending credit: {money(data.get('ending_credit', 0))}").grid(row=2, column=0, sticky="nsew", padx=(0, 8))
+        metric_card(grid, "Prior-Year / Credit Movements", adj, "#a855f7", f"{RECORDED_CREDIT_BALANCE_LABEL}: {money(data.get('ending_credit', 0))}").grid(row=2, column=0, sticky="nsew", padx=(0, 8))
         metric_card(grid, "Total Collectible", total_target, "#f59e0b", "Beginning + net current + adjustments").grid(row=2, column=1, sticky="nsew", padx=4)
         metric_card(grid, "Ending Receivable", end, ModernTheme.DANGER, f"{uncollected_rate:.1f}% remains uncollected").grid(row=2, column=2, sticky="nsew", padx=(8, 0))
 
@@ -1981,7 +2020,7 @@ class ReportsPage:
         ).pack(anchor="w", padx=16, pady=(6, 4))
         ctk.CTkLabel(
             progress_fr,
-            text="Coverage includes cash applied and prepaid credits. Separate credits do not settle another account's debt.",
+            text=RECEIVABLES_COVERAGE_HELP,
             font=("Inter", 10),
             text_color=ModernTheme.TEXT_GRAY,
             wraplength=430,
@@ -2081,7 +2120,7 @@ class ReportsPage:
 
         self.brgy_total_lbl.configure(
             text=tr("reports.barangay.total").replace("{value}", f"P {grand_total:,.2f}")
-                 + f"  |  Separate credits: P {sum(float(row[7] or 0) for row in data if len(row) > 7):,.2f}"
+                 + f"  |  {RECORDED_CREDIT_BALANCE_LABEL}: P {sum(float(row[7] or 0) for row in data if len(row) > 7):,.2f}"
         )
 
     # ── Export helpers ────────────────────────────────────────────────────────
@@ -2100,32 +2139,33 @@ class ReportsPage:
         except Exception:
             pass
 
-    def _export_with_feedback(self, btn, worker_fn):
-        """Run worker_fn in a thread; show progress on btn, then open the result."""
+    def _export_with_feedback(self, btn, worker_fn, export_format):
+        """Generate in a thread, then save on the UI thread in the chosen format."""
         original_text = btn.cget("text")
         btn.configure(text="⏳ Generating...", state="disabled")
 
         def _run():
             try:
                 path = worker_fn()
+                options = report_export_dialog_options(path, export_format)
                 # Ask where to save
                 def _save():
-                    dest = filedialog.asksaveasfilename(
-                        title="Save Report",
-                        initialfile=os.path.basename(path),
-                        defaultextension=os.path.splitext(path)[1],
-                        filetypes=[
-                            ("PDF files", "*.pdf"),
-                            ("Excel files", "*.xlsx"),
-                            ("All files", "*.*"),
-                        ],
-                    )
-                    if dest:
-                        shutil.copy2(path, dest)
-                        if messagebox.askyesno("Export Successful",
-                                               f"Report saved to:\n{dest}\n\nOpen it now?"):
-                            self._open_file(dest)
-                    btn.configure(text=original_text, state="normal")
+                    try:
+                        dest = filedialog.asksaveasfilename(**options)
+                        if dest:
+                            if os.path.splitext(dest)[1].lower() != options["defaultextension"]:
+                                raise ValueError(
+                                    f"Save this report with the {options['defaultextension']} extension. "
+                                    "Changing the filename does not convert its format. No file was saved."
+                                )
+                            shutil.copy2(path, dest)
+                            if messagebox.askyesno("Export Successful",
+                                                   f"Report saved to:\n{dest}\n\nOpen it now?"):
+                                self._open_file(dest)
+                    except Exception as exc:
+                        messagebox.showerror("Export Failed", str(exc))
+                    finally:
+                        btn.configure(text=original_text, state="normal")
 
                 self.container.after(0, _save)
             except Exception as exc:
@@ -2143,6 +2183,7 @@ class ReportsPage:
         self._export_with_feedback(
             self.receiv_export_excel_btn,
             lambda: billing.export_report_excel("receivables", year=year),
+            "excel",
         )
 
     def _export_receivables_barangay_pdf(self):
@@ -2150,6 +2191,7 @@ class ReportsPage:
         self._export_with_feedback(
             self.receiv_export_brgy_btn,
             lambda: billing.download_receivables_by_barangay_pdf(year=year),
+            "pdf",
         )
 
     def _export_brgy_pdf(self):
@@ -2162,6 +2204,7 @@ class ReportsPage:
         self._export_with_feedback(
             self.brgy_export_pdf_btn,
             lambda: billing.download_receivables_by_barangay_pdf(year=year),
+            "pdf",
         )
 
     def _export_brgy_excel(self):
@@ -2170,6 +2213,7 @@ class ReportsPage:
         self._export_with_feedback(
             self.brgy_export_excel_btn,
             lambda: billing.export_report_excel("receivables_by_barangay", year=year),
+            "excel",
         )
 
     def open_manage_deposits(self):

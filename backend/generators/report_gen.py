@@ -24,6 +24,10 @@ from backend.generators.base import (
     draw_seal,
 )
 from utils.assessment_roll_status import assessment_roll_duplicate_status
+from utils.report_labels import (
+    RECORDED_CREDIT_BALANCE_LABEL,
+    RECORDED_CREDIT_BALANCE_HELP,
+)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -57,9 +61,9 @@ def _fit_cell_text(c, value, max_width, font_name, font_size):
     return f"{text[:low].rstrip()}{suffix}"
 
 
-def _draw_table_header_row(c, left_x, top_y, columns):
+def _draw_table_header_row(c, left_x, top_y, columns, *, multiline=False):
     """Draws a single styled header row for a tabular report section."""
-    row_h = 7 * mm
+    row_h = (9 if multiline else 7) * mm
     c.setFillColor(_HEADER_FILL)
     total_w = sum(w for _, w in columns)
     c.rect(left_x, top_y - row_h, total_w, row_h, fill=1, stroke=0)
@@ -67,7 +71,13 @@ def _draw_table_header_row(c, left_x, top_y, columns):
     c.setFont("Helvetica-Bold", 7.5)
     cx = left_x
     for label, w in columns:
-        c.drawCentredString(cx + w / 2, top_y - 5 * mm, label.upper())
+        if multiline:
+            lines = label.upper().split("\n")
+            first_baseline = top_y - row_h / 2 + (len(lines) - 1) * 9 / 2 - 2.625
+            for index, line in enumerate(lines):
+                c.drawCentredString(cx + w / 2, first_baseline - index * 9, line)
+        else:
+            c.drawCentredString(cx + w / 2, top_y - 5 * mm, label.upper())
         cx += w
     return top_y - row_h
 
@@ -172,7 +182,7 @@ def generate_receivables_by_barangay_pdf(rows, year_label, base_dir):
         ("Discount", 26 * mm),
         ("Applied Cash", 32 * mm),
         ("Positive\nReceivable", 34 * mm),
-        ("Separate\nCredit", 32 * mm),
+        (RECORDED_CREDIT_BALANCE_LABEL.replace(" Credit ", "\nCredit "), 32 * mm),
     ]
 
     def new_page():
@@ -195,10 +205,12 @@ def generate_receivables_by_barangay_pdf(rows, year_label, base_dir):
         c.drawRightString(width - margin_x, sub_y, f"Generated: {generated}")
         c.setStrokeColor(_BORDER)
         c.line(margin_x, sub_y - 2 * mm, width - margin_x, sub_y - 2 * mm)
-        return sub_y - 10 * mm
+        c.setFont("Helvetica", 7.5)
+        c.drawString(margin_x, sub_y - 7 * mm, RECORDED_CREDIT_BALANCE_HELP)
+        return sub_y - 15 * mm
 
     cur_y = new_page()
-    cur_y = _draw_table_header_row(c, margin_x, cur_y, columns)
+    cur_y = _draw_table_header_row(c, margin_x, cur_y, columns, multiline=True)
 
     grand_total = 0.0
     grand_credit = 0.0
@@ -206,7 +218,7 @@ def generate_receivables_by_barangay_pdf(rows, year_label, base_dir):
         if cur_y < 30 * mm:
             c.showPage()
             cur_y = new_page()
-            cur_y = _draw_table_header_row(c, margin_x, cur_y, columns)
+            cur_y = _draw_table_header_row(c, margin_x, cur_y, columns, multiline=True)
 
         values = [
             safe_text(row[0]),  # Barangay

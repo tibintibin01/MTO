@@ -36,6 +36,7 @@ All report components are read in one repeatable-read transaction. Diagnostic co
 - Stale asynchronous responses cannot overwrite a newer request. Pagination cannot skip ahead while a request is pending. Failed collection/barangay loads clear older visible results.
 - The RCD All/All filter covers all recorded receipt dates instead of substituting the current year. A specific month with All years requires a year selection because the RCD/deposit workflow uses a contiguous date range.
 - Barangay exports retain direct references to the real buttons for feedback/disable behavior.
+- Fixed-format report buttons must offer only their selected format in the Save dialog: Excel means `.xlsx`, PDF means `.pdf`. The client copies the generated document; changing the Save-as filter never converts its bytes. A mismatched generated or destination extension must be rejected, and cancel/save failures must restore the export button.
 - Reconciliation PDF tables wrap the equation, retain complete diagnostic detail, escape untrusted text, and carry page numbers. Barangay PDF columns fit landscape A4.
 - Untrusted taxpayer/bank/username strings remain literal in Excel. Trusted COA total formulas are preserved. Empty COA detail exports use numeric zero totals, not circular formulas.
 
@@ -65,7 +66,19 @@ Exit 2 means `REVIEW_REQUIRED`, not a request to repair data. `NO_FLAGGED_CASES`
 
 Normal receipt posting can refresh cached billing totals for the affected billing rows, as it already did before this change. The corrected aggregation applies there too. No activation step silently recalculates the entire historical database.
 
+## Reading the receivables indicators
+
+`Applied Cash/Credit Coverage` belongs to the RPT Receivables Summary, not the Collection register. It is `(cash applied to active current/prior-year receivables in the selected fiscal year + earlier payments allocated to that year's billings) / (beginning receivable + net current collectible + prior-year/credit movements) * 100`. It is not the percentage of taxpayers paid, a current-year-only cash collection rate, or proof of reconciliation. Future-year payments are excluded from this coverage numerator.
+
+`Separate Credit` aggregates positive excesses of recorded paid amounts over recorded charges on individual billing rows within the selected report cutoff. It is kept separate from positive debt: a credit on one account/year does not automatically pay another account/year's balance. It is not a discount, new revenue, an approved refund, or proof that an overpayment was intentional. Overpayments, timing/adjustment effects, and incorrect amounts or allocations require review against official evidence before any correction or transfer.
+
+The Reports wording hotfix labels these same values `Receivables Coverage (including advance payments)` and `Recorded Credit Balance`. Screen guidance and Excel/PDF credit headings use the shared plain-language labels; calculations, payload keys, fiscal cutoffs and recorded values remain unchanged. The long PDF credit heading wraps without reducing the font size. This hotfix must be delivered as a new immutable release, not an edited v2.1.18 package.
+
 The v2.1.18 workflow holds the existing publisher byte-range mutex during source activation, then explicitly reapproves v2.1.18 for the immutable R4 transport. It requires the previously verified v2.1.17 bridge, keeps that original migration intent unchanged, uses a separate release-specific intent and evidence folder, and tests both a demand-only SYSTEM task and the real daily publisher. Its four triggers and unchanged action are preserved. Verify/Finalize recognize an already completed reapproval without uploading again. Approval remains an operator prompt, not a release HTTP parameter.
+
+The v2.1.19 wording/export-dialog hotfix follows the same guarded workflow from v2.1.18. It requires the exact v2.1.18 tag, source approval, and verified `app-bridge-migration-v2.1.18.json`, and writes only its own v2.1.19 intent and new evidence. Interrupted reapproval accepts only the verified previous approval or the explicitly approved current version. The v2.1.18 installer, tag, workflow, baselines and old evidence remain untouched; an unfinished v2.1.18 pilot is not silently certified. No report mathematics, receipt values, historical cutoffs, tax policy, API compatibility or minimum client version change in this hotfix.
+
+Pilot v2.1.19 with genuine existing records, without creating test production payments. Check the RPT Receivables and Barangay Excel buttons open `.xlsx`-only Save dialogs, the PDF buttons open `.pdf`-only dialogs, cancellation restores each button, and saved files open in their intended applications. Compare amounts to the same report/year before the upgrade and verify the clearer coverage/credit guidance. Keep financial entry paused through final comparisons and manual acceptance, then resume only after the workflow passes.
 
 ## Validation boundaries
 
