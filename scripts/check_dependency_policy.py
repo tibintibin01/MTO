@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -46,6 +47,88 @@ ACTION_USE = re.compile(r"\buses:\s*([^\s#]+)")
 IMMUTABLE_ACTION_REF = re.compile(r"[^@\s]+@[0-9a-f]{40}")
 UNIVERSAL_LOCK_TOKEN = "--universal"
 WINDOWS_ONLY_PACKAGES = {"pefile", "pywin32", "pywin32-ctypes"}
+GUARDED_BRACES_SPEC = "file:vendor/braces-guarded"
+GUARDED_BRACES_FILES = {
+    "LICENSE",
+    "README.md",
+    "UPSTREAM.json",
+    "package.json",
+    "index.js",
+    "lib/compile.js",
+    "lib/constants.js",
+    "lib/expand.js",
+    "lib/guard.js",
+    "lib/parse.js",
+    "lib/stringify.js",
+    "lib/utils.js",
+}
+
+
+def check_guarded_frontend_package(
+    root: Path, package: dict, locked_paths: dict
+) -> list[dict]:
+    """Only this reviewed first-party file dependency replaces a registry pin.
+
+    Its complete source is pinned in the immutable Git commit and additionally
+    checksum-verified. Other arbitrary local/URL dependencies remain forbidden.
+    This is a code backport, not acceptance of the unmodified vulnerable package.
+    """
+    folder = root / "frontend/vendor/braces-guarded"
+    problems = []
+    if (
+        package.get("devDependencies", {}).get("braces") != GUARDED_BRACES_SPEC
+        or "braces" in package.get("dependencies", {})
+        or package.get("overrides", {}).get("braces") != "$braces"
+    ):
+        problems.append("explicit development-only source override missing")
+    try:
+        files = {
+            p.relative_to(folder).as_posix(): p
+            for p in folder.rglob("*")
+            if p.is_file()
+        }
+        if set(files) != GUARDED_BRACES_FILES | {"PATCH-SHA256.json"}:
+            problems.append("source file allowlist changed")
+        for path in [folder, *files.values()]:
+            if (
+                path.is_symlink()
+                or getattr(path.lstat(), "st_file_attributes", 0) & 0x400
+            ):
+                problems.append("linked source path")
+        hashes = json.loads((folder / "PATCH-SHA256.json").read_text(encoding="utf-8"))
+        if set(hashes) != GUARDED_BRACES_FILES:
+            problems.append("source checksum allowlist changed")
+        for name in GUARDED_BRACES_FILES:
+            content = files[name].read_bytes().replace(b"\r\n", b"\n")
+            if hashes.get(name) != hashlib.sha256(content).hexdigest():
+                problems.append("reviewed source checksum mismatch: " + name)
+        manifest = json.loads(files["package.json"].read_text(encoding="utf-8"))
+        if (
+            manifest.get("name") != "@mto/braces-guarded"
+            or manifest.get("version") != "0.1.0"
+            or manifest.get("private") is not True
+            or manifest.get("dependencies") != {"fill-range": "7.1.1"}
+            or manifest.get("scripts")
+        ):
+            problems.append("backport package identity/hooks changed")
+    except (OSError, ValueError, KeyError, TypeError):
+        problems.append("complete backport source/checksums unavailable")
+    copies = [
+        value
+        for name, value in locked_paths.items()
+        if name.endswith("node_modules/braces")
+    ]
+    if not copies or any(
+        value.get("link") is not True
+        or value.get("resolved") != "vendor/braces-guarded"
+        for value in copies
+    ):
+        problems.append("unpatched or foreign dependency copy")
+    if locked_paths.get("vendor/braces-guarded", {}).get("dev") is not True:
+        problems.append("backport is not development-only")
+    return [
+        finding("FRONTEND_BUILD_BACKPORT_INVALID", folder, text) for text in problems
+    ]
 
 
 def finding(code: str, path: Path, detail: str) -> dict[str, str]:
@@ -370,10 +453,19 @@ def validate_repository(
     package = json.loads(package_path.read_text(encoding="utf-8"))
     package_lock = json.loads(package_lock_path.read_text(encoding="utf-8"))
     frontend = {**package.get("dependencies", {}), **package.get("devDependencies", {})}
+    backport_findings = check_guarded_frontend_package(
+        root, package, package_lock.get("packages", {})
+    )
+    findings.extend(backport_findings)
     non_exact = sorted(
         name
         for name, version in frontend.items()
         if not re.fullmatch(r"\d+(?:\.\d+){2}(?:[-+][0-9A-Za-z.-]+)?", version)
+        and not (
+            name == "braces"
+            and version == GUARDED_BRACES_SPEC
+            and not backport_findings
+        )
     )
     if non_exact:
         findings.append(

@@ -1,0 +1,11 @@
+{
+  "name": "@mto/braces-guarded",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MTO reviewed build-only depth/cycle backport of MIT braces 3.0.3; not an upstream release",
+  "license": "MIT",
+  "main": "index.js",
+  "files": ["index.js", "lib", "LICENSE", "UPSTREAM.json", "PATCH-SHA256.json", "README.md"],
+  "engines": {"node": ">=20.9.0"},
+  "dependencies": {"fill-range": "7.1.1"}
+}
