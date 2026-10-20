@@ -57,6 +57,11 @@ def test_server_migration_entrypoint_runs_all_compatibility_checks(monkeypatch):
         "ensure_portfolio_schema",
         lambda db_session: calls.append(("portfolio", db_session)),
     )
+    monkeypatch.setattr(
+        migration_manager,
+        "ensure_rcd_register_schema",
+        lambda db_session: calls.append(("rcd", db_session)),
+    )
 
     assert migration_manager.run_migrations() == 2
     assert [name for name, _session in calls] == [
@@ -67,6 +72,7 @@ def test_server_migration_entrypoint_runs_all_compatibility_checks(monkeypatch):
         "phase6",
         "audit",
         "portfolio",
+        "rcd",
     ]
     assert all(call_session is session for _name, call_session in calls)
     assert session.commits == 1

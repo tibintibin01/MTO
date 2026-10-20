@@ -461,10 +461,11 @@ def api_request(
         raise Exception(f"Unexpected Error: {str(e)}")
 
 
-def api_download_file(method, endpoint, params=None, timeout=120):
+def api_download_file(method, endpoint, params=None, timeout=120, *, json_body=None):
     """
-    Specialized helper for downloading files (PDFs) from the backend.
+    Download PDFs/spreadsheets, optionally posting report inputs as a JSON body.
     Saves the response content to a temporary file and returns the path.
+    This path never queues an offline mutation or retries a timed-out POST.
     """
     url = f"{BASE_URL}{endpoint}"
     headers = {}
@@ -496,6 +497,7 @@ def api_download_file(method, endpoint, params=None, timeout=120):
                 timeout=_requests_timeout(timeout),
                 verify=verify_param,
                 stream=True,
+                **({"json": json_body} if json_body is not None else {}),
             )
             record_connection_success()
 

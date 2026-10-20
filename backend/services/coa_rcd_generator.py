@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import io
 import os
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
@@ -11,6 +11,7 @@ from backend.models import Payment, PaymentBilling, BankDeposit, Property, TaxPo
 from backend.services.billing_service import normalize_tax_years
 from backend.services.payment_adjustments import equal_adjustment_shares, CENT
 from decimal import ROUND_HALF_UP
+from utils.rcd_metadata import resolve_rcd_metadata, report_identifier_format
 
 
 def is_current_year(payment_tax_year: str, date_paid: datetime) -> bool:
@@ -108,6 +109,10 @@ def generate_coa_rcd_excel(
     end_date: datetime,
     liquidating_officer: str = "N/A",
     treasurer: str = "N/A",
+    *,
+    report_number: str = "",
+    accountable_officer: str = "",
+    report_date: date | str | None = None,
 ) -> io.BytesIO:
     """
     Generates a print-ready, professional COA Appendix 39 Excel report
@@ -116,6 +121,8 @@ def generate_coa_rcd_excel(
       2. Detailed Collections
       3. UACS Summary
     """
+    metadata = resolve_rcd_metadata(report_number, accountable_officer, report_date)
+
     # Fetch payments in date range
     # Ensure datetime boundary covers the whole day
     start_dt = datetime(start_date.year, start_date.month, start_date.day, 0, 0, 0)
@@ -324,6 +331,31 @@ def generate_coa_rcd_excel(
     ws1.cell(row=3, column=1, value="OFFICE OF THE MUNICIPAL TREASURER").font = (
         font_bold
     )
+
+    # Editable report identity does not change the selected receipt period.
+    # Explicit text cells preserve leading zeroes and cannot execute formulas.
+    for row, label, value in (
+        (1, "Report number", metadata.report_number),
+        (3, "Accountable officer", metadata.accountable_officer),
+    ):
+        label_cell = ws1.cell(row=row, column=3, value=label)
+        label_cell.font = font_bold
+        label_cell.alignment = Alignment(horizontal="left", vertical="top")
+        ws1.cell(row=row, column=1).alignment = Alignment(
+            horizontal="left", vertical="top"
+        )
+        cell = ws1.cell(row=row, column=4, value=value)
+        cell.data_type = "s"
+        cell.number_format = report_identifier_format(value)
+        cell.font = font_bold
+        cell.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+        # A bounded header accommodates the full validated input at normal size.
+        ws1.row_dimensions[row].height = max(18, 14 * ((len(value) + 11) // 12))
+    ws1.cell(row=2, column=3, value="Report date (PHT)").font = font_bold
+    report_date_cell = ws1.cell(row=2, column=4, value=metadata.report_date)
+    report_date_cell.number_format = "mmm d, yyyy"
+    report_date_cell.font = font_bold
+    report_date_cell.alignment = Alignment(horizontal="left", vertical="center")
 
     ws1.cell(row=5, column=1, value="REPORT OF COLLECTIONS AND DEPOSITS").font = (
         font_title
