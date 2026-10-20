@@ -171,3 +171,61 @@ def test_generate_coa_rcd_excel(db):
     assert uacs_map["4-01-02-041-02"] == 2400.0
     assert uacs_map["4-01-02-041-03"] == 800.0
     assert uacs_map["4-01-02-041-04"] == -100.0
+
+
+def test_report_identity_is_literal_and_does_not_change_receipt_totals(db):
+    prop = Property(
+        td_number="SYNTHETIC-RCD", owner_name="SAMPLE OWNER", assessed_value=36000
+    )
+    db.add(prop)
+    db.flush()
+    db.add(
+        Payment(
+            property_id=prop.id,
+            amount=Decimal("648.00"),
+            penalty=0,
+            discount=Decimal("72.00"),
+            or_number="SAMPLE-001",
+            tax_year="2026",
+            date_paid=datetime(2026, 10, 15, 9, 0),
+        )
+    )
+    db.commit()
+    args = (
+        db,
+        datetime(2026, 10, 15),
+        datetime(2026, 10, 15),
+        "SAMPLE LIQUIDATOR",
+        "SAMPLE TREASURER",
+    )
+    baseline = openpyxl.load_workbook(
+        generate_coa_rcd_excel(*args, report_date="2026-10-15")
+    )
+    updated = openpyxl.load_workbook(
+        generate_coa_rcd_excel(
+            *args,
+            report_number="0007/2026",
+            accountable_officer="=SAMPLE()",
+            report_date="2026-10-19",
+        )
+    )
+    summary = updated["Summary"]
+    assert summary["D1"].value == "0007/2026"
+    assert summary["D1"].data_type == "s"
+    assert summary["D3"].value == "=SAMPLE()"
+    assert summary["D3"].data_type == "s"  # Never an executable spreadsheet formula.
+    assert summary["D2"].value == datetime(2026, 10, 19)
+    assert summary["D2"].data_type == "d"
+    assert summary["C18"].value == 648.0
+    assert baseline.sheetnames == updated.sheetnames
+    for original, changed in zip(baseline, updated):
+        for row in original:
+            for cell in row:
+                if original.title == "Summary" and cell.coordinate in {
+                    "D1",
+                    "D2",
+                    "D3",
+                }:
+                    continue
+                assert changed[cell.coordinate].value == cell.value
+    assert db.query(Payment).count() == 1

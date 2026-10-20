@@ -17,6 +17,7 @@ from backend.services.migration_service import (
     run_migrations as _run_migrations_service,
 )
 from backend.services.portfolio_service import ensure_portfolio_schema
+from backend.services.rcd_register_service import ensure_rcd_register_schema
 
 
 def run_migrations() -> int:
@@ -29,6 +30,7 @@ def run_migrations() -> int:
         ensure_phase6_financial_reconciliation_schema(session)
         require_audit_integrity_schema(session)
         ensure_portfolio_schema(session)
+        ensure_rcd_register_schema(session)
         session.commit()
     print("Server schema compatibility checks passed.")
     return applied

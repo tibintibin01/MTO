@@ -1,0 +1,972 @@
+{
+  "upstream": "braces@3.0.3",
+  "cases": [
+    {
+      "input": "a/{b,c}/d",
+      "options": {},
+      "expected": [
+        "a/(b|c)/d"
+      ]
+    },
+    {
+      "input": "a/{b,c}/d",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "a/b/d",
+        "a/c/d"
+      ]
+    },
+    {
+      "input": "a/{b,c}/d",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "a/b/d",
+        "a/c/d"
+      ]
+    },
+    {
+      "input": "a/{1..3}/b",
+      "options": {},
+      "expected": [
+        "a/([1-3])/b"
+      ]
+    },
+    {
+      "input": "a/{1..3}/b",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "a/1/b",
+        "a/2/b",
+        "a/3/b"
+      ]
+    },
+    {
+      "input": "a/{1..3}/b",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "a/1/b",
+        "a/2/b",
+        "a/3/b"
+      ]
+    },
+    {
+      "input": "{01..05}",
+      "options": {},
+      "expected": [
+        "(0[1-5])"
+      ]
+    },
+    {
+      "input": "{01..05}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "01",
+        "02",
+        "03",
+        "04",
+        "05"
+      ]
+    },
+    {
+      "input": "{01..05}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "01",
+        "02",
+        "03",
+        "04",
+        "05"
+      ]
+    },
+    {
+      "input": "{1..10..2}",
+      "options": {},
+      "expected": [
+        "(1|3|5|7|9)"
+      ]
+    },
+    {
+      "input": "{1..10..2}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "1",
+        "3",
+        "5",
+        "7",
+        "9"
+      ]
+    },
+    {
+      "input": "{1..10..2}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "1",
+        "3",
+        "5",
+        "7",
+        "9"
+      ]
+    },
+    {
+      "input": "{a,b,{c,d}}",
+      "options": {},
+      "expected": [
+        "(a|b|(c|d))"
+      ]
+    },
+    {
+      "input": "{a,b,{c,d}}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ]
+    },
+    {
+      "input": "{a,b,{c,d}}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ]
+    },
+    {
+      "input": "a{b,c{d,e}}f",
+      "options": {},
+      "expected": [
+        "a(b|c(d|e))f"
+      ]
+    },
+    {
+      "input": "a{b,c{d,e}}f",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "abf",
+        "acdf",
+        "acef"
+      ]
+    },
+    {
+      "input": "a{b,c{d,e}}f",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "abf",
+        "acdf",
+        "acef"
+      ]
+    },
+    {
+      "input": "**/*.{js,ts,jsx,tsx,mdx}",
+      "options": {},
+      "expected": [
+        "**/*.(js|ts|jsx|tsx|mdx)"
+      ]
+    },
+    {
+      "input": "**/*.{js,ts,jsx,tsx,mdx}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "**/*.js",
+        "**/*.ts",
+        "**/*.jsx",
+        "**/*.tsx",
+        "**/*.mdx"
+      ]
+    },
+    {
+      "input": "**/*.{js,ts,jsx,tsx,mdx}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "**/*.js",
+        "**/*.ts",
+        "**/*.jsx",
+        "**/*.tsx",
+        "**/*.mdx"
+      ]
+    },
+    {
+      "input": "./pages/**/*.{js,ts,jsx,tsx,mdx}",
+      "options": {},
+      "expected": [
+        "./pages/**/*.(js|ts|jsx|tsx|mdx)"
+      ]
+    },
+    {
+      "input": "./pages/**/*.{js,ts,jsx,tsx,mdx}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "./pages/**/*.js",
+        "./pages/**/*.ts",
+        "./pages/**/*.jsx",
+        "./pages/**/*.tsx",
+        "./pages/**/*.mdx"
+      ]
+    },
+    {
+      "input": "./pages/**/*.{js,ts,jsx,tsx,mdx}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "./pages/**/*.js",
+        "./pages/**/*.ts",
+        "./pages/**/*.jsx",
+        "./pages/**/*.tsx",
+        "./pages/**/*.mdx"
+      ]
+    },
+    {
+      "input": "./components/**/*.{js,ts,jsx,tsx,mdx}",
+      "options": {},
+      "expected": [
+        "./components/**/*.(js|ts|jsx|tsx|mdx)"
+      ]
+    },
+    {
+      "input": "./components/**/*.{js,ts,jsx,tsx,mdx}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "./components/**/*.js",
+        "./components/**/*.ts",
+        "./components/**/*.jsx",
+        "./components/**/*.tsx",
+        "./components/**/*.mdx"
+      ]
+    },
+    {
+      "input": "./components/**/*.{js,ts,jsx,tsx,mdx}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "./components/**/*.js",
+        "./components/**/*.ts",
+        "./components/**/*.jsx",
+        "./components/**/*.tsx",
+        "./components/**/*.mdx"
+      ]
+    },
+    {
+      "input": "./app/**/*.{js,ts,jsx,tsx,mdx}",
+      "options": {},
+      "expected": [
+        "./app/**/*.(js|ts|jsx|tsx|mdx)"
+      ]
+    },
+    {
+      "input": "./app/**/*.{js,ts,jsx,tsx,mdx}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "./app/**/*.js",
+        "./app/**/*.ts",
+        "./app/**/*.jsx",
+        "./app/**/*.tsx",
+        "./app/**/*.mdx"
+      ]
+    },
+    {
+      "input": "./app/**/*.{js,ts,jsx,tsx,mdx}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "./app/**/*.js",
+        "./app/**/*.ts",
+        "./app/**/*.jsx",
+        "./app/**/*.tsx",
+        "./app/**/*.mdx"
+      ]
+    },
+    {
+      "input": "./packages/*/",
+      "options": {},
+      "expected": [
+        "./packages/*/"
+      ]
+    },
+    {
+      "input": "./packages/*/",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "./packages/*/"
+      ]
+    },
+    {
+      "input": "./packages/*/",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "./packages/*/"
+      ]
+    },
+    {
+      "input": "a/{b,b,,c}/",
+      "options": {},
+      "expected": [
+        "a/(b|b|c)/"
+      ]
+    },
+    {
+      "input": "a/{b,b,,c}/",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "a/b/",
+        "a/b/",
+        "a//",
+        "a/c/"
+      ]
+    },
+    {
+      "input": "a/{b,b,,c}/",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "a/b/",
+        "a//",
+        "a/c/"
+      ]
+    },
+    {
+      "input": "hello",
+      "options": {},
+      "expected": [
+        "hello"
+      ]
+    },
+    {
+      "input": "hello",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "hello"
+      ]
+    },
+    {
+      "input": "hello",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "hello"
+      ]
+    },
+    {
+      "input": "{}",
+      "options": {},
+      "expected": [
+        "{}"
+      ]
+    },
+    {
+      "input": "{}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "{}"
+      ]
+    },
+    {
+      "input": "{}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "{}"
+      ]
+    },
+    {
+      "input": "{a}",
+      "options": {},
+      "expected": [
+        "{a}"
+      ]
+    },
+    {
+      "input": "{a}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "{a}"
+      ]
+    },
+    {
+      "input": "{a}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "{a}"
+      ]
+    },
+    {
+      "input": "{a,b",
+      "options": {},
+      "expected": [
+        "{a,b"
+      ]
+    },
+    {
+      "input": "{a,b",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "{a,b"
+      ]
+    },
+    {
+      "input": "{a,b",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "{a,b"
+      ]
+    },
+    {
+      "input": "a,b}",
+      "options": {},
+      "expected": [
+        "a,b}"
+      ]
+    },
+    {
+      "input": "a,b}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "a,b}"
+      ]
+    },
+    {
+      "input": "a,b}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "a,b}"
+      ]
+    },
+    {
+      "input": "{{a,b},c}",
+      "options": {},
+      "expected": [
+        "((a|b)|c)"
+      ]
+    },
+    {
+      "input": "{{a,b},c}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "input": "{{a,b},c}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "input": "foo\\{bar,baz\\}",
+      "options": {},
+      "expected": [
+        "foo{bar,baz}"
+      ]
+    },
+    {
+      "input": "foo\\{bar,baz\\}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "foo{bar,baz}"
+      ]
+    },
+    {
+      "input": "foo\\{bar,baz\\}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "foo{bar,baz}"
+      ]
+    },
+    {
+      "input": "\"{{{{{literal\"",
+      "options": {},
+      "expected": [
+        "{{{{{literal"
+      ]
+    },
+    {
+      "input": "\"{{{{{literal\"",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "{{{{{literal"
+      ]
+    },
+    {
+      "input": "\"{{{{{literal\"",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "{{{{{literal"
+      ]
+    },
+    {
+      "input": "[{{{{{]",
+      "options": {},
+      "expected": [
+        "[{{{{{]"
+      ]
+    },
+    {
+      "input": "[{{{{{]",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "[{{{{{]"
+      ]
+    },
+    {
+      "input": "[{{{{{]",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "[{{{{{]"
+      ]
+    },
+    {
+      "input": "(a|b)",
+      "options": {},
+      "expected": [
+        "(a|b)"
+      ]
+    },
+    {
+      "input": "(a|b)",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "(a|b)"
+      ]
+    },
+    {
+      "input": "(a|b)",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "(a|b)"
+      ]
+    },
+    {
+      "input": "((a|b))",
+      "options": {},
+      "expected": [
+        "((a|b))"
+      ]
+    },
+    {
+      "input": "((a|b))",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "((a|b))"
+      ]
+    },
+    {
+      "input": "((a|b))",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "((a|b))"
+      ]
+    },
+    {
+      "input": "${a,b}",
+      "options": {},
+      "expected": [
+        "${a,b}"
+      ]
+    },
+    {
+      "input": "${a,b}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "${a,b}"
+      ]
+    },
+    {
+      "input": "${a,b}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "${a,b}"
+      ]
+    },
+    {
+      "input": "{a..c}",
+      "options": {},
+      "expected": [
+        "([a-c])"
+      ]
+    },
+    {
+      "input": "{a..c}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "input": "{a..c}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "input": "{3..1}",
+      "options": {},
+      "expected": [
+        "([1-3])"
+      ]
+    },
+    {
+      "input": "{3..1}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "3",
+        "2",
+        "1"
+      ]
+    },
+    {
+      "input": "{3..1}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "3",
+        "2",
+        "1"
+      ]
+    },
+    {
+      "input": "{-2..2}",
+      "options": {},
+      "expected": [
+        "(-[12]|[0-2])"
+      ]
+    },
+    {
+      "input": "{-2..2}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "-2",
+        "-1",
+        "0",
+        "1",
+        "2"
+      ]
+    },
+    {
+      "input": "{-2..2}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "-2",
+        "-1",
+        "0",
+        "1",
+        "2"
+      ]
+    },
+    {
+      "input": "a/{01..03}/b",
+      "options": {},
+      "expected": [
+        "a/(0[1-3])/b"
+      ]
+    },
+    {
+      "input": "a/{01..03}/b",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "a/01/b",
+        "a/02/b",
+        "a/03/b"
+      ]
+    },
+    {
+      "input": "a/{01..03}/b",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "a/01/b",
+        "a/02/b",
+        "a/03/b"
+      ]
+    },
+    {
+      "input": "a{b..z}c",
+      "options": {},
+      "expected": [
+        "a([b-z])c"
+      ]
+    },
+    {
+      "input": "a{b..z}c",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "abc",
+        "acc",
+        "adc",
+        "aec",
+        "afc",
+        "agc",
+        "ahc",
+        "aic",
+        "ajc",
+        "akc",
+        "alc",
+        "amc",
+        "anc",
+        "aoc",
+        "apc",
+        "aqc",
+        "arc",
+        "asc",
+        "atc",
+        "auc",
+        "avc",
+        "awc",
+        "axc",
+        "ayc",
+        "azc"
+      ]
+    },
+    {
+      "input": "a{b..z}c",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "abc",
+        "acc",
+        "adc",
+        "aec",
+        "afc",
+        "agc",
+        "ahc",
+        "aic",
+        "ajc",
+        "akc",
+        "alc",
+        "amc",
+        "anc",
+        "aoc",
+        "apc",
+        "aqc",
+        "arc",
+        "asc",
+        "atc",
+        "auc",
+        "avc",
+        "awc",
+        "axc",
+        "ayc",
+        "azc"
+      ]
+    },
+    {
+      "input": "{a..z..5}",
+      "options": {},
+      "expected": [
+        "(a|f|k|p|u|z)"
+      ]
+    },
+    {
+      "input": "{a..z..5}",
+      "options": {
+        "expand": true
+      },
+      "expected": [
+        "a",
+        "f",
+        "k",
+        "p",
+        "u",
+        "z"
+      ]
+    },
+    {
+      "input": "{a..z..5}",
+      "options": {
+        "expand": true,
+        "nodupes": true,
+        "noempty": true
+      },
+      "expected": [
+        "a",
+        "f",
+        "k",
+        "p",
+        "u",
+        "z"
+      ]
+    }
+  ],
+  "css_baseline": {
+    "source_commit": "45cb9221b37994ef808a778ce21850048f2527db",
+    "normalization": "crlf-to-lf",
+    "original_windows_sha256": "4ecbedb94fe176a0cb42363aaf8782e854af4ca9fe08126884e37ec8d267704f",
+    "sha256": "302dc607ace98128f6c3f5041388ed9e46aa19ee2b4a64b27640fcfe4d3331c4"
+  }
+}

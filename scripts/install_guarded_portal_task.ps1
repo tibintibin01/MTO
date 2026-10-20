@@ -2,7 +2,7 @@
 # migrate the owned daily action to the same CLI used by the desktop job.
 param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{40}$')][string]$ExpectedCommit,
-    [ValidateSet('v2.1.17','v2.1.18','v2.1.19','v2.1.20')][string]$ReleaseTag='v2.1.17',
+    [ValidateSet('v2.1.17','v2.1.18','v2.1.19','v2.1.20','v2.1.21')][string]$ReleaseTag='v2.1.17',
     [ValidatePattern('^$|^[a-f0-9]{40}$')][string]$PreviousCommit=''
 )
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
@@ -41,7 +41,7 @@ function Wait-Smoke {
     return $info
 }
 function Assert-PreviousBridgeApproval {
-    param($State,$PriorIntent,[string]$BeforeCommit,[ValidateSet('2.1.17','2.1.18','2.1.19')][string]$BeforeVersion='2.1.17')
+    param($State,$PriorIntent,[string]$BeforeCommit,[ValidateSet('2.1.17','2.1.18','2.1.19','2.1.20')][string]$BeforeVersion='2.1.17')
     if($BeforeCommit -cnotmatch '^[a-f0-9]{40}$' -or
         $State.approved_source_commit -cne $BeforeCommit -or
         $State.approved_product_version -cne $BeforeVersion -or
@@ -50,13 +50,13 @@ function Assert-PreviousBridgeApproval {
         $PriorIntent.status -cne 'VERIFIED' -or $PriorIntent.expected_commit -cne $BeforeCommit){
         throw 'Previous verified bridge approval does not match the required release.'
     }
-    if($BeforeVersion -in @('2.1.18','2.1.19') -and $PriorIntent.release_tag -cne ('v'+$BeforeVersion)){
+    if($BeforeVersion -in @('2.1.18','2.1.19','2.1.20') -and $PriorIntent.release_tag -cne ('v'+$BeforeVersion)){
         throw 'Previous verified bridge intent has the wrong release tag.'
     }
 }
 function Get-PreviousBridgeReleaseTag {
-    param([ValidateSet('v2.1.17','v2.1.18','v2.1.19','v2.1.20')][string]$Tag)
-    switch($Tag){'v2.1.17'{return ''};'v2.1.18'{return 'v2.1.17'};'v2.1.19'{return 'v2.1.18'};'v2.1.20'{return 'v2.1.19'}}
+    param([ValidateSet('v2.1.17','v2.1.18','v2.1.19','v2.1.20','v2.1.21')][string]$Tag)
+    switch($Tag){'v2.1.17'{return ''};'v2.1.18'{return 'v2.1.17'};'v2.1.19'{return 'v2.1.18'};'v2.1.20'{return 'v2.1.19'};'v2.1.21'{return 'v2.1.20'}}
 }
 function Assert-InterruptedBridgeApproval {
     param($State,$PriorIntent,[string]$BeforeCommit,[string]$BeforeVersion,[string]$Commit,[string]$Version)
@@ -66,7 +66,7 @@ function Assert-InterruptedBridgeApproval {
         $State.approved_bridge_revision -cne 'app-guarded-publish-v1' -or
         $PriorIntent.owner -cne 'MTO_PORTAL_PUBLICATION_20261007' -or $PriorIntent.status -cne 'VERIFIED' -or
         $PriorIntent.expected_commit -cne $BeforeCommit -or
-        ($BeforeVersion -in @('2.1.18','2.1.19') -and $PriorIntent.release_tag -cne ('v'+$BeforeVersion))){
+        ($BeforeVersion -in @('2.1.18','2.1.19','2.1.20') -and $PriorIntent.release_tag -cne ('v'+$BeforeVersion))){
         throw 'Interrupted reapproval state is inconsistent.'
     }
 }

@@ -154,7 +154,9 @@ jobs:
       working-directory: frontend
 
     - name: 🔒 Audit frontend dependencies for CVEs
-      run: npm run audit:security
+      run: |
+        npm run test:build-backport
+        npm run audit:security
       working-directory: frontend
 
     - name: 📏 Lint Next.js

@@ -1,4 +1,8 @@
 from pathlib import Path
+from copy import deepcopy
+import json
+import shutil
+import pytest
 
 from scripts.check_dependency_policy import (
     EXACT_DEVELOPMENT_TOOLS,
@@ -9,6 +13,7 @@ from scripts.check_dependency_policy import (
     validate_repository,
     validate_workflow_action_pins,
     check_frontend_transitive_security,
+    check_guarded_frontend_package,
 )
 
 
@@ -45,6 +50,52 @@ def test_repository_dependency_policy_passes():
     assert findings == []
     assert counts["runtime_direct"] > 0
     assert counts["frontend_locked"] > counts["frontend_direct"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "valid",
+        "changed_code",
+        "missing_checksum",
+        "arbitrary_path",
+        "runtime",
+        "upstream_copy",
+        "lifecycle_hook",
+    ],
+)
+def test_local_build_backport_is_exact_source_only_not_a_general_pin_bypass(
+    tmp_path, case
+):
+    folder = tmp_path / "frontend/vendor/braces-guarded"
+    shutil.copytree(PROJECT_ROOT / "frontend/vendor/braces-guarded", folder)
+    package = json.loads((PROJECT_ROOT / "frontend/package.json").read_text())
+    locked = deepcopy(
+        json.loads((PROJECT_ROOT / "frontend/package-lock.json").read_text())[
+            "packages"
+        ]
+    )
+    if case == "changed_code":
+        (folder / "lib/guard.js").write_text("module.exports={};\n")
+    elif case == "missing_checksum":
+        (folder / "PATCH-SHA256.json").unlink()
+    elif case == "arbitrary_path":
+        package["devDependencies"]["braces"] = "file:../../other"
+    elif case == "runtime":
+        locked["vendor/braces-guarded"]["dev"] = False
+        package["dependencies"]["braces"] = package["devDependencies"].pop("braces")
+    elif case == "upstream_copy":
+        locked["node_modules/any/node_modules/braces"] = {
+            "version": "3.0.3",
+            "dev": True,
+        }
+    elif case == "lifecycle_hook":
+        manifest = json.loads((folder / "package.json").read_text())
+        manifest["scripts"] = {"postinstall": "unexpected-command"}
+        (folder / "package.json").write_text(json.dumps(manifest))
+    findings = check_guarded_frontend_package(tmp_path, package, locked)
+    assert (findings == []) == (case == "valid")
+    assert all(row["code"] == "FRONTEND_BUILD_BACKPORT_INVALID" for row in findings)
 
 
 def test_desktop_packager_is_an_exact_reviewed_direct_dependency():

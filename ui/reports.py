@@ -13,6 +13,7 @@ from ui_components import show_toast
 from ui.empty_state import EmptyTableState, show_empty_content
 from ui.report_workspace_state import ReportViewState, period_label, captured_time_label
 from utils import format_curr, tr
+from utils.rcd_metadata import philippine_report_date, resolve_rcd_metadata
 from utils.report_labels import (
     RECEIVABLES_COVERAGE_LABEL,
     RECEIVABLES_COVERAGE_HELP,
@@ -543,6 +544,11 @@ class ReportsPage:
             self.export_rcd_btn.pack(side="right", padx=(8, 0))
 
         self._workspace_register("collection", collection_fr, (self.month_cb, self.year_cb, self.coll_search, self.coll_order_cb), (self.export_rcd_btn,))
+        if role == "admin":
+            daily_rcd_fr = ctk.CTkFrame(collection_fr, fg_color="transparent")
+            daily_rcd_fr.pack(fill="x", pady=(0, 8))
+            ctk.CTkButton(daily_rcd_fr, text="DAILY RCD (100 / 200)", command=self.open_daily_rcd, width=205, height=34).pack(side="left", padx=(0, 12))
+            ctk.CTkLabel(daily_rcd_fr, text="Automatic collections by OR date and registered booklet owner.", wraplength=430, justify="left").pack(side="left")
         self.coll_metrics = self._metric_cards(collection_fr, (("Recorded cash", "—", "Whole selected period / search"), ("Receipts", "—", "Whole selected period / search"), ("This page", "—", "Up to 100 receipts; chosen posted order")))
         ctk.CTkLabel(collection_fr, text="COA RCD exports the whole period. Clear the search before exporting it.", anchor="w", font=ModernTheme.BODY_SMALL).pack(fill="x", pady=(0, 8))
 
@@ -2555,7 +2561,18 @@ class ReportsPage:
         default_officer = self.user.get("full_name", "") if isinstance(self.user, dict) else ""
         SignatoriesModal(self.container, default_officer, self.export_coa_rcd)
 
-    def export_coa_rcd(self, liquidating_officer, treasurer):
+    def open_daily_rcd(self):
+        role = str(self.user.get("role", "")).strip().lower() if isinstance(self.user, dict) else ""
+        if role != "admin":
+            messagebox.showerror("Access denied", "Daily RCD and booklet registration require administrator access.")
+            return
+        from ui.rcd_daily import DailyRcdWindow
+        DailyRcdWindow(self.container)
+
+    def export_coa_rcd(
+        self, liquidating_officer, treasurer, *, report_number="",
+        accountable_officer="", report_date=None,
+    ):
         start_date, end_date = self.get_selected_date_range()
         self._show_loading()
         
@@ -2567,7 +2584,10 @@ class ReportsPage:
                     start_date=start_date,
                     end_date=end_date,
                     liquidating_officer=liquidating_officer,
-                    treasurer=treasurer
+                    treasurer=treasurer,
+                    report_number=report_number,
+                    accountable_officer=accountable_officer,
+                    report_date=report_date,
                 )
                 
                 def save_file():
@@ -2624,9 +2644,10 @@ class ReportsPage:
 class SignatoriesModal(ctk.CTkToplevel):
     def __init__(self, parent, default_officer, callback):
         super().__init__(parent)
-        self.title("RCD Signatories")
-        self.geometry("400x320")
-        self.resizable(False, False)
+        self.title("RCD Report Details")
+        self.geometry("520x640")
+        self.minsize(460, 480)
+        self.resizable(True, True)
         self.callback = callback
         
         self.transient(parent.winfo_toplevel())
@@ -2635,7 +2656,7 @@ class SignatoriesModal(ctk.CTkToplevel):
         
         self.update_idletasks()
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"+{(sw-400)//2}+{(sh-320)//2}")
+        self.geometry(f"+{max(0, (sw-520)//2)}+{max(0, (sh-640)//2)}")
         
         self.setup_ui(default_officer)
         
@@ -2643,15 +2664,29 @@ class SignatoriesModal(ctk.CTkToplevel):
         self.configure(fg_color="#1a1a2e")
         ctk.CTkFrame(self, fg_color=ModernTheme.PRIMARY, height=4, corner_radius=0).pack(fill="x")
         
-        body = ctk.CTkFrame(self, fg_color="#1a1a2e")
-        body.pack(fill="both", expand=True, padx=30, pady=24)
+        body = ctk.CTkScrollableFrame(self, fg_color="#1a1a2e")
+        body.pack(fill="both", expand=True, padx=24, pady=(18, 8))
         
-        ctk.CTkLabel(body, text="COA RCD Signatories", font=("Segoe UI", 14, "bold"), text_color="white").pack(anchor="w", pady=(0, 6))
-        ctk.CTkLabel(body, text="Enter the names of the signing officers for this report.", font=("Segoe UI", 11), text_color="#a0aec0").pack(anchor="w", pady=(0, 16))
+        ctk.CTkLabel(body, text="RCD Report Details", font=("Segoe UI", 14, "bold"), text_color="white").pack(anchor="w", pady=(0, 6))
+        ctk.CTkLabel(body, text="Report identity is separate from the selected collection period.", wraplength=380, justify="left", font=("Segoe UI", 11), text_color="#a0aec0").pack(anchor="w", pady=(0, 16))
+
+        ctk.CTkLabel(body, text="Report number", font=("Segoe UI", 11, "bold"), text_color="#a0aec0").pack(anchor="w")
+        self.report_number_ent = ctk.CTkEntry(body, height=36, placeholder_text="Enter your office's report number", fg_color="#2d2d4e", border_color="#4a4a6e", text_color="white")
+        self.report_number_ent.pack(fill="x", pady=(4, 12))
+
+        ctk.CTkLabel(body, text="Accountable officer (preparer)", font=("Segoe UI", 11, "bold"), text_color="#a0aec0").pack(anchor="w")
+        self.accountable_officer_ent = ctk.CTkEntry(body, height=36, fg_color="#2d2d4e", border_color="#4a4a6e", text_color="white")
+        self.accountable_officer_ent.insert(0, default_officer)
+        self.accountable_officer_ent.pack(fill="x", pady=(4, 12))
+
+        ctk.CTkLabel(body, text="Report date (YYYY-MM-DD, Philippine time)", font=("Segoe UI", 11, "bold"), text_color="#a0aec0").pack(anchor="w")
+        self.report_date_ent = ctk.CTkEntry(body, height=36, fg_color="#2d2d4e", border_color="#4a4a6e", text_color="white")
+        self.report_date_ent.insert(0, philippine_report_date().isoformat())
+        self.report_date_ent.pack(fill="x", pady=(4, 4))
+        ctk.CTkLabel(body, text="Filled with today's date. Change it only when preparing an earlier report.\nThe exported date stays fixed when the file is reopened.", justify="left", wraplength=380, font=("Segoe UI", 10), text_color="#a0aec0").pack(anchor="w", pady=(0, 12))
         
         ctk.CTkLabel(body, text="Liquidating Officer", font=("Segoe UI", 11, "bold"), text_color="#a0aec0").pack(anchor="w")
         self.officer_ent = ctk.CTkEntry(body, height=36, fg_color="#2d2d4e", border_color="#4a4a6e", text_color="white")
-        self.officer_ent.insert(0, default_officer)
         self.officer_ent.pack(fill="x", pady=(4, 12))
         self.officer_ent.bind("<Return>", lambda _e: self.on_export())
         self.officer_ent.bind("<KP_Enter>", lambda _e: self.on_export())
@@ -2662,8 +2697,12 @@ class SignatoriesModal(ctk.CTkToplevel):
         self.treasurer_ent.bind("<Return>", lambda _e: self.on_export())
         self.treasurer_ent.bind("<KP_Enter>", lambda _e: self.on_export())
         
-        btn_fr = ctk.CTkFrame(body, fg_color="transparent")
-        btn_fr.pack(fill="x")
+        for entry in (self.report_number_ent, self.accountable_officer_ent, self.report_date_ent):
+            entry.bind("<Return>", lambda _e: self.on_export())
+            entry.bind("<KP_Enter>", lambda _e: self.on_export())
+
+        btn_fr = ctk.CTkFrame(self, fg_color="transparent")
+        btn_fr.pack(fill="x", padx=24, pady=(8, 18))
         
         ctk.CTkButton(btn_fr, text="Cancel", command=self.destroy,
                       fg_color="#2d2d4e", hover_color="#3d3d5e", text_color="#a0aec0",
@@ -2674,12 +2713,24 @@ class SignatoriesModal(ctk.CTkToplevel):
                       height=38, width=150, font=("Segoe UI", 11, "bold"), corner_radius=8).pack(side="right")
                       
     def on_export(self):
+        try:
+            metadata = resolve_rcd_metadata(
+                self.report_number_ent.get(), self.accountable_officer_ent.get(),
+                self.report_date_ent.get(), required=True,
+            )
+        except ValueError as error:
+            messagebox.showerror("Check Report Details", str(error))
+            return
         officer = self.officer_ent.get().strip()
         treasurer = self.treasurer_ent.get().strip()
         if not officer or not treasurer:
-            messagebox.showerror("Error", "Both fields are required.")
+            messagebox.showerror("Check Signatories", "Enter the liquidating officer and Municipal Treasurer names.")
             return
-        self.callback(officer, treasurer)
+        self.callback(
+            officer, treasurer, report_number=metadata.report_number,
+            accountable_officer=metadata.accountable_officer,
+            report_date=metadata.report_date.isoformat(),
+        )
         self.destroy()
 
 

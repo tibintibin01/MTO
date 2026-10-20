@@ -12,8 +12,11 @@ from backend.models import BankDeposit
 from backend.services.coa_rcd_generator import generate_coa_rcd_excel
 from backend.services.system_service import log_action
 from utils.logger import mto_logger
+from utils.rcd_metadata import resolve_rcd_metadata
+from backend.routes.daily_rcd import router as daily_rcd_router
 
 router = APIRouter(prefix="/reports", tags=["Reports & Audit"])
+router.include_router(daily_rcd_router)
 
 
 class BankDepositCreateSchema(BaseModel):
@@ -193,6 +196,9 @@ async def export_coa_rcd(
         "N/A", description="Liquidating Officer Signatory"
     ),
     treasurer: str = Query("N/A", description="Treasurer Signatory"),
+    report_number: str = "",
+    accountable_officer: str = "",
+    report_date: Optional[str] = None,
     current_user: dict = Depends(admin_only),
     db: Session = Depends(get_db),
 ):
@@ -207,6 +213,7 @@ async def export_coa_rcd(
         )
 
     try:
+        metadata = resolve_rcd_metadata(report_number, accountable_officer, report_date)
         # Generate Excel buffer
         excel_buffer = generate_coa_rcd_excel(
             db=db,
@@ -214,6 +221,9 @@ async def export_coa_rcd(
             end_date=end_dt,
             liquidating_officer=liquidating_officer,
             treasurer=treasurer,
+            report_number=metadata.report_number,
+            accountable_officer=metadata.accountable_officer,
+            report_date=metadata.report_date,
         )
 
         log_action(

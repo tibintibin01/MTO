@@ -5,6 +5,8 @@ from sqlalchemy import (
     String,
     DECIMAL,
     Boolean,
+    BigInteger,
+    Date,
     DateTime,
     ForeignKey,
     Text,
@@ -536,8 +538,60 @@ class RateLimitBlock(Base):
     retry_after = Column(Integer, nullable=False)
 
 
+class RcdCollectingOfficer(Base):
+    __tablename__ = "rcd_collecting_officers"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(120), nullable=False)
+    name_key = Column(String(240), unique=True, nullable=False)
+    created_by = Column(String(150), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class RcdReceiptBooklet(Base):
+    __tablename__ = "rcd_receipt_booklets"
+    id = Column(Integer, primary_key=True)
+    collector_id = Column(
+        Integer,
+        ForeignKey("rcd_collecting_officers.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    form_type = Column(String(20), nullable=False, default="AF 56")
+    first_or = Column(String(80), nullable=False)
+    last_or = Column(String(80), nullable=False)
+    serial_prefix = Column(String(64), nullable=False, index=True)
+    start_serial = Column(BigInteger, nullable=False)
+    end_serial = Column(BigInteger, nullable=False)
+    serial_width = Column(SmallInteger, nullable=False)
+    issued_on = Column(Date, nullable=False)
+    created_by = Column(String(150), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (
+        UniqueConstraint("serial_prefix", "start_serial", name="uq_rcd_booklet_start"),
+    )
+
+
+class RcdRegisterControl(Base):
+    """A single row serializes register writes and versions report snapshots."""
+
+    __tablename__ = "rcd_register_control"
+    id = Column(Integer, primary_key=True)
+    revision = Column(Integer, nullable=False, default=0)
+
+
 # --- SECURE GOVERNMENT COMPLIANCE: AUDIT LOG IMMUTABILITY ---
 from sqlalchemy import event
+
+
+def _protect_rcd_assignment(mapper, connection, target):
+    raise ValueError(
+        "RCD officer and booklet records are historical assignments; review a correction instead of overwriting or deleting them."
+    )
+
+
+for _rcd_model in (RcdCollectingOfficer, RcdReceiptBooklet):
+    event.listen(_rcd_model, "before_update", _protect_rcd_assignment)
+    event.listen(_rcd_model, "before_delete", _protect_rcd_assignment)
 
 
 @event.listens_for(AuditLog, "before_update")
