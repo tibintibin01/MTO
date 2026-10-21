@@ -631,3 +631,81 @@ def test_stock_declaration_is_not_released_when_export_audit_fails(db, client):
         )
     assert result.status_code == 500
     assert not result.headers["content-type"].startswith("application/vnd")
+
+
+@pytest.mark.parametrize("driver_kind", ["date", "datetime"])
+def test_reviewed_stock_download_accepts_native_driver_date_shapes(
+    db, client, driver_kind
+):
+    """SQLite DATETIME alone missed MariaDB's legacy native DATE representation."""
+    from types import SimpleNamespace
+    from backend.models import BankDeposit
+    from backend.services.daily_rcd_service import validate_stock_history
+
+    officer, _, booklet, _ = setup_books(db)
+    original = payment(db)
+    before = (original.amount, original.penalty, original.discount, original.date_paid)
+    source = build_daily_rcd(db, officer.id, "2026-10-18")
+
+    class DriverQuery:
+        def __init__(self, query):
+            self.query = query
+
+        def filter(self, *args):
+            self.query = self.query.filter(*args)
+            return self
+
+        def limit(self, size):
+            self.query = self.query.limit(size)
+            return self
+
+        def all(self):
+            return [
+                SimpleNamespace(
+                    or_number=row.or_number,
+                    date_paid=(
+                        row.date_paid.date()
+                        if driver_kind == "date" and row.date_paid
+                        else row.date_paid
+                    ),
+                )
+                for row in self.query.all()
+            ]
+
+    class DriverSession:
+        def query(self, *args):
+            return DriverQuery(db.query(*args))
+
+    def history_with_native_driver_rows(_db, payload, stock):
+        return validate_stock_history(DriverSession(), payload, stock)
+
+    body = {
+        "collector_id": officer.id,
+        "report_date": "2026-10-18",
+        "report_number": "SAMPLE-0007",
+        "expected_signature": source["source_signature"],
+        "review": {"cash_check_confirmed": True, "stock": _stock_input(booklet.id)},
+    }
+    with (
+        patch.object(
+            routes,
+            "validate_stock_history",
+            side_effect=history_with_native_driver_rows,
+        ),
+        patch.object(routes, "log_action") as audit,
+    ):
+        response = client.post("/reports/rcd/daily/excel", json=body)
+    assert response.status_code == 200, response.text
+    audit.assert_called_once()
+    workbook = openpyxl.load_workbook(BytesIO(response.content))
+    assert workbook.sheetnames[:2] == ["REMITTANCE 100", "REMITTANCE 200"]
+    assert workbook["REMITTANCE 100"]["K21"].value == 324
+    assert workbook["REMITTANCE 200"]["K18"].value == 324
+    assert (
+        original.amount,
+        original.penalty,
+        original.discount,
+        original.date_paid,
+    ) == before
+    assert db.query(Payment).count() == 1
+    assert db.query(BankDeposit).count() == 0

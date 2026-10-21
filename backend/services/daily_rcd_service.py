@@ -1,6 +1,6 @@
 """Officer/date RPT collection snapshots. Reads posted cash, never rebills taxes."""
 
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 import hashlib
 import json
@@ -333,10 +333,7 @@ def validate_stock_history(db, payload, stock):
             for width in range(len(str(serial)), 16)
         }
     )
-    day_start = datetime.combine(
-        resolve_rcd_metadata(report_date=payload["report_date"]).report_date,
-        time.min,
-    )
+    report_day = resolve_rcd_metadata(report_date=payload["report_date"]).report_date
     for offset in range(0, len(variants), 900):
         rows = (
             db.query(Payment.or_number, Payment.date_paid)
@@ -360,7 +357,18 @@ def validate_stock_history(db, payload, stock):
                 raise ValueError(
                     "A cancelled/spoiled OR has a saved payment entry. Review the actual records; no payment was cancelled or deleted."
                 )
-            if row.date_paid is None or row.date_paid < day_start:
+            # Legacy MariaDB DATE columns yield datetime.date, while DATETIME
+            # columns yield datetime.datetime. Stock belongs to the recorded OR
+            # calendar day, not its time of day. Preserve that day without a
+            # timezone shift or changes to any saved payment/schema value.
+            paid_on = row.date_paid
+            if isinstance(paid_on, datetime):
+                paid_on = paid_on.date()
+            if paid_on is not None and not isinstance(paid_on, date):
+                raise ValueError(
+                    "Stock history contains an unsupported receipt date. Review the actual records; no date was inferred."
+                )
+            if paid_on is None or paid_on < report_day:
                 raise ValueError(
                     "Claimed unused opening/received stock includes an earlier or undated payment. Review the stock log; no balance was inferred."
                 )
