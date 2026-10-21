@@ -28,6 +28,30 @@ are included. Existing immutable booklet assignments and audit history remain.
 Product identity and the release-specific guarded publisher transition advance
 to v2.1.22 from v2.1.21; earlier release guards remain supported.
 
+## Separately approved dependency remediation
+
+The initial PR audit blocked on nine findings in the existing Pillow 12.3.0 and
+certifi 2026.7.22 runtime pins. The operator separately authorized updating only
+those two packages and their necessary lock entries, without an audit bypass or
+exception renewal. Pillow is pinned to 13.0.0 and certifi to 2026.10.19; policy
+floors reject the previous vulnerable versions. Runtime/development universal
+hash locks preserve every unrelated package version. No frontend dependency,
+municipal CA, endpoint, credential or TLS-verification policy changes are made.
+
+The subsequent development audit found uv 0.12.18 also carried the compromised
+public root bundle (PYSEC-2026-4321 / GHSA-hq85-5cpj-mr62). The operator separately
+approved updating this build-only lock generator to 0.13.4 and its necessary
+development lock/policy entries. The runtime lock still changes only Pillow and
+certifi; the development lock additionally changes only uv. No security finding
+is suppressed and no acceptance exception is renewed. See the
+[uv maintainer advisory](https://github.com/astral-sh/uv/security/advisories/GHSA-hq85-5cpj-mr62).
+
+Both packages support Python 3.11. Review the upstream
+[Pillow release notes](https://pillow.readthedocs.io/en/stable/releasenotes/13.0.0.html)
+and [certifi package](https://pypi.org/project/certifi/2026.10.19/). The Pillow 13
+removals were checked against the app's image APIs; image/PDF and secure-client
+regressions must pass along with the full suite and fresh dependency audit.
+
 ## Verification and office handoff
 
 Regression coverage includes native DATE, naive/aware DATETIME, same/future and
@@ -36,12 +60,17 @@ and real in-memory 100/200 workbook downloads through the reviewed POST route.
 Driver-shaped synthetic rows are used where SQLite would normalize DATETIME;
 tests do not connect to the office database or certify MariaDB concurrency.
 
-The locked Python 3.11 local suite passed 1,206 tests (six existing warnings).
+The locked Python 3.11 local suite passed 1,213 tests (six existing warnings)
+after all three approved package updates, including offline seal, PNG/JPEG/ICO,
+ReportLab image embedding and public TLS bundle checks.
 The focused pre-fix run reproduced the native DATE export as HTTP 500; the same
 POST path now returns a readable 100/200 workbook with unchanged recorded cash.
 Dependency-policy, desktop/server trust-boundary, critical lint and medium/high
 backend security checks passed. CI/build and the actual installed-client pilot
 remain separate gates; no office server was changed by these tests.
+
+Both refreshed runtime and development vulnerability audits found no known
+vulnerabilities. Source publication/build remain subject to their normal CI gates.
 
 Build and distribute a new immutable v2.1.22 internal package after source checks
 pass. Do not patch the running server, modify its schema to fit the ORM, replace
