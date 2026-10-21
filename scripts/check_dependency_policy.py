@@ -17,9 +17,10 @@ from packaging.version import Version
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXACT_RUNTIME_MINIMUMS = {
+    "certifi": "2026.10.19",
     "cryptography": "50.0.1",
     "fastapi": "0.141.1",
-    "pillow": "12.3.0",
+    "pillow": "13.0.0",
     "pyjwt": "2.15.1",
     "pymysql": "1.2.0",
     "python-dotenv": "1.2.3",
@@ -39,6 +40,7 @@ EXACT_FRONTEND_MINIMUMS = {
 }
 EXACT_DEVELOPMENT_TOOLS = {
     "pyinstaller": "6.22.3",
+    "uv": "0.13.4",
 }
 FORBIDDEN_PYTHON = {"python-jose"}
 FORBIDDEN_FRONTEND = {"next-pwa", "workbox-webpack-plugin"}

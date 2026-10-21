@@ -6,6 +6,7 @@ import pytest
 
 from scripts.check_dependency_policy import (
     EXACT_DEVELOPMENT_TOOLS,
+    EXACT_RUNTIME_MINIMUMS,
     PROJECT_ROOT,
     parse_direct_requirements,
     parse_hash_lock,
@@ -14,7 +15,39 @@ from scripts.check_dependency_policy import (
     validate_workflow_action_pins,
     check_frontend_transitive_security,
     check_guarded_frontend_package,
+    _check_exact_versions,
+    _check_minimums,
 )
+
+
+@pytest.mark.parametrize("version,valid", [("0.12.18", False), ("0.13.4", True)])
+def test_lock_generator_uses_reviewed_patched_version(version, valid):
+    assert EXACT_DEVELOPMENT_TOOLS["uv"] == "0.13.4"
+    findings = _check_exact_versions(
+        {"uv": version}, {"uv": "0.13.4"}, Path("dev-requirements.txt"), "BUILD"
+    )
+    assert (findings == []) is valid
+
+
+@pytest.mark.parametrize(
+    "name,old_version,patched_version",
+    [("pillow", "12.3.0", "13.0.0"), ("certifi", "2026.7.22", "2026.10.19")],
+)
+def test_image_and_public_tls_security_floors(name, old_version, patched_version):
+    minimum = {name: EXACT_RUNTIME_MINIMUMS[name]}
+    assert minimum[name] == patched_version
+    assert [
+        row["code"]
+        for row in _check_minimums(
+            {name: old_version}, minimum, Path("requirements.txt"), "PYTHON"
+        )
+    ] == ["PYTHON_SECURITY_FLOOR"]
+    assert (
+        _check_minimums(
+            {name: patched_version}, minimum, Path("requirements.txt"), "PYTHON"
+        )
+        == []
+    )
 
 
 def test_indexed_source_map_vulnerability_is_rejected_in_nested_copies():
