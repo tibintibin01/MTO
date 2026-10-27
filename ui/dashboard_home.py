@@ -8,6 +8,7 @@ import api_clients.readiness_service as readiness_service
 from ui_components import ModernChartWidget, show_toast
 from utils import tr
 from ui.animation_helper import WidgetAnimator
+from ui.property_status_display import validated_property_status
 
 
 def _recent_payment_display(row):
@@ -117,7 +118,7 @@ class DashboardHomePage:
                 self.stats_frame,
                 0,
                 tr("dashboard.stats.total_properties"),
-                "0",
+                "—",
                 ModernTheme.INFO,
             ),
             "collections_today": self._make_stat_card(
@@ -142,6 +143,23 @@ class DashboardHomePage:
                 ModernTheme.WARNING,
             ),
         }
+
+        self.property_status_label = ctk.CTkLabel(
+            self.container,
+            text=tr("dashboard.stats.property_status_loading"),
+            font=ModernTheme.BODY_SMALL,
+            anchor="w",
+            justify="left",
+            wraplength=1000,
+            text_color=("#475569", "#cbd5e1"),
+        )
+        self.property_status_label.pack(fill="x", pady=(0, 16))
+        self.property_status_label.bind(
+            "<Configure>",
+            lambda event: self.property_status_label.configure(
+                wraplength=max(200, event.width - 12)
+            ),
+        )
 
         # Charts Section
 
@@ -600,16 +618,54 @@ class DashboardHomePage:
             )
         except Exception as e:
             print(f"Dashboard refresh error: {e}")
+            self.parent.after(0, lambda: self._update_property_status({}))
             self.parent.after(0, self._hide_loading)
+
+    def _update_property_status(self, summary):
+        if not self.stat_cards["total_properties"].winfo_exists():
+            return
+        counts = validated_property_status(summary)
+        label = getattr(self, "property_status_label", None)
+        if counts is None:
+            self.stat_cards["total_properties"].configure(text="—")
+            if label is not None:
+                label.configure(
+                    text=tr("dashboard.stats.property_status_unavailable"),
+                    text_color=("#92400e", "#fbbf24"),
+                )
+            return
+        self.stat_cards["total_properties"].configure(text=f"{counts['active']:,}")
+        if label is not None:
+            fields = (
+                ("inactive_replaced", "inactive_properties"),
+                ("future_effective", "future_properties"),
+                ("archived", "archived_properties"),
+                ("needs_review", "review_properties"),
+            )
+            pieces = [
+                f"{tr('dashboard.stats.property_status_year')} {counts['as_of_tax_year']}"
+            ]
+            pieces.extend(
+                f"{tr('dashboard.stats.' + key)}: {counts[field]:,}"
+                for field, key in fields
+            )
+            label.configure(
+                text="  |  ".join(pieces)
+                + "\n"
+                + tr("dashboard.stats.property_history_retained"),
+                text_color=(
+                    ("#92400e", "#fbbf24")
+                    if counts["needs_review"]
+                    else ("#475569", "#cbd5e1")
+                ),
+            )
 
     def _update_ui(self, summary, trend_rows, recent_rows, recent_error=None):
         self._hide_loading()
         if not self.stat_cards["total_properties"].winfo_exists():
             return
 
-        self.stat_cards["total_properties"].configure(
-            text=str(summary.get("total_properties", 0))
-        )
+        self._update_property_status(summary)
         self.stat_cards["collections_today"].configure(
             text=f"P {float(summary.get('collections_today', 0) or 0):,.2f}"
         )

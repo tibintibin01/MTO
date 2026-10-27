@@ -151,6 +151,9 @@ def get_dashboard_summary(db_session: Session = None):
         refresh_system_stats(db_session=db_session)
 
     summary = {
+        # Keep the legacy registered-record total for existing API consumers.
+        # The desktop's Active Properties card uses the separate year-aware
+        # contract below, never this unfiltered/cache-backed total.
         "total_properties": int(
             get_cached_stat("total_properties", db_session=db_session)
         ),
@@ -172,6 +175,12 @@ def get_dashboard_summary(db_session: Session = None):
         # list while the summary cards correctly reported today's receipt.
         "recent_payments": get_recent_payments(limit=6, db_session=db_session),
     }
+
+    from backend.services.property_status_service import get_property_status_counts
+
+    # Compute on each refresh, independent of the five-minute statistics cache.
+    # A January tax-year rollover therefore needs no row edits or scheduled job.
+    summary["property_status_counts"] = get_property_status_counts(db_session)
 
     return summary
 

@@ -29,6 +29,14 @@
         "subtitle": "Real-time collection monitoring and analytics",
         "stats": {
             "total_properties": "Active Properties",
+            "inactive_properties": "Inactive / replaced TDs",
+            "future_properties": "Future-effective TDs",
+            "archived_properties": "Archived TDs",
+            "review_properties": "Needs review",
+            "property_status_year": "As of tax year",
+            "property_status_loading": "Loading year-aware property status…",
+            "property_status_unavailable": "Year-aware property counts unavailable. Refresh, or check that the server supports property-status counts. Registered-record totals are not shown as active.",
+            "property_history_retained": "Inactive TDs remain stored for tracing. Future TDs are not counted as active yet. Status is by tax year, not payment or delinquency status.",
             "collections_today": "Collection Dated Today",
             "receipts_today": "ORs Dated Today",
             "collections_month": "Monthly Total"

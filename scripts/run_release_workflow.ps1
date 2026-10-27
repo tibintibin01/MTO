@@ -312,7 +312,7 @@ function Enter-PortalPublisherMaintenanceLock {
 function Invoke-PostChecks {
     Assert-Checkout $script:ResolvedProject $ExpectedCommit
     Assert-ReleaseIdentity $ReleaseTag $ExpectedCommit $script:ResolvedDistribution
-    if($ReleaseTag -in @('v2.1.17','v2.1.18','v2.1.19','v2.1.20','v2.1.21','v2.1.22')){
+    if($ReleaseTag -in @('v2.1.17','v2.1.18','v2.1.19','v2.1.20','v2.1.21','v2.1.22','v2.1.23')){
         # Native child process: preserve its actual exit code, not an unset
         # LASTEXITCODE from calling a normally-returning PowerShell script.
         Invoke-CheckedNative (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') @(
@@ -469,7 +469,7 @@ try {
         # Interactive unsigned-release approval remains in the existing updater.
         $portalActivationLock=$null
         try {
-            if($ReleaseTag -in @('v2.1.17','v2.1.18','v2.1.19','v2.1.20','v2.1.21','v2.1.22')){$portalActivationLock=Enter-PortalPublisherMaintenanceLock}
+            if($ReleaseTag -in @('v2.1.17','v2.1.18','v2.1.19','v2.1.20','v2.1.21','v2.1.22','v2.1.23')){$portalActivationLock=Enter-PortalPublisherMaintenanceLock}
             Invoke-CheckedNative (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') $updaterArguments
         } finally {
             if($portalActivationLock){$portalActivationLock.Unlock(0,1);$portalActivationLock.Dispose()}
