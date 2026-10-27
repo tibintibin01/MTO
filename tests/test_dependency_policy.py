@@ -3,6 +3,7 @@ from copy import deepcopy
 import json
 import shutil
 import pytest
+import tomllib
 
 from scripts.check_dependency_policy import (
     EXACT_DEVELOPMENT_TOOLS,
@@ -27,6 +28,32 @@ def test_lock_generator_uses_reviewed_patched_version(version, valid):
         {"uv": version}, {"uv": "0.13.4"}, Path("dev-requirements.txt"), "BUILD"
     )
     assert (findings == []) is valid
+
+
+@pytest.mark.parametrize(
+    "name,old,new",
+    [
+        ("black", "26.3.1", "26.10.1"),
+        ("brotli", "1.2.0", "1.2.1"),
+        ("filelock", "3.32.6", "4.2.1"),
+        ("setuptools", "84.0.0", "84.1.0"),
+    ],
+)
+def test_reviewed_build_security_pins_reject_previous_versions(name, old, new):
+    assert EXACT_DEVELOPMENT_TOOLS[name] == new
+    path = Path("dev-requirements.txt")
+    assert _check_exact_versions({name: old}, {name: new}, path, "BUILD")
+    assert not _check_exact_versions({name: new}, {name: new}, path, "BUILD")
+
+
+def test_build_backend_uses_the_same_patched_setuptools_pin():
+    project = tomllib.loads(
+        (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert (
+        "setuptools==" + EXACT_DEVELOPMENT_TOOLS["setuptools"]
+        in project["build-system"]["requires"]
+    )
 
 
 @pytest.mark.parametrize(
