@@ -7,6 +7,7 @@ import tomllib
 
 from scripts.check_dependency_policy import (
     EXACT_DEVELOPMENT_TOOLS,
+    EXACT_FRONTEND_MINIMUMS,
     EXACT_RUNTIME_MINIMUMS,
     PROJECT_ROOT,
     parse_direct_requirements,
@@ -102,6 +103,38 @@ def test_unversioned_source_map_dependency_fails_closed():
         )[0]["code"]
         == "FRONTEND_TRANSITIVE_INVALID_VERSION"
     )
+
+
+@pytest.mark.parametrize(
+    "name,old,new",
+    [("next", "16.3.8", "16.4.3"), ("eslint-config-next", "16.3.8", "16.4.3")],
+)
+def test_website_framework_security_floor(name, old, new):
+    assert EXACT_FRONTEND_MINIMUMS[name] == new
+    assert _check_minimums({name: old}, {name: new}, Path("package.json"), "WEB")
+    assert not _check_minimums({name: new}, {name: new}, Path("package.json"), "WEB")
+
+
+@pytest.mark.parametrize("name,patched", [("undici", "6.29.1"), ("zod", "4.6.6")])
+@pytest.mark.parametrize("version", [None, "old", "unreviewed_major", "patched"])
+def test_website_security_pins_apply_to_every_nested_copy(name, patched, version):
+    actual = {
+        None: None,
+        "old": "6.28.1" if name == "undici" else "4.4.3",
+        "unreviewed_major": "7.0.0" if name == "undici" else "5.0.0",
+        "patched": patched,
+    }[version]
+    locked = {"node_modules/parent/node_modules/" + name: {"version": actual}}
+    findings = check_frontend_transitive_security(locked, Path("package-lock.json"))
+    assert (findings == []) == (version == "patched")
+
+
+def test_website_security_overrides_match_the_reviewed_lock():
+    package = json.loads((PROJECT_ROOT / "frontend/package.json").read_text())
+    for name, patched in {"undici": "6.29.1", "zod": "4.6.6"}.items():
+        assert package["overrides"][name] == patched
+    assert package["dependencies"]["@serwist/next"] == "9.5.12"
+    assert package["devDependencies"]["serwist"] == "9.5.12"
 
 
 def test_repository_dependency_policy_passes():

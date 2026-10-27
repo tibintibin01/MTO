@@ -156,6 +156,7 @@ jobs:
     - name: 🔒 Audit frontend dependencies for CVEs
       run: |
         npm run test:build-backport
+        npm run test:dependency-security
         npm run audit:security
       working-directory: frontend
 
