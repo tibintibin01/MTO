@@ -32,14 +32,18 @@ EXACT_RUNTIME_MINIMUMS = {
 }
 EXACT_FRONTEND_MINIMUMS = {
     "@serwist/next": "9.5.12",
-    "eslint-config-next": "16.3.8",
-    "next": "16.3.8",
+    "eslint-config-next": "16.4.3",
+    "next": "16.4.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "serwist": "9.5.12",
 }
 EXACT_DEVELOPMENT_TOOLS = {
+    "black": "26.10.1",
+    "brotli": "1.2.1",
+    "filelock": "4.2.1",
     "pyinstaller": "6.22.3",
+    "setuptools": "84.1.0",
     "uv": "0.13.4",
 }
 FORBIDDEN_PYTHON = {"python-jose"}
@@ -278,9 +282,24 @@ def _check_minimums(
 def check_frontend_transitive_security(
     locked_paths: dict, path: Path
 ) -> list[dict[str, str]]:
-    """Keep every nested copy above GHSA-68fv-2mgg-jv7q's patched floor."""
+    """Check every nested copy; do not infer safety across unreviewed majors."""
     results = []
     for package_path, metadata in locked_paths.items():
+        for name, patched in {"undici": "6.29.1", "zod": "4.6.6"}.items():
+            if package_path.endswith("node_modules/" + name):
+                actual = metadata.get("version") if isinstance(metadata, dict) else None
+                if not isinstance(actual, str):
+                    results.append(
+                        finding(
+                            "FRONTEND_TRANSITIVE_INVALID_VERSION", path, package_path
+                        )
+                    )
+                else:
+                    results.extend(
+                        _check_exact_versions(
+                            {name: actual}, {name: patched}, path, "FRONTEND_TRANSITIVE"
+                        )
+                    )
         if package_path.endswith("node_modules/source-map-js"):
             actual = metadata.get("version") if isinstance(metadata, dict) else None
             if not isinstance(actual, str):

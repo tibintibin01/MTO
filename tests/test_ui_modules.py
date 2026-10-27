@@ -216,8 +216,9 @@ class TestOtherEmptyStates(unittest.TestCase):
         icon = MagicMock()
         title = MagicMock()
         message = MagicMock()
-        with patch("ui.empty_state.ctk.CTkFrame") as frame_class, patch(
-            "ui.empty_state.ctk.CTkLabel", side_effect=[icon, title, message]
+        with (
+            patch("ui.empty_state.ctk.CTkFrame") as frame_class,
+            patch("ui.empty_state.ctk.CTkLabel", side_effect=[icon, title, message]),
         ):
             state = EmptyTableState(MagicMock(), "Search to begin.")
             state.show("Try another search.", title="No matching records")
@@ -260,10 +261,12 @@ class TestOtherEmptyStates(unittest.TestCase):
 
         page._update_coll_table({"items": [], "has_more": False})
         page.coll_empty_state.show.assert_called_once()
-        page._update_coll_table({
-            "items": [["2026-01-01", "OR-1", "TD-1", "Owner", "RPT", 2026, 50]],
-            "has_more": False,
-        })
+        page._update_coll_table(
+            {
+                "items": [["2026-01-01", "OR-1", "TD-1", "Owner", "RPT", 2026, 50]],
+                "has_more": False,
+            }
+        )
         page.coll_empty_state.hide.assert_called_once_with()
         page.coll_tree.insert.assert_called_once()
 
@@ -302,6 +305,7 @@ class TestOtherEmptyStates(unittest.TestCase):
         page.recon_export_excel_btn.configure.assert_called_once_with(state="disabled")
         page.recon_export_pdf_btn.configure.assert_called_once_with(state="disabled")
         self.assertEqual(show.call_args.kwargs["title"], "No reconciliation data")
+
 
 class TestLedgerColumns(unittest.TestCase):
     def test_pdf_status_is_internal_and_not_a_visible_column(self):
@@ -572,6 +576,53 @@ class TestDashboardHome(unittest.TestCase):
 
         home._render_recent_collections.assert_called_once_with(recent, load_error=None)
         log_error.assert_called_once()
+
+    def test_dashboard_active_card_uses_year_aware_count_not_registered_total(self):
+        home = object.__new__(DashboardHomePage)
+        home.stat_cards = {"total_properties": MagicMock()}
+        home.stat_cards["total_properties"].winfo_exists.return_value = True
+        home.property_status_label = MagicMock()
+        home._update_property_status(
+            {
+                "total_properties": 999,
+                "property_status_counts": {
+                    "format_version": 1,
+                    "as_of_tax_year": 2027,
+                    "active": 100,
+                    "inactive_replaced": 10,
+                    "future_effective": 2,
+                    "archived": 3,
+                    "needs_review": 1,
+                    "total_records": 116,
+                    "registered_records": 113,
+                },
+            }
+        )
+        home.stat_cards["total_properties"].configure.assert_called_once_with(
+            text="100"
+        )
+        detail = home.property_status_label.configure.call_args.kwargs["text"]
+        self.assertIn("2027", detail)
+        self.assertIn("10", detail)
+        self.assertNotIn("999", detail)
+
+    def test_dashboard_old_server_does_not_mislabel_raw_total_as_active(self):
+        home = object.__new__(DashboardHomePage)
+        home.stat_cards = {"total_properties": MagicMock()}
+        home.stat_cards["total_properties"].winfo_exists.return_value = True
+        home.property_status_label = MagicMock()
+        home._update_property_status({"total_properties": 999})
+        home.stat_cards["total_properties"].configure.assert_called_once_with(text="—")
+        self.assertNotIn(
+            "999", home.property_status_label.configure.call_args.kwargs["text"]
+        )
+
+    def test_dashboard_property_status_ignores_destroyed_page(self):
+        home = object.__new__(DashboardHomePage)
+        home.stat_cards = {"total_properties": MagicMock()}
+        home.stat_cards["total_properties"].winfo_exists.return_value = False
+        home._update_property_status({})
+        home.stat_cards["total_properties"].configure.assert_not_called()
 
     def test_chart_draw_completes_with_plain_currency_formatter(self):
         chart = object.__new__(ModernChartWidget)

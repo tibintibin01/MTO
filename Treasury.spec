@@ -78,6 +78,7 @@ a = Analysis(
         'ui.compliant_dashboard',
         'ui.conflict_resolver',
         'ui.dashboard_home',
+        'ui.property_status_display',
         'ui.delinquency_dashboard',
         'ui.dossier',
         'ui.empty_state',

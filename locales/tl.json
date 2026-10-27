@@ -29,6 +29,14 @@
         "subtitle": "Real-time na pagsubaybay sa koleksyon at analytics",
         "stats": {
             "total_properties": "Mga Aktibong Ari-arian",
+            "inactive_properties": "Hindi aktibo / napalitang TD",
+            "future_properties": "TD na epektibo sa susunod na taon",
+            "archived_properties": "Naka-archive na TD",
+            "review_properties": "Kailangang suriin",
+            "property_status_year": "Para sa taong buwis",
+            "property_status_loading": "Kinukuha ang katayuan ng TD ayon sa taon…",
+            "property_status_unavailable": "Hindi makuha ang bilang ng TD ayon sa taon. I-refresh o tingnan kung suportado ito ng server. Hindi ituturing na aktibo ang lahat ng naka-record na TD.",
+            "property_history_retained": "Nananatili ang lumang TD para sa pagsubaybay. Hindi pa aktibo ang TD na para sa susunod na taon. Katayuan ito ng TD, hindi ng pagbabayad o pagkakautang.",
             "collections_today": "Koleksyon Ngayon",
             "receipts_today": "Mga Resibo Ngayon",
             "collections_month": "Buwanang Kabuuan"
