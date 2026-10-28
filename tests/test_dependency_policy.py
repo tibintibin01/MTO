@@ -37,6 +37,7 @@ def test_lock_generator_uses_reviewed_patched_version(version, valid):
         ("black", "26.3.1", "26.10.1"),
         ("brotli", "1.2.0", "1.2.1"),
         ("filelock", "3.32.6", "4.2.1"),
+        ("msgpack", "1.2.2", "1.2.3"),
         ("setuptools", "84.0.0", "84.1.0"),
     ],
 )
@@ -55,6 +56,22 @@ def test_build_backend_uses_the_same_patched_setuptools_pin():
         "setuptools==" + EXACT_DEVELOPMENT_TOOLS["setuptools"]
         in project["build-system"]["requires"]
     )
+
+
+def test_msgpack_security_pin_is_development_only():
+    runtime, runtime_findings = parse_direct_requirements(
+        PROJECT_ROOT / "requirements.txt"
+    )
+    runtime_lock, lock_findings = parse_hash_lock(PROJECT_ROOT / "requirements.lock")
+    development, dev_findings = parse_direct_requirements(
+        PROJECT_ROOT / "dev-requirements.txt"
+    )
+    dev_lock, dev_lock_findings = parse_hash_lock(
+        PROJECT_ROOT / "dev-requirements.lock"
+    )
+    assert not runtime_findings + lock_findings + dev_findings + dev_lock_findings
+    assert "msgpack" not in runtime and "msgpack" not in runtime_lock
+    assert development["msgpack"] == dev_lock["msgpack"] == "1.2.3"
 
 
 @pytest.mark.parametrize(

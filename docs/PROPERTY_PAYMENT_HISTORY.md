@@ -92,8 +92,8 @@ The development branch is `codex/property-payment-history`, based on
 `05937331c7288c40d4ce0d9c6ab2c495be895b2f`. The verification above records
 pre-publication development checks. v2.1.24 advances only the product identity
 and explicit immediate-predecessor publisher/workflow allowlists. It preserves
-the original publisher tools, four daily triggers and evidence. No dependency,
-risk exception, schema or financial-calculation change is included.
+the original publisher tools, four daily triggers and evidence. No runtime
+dependency, risk exception, schema or financial-calculation change is included.
 
 Production remains the separately finalized v2.1.23 release until an approved
 maintenance window, deployment, genuine pilot and final acceptance. These local
@@ -103,3 +103,16 @@ Release-preparation regression on 2026-10-29: **1,318 passed**, including the
 explicit v2.1.23-to-v2.1.24 and interrupted publisher-approval transitions.
 Future, unreviewed v2.1.25 remains rejected. The original manual/finalization,
 financial invariant, backup and immutable-source gates are unchanged.
+
+## Approved build-only security patch
+
+The first PR CI run found CVE-2026-114613 in development-only `msgpack` 1.2.2.
+On 2026-10-29 the owner approved updating only that package to 1.2.3 and
+regenerating the reviewed development hash lock. The universal lock was rebuilt
+with the existing pinned uv tool. All other resolved package versions, runtime
+requirements/lock, website dependencies and risk exceptions remain unchanged.
+The direct development pin, dependency policy and regression tests prevent a
+silent return to the affected version. No vulnerability is ignored or waived.
+
+Primary advisory:
+https://github.com/msgpack/msgpack-python/security/advisories/GHSA-j586-36cw-2gc2

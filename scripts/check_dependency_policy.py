@@ -42,6 +42,7 @@ EXACT_DEVELOPMENT_TOOLS = {
     "black": "26.10.1",
     "brotli": "1.2.1",
     "filelock": "4.2.1",
+    "msgpack": "1.2.3",
     "pyinstaller": "6.22.3",
     "setuptools": "84.1.0",
     "uv": "0.13.4",
