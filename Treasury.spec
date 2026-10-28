@@ -85,6 +85,7 @@ a = Analysis(
         'ui.help_page',
         'ui.import_wizard',
         'ui.ledger',
+        'ui.payment_history',
         'ui.logs',
         'ui.navigation',
         'ui.notifications',

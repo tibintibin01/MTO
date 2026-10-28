@@ -193,7 +193,7 @@ def test_reports_reapproval_preserves_old_intent_and_does_not_rewrite_unchanged_
 def test_reports_workflow_reapproves_before_checks_and_serializes_source_activation():
     text = (SCRIPT.parent / "run_release_workflow.ps1").read_text(encoding="utf-8")
     assert (
-        "@('v2.1.17','v2.1.18','v2.1.19','v2.1.20','v2.1.21','v2.1.22','v2.1.23')"
+        "@('v2.1.17','v2.1.18','v2.1.19','v2.1.20','v2.1.21','v2.1.22','v2.1.23','v2.1.24')"
         in text
     )
     assert "'-ReleaseTag',$ReleaseTag,'-PreviousCommit',$PreviousCommit" in text
@@ -215,6 +215,7 @@ def test_reports_workflow_reapproves_before_checks_and_serializes_source_activat
         ("v2.1.21", "v2.1.20"),
         ("v2.1.22", "v2.1.21"),
         ("v2.1.23", "v2.1.22"),
+        ("v2.1.24", "v2.1.23"),
     ],
 )
 def test_bridge_transition_requires_the_immediate_supported_predecessor(tag, previous):
@@ -225,7 +226,7 @@ def test_bridge_transition_requires_the_immediate_supported_predecessor(tag, pre
 
 def test_unreviewed_future_bridge_transition_is_rejected():
     result = functions(
-        "Get-PreviousBridgeReleaseTag 'v2.1.24';Write-Output 'WRONG PASS'"
+        "Get-PreviousBridgeReleaseTag 'v2.1.25';Write-Output 'WRONG PASS'"
     )
     assert result.returncode != 0
     assert "WRONG PASS" not in result.stdout
@@ -234,7 +235,9 @@ def test_unreviewed_future_bridge_transition_is_rejected():
 @pytest.mark.parametrize(
     "case", ["valid", "wrong_tag", "wrong_version", "wrong_commit", "unverified"]
 )
-@pytest.mark.parametrize("previous_version", ["2.1.19", "2.1.20", "2.1.21", "2.1.22"])
+@pytest.mark.parametrize(
+    "previous_version", ["2.1.19", "2.1.20", "2.1.21", "2.1.22", "2.1.23"]
+)
 def test_next_release_requires_exact_verified_publisher_approval(
     case, previous_version
 ):
@@ -274,6 +277,7 @@ def test_next_release_requires_exact_verified_publisher_approval(
         ("2.1.20", "2.1.21"),
         ("2.1.21", "2.1.22"),
         ("2.1.22", "2.1.23"),
+        ("2.1.23", "2.1.24"),
     ],
 )
 def test_interrupted_reapproval_requires_the_exact_release_transition(

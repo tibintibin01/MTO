@@ -1,7 +1,7 @@
 import os
 import asyncio
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
@@ -13,8 +13,70 @@ from backend.generators import receipt_gen
 from backend.services.storage_service import storage_service
 from backend.services.idempotency_service import begin_financial_operation
 from utils.logger import mto_logger
+from backend.services.property_payment_history_service import (
+    HistoryScopeError,
+    get_property_payment_history,
+)
+from backend.generators.payment_history_gen import history_excel, history_pdf
 
 router = APIRouter(prefix="/payments", tags=["Financial"])
+
+
+def _history_payload(property_id, include_previous, db_session):
+    try:
+        return get_property_payment_history(
+            property_id, include_previous=include_previous, db_session=db_session
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except HistoryScopeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+@router.get("/property/{property_id}/history")
+def preview_property_payment_history(
+    response: Response,
+    property_id: int = Path(ge=1),
+    include_previous: bool = False,
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    response.headers["Cache-Control"] = "no-store"
+    return _history_payload(property_id, include_previous, db_session)
+
+
+@router.get("/property/{property_id}/history/export")
+def export_property_payment_history(
+    property_id: int = Path(ge=1),
+    include_previous: bool = False,
+    format: str = Query(pattern="^(pdf|xlsx)$"),
+    fingerprint: str = Query(min_length=64, max_length=64, pattern="^[a-f0-9]{64}$"),
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    payload = _history_payload(property_id, include_previous, db_session)
+    if payload["fingerprint"] != fingerprint:
+        raise HTTPException(
+            status_code=409,
+            detail="History changed after the preview. Reload and review it before exporting.",
+        )
+    content = history_pdf(payload) if format == "pdf" else history_excel(payload)
+    media = (
+        "application/pdf"
+        if format == "pdf"
+        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    # A generated office reference only: no receipt registration, cloud upload,
+    # financial audit write, or stored server-side taxpayer export file.
+    return Response(
+        content=content,
+        media_type=media,
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="Property_Payment_History_{property_id}.{format}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 def _replayed_response(claim):
