@@ -30,6 +30,7 @@ uv==0.13.4
 # Reviewed build/development transitive security pins (not runtime requirements).
 brotli==1.2.1
 filelock==4.2.1
+msgpack==1.2.3
 setuptools==84.1.0
 
 # --- Desktop Packaging ---

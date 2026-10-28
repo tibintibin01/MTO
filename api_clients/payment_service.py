@@ -42,6 +42,33 @@ def get_unified_payment_history(term=None, property_id=None):
     return get_payment_ledger(term=term, property_id=property_id)
 
 
+def get_property_payment_history(property_id, include_previous=False):
+    return api_request(
+        "GET",
+        f"/payments/property/{int(property_id)}/history",
+        params={"include_previous": bool(include_previous)},
+        queue_offline=False,
+    )
+
+
+def download_property_payment_history(
+    property_id, include_previous, format, fingerprint
+):
+    from api_clients.api_helper import api_download_file
+
+    if format not in ("pdf", "xlsx"):
+        raise ValueError("Choose PDF or Excel.")
+    return api_download_file(
+        "GET",
+        f"/payments/property/{int(property_id)}/history/export",
+        params={
+            "include_previous": bool(include_previous),
+            "format": format,
+            "fingerprint": fingerprint,
+        },
+    )
+
+
 def get_next_or_number():
     return api_request("GET", "/payments/next-or")
 

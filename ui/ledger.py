@@ -325,6 +325,16 @@ class LedgerPage:
             border_color=colors["border"],
         )
         selected_bar.pack(fill="x", pady=(0, 9))
+        self.history_btn = ctk.CTkButton(
+            selected_bar,
+            text="PAYMENT HISTORY",
+            command=self.export_payment_history,
+            font=("Inter", 10, "bold"),
+            width=145,
+            height=36,
+            corner_radius=6,
+        )
+        self.history_btn.pack(side="right", padx=12, pady=10)
         context = ctk.CTkFrame(selected_bar, fg_color="transparent")
         context.pack(side="left", fill="x", expand=True, padx=(14, 10), pady=8)
         self.property_owner_lbl = ctk.CTkLabel(
@@ -1139,6 +1149,24 @@ class LedgerPage:
             user=self.user,
             payment_mode=True,
         )
+
+    def export_payment_history(self):
+        from ui.payment_history import PaymentHistoryDialog, selected_history_account
+
+        selected = self.tree.selection()
+        row_context = (
+            self._ledger_property_contexts.get(selected[0]) if selected else None
+        )
+        property_id = selected_history_account(
+            self._active_property_context, row_context
+        )
+        if property_id is None:
+            messagebox.showwarning(
+                "Payment history",
+                "Load one property account or select a payment row belonging to it. Owner names and TD text alone do not select an account.",
+            )
+            return
+        PaymentHistoryDialog(self.container.winfo_toplevel(), property_id)
 
     def do_export(self):
         data = []
