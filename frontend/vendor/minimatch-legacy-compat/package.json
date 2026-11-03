@@ -1,0 +1,11 @@
+{
+  "name": "@mto/minimatch-legacy-compat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Callable CommonJS compatibility entry point for patched upstream minimatch, not a fork of its matching engine",
+  "license": "MIT",
+  "main": "index.js",
+  "files": ["index.js", "README.md"],
+  "engines": {"node": ">=20.9.0"},
+  "dependencies": {"minimatch-modern": "npm:minimatch@11.0.1"}
+}

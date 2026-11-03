@@ -55,6 +55,7 @@ IMMUTABLE_ACTION_REF = re.compile(r"[^@\s]+@[0-9a-f]{40}")
 UNIVERSAL_LOCK_TOKEN = "--universal"
 WINDOWS_ONLY_PACKAGES = {"pefile", "pywin32", "pywin32-ctypes"}
 GUARDED_BRACES_SPEC = "file:vendor/braces-guarded"
+MINIMATCH_COMPAT_SPEC = "file:vendor/minimatch-legacy-compat"
 GUARDED_BRACES_FILES = {
     "LICENSE",
     "README.md",
@@ -135,6 +136,74 @@ def check_guarded_frontend_package(
         problems.append("backport is not development-only")
     return [
         finding("FRONTEND_BUILD_BACKPORT_INVALID", folder, text) for text in problems
+    ]
+
+
+def check_minimatch_compat_package(
+    root: Path, package: dict, locked: dict
+) -> list[dict]:
+    """Allow only the reviewed callable entry point, never an arbitrary local pin."""
+    folder = root / "frontend/vendor/minimatch-legacy-compat"
+    problems = []
+    if (
+        package.get("devDependencies", {}).get("minimatch") != MINIMATCH_COMPAT_SPEC
+        or "minimatch" in package.get("dependencies", {})
+        or package.get("overrides", {}).get("minimatch@<4") != "$minimatch"
+        or package.get("overrides", {}).get("minimatch@>=4") != "11.0.1"
+        or package.get("overrides", {}).get("glob") != "14.0.2"
+    ):
+        problems.append("explicit reviewed security overrides missing")
+    expected = {"package.json", "index.js", "README.md"}
+    try:
+        files = {
+            p.relative_to(folder).as_posix(): p
+            for p in folder.rglob("*")
+            if p.is_file()
+        }
+        if set(files) != expected | {"SOURCE-SHA256.json"}:
+            problems.append("adapter source allowlist changed")
+        for path in [folder, *files.values()]:
+            if (
+                path.is_symlink()
+                or getattr(path.lstat(), "st_file_attributes", 0) & 0x400
+            ):
+                problems.append("linked adapter source")
+        hashes = json.loads(files["SOURCE-SHA256.json"].read_text(encoding="utf-8"))
+        if set(hashes) != expected:
+            problems.append("adapter checksum allowlist changed")
+        for name in expected:
+            content = files[name].read_bytes().replace(b"\r\n", b"\n")
+            if hashes.get(name) != hashlib.sha256(content).hexdigest():
+                problems.append("adapter source checksum mismatch: " + name)
+        manifest = json.loads(files["package.json"].read_text(encoding="utf-8"))
+        if (
+            manifest.get("name") != "@mto/minimatch-legacy-compat"
+            or manifest.get("version") != "0.1.0"
+            or manifest.get("private") is not True
+            or manifest.get("dependencies")
+            != {"minimatch-modern": "npm:minimatch@11.0.1"}
+            or manifest.get("scripts")
+        ):
+            problems.append("adapter identity, engine pin or lifecycle hooks changed")
+    except (OSError, ValueError, KeyError, TypeError):
+        problems.append("complete adapter source/checksums unavailable")
+    link = locked.get("node_modules/minimatch", {})
+    if (
+        link.get("link") is not True
+        or link.get("resolved") != "vendor/minimatch-legacy-compat"
+    ):
+        problems.append("legacy consumers do not use the reviewed adapter")
+    if locked.get("vendor/minimatch-legacy-compat", {}).get("dev") is not True:
+        problems.append("adapter is not development-only")
+    modern = locked.get("node_modules/minimatch-modern", {})
+    if (
+        modern.get("name") != "minimatch"
+        or modern.get("version") != "11.0.1"
+        or not modern.get("integrity")
+    ):
+        problems.append("upstream alias identity/integrity mismatch")
+    return [
+        finding("FRONTEND_MINIMATCH_COMPAT_INVALID", folder, text) for text in problems
     ]
 
 
@@ -286,8 +355,21 @@ def check_frontend_transitive_security(
     """Check every nested copy; do not infer safety across unreviewed majors."""
     results = []
     for package_path, metadata in locked_paths.items():
-        for name, patched in {"undici": "6.29.1", "zod": "4.6.6"}.items():
+        for name, patched in {
+            "undici": "6.29.1",
+            "zod": "4.6.6",
+            "glob": "14.0.2",
+            "minimatch": "11.0.1",
+            "minimatch-modern": "11.0.1",
+        }.items():
             if package_path.endswith("node_modules/" + name):
+                if (
+                    package_path == "node_modules/minimatch"
+                    and isinstance(metadata, dict)
+                    and metadata.get("link") is True
+                    and metadata.get("resolved") == "vendor/minimatch-legacy-compat"
+                ):
+                    continue  # Source and development-only placement checked separately.
                 actual = metadata.get("version") if isinstance(metadata, dict) else None
                 if not isinstance(actual, str):
                     results.append(
@@ -479,6 +561,10 @@ def validate_repository(
         root, package, package_lock.get("packages", {})
     )
     findings.extend(backport_findings)
+    compat_findings = check_minimatch_compat_package(
+        root, package, package_lock.get("packages", {})
+    )
+    findings.extend(compat_findings)
     non_exact = sorted(
         name
         for name, version in frontend.items()
@@ -487,6 +573,11 @@ def validate_repository(
             name == "braces"
             and version == GUARDED_BRACES_SPEC
             and not backport_findings
+        )
+        and not (
+            name == "minimatch"
+            and version == MINIMATCH_COMPAT_SPEC
+            and not compat_findings
         )
     )
     if non_exact:

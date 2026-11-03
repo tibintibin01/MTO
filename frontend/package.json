@@ -34,6 +34,7 @@
   },
   "devDependencies": {
     "braces": "file:vendor/braces-guarded",
+    "minimatch": "file:vendor/minimatch-legacy-compat",
     "@types/node": "20.19.41",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
@@ -53,6 +54,9 @@
     "sharp": "0.35.5",
     "postcss-selector-parser": "7.1.6",
     "undici": "6.29.1",
-    "zod": "4.6.6"
+    "zod": "4.6.6",
+    "glob": "14.0.2",
+    "minimatch@<4": "$minimatch",
+    "minimatch@>=4": "11.0.1"
   }
 }

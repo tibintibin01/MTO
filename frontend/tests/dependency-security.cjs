@@ -13,6 +13,7 @@ let checks = 0;
 function check(value, message) { assert.ok(value, message); checks++; }
 
 async function main() {
+  await require('./glob-security.cjs')();
   check(manifest.dependencies.next === '16.4.3', 'Reviewed Next.js patch');
   check(manifest.devDependencies['eslint-config-next'] === '16.4.3', 'Matching lint package');
   check(manifest.dependencies['@serwist/next'] === '9.5.12' && manifest.devDependencies.serwist === '9.5.12', 'No Serwist downgrade or unrelated upgrade');
