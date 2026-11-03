@@ -146,6 +146,16 @@ def _receipt_date(value):
     )
 
 
+def _effectivity_metadata(value):
+    """Serialize native DATE/DATETIME values before fingerprinting the report.
+
+    Some legacy schemas return native dates despite the model's String type.
+    Preserve existing text/other values and datetime precision/timezone; this
+    changes only report metadata, never the stored effectivity or tax timeline.
+    """
+    return value.isoformat() if isinstance(value, (date, datetime)) else value
+
+
 def get_property_payment_history(property_id, *, include_previous=False, db_session):
     if type(property_id) is not int or property_id < 1:
         raise HistoryScopeError("Select one property account by its record ID.")
@@ -246,7 +256,7 @@ def get_property_payment_history(property_id, *, include_previous=False, db_sess
                 "lot_number": p.lot_number,
                 "block_number": p.block_number,
                 "classification": p.kind_of_property,
-                "effectivity": p.effectivity_date,
+                "effectivity": _effectivity_metadata(p.effectivity_date),
                 "archived": p.deleted_at is not None,
                 "selected": pid == property_id,
                 "payments": rows,
