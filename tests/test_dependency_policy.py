@@ -17,6 +17,7 @@ from scripts.check_dependency_policy import (
     validate_workflow_action_pins,
     check_frontend_transitive_security,
     check_guarded_frontend_package,
+    check_minimatch_compat_package,
     _check_exact_versions,
     _check_minimums,
 )
@@ -206,6 +207,72 @@ def test_local_build_backport_is_exact_source_only_not_a_general_pin_bypass(
     findings = check_guarded_frontend_package(tmp_path, package, locked)
     assert (findings == []) == (case == "valid")
     assert all(row["code"] == "FRONTEND_BUILD_BACKPORT_INVALID" for row in findings)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "valid",
+        "code",
+        "checksum",
+        "runtime",
+        "path",
+        "hook",
+        "engine",
+        "override",
+        "alias",
+    ],
+)
+def test_minimatch_adapter_is_reviewed_source_not_a_pin_bypass(tmp_path, case):
+    folder = tmp_path / "frontend/vendor/minimatch-legacy-compat"
+    shutil.copytree(PROJECT_ROOT / "frontend/vendor/minimatch-legacy-compat", folder)
+    package = json.loads((PROJECT_ROOT / "frontend/package.json").read_text())
+    locked = deepcopy(
+        json.loads((PROJECT_ROOT / "frontend/package-lock.json").read_text())[
+            "packages"
+        ]
+    )
+    if case == "code":
+        (folder / "index.js").write_text("module.exports = {};\n")
+    elif case == "checksum":
+        (folder / "SOURCE-SHA256.json").unlink()
+    elif case == "runtime":
+        locked["vendor/minimatch-legacy-compat"]["dev"] = False
+    elif case == "path":
+        package["devDependencies"]["minimatch"] = "file:../../arbitrary"
+    elif case in {"hook", "engine"}:
+        manifest = json.loads((folder / "package.json").read_text())
+        if case == "hook":
+            manifest["scripts"] = {"postinstall": "unexpected"}
+        else:
+            manifest["dependencies"]["minimatch-modern"] = "npm:minimatch@10.2.6"
+        (folder / "package.json").write_text(json.dumps(manifest))
+    elif case == "override":
+        package["overrides"]["minimatch@>=4"] = "10.2.6"
+    elif case == "alias":
+        locked["node_modules/minimatch-modern"]["name"] = "other"
+    findings = check_minimatch_compat_package(tmp_path, package, locked)
+    assert (findings == []) == (case == "valid")
+    assert all(row["code"] == "FRONTEND_MINIMATCH_COMPAT_INVALID" for row in findings)
+
+
+@pytest.mark.parametrize(
+    "name,old,new",
+    [
+        ("glob", "13.0.6", "14.0.2"),
+        ("minimatch", "10.2.6", "11.0.1"),
+        ("minimatch-modern", "3.1.5", "11.0.1"),
+    ],
+)
+def test_every_nested_glob_engine_is_exactly_the_reviewed_patch(name, old, new):
+    key = "node_modules/synthetic/node_modules/" + name
+    assert check_frontend_transitive_security(
+        {key: {"version": old}}, Path("package-lock.json")
+    )
+    assert not check_frontend_transitive_security(
+        {key: {"version": new}}, Path("package-lock.json")
+    )
+    assert check_frontend_transitive_security({key: {}}, Path("package-lock.json"))
 
 
 def test_desktop_packager_is_an_exact_reviewed_direct_dependency():
