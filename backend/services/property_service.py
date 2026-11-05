@@ -89,15 +89,23 @@ class SyncConflictError(Exception):
 
 
 class AmbiguousPropertyError(ValueError):
-    """Raised when a TD lookup matches more than one active property."""
+    """Raised when account identity or predecessor history is ambiguous."""
 
-    def __init__(self, td_number, matches):
+    def __init__(self, td_number, matches, *, context="duplicate_td"):
         self.td_number = _td_text(td_number)
         self.matches = list(matches or [])
-        super().__init__(
-            f"{len(self.matches)} active properties use TD {self.td_number}. "
-            "Select the correct property account before continuing."
-        )
+        if context == "history":
+            message = (
+                f"The TD history for {self.td_number} has ambiguous or inconsistent "
+                "Previous TD account links. Review the property history before "
+                "continuing; no account was selected automatically."
+            )
+        else:
+            message = (
+                f"{len(self.matches)} active properties use TD {self.td_number}. "
+                "Select the correct property account before continuing."
+            )
+        super().__init__(message)
 
 
 def verified_duplicate_td_feature_enabled() -> bool:
@@ -570,8 +578,15 @@ def _td_chain_for_property(seed_prop, db_session: Session):
         else:
             # Legacy fallback is permitted only when the TD is unambiguous.
             parent = _one_active_property_by_td(current.prev_td_number, db_session)
-        if not parent or parent.id in visited:
+        if not parent:
             break
+        if parent.id in visited or (
+            _td_text(current.prev_td_number)
+            and _td_text(current.prev_td_number) != _td_text(parent.td_number)
+        ):
+            raise AmbiguousPropertyError(
+                seed_prop.td_number, list(by_id.values()), context="history"
+            )
         by_id[parent.id] = parent
         visited.add(parent.id)
         current = parent
@@ -604,7 +619,7 @@ def _td_chain_for_property(seed_prop, db_session: Session):
             # One former TD may legitimately lead to several subdivided
             # properties. That is a selection problem, not a condition where
             # the server may choose a child based on sort order.
-            raise AmbiguousPropertyError(current.td_number, children)
+            raise AmbiguousPropertyError(current.td_number, children, context="history")
         children.sort(key=lambda p: (_property_effectivity_year(p) or 9999, p.id or 0))
         for child in children:
             if child.id not in by_id:
@@ -614,6 +629,72 @@ def _td_chain_for_property(seed_prop, db_session: Session):
     chain = list(by_id.values())
     chain.sort(key=lambda p: (_property_effectivity_year(p) or 0, p.id or 0))
     return chain
+
+
+def _same_year_successor(td_number, candidates, chain, db_session: Session):
+    """Break an annual-effectivity tie only by a proven successor relationship.
+
+    Record IDs, names, creation times and full dates are not tie-breakers. Every
+    other candidate must be an ancestor of one unique candidate through known,
+    nondecreasing effectivity years. Unknown or conflicting links never guess.
+    """
+    by_id = {prop.id: prop for prop in chain}
+    parents = {}
+    years = {prop.id: _property_effectivity_year(prop) for prop in chain}
+
+    def blocked():
+        return AmbiguousPropertyError(td_number, candidates, context="history")
+
+    for prop in chain:
+        previous_td = _td_text(prop.prev_td_number)
+        if prop.previous_property_id is not None:
+            parent = by_id.get(prop.previous_property_id)
+            if parent and previous_td and previous_td != _td_text(parent.td_number):
+                raise blocked()
+        else:
+            parent = (
+                _one_active_property_by_td(previous_td, db_session)
+                if previous_td
+                else None
+            )
+        if parent is None:
+            continue
+        if parent.id not in by_id or parent.id == prop.id:
+            raise blocked()
+        if (
+            years[prop.id] is not None
+            and years[parent.id] is not None
+            and years[prop.id] < years[parent.id]
+        ):
+            raise blocked()
+        parents[prop.id] = parent.id
+
+    # A cycle must not masquerade as a path containing all tied candidates.
+    for prop in chain:
+        seen = set()
+        current_id = prop.id
+        while current_id is not None:
+            if current_id in seen:
+                raise blocked()
+            seen.add(current_id)
+            current_id = parents.get(current_id)
+
+    candidate_ids = {prop.id for prop in candidates}
+    successors = []
+    for prop in candidates:
+        ancestors = {prop.id}
+        current_id = prop.id
+        while current_id in parents:
+            parent_id = parents[current_id]
+            if years[current_id] is None or years[parent_id] is None:
+                break
+            ancestors.add(parent_id)
+            current_id = parent_id
+        if candidate_ids <= ancestors:
+            successors.append(prop)
+    if len(successors) != 1:
+        raise blocked()
+    return successors[0]
 
 
 def resolve_property_for_tax_year(
@@ -682,7 +763,7 @@ def resolve_property_for_tax_year(
         if (_property_effectivity_year(prop) or 0) == latest_year
     ]
     if len(latest) > 1:
-        raise AmbiguousPropertyError(td, latest)
+        return _same_year_successor(td, latest, chain, db_session)
     return latest[0]
 
 
@@ -1317,6 +1398,8 @@ def save_property(
 
     except Exception as e:
         db_session.rollback()
+        if isinstance(e, AmbiguousPropertyError):
+            raise HTTPException(status_code=409, detail=str(e)) from e
         if isinstance(e, (HTTPException, ValidationError, SyncConflictError)):
             raise
         if isinstance(e, IntegrityError) and "uq_properties_td_number" in str(e):
