@@ -13,7 +13,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/run_bounded_release_workflow.ps1"
-POWERSHELL = shutil.which("powershell.exe") or shutil.which("pwsh")
+# Rehearse the exact Windows PowerShell runtime used by the server launcher.
+# The native stage branch contains Windows file-URI and SystemRoot semantics;
+# Linux CI still runs the platform-independent policy/function/kit tests.
+POWERSHELL = shutil.which("powershell.exe")
 
 
 def literal(value):
@@ -22,7 +25,7 @@ def literal(value):
 
 def rehearse(tmp_path, tail):
     if not POWERSHELL:
-        pytest.skip("PowerShell runtime required")
+        pytest.skip("Windows PowerShell required for the native stage rehearsal")
     code = f"""
     $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
     $tokens=$null;$errors=$null
