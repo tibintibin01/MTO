@@ -378,7 +378,7 @@ print(json.dumps({'status': 'PROTOCOL_CONTRACT_UNCHANGED', 'api_version': after[
             $script:MayWriteState=$true
             New-WindowAttempt
             Invoke-Gate 'readiness-now' @('-B','-m','scripts.phase4_reliability_preflight','--require-ready','--output',(Join-Path $script:GateDirectory 'readiness-now.json'))
-            Confirm-WindowAction ('Pause ALL financial entry. Type BEGIN MTO RELEASE '+$ReleaseTag) ('BEGIN MTO RELEASE '+$ReleaseTag)
+            Confirm-WindowAction ('Close client apps and pause ALL financial entry for the approved window. Type BEGIN MTO RELEASE '+$ReleaseTag) ('BEGIN MTO RELEASE '+$ReleaseTag)
             $script:WorkflowState.window_started_utc=[datetime]::UtcNow.ToString('o')
             Invoke-Gate 'backup' @('-B','-c',"import asyncio; from backend.services.backup_service import run_hybrid_backup; ok,msg=asyncio.run(run_hybrid_backup(user={'id':0,'username':'approved-release-workflow','role':'admin'})); print({'success':ok,'message':msg}); raise SystemExit(0 if ok else 2)")
             Invoke-Gate 'baseline-before' @('-B','-m','scripts.capture_remediation_baseline','--database','--require-ready','--output',(Join-Path $script:RunDirectory 'baseline-before.json'))

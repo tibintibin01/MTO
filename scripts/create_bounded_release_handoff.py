@@ -114,7 +114,7 @@ set "MTO_WINDOW_TOOLS=%~dp0"
 title MTO v2.1.26 - Prepared Release Window
 echo Keep all v2.1.25 release and controlled-acceptance evidence.
 echo 1. Prepare - office work continues; download and verify before maintenance
-echo 2. Activate prepared workflow - approved financial-entry pause required
+echo 2. Activate prepared workflow - close clients; approved financial pause
 echo 3. Verify existing workflow - no new activation
 echo 4. Resume entry - after essential READ-ONLY client pilot and strict checks
 echo 5. Finalize later - full pilot and manual acceptance after explicit Resume
