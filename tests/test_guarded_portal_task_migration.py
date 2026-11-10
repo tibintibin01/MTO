@@ -218,6 +218,7 @@ def test_reports_workflow_reapproves_before_checks_and_serializes_source_activat
         ("v2.1.24", "v2.1.23"),
         ("v2.1.25", "v2.1.24"),
         ("v2.1.26", "v2.1.25"),
+        ("v2.1.27", "v2.1.26"),
     ],
 )
 def test_bridge_transition_requires_the_immediate_supported_predecessor(tag, previous):
@@ -228,7 +229,7 @@ def test_bridge_transition_requires_the_immediate_supported_predecessor(tag, pre
 
 def test_unreviewed_future_bridge_transition_is_rejected():
     result = functions(
-        "Get-PreviousBridgeReleaseTag 'v2.1.27';Write-Output 'WRONG PASS'"
+        "Get-PreviousBridgeReleaseTag 'v2.1.28';Write-Output 'WRONG PASS'"
     )
     assert result.returncode != 0
     assert "WRONG PASS" not in result.stdout
@@ -239,7 +240,7 @@ def test_unreviewed_future_bridge_transition_is_rejected():
 )
 @pytest.mark.parametrize(
     "previous_version",
-    ["2.1.19", "2.1.20", "2.1.21", "2.1.22", "2.1.23", "2.1.24", "2.1.25"],
+    ["2.1.19", "2.1.20", "2.1.21", "2.1.22", "2.1.23", "2.1.24", "2.1.25", "2.1.26"],
 )
 def test_next_release_requires_exact_verified_publisher_approval(
     case, previous_version
@@ -283,6 +284,7 @@ def test_next_release_requires_exact_verified_publisher_approval(
         ("2.1.23", "2.1.24"),
         ("2.1.24", "2.1.25"),
         ("2.1.25", "2.1.26"),
+        ("2.1.26", "2.1.27"),
     ],
 )
 def test_interrupted_reapproval_requires_the_exact_release_transition(

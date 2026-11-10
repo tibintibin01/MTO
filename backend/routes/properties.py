@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 
 import backend.services.property_service as prop_svc
 import backend.services.billing_service as bill_svc
+from backend.services.tax_bill_search_service import search_tax_bill_properties
 from backend.deps import (
     get_current_user,
     write_access,
@@ -56,6 +57,21 @@ def duplicate_td_policy(current_user: dict = Depends(get_current_user)):
             "Explicit TD confirmation",
         ],
     }
+
+
+@router.get("/tax-bill-candidates")
+def tax_bill_candidates(
+    search: str = Query(..., min_length=1, max_length=100),
+    limit: int = Query(50, ge=1, le=100),
+    cursor: Optional[int] = Query(None, ge=1),
+    current_user: dict = Depends(get_current_user),
+    db_session: Session = Depends(get_db),
+):
+    """Find declarations without requiring a paid billing or current effectivity."""
+    try:
+        return search_tax_bill_properties(search, limit, cursor, db_session)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("")

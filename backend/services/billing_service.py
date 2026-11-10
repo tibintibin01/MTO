@@ -1554,6 +1554,20 @@ def get_property_tax_bill_data(
         if not prop:
             return None
 
+        replacements = _replacement_links_subquery(db_session)
+        if (
+            db_session.query(replacements.c.successor_id)
+            .filter(
+                replacements.c.predecessor_id == prop.id,
+                replacements.c.replacement_year <= target_year,
+            )
+            .first()
+        ):
+            raise TaxBillUnavailableError(
+                f"This account was replaced by tax year {target_year}. "
+                "Search for and explicitly select the effective declaration instead."
+            )
+
         policy = (
             db_session.query(TaxPolicy)
             .filter(TaxPolicy.tax_year == target_year)
@@ -1672,7 +1686,15 @@ def get_property_tax_bill_data(
                 sum(float(row.get("balance_amount", 0) or 0) for row in prior_rows),
                 2,
             ),
-            "compliant_through_year": target_year - 1 if not prior_rows else None,
+            "compliant_through_year": (
+                target_year - 1
+                if not prior_rows
+                and any(
+                    int(row.get("tax_year") or 0) < target_year
+                    for row in statement.get("billing_rows", [])
+                )
+                else None
+            ),
         }
     )
     return result

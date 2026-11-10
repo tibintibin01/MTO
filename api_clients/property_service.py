@@ -4,7 +4,14 @@ from api_clients.api_helper import api_request, api_request_with_cache
 
 
 def search_properties(
-    term, limit=50, cursor=None, kind=None, year_start=None, year_end=None, as_of_year=None, barangay=None
+    term,
+    limit=50,
+    cursor=None,
+    kind=None,
+    year_start=None,
+    year_end=None,
+    as_of_year=None,
+    barangay=None,
 ):
     params = {"search": term, "limit": limit}
     if cursor:
@@ -26,6 +33,14 @@ def get_barangays():
     return api_request_with_cache("GET", "/properties/barangays")
 
 
+def search_tax_bill_properties(term, limit=50, cursor=None):
+    """Fresh discovery, including newly encoded and future-effective accounts."""
+    params = {"search": str(term).strip(), "limit": limit}
+    if cursor is not None:
+        params["cursor"] = cursor
+    return api_request("GET", "/properties/tax-bill-candidates", params=params)
+
+
 def get_property_by_id(property_id):
     # Editors must load the current server version for optimistic concurrency.
     return api_request("GET", f"/properties/{property_id}")
@@ -43,7 +58,9 @@ def find_properties_by_td_number(td_number, exclude_id=None):
 
     # Do not use the list cache here: a newly added or recently edited TD must
     # be visible immediately when it is selected as a Previous TD.
-    response = api_request("GET", "/properties", params={"search": normalized_td, "limit": 100})
+    response = api_request(
+        "GET", "/properties", params={"search": normalized_td, "limit": 100}
+    )
     matches = []
     for row in response.get("items", []):
         if exclude_id is not None and str(row[0]) == str(exclude_id):
@@ -118,13 +135,15 @@ def save_property(data, editing_id=None, idempotency_key=None, **kwargs):
     """
     if editing_id:
         return api_request(
-            "PUT", f"/properties/{editing_id}",
+            "PUT",
+            f"/properties/{editing_id}",
             data=data,
             idempotency_key=idempotency_key,
         )
     else:
         return api_request(
-            "POST", "/properties",
+            "POST",
+            "/properties",
             data=data,
             idempotency_key=idempotency_key,
         )
@@ -142,7 +161,9 @@ def get_receivables_by_barangay(year=None):
     params = {}
     if year:
         params["year"] = year
-    return api_request_with_cache("GET", "/reports/receivables-by-barangay", params=params if params else None)
+    return api_request_with_cache(
+        "GET", "/reports/receivables-by-barangay", params=params if params else None
+    )
 
 
 def get_deleted_properties():
