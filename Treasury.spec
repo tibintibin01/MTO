@@ -76,6 +76,7 @@ a = Analysis(
         'ui.batch_delete_payments',
         'ui.command_palette',
         'ui.compliant_dashboard',
+        'ui.tax_bill',
         'ui.conflict_resolver',
         'ui.dashboard_home',
         'ui.property_status_display',
