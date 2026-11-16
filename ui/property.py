@@ -1,12 +1,19 @@
-import customtkinter as ctk
-import tkinter as tk
-from tkinter import ttk, messagebox
-import threading
+import re
 import sys
+import threading
+import tkinter as tk
+from math import isfinite
 from pathlib import Path
+from queue import Empty, SimpleQueue
+from tkinter import ttk, messagebox
+
+import customtkinter as ctk
+
 import api_clients.property_service as prop_svc
+import api_clients.system_service as system_svc
 import api_clients.api_helper as api
 import api_clients.auth_service as auth
+from api_clients.billing_service import normalize_date_input, normalize_tax_years
 from ui.dossier import PropertyDossierModal
 from ui.empty_state import EmptyTableState
 from ui.import_wizard import ImportWizardModal
@@ -355,12 +362,17 @@ class PropertyEditModal(ctk.CTkToplevel):
         self._last_input = None
         self._field_entries = []
         self._field_entries_by_key = {}
-        self._last_auto_amount_paid = ""
-        self._setting_auto_amount_paid = False
-        self._amount_paid_manually_changed = False
-        self._payment_target_timer = None
-        self._resolving_payment_target = False
-        self._last_resolved_target_key = None
+        self._payment_origin = None
+        self._payment_revision = 0
+        self._payment_preview_timer = None
+        self._payment_poll_timer = None
+        self._payment_preview_pending = False
+        self._payment_results = SimpleQueue()
+        self._payment_date_finished = False
+        self._payment_net_due = None
+        self._applying_payment_preview = False
+        self._suggested_amount = False
+        self._edited_adjustments = False
         self.barangays = ["NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN", "BUENAVISTA", "CALAOCAN", "DIAMANEN", "DIANED", "DIARABASIN", "DIBUTUNAN", "DIMABUNO", "DINADIAWAN", "DITALE", "GUPA", "IPIL", "LABOY", "LIPIT", "LOBBOT", "MALIGAYA", "MIJARES", "MUCDOL", "PUANGI", "SALAY", "SAPANGKAWAYAN", "TOYTOYAN"]
         self.duplicate_policy = {"enabled": False, "admin_authorized": False}
         if not self.payment_mode and auth.get_user_role(self.user) == "admin":
@@ -384,11 +396,11 @@ class PropertyEditModal(ctk.CTkToplevel):
         self._apply_window_icon()
         self.setup_ui()
         self._bind_keyboard_shortcuts()
-        if self.property_id:
-            self.load_data()
-            if self.payment_mode:
-                self._prepare_payment_entry()
-        else: self.recompute()
+        prop = self.load_data() if self.property_id else None
+        if self.payment_mode:
+            self._prepare_payment_entry(prop)
+        elif not self.property_id:
+            self.validate()
 
     def _apply_window_icon(self):
         icon_path = _resource_path("assets/official/app_icon.ico")
@@ -498,14 +510,25 @@ class PropertyEditModal(ctk.CTkToplevel):
                 entry = ctk.CTkEntry(self.scroll_form, height=40, textvariable=self.vars[key], placeholder_text=placeholder)
                 entry.pack(fill="x", padx=10, pady=(0, 5))
                 entry.bind("<FocusIn>", lambda e, w=entry: self.after_idle(_scroll_to_widget, w))
-                if key in ["assessed_value", "prior_assessed_value", "penalty", "discount"]:
-                    self.vars[key].trace_add("write", lambda *a: self.recompute())
+            if self.payment_mode:
+                if key in {"tax_year", "or_number", "or_date"}:
+                    self.vars[key].trace_add("write", lambda *a, field=key: self._payment_input_changed(field))
+                elif key in {"penalty", "discount", "amount_paid"}:
+                    self.vars[key].trace_add("write", lambda *a, field=key: self._payment_amount_changed(field))
+                elif key != "remarks":
+                    # These fields identify the account; payment posting does not edit them.
+                    entry.configure(state="readonly")
+                if key == "or_date":
+                    entry.bind("<FocusOut>", self._finish_payment_date)
+                    self._setup_payment_preview_status()
                 elif key == "amount_paid":
-                    self.vars[key].trace_add("write", lambda *a: self._on_amount_paid_changed())
-                elif key == "tax_year" and self.payment_mode:
-                    self.vars[key].trace_add("write", lambda *a: self._on_payment_tax_year_changed())
-                else:
-                    self.vars[key].trace_add("write", lambda *a: self.validate())
+                    ctk.CTkLabel(
+                        self.scroll_form,
+                        text="Enter the actual cash received. For a partial payment, enter this installment only.",
+                        wraplength=480, justify="left", font=("Segoe UI", 10),
+                    ).pack(anchor="w", padx=10, pady=(0, 3))
+            else:
+                self.vars[key].trace_add("write", self.validate)
             if self._first_input is None:
                 self._first_input = entry
             self._last_input = entry
@@ -571,36 +594,16 @@ class PropertyEditModal(ctk.CTkToplevel):
                 )
                 entry.pack(fill="x", padx=12, pady=(2, 8))
 
-        self.calc_box = ctk.CTkFrame(self.scroll_form, fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK), corner_radius=8)
-        self.calc_box.pack(fill="x", padx=10, pady=15)
-
-        # ── Auto-Compute button ───────────────────────────────────────────────
-        compute_fr = ctk.CTkFrame(self.scroll_form, fg_color="transparent")
-        compute_fr.pack(fill="x", padx=10, pady=(0, 6))
-
-        self._compute_btn = ctk.CTkButton(
-            compute_fr,
-            text="⚡  AUTO-COMPUTE PENALTY & DISCOUNT",
-            command=self._auto_compute,
-            height=38,
-            font=("Inter", 11, "bold"),
-            fg_color="#7c3aed",
-            hover_color="#6d28d9",
-            text_color="white",
-        )
-        self._compute_btn.pack(fill="x")
-
-        self._compute_lbl = ctk.CTkLabel(
-            compute_fr, text="Fill in Assessed Value, Tax Year, and OR Date first.",
-            font=("Inter", 9), text_color="#64748b", anchor="w",
-        )
-        self._compute_lbl.pack(anchor="w", pady=(2, 0))
-
-        self.total_lbl = ctk.CTkLabel(self.calc_box, text="TOTAL TAX DUE: 0.00", font=("Segoe UI", 12, "bold"), text_color="#1f538d")
-        self.total_lbl.pack(pady=15)
-        if not self.payment_mode:
-            self.calc_box.pack_forget()
-            compute_fr.pack_forget()
+        if self.payment_mode:
+            calc_box = ctk.CTkFrame(self.scroll_form, fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK), corner_radius=8)
+            calc_box.pack(fill="x", padx=10, pady=15)
+            self.total_lbl = ctk.CTkLabel(calc_box, text="CALCULATED ANNUAL DUE: —", font=("Segoe UI", 12, "bold"))
+            self.total_lbl.pack(anchor="w", padx=10, pady=(10, 2))
+            self._payment_breakdown = ctk.CTkLabel(
+                calc_box, text="", wraplength=490, justify="left", anchor="w",
+                font=("Segoe UI", 10),
+            )
+            self._payment_breakdown.pack(fill="x", padx=10, pady=(0, 8))
 
         footer = ctk.CTkFrame(self, fg_color="transparent")
         footer.pack(fill="x", padx=20, pady=20)
@@ -678,273 +681,300 @@ class PropertyEditModal(ctk.CTkToplevel):
         self.save()
         return "break"
 
-    def _prepare_payment_entry(self):
-        """Reuse the property editor as a clean payment-posting form."""
-        self.title("Add Payment")
-        self._last_auto_amount_paid = ""
-        self._setting_auto_amount_paid = False
-        self._amount_paid_manually_changed = False
-        for key in ("or_number", "or_date", "penalty", "discount", "amount_paid", "remarks"):
-            if key in self.vars:
-                self.vars[key].set("")
-        self.save_btn.configure(text="SAVE PAYMENT")
-        self._compute_lbl.configure(
-            text=(
-                "Enter OR Number, OR Date, and Tax Year. For a partial payment, "
-                "Amount Paid is this installment only."
-            ),
-            text_color="#64748b",
+    def _setup_payment_preview_status(self):
+        row = ctk.CTkFrame(self.scroll_form, fg_color="transparent")
+        row.pack(fill="x", padx=10, pady=(0, 4))
+        self._compute_lbl = ctk.CTkLabel(
+            row, text="", wraplength=390, anchor="w", justify="left",
+            font=("Segoe UI", 11),
         )
-        self.recompute()
+        self._compute_lbl.pack(side="left", fill="x", expand=True)
+        self._compute_btn = ctk.CTkButton(
+            row, text="Recalculate", command=self._recalculate_payment,
+            width=100, height=28, state="disabled",
+        )
+        self._compute_btn.pack(side="right", padx=(8, 0))
+        self._compute_btn.bind("<Return>", lambda e: self._recalculate_from_keyboard())
+        self._compute_btn.bind("<KP_Enter>", lambda e: self._recalculate_from_keyboard())
+
+    def _recalculate_from_keyboard(self):
+        if self._compute_btn.cget("state") == "normal":
+            self._recalculate_payment()
+        return "break"
+
+    def _prepare_payment_entry(self, prop):
+        """Start with blank receipt fields and retain the original account selection."""
+        self.title("Add Payment")
+        self.save_btn.configure(text="SAVE PAYMENT")
+        if (
+            isinstance(prop, dict)
+            and prop.get("id") == int(self.property_id or 0)
+            and self.vars["td_number"].get().strip()
+        ):
+            self._payment_origin = prop
+        self._queue_payment_preview()
         self._focus_and_select_field("tax_year")
 
-    def _on_payment_tax_year_changed(self):
-        self.validate()
-        if not self.payment_mode or self._resolving_payment_target:
-            return
+    @staticmethod
+    def _payment_number(value):
+        return float(str(value).replace(",", "").strip())
+
+    def _payment_preview_inputs(self):
+        if not self._payment_origin:
+            return (), "", "No property account is loaded. Close and reopen Add Payment."
         year_text = self.vars["tax_year"].get().strip()
-        if not (year_text.isdigit() and len(year_text) == 4):
-            return
-        if self._payment_target_timer:
-            try:
-                self.after_cancel(self._payment_target_timer)
-            except Exception:
-                pass
-        self._payment_target_timer = self.after(450, self._resolve_payment_target_for_tax_year)
+        or_number = self.vars["or_number"].get().strip()
+        date_text = self.vars["or_date"].get().strip()
+        if not re.fullmatch(r"[0-9,;\s-]+", year_text):
+            return (), "", "Enter a valid Tax Year to calculate."
+        years = normalize_tax_years(year_text)
+        if not years or not all(re.fullmatch(r"[0-9]{4}", year) and int(year) for year in years):
+            return (), "", "Enter a valid Tax Year to calculate."
+        if not or_number or not date_text:
+            return (), "", "Enter OR Number and OR Date to calculate."
+        date = normalize_date_input(date_text)
+        if not date:
+            return (), "", "Enter a valid OR Date (YYYY-MM-DD)."
+        return tuple(int(year) for year in years), date, ""
 
-    def _resolve_payment_target_for_tax_year(self):
-        if not self.payment_mode or self._resolving_payment_target:
+    def _finish_payment_date(self, event=None):
+        if self._payment_date_finished:
             return
-        td_number = self.vars["td_number"].get().strip()
-        year_text = self.vars["tax_year"].get().strip()
-        if not td_number or not (year_text.isdigit() and len(year_text) == 4):
-            return
-        resolve_key = (td_number.upper(), year_text, self.property_id)
-        if resolve_key == self._last_resolved_target_key:
-            return
-        self._last_resolved_target_key = resolve_key
+        self._payment_date_finished = True
+        self._queue_payment_preview()
 
-        def worker():
-            try:
-                result = prop_svc.resolve_payment_target(
-                    td_number,
-                    int(year_text),
-                    property_id=self.property_id,
-                )
-                self.after(0, lambda r=result, old_td=td_number, year=year_text: self._apply_payment_target_resolution(r, old_td, year))
-            except Exception:
-                # Do not interrupt typing. Save still has server-side validation.
-                pass
+    def _payment_input_changed(self, field):
+        if field == "or_date":
+            self._payment_date_finished = False
+        self._invalidate_payment_preview()
+        if field == "tax_year" and self._payment_origin:
+            # Resolve every new year from the original selection, not a previously
+            # redirected account that could have its own same-year billing.
+            origin_id = self._payment_origin["id"]
+            if self.property_id != origin_id:
+                self.property_id = origin_id
+                self._apply_property_data(self._payment_origin)
+        self._queue_payment_preview()
 
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _apply_payment_target_resolution(self, result, old_td, year_text):
-        if not self.winfo_exists() or not isinstance(result, dict):
-            return
-        target_id = result.get("id")
-        target_td = result.get("td_number")
-        if not target_id or int(target_id) == int(self.property_id or 0):
-            return
-
-        payment_values = {
-            key: self.vars[key].get()
-            for key in ("tax_year", "or_number", "or_date", "penalty", "discount", "amount_paid", "remarks")
-            if key in self.vars
-        }
-        manual_amount = self._amount_paid_manually_changed
-        last_auto = self._last_auto_amount_paid
-
-        self._resolving_payment_target = True
+    def _invalidate_payment_preview(self):
+        self._payment_revision += 1
+        self._payment_preview_pending = False
+        if self._payment_preview_timer is not None:
+            self.after_cancel(self._payment_preview_timer)
+            self._payment_preview_timer = None
+        self._payment_net_due = None
+        self._edited_adjustments = False
+        self._applying_payment_preview = True
         try:
-            self.property_id = int(target_id)
-            self.load_data()
-            for key, value in payment_values.items():
-                if key in self.vars:
-                    self.vars[key].set(value)
-            self._amount_paid_manually_changed = manual_amount
-            self._last_auto_amount_paid = last_auto
-            self._compute_lbl.configure(
-                text=(
-                    f"Tax year {year_text} belongs to TD {target_td}. "
-                    f"The payment target was switched from {old_td}."
-                ),
-                text_color="#f59e0b",
-            )
-            self.recompute()
+            for key in ("penalty", "discount"):
+                self.vars[key].set("")
+            self._clear_suggested_amount()
         finally:
-            self._resolving_payment_target = False
+            self._applying_payment_preview = False
+        self.total_lbl.configure(text="CALCULATED ANNUAL DUE: —")
+        self._payment_breakdown.configure(text="")
 
-    def _auto_compute(self):
-        """
-        Calls the backend compute-payment endpoint and auto-fills
-        Penalty, Discount, and Amount Paid based on date_paid vs tax_year.
-        """
-        import threading
-        import api_clients.system_service as system_svc
+    def _clear_suggested_amount(self):
+        if self._suggested_amount:
+            self._suggested_amount = False
+            self.vars["amount_paid"].set("")
 
-        # Validate required fields
-        av_str   = self.vars["assessed_value"].get().replace(",", "").strip()
-        yr_str   = self.vars["tax_year"].get().strip()
-        date_str = self.vars["or_date"].get().strip()
-
-        if not av_str or not yr_str or not date_str:
-            self._compute_lbl.configure(
-                text="⚠️  Fill in Assessed Value, Tax Year, and OR Date first.",
-                text_color="#f59e0b",
+    def _queue_payment_preview(self):
+        years, date, problem = self._payment_preview_inputs()
+        self._update_payment_preview_controls(years)
+        if problem:
+            self._compute_lbl.configure(text=problem)
+        elif not self._payment_date_finished:
+            self._compute_lbl.configure(text="Press Tab or leave OR Date to calculate.")
+        elif len(years) > 1:
+            self._compute_lbl.configure(text="Multiple tax years: enter adjustments and Amount Paid manually.")
+            self.total_lbl.configure(text="NO AUTOMATIC TOTAL FOR MULTIPLE TAX YEARS")
+        else:
+            self._compute_lbl.configure(text="Calculating…")
+            self._payment_preview_timer = self.after(
+                300, self._start_payment_preview, self._payment_revision, years[0], date,
             )
-            return
 
-        try:
-            av = float(av_str)
-            yr = int(yr_str)
-        except ValueError:
-            self._compute_lbl.configure(
-                text="⚠️  Assessed Value and Tax Year must be numbers.",
-                text_color="#f59e0b",
-            )
+    def _recalculate_payment(self):
+        years, date, _ = self._payment_preview_inputs()
+        if len(years) != 1 or self._payment_preview_pending:
             return
+        self._payment_date_finished = True
+        self._invalidate_payment_preview()
+        self._start_payment_preview(self._payment_revision, years[0], date)
 
-        # Normalize date to YYYY-MM-DD
-        from api_clients.billing_service import normalize_date_input
-        clean_date = normalize_date_input(date_str)
-        if not clean_date:
-            self._compute_lbl.configure(
-                text="⚠️  Invalid OR Date format. Use YYYY-MM-DD.",
-                text_color="#f59e0b",
-            )
-            return
-
-        self._compute_btn.configure(state="disabled", text="⏳  COMPUTING...")
-        self._compute_lbl.configure(text="Fetching rates from server...", text_color="#64748b")
+    def _start_payment_preview(self, revision, year, date):
+        self._payment_preview_timer = None
+        self._payment_preview_pending = True
+        self._compute_lbl.configure(text="Calculating…")
+        self._update_payment_preview_controls((year,))
+        origin = self._payment_origin
+        results = self._payment_results
 
         def worker():
+            # No Tk access from this thread. Only the main loop renders results.
             try:
-                result = system_svc.compute_payment(
-                    av,
-                    yr,
-                    clean_date,
-                    property_id=self.property_id if self.payment_mode else None,
+                target = prop_svc.resolve_payment_target(
+                    origin["td_number"], year, property_id=int(origin["id"]),
                 )
-                self.after(0, lambda r=result: self._apply_compute(r))
-            except Exception as e:
-                self.after(0, lambda err=e: self._compute_lbl.configure(
-                    text=f"⚠️  {str(err)}", text_color="#ef4444"
-                ))
-            finally:
-                if self.winfo_exists():
-                    self.after(0, lambda: self._compute_btn.configure(
-                        state="normal", text="⚡  AUTO-COMPUTE PENALTY & DISCOUNT"
-                    ))
+                target_id = int(target["id"])
+                prop = origin if target_id == int(origin["id"]) else (
+                    prop_svc.get_property_by_id(target_id, require_fresh=True)
+                )
+                if target_id <= 0 or int(prop["id"]) != target_id or prop["td_number"] != target["td_number"]:
+                    raise ValueError("Payment account could not be verified.")
+                av = PropertyEditModal._payment_number(prop["assessed_value"])
+                if not isfinite(av) or av < 0:
+                    raise ValueError("Invalid assessed value.")
+                preview = system_svc.compute_payment(av, year, date, property_id=target_id)
+                amounts = tuple(
+                    float(preview[key])
+                    for key in ("penalty_amount", "discount_amount", "net_amount_due")
+                )
+                if any(not isfinite(amount) or amount < 0 for amount in amounts):
+                    raise ValueError("Invalid calculated amount.")
+                results.put((revision, (prop, amounts, str(preview.get("breakdown") or ""))))
+            except Exception:
+                results.put((revision, None))
 
         threading.Thread(target=worker, daemon=True).start()
+        if self._payment_poll_timer is None:
+            self._payment_poll_timer = self.after(75, self._poll_payment_preview)
 
-    def _apply_compute(self, result: dict):
-        """Apply computed values to the form fields."""
-        discount = result.get("discount_amount", 0.0)
-        penalty  = result.get("penalty_amount",  0.0)
-        net_due  = result.get("net_amount_due",  0.0)
-        resolved_av = result.get("assessed_value")
+    def _poll_payment_preview(self):
+        self._payment_poll_timer = None
+        while True:
+            try:
+                revision, preview = self._payment_results.get_nowait()
+            except Empty:
+                break
+            if revision != self._payment_revision:
+                continue
+            self._payment_preview_pending = False
+            if preview is None:
+                self._compute_lbl.configure(
+                    text="Could not calculate. Check the account and year, then choose Recalculate."
+                )
+            else:
+                self._apply_payment_preview(*preview)
+            self._update_payment_preview_controls(self._payment_preview_inputs()[0])
+        if self._payment_preview_pending:
+            self._payment_poll_timer = self.after(75, self._poll_payment_preview)
 
-        if self.payment_mode and resolved_av is not None:
-            self.vars["assessed_value"].set(f"{float(resolved_av):.2f}")
-
-        self.vars["discount"].set(f"{discount:.2f}")
-        self.vars["penalty"].set(f"{penalty:.2f}")
-        self._set_auto_amount_paid(net_due)
-
-        breakdown = result.get("breakdown", "")
-        source = result.get("assessed_value_source")
-        prefix = ""
-        if self.payment_mode and source == "effective_year":
-            prefix = (
-                f"AV used for {self.vars['tax_year'].get().strip()}: "
-                f"{float(resolved_av or 0):,.2f}. "
-            )
-        breakdown = f"{prefix}{breakdown}"
-        self._compute_lbl.configure(
-            text=f"✅  {breakdown}",
-            text_color="#10b981",
+    def _apply_payment_preview(self, prop, amounts, breakdown):
+        if int(prop["id"]) != int(self.property_id):
+            self.property_id = int(prop["id"])
+            self._apply_property_data(prop)
+        penalty, discount, net_due = amounts
+        self._payment_net_due = net_due
+        kept_amount = bool(self.vars["amount_paid"].get().strip())
+        self._applying_payment_preview = True
+        try:
+            self.vars["penalty"].set(f"{penalty:.2f}")
+            self.vars["discount"].set(f"{discount:.2f}")
+            if not kept_amount:
+                self._suggested_amount = True
+                self.vars["amount_paid"].set(f"{net_due:.2f}")
+        finally:
+            self._applying_payment_preview = False
+        changed_account = int(self.property_id) != int(self._payment_origin["id"])
+        msg = f"Updated for account #{self.property_id}."
+        if changed_account:
+            msg = f"Matched tax year to TD {prop['td_number']} (account #{self.property_id})."
+        if kept_amount:
+            msg += " Amount Paid kept; review it."
+        self._compute_lbl.configure(text=msg)
+        self.total_lbl.configure(text=f"CALCULATED ANNUAL DUE: {net_due:,.2f}")
+        self._payment_breakdown.configure(
+            text=f"{breakdown}\nPrevious payments are not deducted from this calculation.".strip()
         )
-        self.recompute()
 
-    def _on_amount_paid_changed(self):
-        if self._setting_auto_amount_paid:
-            self.validate()
+    def _update_payment_preview_controls(self, years):
+        self._compute_btn.configure(
+            state="normal" if len(years) == 1 and not self._payment_preview_pending else "disabled"
+        )
+        can_edit = self._payment_date_finished and (len(years) > 1 or self._payment_net_due is not None)
+        for key in ("penalty", "discount"):
+            self._field_entries_by_key[key].configure(state="normal" if can_edit else "disabled")
+        self.validate()
+
+    def _payment_amount_changed(self, field):
+        if self._applying_payment_preview:
             return
-        current = self.vars["amount_paid"].get().strip()
-        if current and current != self._last_auto_amount_paid:
-            self._amount_paid_manually_changed = True
-        elif not current:
-            self._amount_paid_manually_changed = False
+        if field == "amount_paid":
+            self._suggested_amount = False
+        elif self._payment_net_due is not None:
+            if not self._edited_adjustments:
+                self._edited_adjustments = True
+                self._clear_suggested_amount()
+            self.total_lbl.configure(
+                text=f"CALCULATED ANNUAL DUE: {self._payment_net_due:,.2f} (before edits)"
+            )
+            self._compute_lbl.configure(text="Adjustments edited. Review Amount Paid before saving.")
         self.validate()
 
-    def _set_auto_amount_paid(self, amount):
-        text = f"{float(amount or 0):.2f}"
-        self._setting_auto_amount_paid = True
+    def _payment_can_save(self):
+        years, _, problem = self._payment_preview_inputs()
+        if problem or not self._payment_date_finished or self._payment_preview_pending:
+            return False
+        if len(years) == 1 and self._payment_net_due is None:
+            return False
         try:
-            self.vars["amount_paid"].set(text)
-            self._last_auto_amount_paid = text
-            self._amount_paid_manually_changed = False
-        finally:
-            self._setting_auto_amount_paid = False
-        self.validate()
-
-    def recompute(self, *args):
-        try:
-            av = float(self.vars["assessed_value"].get().replace(",", "") or 0)
-            pe = float(self.vars["penalty"].get().replace(",", "") or 0)
-            ds = float(self.vars["discount"].get().replace(",", "") or 0)
-            # Use 2% as the display default (1% basic + 1% SEF per TaxPolicy default).
-            # The AUTO-COMPUTE button fetches the exact rate from TaxPolicy for the
-            # specific tax year — use that for accurate final amounts.
-            total = (av * 0.02) + pe - ds
-            self.total_lbl.configure(text=f"TOTAL TAX DUE: {total:,.2f}  (preview — use ⚡ AUTO-COMPUTE for exact amount)")
-            if self.payment_mode:
-                current_amount = self.vars["amount_paid"].get().strip()
-                if (
-                    not self._amount_paid_manually_changed
-                    or not current_amount
-                    or current_amount == self._last_auto_amount_paid
-                ):
-                    self._set_auto_amount_paid(total)
-        except Exception:
-            pass
-        self.validate()
+            paid = self._payment_number(self.vars["amount_paid"].get())
+            adjustments = [
+                self._payment_number(self.vars[key].get() or "0")
+                for key in ("penalty", "discount")
+            ]
+        except ValueError:
+            return False
+        return isfinite(paid) and paid > 0 and all(isfinite(a) and a >= 0 for a in adjustments)
 
     def validate(self, *args):
         valid = bool(self.vars["td_number"].get().strip() and self.vars["owner_name"].get().strip() and self.vars["assessed_value"].get().strip())
         if self.payment_mode:
-            valid = valid and all(
-                self.vars[key].get().strip()
-                for key in ("or_number", "or_date", "tax_year", "amount_paid")
-            )
+            valid = valid and self._payment_can_save()
         self.save_btn.configure(state="normal" if valid else "disabled")
+
+    def destroy(self):
+        for timer in (self._payment_preview_timer, self._payment_poll_timer):
+            if timer is not None:
+                self.after_cancel(timer)
+        super().destroy()
 
     def load_data(self):
         try:
-            prop = prop_svc.get_property_by_id(self.property_id)
-            if not prop: return
-            if isinstance(prop, dict):
-                self._loaded_version = prop.get("version")
-                mapping = {"td_number": prop.get("td_number"), "owner_name": prop.get("owner_name"), "pin": prop.get("pin"), "lot_number": prop.get("lot_number"), "area": prop.get("area"), "location": prop.get("location"), "kind_of_property": prop.get("kind_of_property"), "prev_td_number": prop.get("prev_td_number"), "effectivity_date": prop.get("effectivity_date"), "assessed_value": str(prop.get("assessed_value", "0.00")), "penalty": str(prop.get("penalty", "0.00")), "discount": str(prop.get("discount", "0.00")), "or_number": prop.get("or_number"), "or_date": str(prop.get("or_date")) if prop.get("or_date") else "", "tax_year": prop.get("tax_year"), "amount_paid": str(prop.get("amount_paid", "0.00"))}
+            if self.payment_mode:
+                prop = prop_svc.get_property_by_id(self.property_id, require_fresh=True)
             else:
-                mapping = {"td_number": prop[1], "owner_name": prop[2], "lot_number": prop[4], "area": prop[5], "location": prop[6], "kind_of_property": prop[7], "assessed_value": str(prop[9]), "penalty": str(prop[10]), "discount": str(prop[11]), "or_number": prop[12], "or_date": str(prop[13]) if prop[13] else "", "tax_year": prop[14], "pin": prop[18] if len(prop) > 18 else "", "prev_td_number": prop[20] if len(prop) > 20 else "", "effectivity_date": prop[21] if len(prop) > 21 else ""}
-            for k, v in mapping.items():
-                if k in self.vars: self.vars[k].set(str(v) if v is not None else "")
-            self._original_prev_td = self.vars["prev_td_number"].get().strip().upper()
-            self._original_td = self.vars["td_number"].get().strip().upper()
-            if isinstance(prop, dict):
-                self._selected_previous_property_id = prop.get("previous_property_id")
-                self._loaded_duplicate_verified = bool(prop.get("duplicate_td_verified"))
-                self.duplicate_td_var.set(self._loaded_duplicate_verified)
-                self.vars["duplicate_td_reason"].set(
-                    str(prop.get("duplicate_td_reason") or "")
-                )
-                self.vars["duplicate_td_reference"].set(
-                    str(prop.get("duplicate_td_reference") or "")
-                )
-            self.recompute()
+                prop = prop_svc.get_property_by_id(self.property_id)
+            if not prop:
+                return None
+            self._apply_property_data(prop)
+            self.validate()
+            return prop
         except Exception as e: print(f"Load Error: {e}")
+
+    def _apply_property_data(self, prop):
+        fields = (
+            "td_number", "owner_name", "pin", "lot_number", "area", "location",
+            "kind_of_property", "prev_td_number", "effectivity_date", "assessed_value",
+        )
+        if isinstance(prop, dict):
+            self._loaded_version = prop.get("version")
+            mapping = {key: prop.get(key) for key in fields}
+            self._selected_previous_property_id = prop.get("previous_property_id")
+            self._loaded_duplicate_verified = bool(prop.get("duplicate_td_verified"))
+            self.duplicate_td_var.set(self._loaded_duplicate_verified)
+            for key in ("duplicate_td_reason", "duplicate_td_reference"):
+                self.vars[key].set(str(prop.get(key) or ""))
+        else:
+            # Older server responses used a positional property row.
+            indices = (1, 2, 18, 4, 5, 6, 7, 20, 21, 9)
+            mapping = {key: prop[i] for key, i in zip(fields, indices) if len(prop) > i}
+        for key, value in mapping.items():
+            self.vars[key].set(str(value) if value is not None else "")
+        self._original_prev_td = self.vars["prev_td_number"].get().strip().upper()
+        self._original_td = self.vars["td_number"].get().strip().upper()
 
     def _choose_previous_property(self, td_number, matches):
         """Return the explicitly selected predecessor ID, or None on cancel."""
@@ -1025,6 +1055,8 @@ class PropertyEditModal(ctk.CTkToplevel):
         return selected["id"]
 
     def save(self):
+        if self.payment_mode and not self._payment_can_save():
+            return
         # Map the internal var keys to the Title Case keys the backend expects
         key_map = {
             "td_number": "TD Number",
@@ -1202,7 +1234,6 @@ class PropertyEditModal(ctk.CTkToplevel):
                 return
 
         # Normalize Date
-        from api_clients.billing_service import normalize_date_input
         raw_date = data.get("OR Date", "").strip()
         if raw_date:
             clean_date = normalize_date_input(raw_date)

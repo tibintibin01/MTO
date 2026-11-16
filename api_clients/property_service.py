@@ -41,8 +41,12 @@ def search_tax_bill_properties(term, limit=50, cursor=None):
     return api_request("GET", "/properties/tax-bill-candidates", params=params)
 
 
-def get_property_by_id(property_id):
+def get_property_by_id(property_id, *, require_fresh=False):
     # Editors must load the current server version for optimistic concurrency.
+    if require_fresh:
+        return api_request(
+            "GET", f"/properties/{property_id}", queue_offline=False, timeout=15
+        )
     return api_request("GET", f"/properties/{property_id}")
 
 
@@ -100,6 +104,8 @@ def resolve_payment_target(td_number, tax_year, property_id=None):
         "GET",
         "/properties/payment-target",
         params=params,
+        queue_offline=False,
+        timeout=15,
     )
 
 

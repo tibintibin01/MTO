@@ -7,7 +7,7 @@ normal product release.
 """
 
 PRODUCT_NAME = "MTO Treasury System"
-PRODUCT_VERSION = "2.1.27"
+PRODUCT_VERSION = "2.1.28"
 
 API_VERSION = "1.0"
 MIN_CLIENT_VERSION = "1.0"

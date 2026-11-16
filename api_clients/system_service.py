@@ -268,7 +268,9 @@ def compute_payment(
     }
     if property_id:
         payload["property_id"] = property_id
-    return api_request("POST", "/system/compute-payment", data=payload)
+    return api_request(
+        "POST", "/system/compute-payment", data=payload, queue_offline=False, timeout=15
+    )
 
 
 def shadow_duplicate_cleanup(bad_ids: list):
