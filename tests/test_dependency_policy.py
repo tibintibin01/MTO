@@ -18,9 +18,50 @@ from scripts.check_dependency_policy import (
     check_frontend_transitive_security,
     check_guarded_frontend_package,
     check_minimatch_compat_package,
+    check_picomatch_build_backport,
     _check_exact_versions,
     _check_minimums,
 )
+
+
+def test_picomatch_policy_rejects_registry_fallback_and_runtime_placement():
+    frontend = PROJECT_ROOT / "frontend"
+    package = json.loads((frontend / "package.json").read_text(encoding="utf-8"))
+    locked = json.loads((frontend / "package-lock.json").read_text(encoding="utf-8"))[
+        "packages"
+    ]
+    assert not check_picomatch_build_backport(PROJECT_ROOT, package, locked)
+    extra = deepcopy(locked)
+    extra["node_modules/tool/node_modules/picomatch"] = {
+        "version": "4.0.7",
+        "dev": True,
+        "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+    }
+    assert check_picomatch_build_backport(PROJECT_ROOT, package, extra)
+    runtime = deepcopy(locked)
+    runtime["vendor/picomatch-4-guarded"]["dev"] = False
+    assert check_picomatch_build_backport(PROJECT_ROOT, package, runtime)
+
+
+def test_picomatch_policy_rejects_changed_parser_source(tmp_path):
+    frontend = PROJECT_ROOT / "frontend"
+    candidate = tmp_path / "frontend" / "vendor"
+    shutil.copytree(
+        frontend / "vendor" / "picomatch-4-guarded", candidate / "picomatch-4-guarded"
+    )
+    shutil.copyfile(
+        frontend / "vendor" / "picomatch-build-source.json",
+        candidate / "picomatch-build-source.json",
+    )
+    package = json.loads((frontend / "package.json").read_text(encoding="utf-8"))
+    locked = json.loads((frontend / "package-lock.json").read_text(encoding="utf-8"))[
+        "packages"
+    ]
+    parser = candidate / "picomatch-4-guarded" / "lib" / "parse.js"
+    assert not check_picomatch_build_backport(tmp_path, package, locked)
+    parser.write_bytes(parser.read_bytes() + b"\n// Unreviewed test change\n")
+    findings = check_picomatch_build_backport(tmp_path, package, locked)
+    assert any("source checksum mismatch" in item["detail"] for item in findings)
 
 
 @pytest.mark.parametrize("version,valid", [("0.12.18", False), ("0.13.4", True)])
@@ -125,7 +166,7 @@ def test_unversioned_source_map_dependency_fails_closed():
 
 @pytest.mark.parametrize(
     "name,old,new",
-    [("next", "16.3.8", "16.4.3"), ("eslint-config-next", "16.3.8", "16.4.3")],
+    [("next", "16.4.4", "16.4.6"), ("eslint-config-next", "16.4.4", "16.4.6")],
 )
 def test_website_framework_security_floor(name, old, new):
     assert EXACT_FRONTEND_MINIMUMS[name] == new
