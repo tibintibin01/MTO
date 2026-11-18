@@ -1,0 +1,21 @@
+{
+  "advisory": "GHSA-fc5q-39xc-vjpf",
+  "scope": "DEVELOPMENT_ONLY",
+  "forks": {
+    "vendor/picomatch-4-guarded": {
+      "upstream_version": "4.0.7",
+      "upstream_integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+      "sha256": {
+        "LICENSE": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+        "index.js": "02ae26406508e28f9ba0865be16cf77f0b33de6c4d4d49c212c4176df1d5625a",
+        "lib/constants.js": "c28f952d2758261fe5428a121add485cc25b03e0193633f649de903dc0e5e222",
+        "lib/parse.js": "6fdb512b8be24e5d10b041b01fd38095cc50e66c10309ef417a383cbdeb35347",
+        "lib/picomatch.js": "fdd249d7ffff853f3bb1c77eafc8baa1a437bea85a94c35877b83c6a40d9ca94",
+        "lib/scan.js": "6457a1764e5c2e543cc3a0c00ce12ebb3764097628868198370b64d4e642aaae",
+        "lib/utils.js": "f04604f70cd1a3f6ace80b84766468674ff38b4bb83818d2ef1d81fc6355f935",
+        "package.json": "7a4aaa468634404f9dbb044a67883eefff1f4d1d9e6a7fafaba6cf23344ca840",
+        "posix.js": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480"
+      }
+    }
+  }
+}

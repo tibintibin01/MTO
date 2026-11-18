@@ -1,0 +1,17 @@
+{
+  "name": "@mto/picomatch-4-guarded",
+  "version": "4.0.7+mto.1",
+  "private": true,
+  "description": "Private development-only compatibility fork of Picomatch 4.0.7 for MTO builds",
+  "license": "MIT",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "posix.js",
+    "lib"
+  ],
+  "engines": {
+    "node": ">=12"
+  },
+  "sideEffects": false
+}
