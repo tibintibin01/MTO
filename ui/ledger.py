@@ -3,6 +3,7 @@ import threading
 import uuid
 import customtkinter as ctk
 from tkinter import messagebox, ttk
+from ui.operation_feedback import OperationBanner, confirm_action
 import tkinter as tk
 from theme_manager import ModernTheme
 import api_clients.payment_service as payment
@@ -417,6 +418,9 @@ class LedgerPage:
             border_color=colors["border"],
         )
         t_frame.pack(fill="both", expand=True)
+        self._record_feedback = OperationBanner(
+            self.container, before=t_frame, wraplength=620
+        )
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -755,15 +759,31 @@ class LedgerPage:
         }
         self._show_property_context(self._active_property_context)
 
-    def _load_selected_property(self, match):
+    def _load_selected_property(self, match, *, saved=None):
         if self.is_loading:
+            if saved is not None:
+                self._record_feedback.show(
+                    "success",
+                    saved.title,
+                    f"{saved.detail}\nUse Fetch History to refresh the ledger.",
+                    dismissible=True,
+                )
             return
         self.is_loading = True
         self.search_btn.configure(state="disabled")
-        overlay = LoadingOverlay(self.container, "Loading selected property ledger...")
+        overlay = (
+            LoadingOverlay(self.container, "Loading selected property ledger...")
+            if saved is None
+            else None
+        )
         context = self._property_context_from_detail(match)
-        context["duplicate_td"] = True
-        context["duplicate_count"] = int(match.get("duplicate_count") or 2)
+        if saved is None:
+            context["duplicate_td"] = True
+            context["duplicate_count"] = int(match.get("duplicate_count") or 2)
+        else:
+            previous = getattr(self, "_active_property_context", None) or {}
+            if previous.get("property_id") == match["id"]:
+                context = {**previous, "td_number": saved.td_number}
 
         for row_id in self.tree.get_children():
             self.tree.delete(row_id)
@@ -771,7 +791,14 @@ class LedgerPage:
 
         def worker():
             try:
-                rows = payment.get_unified_payment_history(property_id=match["id"])
+                if saved is not None:
+                    rows = payment.get_payment_ledger(
+                        property_id=match["id"], require_fresh=True
+                    )
+                    if not isinstance(rows, list):
+                        raise ValueError("Invalid ledger response")
+                else:
+                    rows = payment.get_unified_payment_history(property_id=match["id"])
                 self.container.after(
                     0,
                     lambda: self._update_ui(
@@ -781,13 +808,19 @@ class LedgerPage:
                     ),
                 )
             except Exception as exc:
-                self.container.after(
-                    0,
-                    lambda err=exc: self._handle_ledger_load_error("Ledger", err),
-                )
+                if saved is not None:
+                    self.container.after(
+                        0, self._show_saved_payment_refresh_warning, saved
+                    )
+                else:
+                    self.container.after(
+                        0,
+                        lambda err=exc: self._handle_ledger_load_error("Ledger", err),
+                    )
             finally:
                 self.is_loading = False
-                self.container.after(0, overlay.hide)
+                if overlay is not None:
+                    self.container.after(0, overlay.hide)
                 self.container.after(
                     0, lambda: self.search_btn.configure(state="normal")
                 )
@@ -850,7 +883,14 @@ class LedgerPage:
                 if fallback_context and fallback_context.get(
                     "property_id"
                 ) == only_context.get("property_id"):
-                    self._active_property_context = fallback_context
+                    self._active_property_context = {
+                        **only_context,
+                        **{
+                            key: value
+                            for key, value in fallback_context.items()
+                            if value is not None and value != ""
+                        },
+                    }
                 else:
                     self._active_property_context = only_context
             elif contexts_by_property:
@@ -984,10 +1024,11 @@ class LedgerPage:
 
         term = self.search_ent.get().strip()
         if not term:
-            ErrorDialog(
-                self.parent.winfo_toplevel(),
-                "Search Required",
+            self._record_feedback.show(
+                "warning",
+                "Choose a property before adding a payment",
                 "Search a TD number, former TD number, PIN, or owner name first.",
+                dismissible=True,
             )
             return
 
@@ -1024,11 +1065,22 @@ class LedgerPage:
                 else:
                     self.container.after(
                         0,
-                        lambda msg=message: messagebox.showwarning("Add Payment", msg),
+                        lambda msg=message: self._record_feedback.show(
+                            "warning",
+                            "Property account not selected",
+                            msg,
+                            dismissible=True,
+                        ),
                     )
-            except Exception as e:
+            except Exception:
                 self.container.after(
-                    0, lambda err=e: messagebox.showerror("Add Payment", str(err))
+                    0,
+                    lambda: self._record_feedback.show(
+                        "error",
+                        "Property lookup failed",
+                        "Check the connection and search for the property again. No payment was submitted.",
+                        dismissible=True,
+                    ),
                 )
             finally:
                 self.container.after(0, lambda: overlay.hide())
@@ -1148,6 +1200,27 @@ class LedgerPage:
             self.load_ledger,
             user=self.user,
             payment_mode=True,
+            on_saved=self._on_payment_saved,
+        )
+
+    def _on_payment_saved(self, record):
+        self._record_feedback.show(
+            "success", record.title, record.detail, dismissible=True
+        )
+        if record.property_id is None:
+            self._show_saved_payment_refresh_warning(record)
+        else:
+            # Use the server's final account, not a search term or an ambiguous TD.
+            self._load_selected_property(
+                {"id": record.property_id, "td_number": record.td_number}, saved=record
+            )
+
+    def _show_saved_payment_refresh_warning(self, record):
+        self._record_feedback.show(
+            "warning",
+            record.title,
+            f"{record.detail}\nThe payment was saved, but the ledger could not refresh. Use Fetch History; do not enter it again.",
+            dismissible=True,
         )
 
     def export_payment_history(self):
@@ -1218,10 +1291,17 @@ class LedgerPage:
         pay_id = item["values"][0]
         or_no = item["values"][2]
 
-        if not messagebox.askyesno(
-            "Delete Payment",
-            f"Are you sure you want to permanently delete payment OR {or_no}?\n\nThis will reverse its impact on the corresponding billing balances.",
-            icon="warning",
+        if not confirm_action(
+            self.container,
+            "Delete payment?",
+            f"Permanently delete payment OR {or_no}?\n\nThis will reverse its impact on the corresponding billing balances.",
+            action="Delete Payment",
+            destructive=True,
+        ):
+            return
+        if (
+            self.tree.selection() != sel
+            or self.tree.item(sel[0])["values"][0] != pay_id
         ):
             return
 

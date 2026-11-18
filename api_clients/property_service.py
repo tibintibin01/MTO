@@ -12,6 +12,8 @@ def search_properties(
     year_end=None,
     as_of_year=None,
     barangay=None,
+    *,
+    require_fresh=False,
 ):
     params = {"search": term, "limit": limit}
     if cursor:
@@ -26,6 +28,10 @@ def search_properties(
         params["as_of_year"] = as_of_year
     if barangay:
         params["barangay"] = barangay
+    if require_fresh:
+        return api_request_with_cache(
+            "GET", "/properties", params=params, queue_offline=False
+        )
     return api_request_with_cache("GET", "/properties", params=params)
 
 

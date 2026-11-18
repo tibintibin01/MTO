@@ -12,6 +12,16 @@ TOKEN_REFRESH_LEEWAY_SECONDS = 300
 _CONSECUTIVE_CONNECTION_FAILURES = 0
 
 
+class ApiResponseError(Exception):
+    """A failed API request with response metadata for structured UI feedback."""
+
+    def __init__(self, message, *, status_code, detail=None, errors=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.detail = detail
+        self.errors = errors
+
+
 def set_connection_status(status):
     """Updates the process-wide API connectivity state safely."""
     global CONNECTION_STATUS, _CONSECUTIVE_CONNECTION_FAILURES
@@ -420,6 +430,8 @@ def api_request(
         # Provide a more descriptive error message
         status_code = getattr(e.response, "status_code", "N/A")
         error_msg = f"API Communication Error (Status {status_code}): {str(e)}"
+        detail = None
+        errors = None
 
         # A 401 means the credentials expired or were revoked by an
         # administrator. The API is reachable, so never treat this as an
@@ -434,6 +446,7 @@ def api_request(
         if e.response is not None and e.response.text:
             try:
                 error_data = e.response.json()
+                errors = error_data.get("errors")
                 if "detail" in error_data:
                     detail = error_data["detail"]
                     if isinstance(detail, list):
@@ -456,7 +469,9 @@ def api_request(
                         error_msg = f"Error: {detail}"
             except:
                 pass
-        raise Exception(error_msg)
+        raise ApiResponseError(
+            error_msg, status_code=status_code, detail=detail, errors=errors
+        ) from e
     except Exception as e:
         raise Exception(f"Unexpected Error: {str(e)}")
 
