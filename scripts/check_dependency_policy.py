@@ -32,8 +32,8 @@ EXACT_RUNTIME_MINIMUMS = {
 }
 EXACT_FRONTEND_MINIMUMS = {
     "@serwist/next": "9.5.12",
-    "eslint-config-next": "16.4.3",
-    "next": "16.4.3",
+    "eslint-config-next": "16.4.6",
+    "next": "16.4.6",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "serwist": "9.5.12",
@@ -56,6 +56,19 @@ UNIVERSAL_LOCK_TOKEN = "--universal"
 WINDOWS_ONLY_PACKAGES = {"pefile", "pywin32", "pywin32-ctypes"}
 GUARDED_BRACES_SPEC = "file:vendor/braces-guarded"
 MINIMATCH_COMPAT_SPEC = "file:vendor/minimatch-legacy-compat"
+PICOMATCH_BUILD_PATH = "vendor/picomatch-4-guarded"
+PICOMATCH_BUILD_SPEC = "file:" + PICOMATCH_BUILD_PATH
+PICOMATCH_BUILD_FILES = {
+    "LICENSE",
+    "index.js",
+    "package.json",
+    "lib/constants.js",
+    "lib/parse.js",
+    "lib/picomatch.js",
+    "lib/scan.js",
+    "lib/utils.js",
+    "posix.js",
+}
 GUARDED_BRACES_FILES = {
     "LICENSE",
     "README.md",
@@ -209,6 +222,95 @@ def check_minimatch_compat_package(
 
 def finding(code: str, path: Path, detail: str) -> dict[str, str]:
     return {"code": code, "path": str(path), "detail": detail}
+
+
+def check_picomatch_build_backport(
+    root: Path, package: dict, locked: dict
+) -> list[dict]:
+    """Only the reviewed private development fork may supply the glob engine."""
+    frontend = root / "frontend"
+    folder = frontend / PICOMATCH_BUILD_PATH
+    provenance = frontend / "vendor/picomatch-build-source.json"
+    problems = []
+    override = {
+        name: spec
+        for name, spec in package.get("overrides", {}).items()
+        if name == "picomatch" or name.startswith("picomatch@")
+    }
+    if (
+        "picomatch" in package.get("dependencies", {})
+        or package.get("devDependencies", {}).get("picomatch") != PICOMATCH_BUILD_SPEC
+        or override != {"picomatch": "$picomatch"}
+        or locked.get(PICOMATCH_BUILD_PATH, {}).get("dev") is not True
+        or locked.get(PICOMATCH_BUILD_PATH, {}).get("version") != "4.0.7+mto.1"
+    ):
+        problems.append("incorrect build-only fork pin, override, or placement")
+    engines = {
+        path: meta
+        for path, meta in locked.items()
+        if path.endswith("node_modules/picomatch") or meta.get("name") == "picomatch"
+    }
+    if "node_modules/picomatch" not in engines or any(
+        meta.get("link") is not True
+        or meta.get("resolved") != PICOMATCH_BUILD_PATH
+        or meta.get("dev") is False
+        for meta in engines.values()
+    ):
+        problems.append("unverified Picomatch copy or link")
+    try:
+        source = json.loads(provenance.read_text(encoding="utf-8"))
+        origin = source["forks"][PICOMATCH_BUILD_PATH]
+        if (
+            source.get("advisory") != "GHSA-fc5q-39xc-vjpf"
+            or source.get("scope") != "DEVELOPMENT_ONLY"
+            or set(source["forks"]) != {PICOMATCH_BUILD_PATH}
+            or origin["upstream_version"] != "4.0.7"
+            or origin["upstream_integrity"]
+            != "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA=="
+        ):
+            problems.append("fork provenance changed")
+        files = {
+            path.relative_to(folder).as_posix(): path
+            for path in folder.rglob("*")
+            if path.is_file()
+        }
+        hashes = origin["sha256"]
+        if (
+            set(files) != PICOMATCH_BUILD_FILES
+            or set(hashes) != PICOMATCH_BUILD_FILES
+            or folder.is_symlink()
+        ):
+            raise ValueError("unexpected source inventory")
+        for relative, path in files.items():
+            content = path.read_bytes().replace(b"\r\n", b"\n")
+            if (
+                path.is_symlink()
+                or hashlib.sha256(content).hexdigest() != hashes[relative]
+            ):
+                problems.append("guarded source checksum mismatch: " + relative)
+        manifest = json.loads(files["package.json"].read_text(encoding="utf-8"))
+        if (
+            manifest.get("private") is not True
+            or manifest.get("name") != "@mto/picomatch-4-guarded"
+            or manifest.get("version") != "4.0.7+mto.1"
+            or any(
+                manifest.get(field)
+                for field in (
+                    "scripts",
+                    "dependencies",
+                    "devDependencies",
+                    "optionalDependencies",
+                    "peerDependencies",
+                )
+            )
+        ):
+            problems.append("fork identity, dependencies or lifecycle hooks changed")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        problems.append("complete reviewed Picomatch source/provenance unavailable")
+    return [
+        finding("FRONTEND_PICOMATCH_BUILD_BACKPORT_INVALID", provenance, text)
+        for text in problems
+    ]
 
 
 def parse_direct_requirements(
@@ -565,6 +667,10 @@ def validate_repository(
         root, package, package_lock.get("packages", {})
     )
     findings.extend(compat_findings)
+    picomatch_findings = check_picomatch_build_backport(
+        root, package, package_lock.get("packages", {})
+    )
+    findings.extend(picomatch_findings)
     non_exact = sorted(
         name
         for name, version in frontend.items()
@@ -578,6 +684,11 @@ def validate_repository(
             name == "minimatch"
             and version == MINIMATCH_COMPAT_SPEC
             and not compat_findings
+        )
+        and not (
+            name == "picomatch"
+            and version == PICOMATCH_BUILD_SPEC
+            and not picomatch_findings
         )
     )
     if non_exact:

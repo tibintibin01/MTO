@@ -14,8 +14,9 @@ function check(value, message) { assert.ok(value, message); checks++; }
 
 async function main() {
   await require('./glob-security.cjs')();
-  check(manifest.dependencies.next === '16.4.3', 'Reviewed Next.js patch');
-  check(manifest.devDependencies['eslint-config-next'] === '16.4.3', 'Matching lint package');
+  require('./picomatch-build-contract.cjs')();
+  check(manifest.dependencies.next === '16.4.6', 'Reviewed Next.js patch');
+  check(manifest.devDependencies['eslint-config-next'] === '16.4.6', 'Matching lint package');
   check(manifest.dependencies['@serwist/next'] === '9.5.12' && manifest.devDependencies.serwist === '9.5.12', 'No Serwist downgrade or unrelated upgrade');
   for (const [name, version] of Object.entries({ undici: '6.29.1', zod: '4.6.6' })) {
     check(manifest.overrides[name] === version, 'Explicit patched override: ' + name);
