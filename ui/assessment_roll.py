@@ -15,6 +15,7 @@ from ui.empty_state import EmptyTableState
 from ui.import_wizard import ImportWizardModal
 from ui.property import PropertyEditModal, BulkBarangayUpdateModal
 from ui.accessibility import bind_keyboard_activation
+from ui.operation_feedback import OperationBanner, confirm_action
 import threading
 from utils.assessment_roll_status import assessment_roll_duplicate_status
 
@@ -533,6 +534,9 @@ class AssessmentRollPage:
         bind_keyboard_activation(self.next_btn, self.next_page)
 
         table_fr.pack(fill="both", expand=True)  # Pack expanding table LAST
+        self._record_feedback = OperationBanner(
+            self.container, before=table_fr, wraplength=620
+        )
 
         self.tree.bind("<Double-1>", lambda e: self.open_dossier())
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._update_action_states())
@@ -713,7 +717,12 @@ class AssessmentRollPage:
     def open_add_modal(self):
         if self._can_manage("property_edit"):
             PropertyEditModal(
-                self.parent, "Add Property", None, self.refresh_table, user=self.user
+                self.parent,
+                "Add Property",
+                None,
+                self.refresh_table,
+                user=self.user,
+                on_saved=self._on_property_saved,
             )
 
     def open_edit_modal(self):
@@ -726,7 +735,14 @@ class AssessmentRollPage:
                 selected[0],
                 self.refresh_table,
                 user=self.user,
+                on_saved=self._on_property_saved,
             )
+
+    def _on_property_saved(self, record):
+        self._record_feedback.show(
+            "success", record.title, record.detail, dismissible=True
+        )
+        self.refresh_table(reset_page=(record.title == "Property added"), saved=record)
 
     def open_bulk_update(self):
         if self._can_manage("property_edit"):
@@ -737,12 +753,14 @@ class AssessmentRollPage:
         if not selected or not self._can_manage("property_delete"):
             return
         property_id, td_number, owner = selected
-        if not messagebox.askyesno(
+        if not confirm_action(
+            self.container,
             "Move to Recycle Bin?",
             f"{owner}\nTD: {td_number}\nAccount ID: {property_id}\n\n"
             "Only this property account will be moved to the Recycle Bin.\n"
-            "It will not be permanently erased. Continue?",
-            parent=self.container,
+            "It will not be permanently erased.",
+            action="Move to Recycle Bin",
+            destructive=True,
         ):
             return
         # A mode/filter/selection change while the confirmation is open must fail closed.
@@ -764,13 +782,21 @@ class AssessmentRollPage:
     def _is_current_refresh(self, generation):
         return generation == self._refresh_generation
 
-    def refresh_table(self, reset_page=True):
+    def refresh_table(self, reset_page=True, *, saved=None):
         self._invalidate_selection()
         try:
             as_of_year = self._query_as_of_year()
             year_start, year_end = self._query_year_range()
         except ValueError as exc:
-            messagebox.showerror("Invalid Year Filter", str(exc))
+            if saved is not None:
+                self._record_feedback.show(
+                    "warning",
+                    saved.title,
+                    f"{saved.detail}\nThe list was not refreshed. {exc}",
+                    dismissible=True,
+                )
+            else:
+                messagebox.showerror("Invalid Year Filter", str(exc))
             return
 
         term = self.search_ent.get().strip()
@@ -788,7 +814,11 @@ class AssessmentRollPage:
         request_generation = self._refresh_generation
         self.is_loading = True
         self._update_action_states()
-        overlay = LoadingOverlay(self.container, "Loading Assessment Roll...")
+        overlay = (
+            LoadingOverlay(self.container, "Loading Assessment Roll...")
+            if saved is None
+            else None
+        )
 
         def apply_response(response):
             if not self._is_current_refresh(request_generation):
@@ -807,6 +837,15 @@ class AssessmentRollPage:
             self._loaded_query = query_context
             self._rows_current = True
             self._update_table(results, has_more=has_more)
+            if saved is not None and not self._highlight_saved_property(
+                saved.property_id
+            ):
+                self._record_feedback.show(
+                    "success",
+                    saved.title,
+                    f"{saved.detail}\nThe saved account is not on this page. Search for its TD to review it.",
+                    dismissible=True,
+                )
 
         def show_error(error):
             if self._is_current_refresh(request_generation):
@@ -815,10 +854,19 @@ class AssessmentRollPage:
                         "Check the connection and try Refresh again.",
                         title="Unable to load assessment roll",
                     )
-                messagebox.showerror("Error", str(error))
+                if saved is not None:
+                    self._record_feedback.show(
+                        "warning",
+                        saved.title,
+                        f"{saved.detail}\nThe save succeeded, but the list could not refresh. Use Refresh to try again.",
+                        dismissible=True,
+                    )
+                else:
+                    messagebox.showerror("Error", str(error))
 
         def finish_request():
-            overlay.hide()
+            if overlay is not None:
+                overlay.hide()
             if self._is_current_refresh(request_generation):
                 self.is_loading = False
                 self._update_action_states()
@@ -833,7 +881,13 @@ class AssessmentRollPage:
                     as_of_year=as_of_year,
                     year_start=year_start,
                     year_end=year_end,
+                    **({"require_fresh": True} if saved is not None else {}),
                 )
+                if saved is not None and (
+                    not isinstance(response, dict)
+                    or not isinstance(response.get("items"), list)
+                ):
+                    raise ValueError("Invalid Assessment Roll response")
                 self.container.after(
                     0, lambda response=response: apply_response(response)
                 )
@@ -843,6 +897,17 @@ class AssessmentRollPage:
                 self.container.after(0, finish_request)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _highlight_saved_property(self, property_id):
+        if property_id is not None:
+            for item in self.tree.get_children():
+                values = self.tree.item(item, "values")
+                if values and str(values[0]) == str(property_id):
+                    self.tree.selection_set(item)
+                    self.tree.focus(item)
+                    self.tree.see(item)
+                    return True
+        return False
 
     def next_page(self):
         if self._rows_current and not self.is_loading and not self.all_loaded:

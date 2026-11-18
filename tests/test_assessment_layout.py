@@ -10,9 +10,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "clients" / "deskto
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Real Windows Tk layout test")
-def test_assessment_controls_fit_minimum_content_width_and_modes_are_distinct():
+def test_assessment_controls_fit_minimum_content_width_and_modes_are_distinct(
+    monkeypatch,
+):
     import customtkinter as ctk
     from ui.assessment_roll import AssessmentRollPage
+    from ui.operation_feedback import SaveFeedback
+    from ui.property import PropertyEditModal, prop_svc
 
     root = ctk.CTk()
     root.withdraw()
@@ -46,6 +50,41 @@ def test_assessment_controls_fit_minimum_content_width_and_modes_are_distinct():
             )
         assert page.as_of_year_ent.cget("state") == "disabled"
         assert page.edit_btn.cget("state") == "disabled"
+        page._record_feedback.show(
+            "success", "Property updated", "TD SYNTHETIC", dismissible=True
+        )
+        root.update()
+        assert page._record_feedback.winfo_ismapped()
+        assert page._record_feedback.winfo_rooty() < page.tree.winfo_rooty()
+        assert page._record_feedback.winfo_width() <= page.container.winfo_width()
+
+        monkeypatch.setattr(
+            prop_svc,
+            "get_property_by_id",
+            lambda *_a, **_k: {
+                "id": 101,
+                "td_number": "SYNTHETIC",
+                "owner_name": "Sample",
+                "assessed_value": 1000,
+            },
+        )
+        modal = PropertyEditModal(root, "Edit sample property", 101, None)
+        modal.attributes("-alpha", 0)
+        try:
+            modal._show_save_feedback(
+                SaveFeedback(
+                    "error",
+                    "Property not updated",
+                    "Check the assessed value.",
+                    "assessed_value",
+                )
+            )
+            root.update()
+            assert modal._save_banner.winfo_ismapped()
+            assert modal._save_banner.winfo_rooty() < modal.scroll_form.winfo_rooty()
+            assert modal._save_field_hint.winfo_exists()
+        finally:
+            modal.destroy()
         for button in page.mode_control._buttons_dict.values():
             assert str(button._canvas.cget("takefocus")) in ("1", "True")
         page._change_mode(page.HISTORY_MODE)

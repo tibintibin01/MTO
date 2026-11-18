@@ -19,8 +19,11 @@ def get_payment_receipt_records(term):
     return result if isinstance(result, list) else []
 
 
-def get_payment_receipt_details(payment_id):
-    # This might need an endpoint
+def get_payment_receipt_details(payment_id, *, require_fresh=False):
+    if require_fresh:
+        return api_request(
+            "GET", f"/payments/{payment_id}/details", queue_offline=False, timeout=15
+        )
     return api_request("GET", f"/payments/{payment_id}/details")
 
 
@@ -29,12 +32,16 @@ def find_duplicate_payment(property_id, or_number, tax_year_text):
     return None
 
 
-def get_payment_ledger(term=None, property_id=None):
+def get_payment_ledger(term=None, property_id=None, *, require_fresh=False):
     params = {}
     if term:
         params["term"] = term
     if property_id:
         params["property_id"] = int(property_id)
+    if require_fresh:
+        return api_request(
+            "GET", "/payments/ledger", params=params, queue_offline=False
+        )
     return api_request("GET", "/payments/ledger", params=params)
 
 

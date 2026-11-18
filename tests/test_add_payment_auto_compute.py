@@ -241,14 +241,20 @@ def test_explicit_save_uses_verified_account_and_entered_cash(form, monkeypatch)
     form.post.assert_not_called()
     form._idempotency_key = "test-form-session-key"
     form.user = {"id": 1, "role": "cashier"}
-    form.callback = None
+    form.callback = Mock()
     form.destroy = Mock()
+    form.on_saved = Mock()
     form.post.side_effect = None
-    form.post.return_value = {"ok": True}
+    form.post.return_value = {
+        "ok": True,
+        "td_number": TARGET["td_number"],
+        "property_id": TARGET["id"],
+    }
     monkeypatch.setattr(
         payment_ui.prop_svc, "find_properties_by_td_number", Mock(return_value=[])
     )
-    monkeypatch.setattr(payment_ui.messagebox, "showinfo", Mock())
+    popup = Mock()
+    monkeypatch.setattr(payment_ui.messagebox, "showinfo", popup)
     payment_ui.PropertyEditModal.save(form)
     form.post.assert_called_once()
     posted = form.post.call_args.args[0]
@@ -256,6 +262,63 @@ def test_explicit_save_uses_verified_account_and_entered_cash(form, monkeypatch)
     assert posted["OR Date"] == "2026-11-10"
     assert form.post.call_args.kwargs["editing_id"] == TARGET["id"]
     assert form.post.call_args.kwargs["idempotency_key"] == form._idempotency_key
+    form.destroy.assert_called_once_with()
+    record = form.on_saved.call_args.args[0]
+    assert record.title == "Payment saved"
+    assert record.property_id == TARGET["id"]
+    assert "₱400.00" in record.detail
+    popup.assert_not_called()
+    form.callback.assert_not_called()
+
+
+@pytest.mark.parametrize("lost_response", [True, False])
+def test_save_feedback_keeps_payment_inputs_and_distinguishes_known_duplicate(
+    form, monkeypatch, lost_response
+):
+    form.resolve.return_value = TARGET
+    enter_receipt(form)
+    form.vars["amount_paid"].set("400.00")
+    form._finish_payment_date()
+    run_preview(form)
+    form._idempotency_key = "test-form-session-key"
+    form.user = {"id": 1, "role": "cashier"}
+    form.destroy = Mock()
+    form.on_saved = Mock()
+    form._show_save_feedback = Mock()
+    form.post.side_effect = (
+        TimeoutError()
+        if lost_response
+        else payment_ui.api.ApiResponseError(
+            "Duplicate",
+            status_code=409,
+            detail="Payment already exists for OR 1234567, tax year 2027, and date 2026-11-10 (payment ID 402).",
+        )
+    )
+    monkeypatch.setattr(
+        payment_ui.prop_svc, "find_properties_by_td_number", Mock(return_value=[])
+    )
+    payment_ui.PropertyEditModal.save(form)
+
+    feedback = form._show_save_feedback.call_args.args[0]
+    form.destroy.assert_not_called()
+    form.on_saved.assert_not_called()
+    assert form.vars["amount_paid"].get() == "400.00"
+    assert form.vars["or_number"].get() == "1234567"
+    if lost_response:
+        assert feedback.title == "Save not confirmed"
+        assert form.save_btn.state == "disabled"
+        payment_ui.PropertyEditModal.save(form)
+        form.post.assert_called_once()
+    else:
+        assert feedback.title == "Payment already recorded"
+        assert feedback.duplicate_id == 402
+        assert "No new payment was saved" in feedback.detail
+        assert form._show_save_feedback.call_args.kwargs["entry"] == (
+            TARGET["id"],
+            "1234567",
+            "2026-11-10",
+            ["2027"],
+        )
 
 
 def test_late_result_does_not_change_new_account_or_figures(form):

@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "clients" / "desktop"))
 from ui.assessment_roll import AssessmentRollPage
 from ui.navigation import NavigationSidebar
+from ui.operation_feedback import SavedRecord
 
 
 @pytest.fixture
@@ -50,6 +51,7 @@ def page():
         "import_btn",
         "cleanup_btn",
         "details_btn",
+        "_record_feedback",
     ):
         setattr(result, name, MagicMock())
     result._loaded_query = result._query_context()
@@ -85,7 +87,12 @@ def test_edit_uses_internal_id_not_shared_td(page):
     with patch("ui.assessment_roll.PropertyEditModal") as editor:
         page.open_edit_modal()
     editor.assert_called_once_with(
-        page.parent, "Edit Property", 9002, page.refresh_table, user=page.user
+        page.parent,
+        "Edit Property",
+        9002,
+        page.refresh_table,
+        user=page.user,
+        on_saved=page._on_property_saved,
     )
 
 
@@ -157,7 +164,7 @@ def test_historical_mode_requires_valid_year(page):
 def test_delete_only_selected_duplicate_account_and_preserves_recycle_semantics(page):
     page.refresh_table = MagicMock()
     with (
-        patch("ui.assessment_roll.messagebox.askyesno", return_value=True) as confirm,
+        patch("ui.assessment_roll.confirm_action", return_value=True) as confirm,
         patch("ui.assessment_roll.messagebox.showinfo"),
         patch(
             "ui.assessment_roll.prop_svc.delete_property",
@@ -165,15 +172,16 @@ def test_delete_only_selected_duplicate_account_and_preserves_recycle_semantics(
         ) as delete,
     ):
         page.confirm_delete()
-    assert "Account ID: 9002" in confirm.call_args.args[1]
-    assert "Recycle Bin" in confirm.call_args.args[1]
+    assert "Account ID: 9002" in confirm.call_args.args[2]
+    assert "Recycle Bin" in confirm.call_args.args[2]
+    assert confirm.call_args.kwargs["action"] == "Move to Recycle Bin"
     delete.assert_called_once_with(9002, user=page.user)
     page.refresh_table.assert_called_once_with()
 
 
 def test_delete_cancel_does_not_call_server(page):
     with (
-        patch("ui.assessment_roll.messagebox.askyesno", return_value=False),
+        patch("ui.assessment_roll.confirm_action", return_value=False),
         patch("ui.assessment_roll.prop_svc.delete_property") as delete,
     ):
         page.confirm_delete()
@@ -186,7 +194,7 @@ def test_mode_change_during_confirmation_blocks_delete(page):
         return True
 
     with (
-        patch("ui.assessment_roll.messagebox.askyesno", side_effect=change_mode),
+        patch("ui.assessment_roll.confirm_action", side_effect=change_mode),
         patch("ui.assessment_roll.prop_svc.delete_property") as delete,
     ):
         page.confirm_delete()
@@ -250,6 +258,65 @@ def test_refresh_captures_current_mode_and_rejects_response_after_switch(page):
         for callback in queued:
             callback()
         page._update_table.assert_not_called()
+
+
+def test_assessment_save_highlights_exact_account_without_clearing_filters(page):
+    page.search_ent.get.return_value = "SHARED-TD"
+    page.tree.get_children.return_value = ("first", "second")
+    rows = {"first": (9001, "SHARED-TD"), "second": (9002, "SHARED-TD")}
+    page.tree.item.side_effect = lambda item, option=None: (
+        rows[item]
+        if option == "values"
+        else {"values": (9002, "SHARED-TD", "", "", "Owner")}
+    )
+    page._update_table = MagicMock()
+    page.container.after.side_effect = lambda _delay, callback: callback()
+    with (
+        patch("ui.assessment_roll.threading.Thread") as thread,
+        patch("ui.assessment_roll.LoadingOverlay"),
+        patch(
+            "ui.assessment_roll.prop_svc.search_properties", return_value={"items": []}
+        ) as search,
+    ):
+        page._on_property_saved(
+            SavedRecord("Property updated", "TD SHARED-TD", 9002, "SHARED-TD")
+        )
+        thread.call_args.kwargs["target"]()
+    search.assert_called_once_with(
+        "SHARED-TD",
+        limit=50,
+        cursor=None,
+        barangay=None,
+        as_of_year=None,
+        year_start=None,
+        year_end=None,
+        require_fresh=True,
+    )
+    page.tree.selection_set.assert_called_once_with("second")
+    page.tree.see.assert_called_once_with("second")
+    page._record_feedback.show.assert_called_once_with(
+        "success", "Property updated", "TD SHARED-TD", dismissible=True
+    )
+
+
+def test_assessment_refresh_failure_does_not_misreport_save_failure(page):
+    page.container.after.side_effect = lambda _delay, callback: callback()
+    with (
+        patch("ui.assessment_roll.threading.Thread") as thread,
+        patch("ui.assessment_roll.LoadingOverlay"),
+        patch("ui.assessment_roll.messagebox.showerror") as popup,
+        patch(
+            "ui.assessment_roll.prop_svc.search_properties", side_effect=RuntimeError
+        ),
+    ):
+        page._on_property_saved(
+            SavedRecord("Property updated", "TD SYNTHETIC", 9002, "SYNTHETIC")
+        )
+        thread.call_args.kwargs["target"]()
+    level, title, detail = page._record_feedback.show.call_args.args
+    assert (level, title) == ("warning", "Property updated")
+    assert "save succeeded" in detail
+    popup.assert_not_called()
 
 
 def test_historical_export_passes_year_and_current_export_does_not(page):

@@ -4,6 +4,7 @@ import threading
 import tkinter as tk
 from math import isfinite
 from pathlib import Path
+from decimal import Decimal, InvalidOperation
 from queue import Empty, SimpleQueue
 from tkinter import ttk, messagebox
 
@@ -11,12 +12,18 @@ import customtkinter as ctk
 
 import api_clients.property_service as prop_svc
 import api_clients.system_service as system_svc
+import api_clients.payment_service as payment_svc
 import api_clients.api_helper as api
 import api_clients.auth_service as auth
 from api_clients.billing_service import normalize_date_input, normalize_tax_years
 from ui.dossier import PropertyDossierModal
+from ui.accessibility import bind_keyboard_activation
 from ui.empty_state import EmptyTableState
 from ui.import_wizard import ImportWizardModal
+from ui.operation_feedback import (
+    PALETTES, OperationBanner, SavedRecord, SaveFeedback, confirm_action,
+    save_failure_feedback,
+)
 from theme_manager import ModernTheme
 from utils import tr, format_curr
 from ui_components import LoadingOverlay, ErrorDialog, AutocompleteComboBox, attach_autocomplete
@@ -344,12 +351,13 @@ class PropertyPage:
             messagebox.showerror("Delete Failed", str(e))
 
 class PropertyEditModal(ctk.CTkToplevel):
-    def __init__(self, parent, title, property_id, callback, user=None, payment_mode=False):
+    def __init__(self, parent, title, property_id, callback, user=None, payment_mode=False, *, on_saved=None):
         super().__init__(parent)
         self.title(title)
         self.geometry("600x750")
         self.property_id = property_id
         self.callback = callback
+        self.on_saved = on_saved
         self.user = user
         self.payment_mode = payment_mode
         self.vars = {}
@@ -373,6 +381,10 @@ class PropertyEditModal(ctk.CTkToplevel):
         self._applying_payment_preview = False
         self._suggested_amount = False
         self._edited_adjustments = False
+        self._save_feedback = None
+        self._save_field_hint = None
+        self._save_locked = False
+        self._duplicate_check_timer = None
         self.barangays = ["NORTH POBLACION", "SOUTH POBLACION", "BAYABAS", "BORLONGAN", "BUENAVISTA", "CALAOCAN", "DIAMANEN", "DIANED", "DIARABASIN", "DIBUTUNAN", "DIMABUNO", "DINADIAWAN", "DITALE", "GUPA", "IPIL", "LABOY", "LIPIT", "LOBBOT", "MALIGAYA", "MIJARES", "MUCDOL", "PUANGI", "SALAY", "SAPANGKAWAYAN", "TOYTOYAN"]
         self.duplicate_policy = {"enabled": False, "admin_authorized": False}
         if not self.payment_mode and auth.get_user_role(self.user) == "admin":
@@ -401,6 +413,16 @@ class PropertyEditModal(ctk.CTkToplevel):
             self._prepare_payment_entry(prop)
         elif not self.property_id:
             self.validate()
+        elif prop is None:
+            self._save_locked = True
+            self.validate()
+            self._show_save_feedback(SaveFeedback(
+                "error", "Property could not be loaded",
+                "Close this form, refresh the Assessment Roll, and reopen the property before editing.",
+            ))
+        self._initial_input_values = self._form_input_values()
+        self.protocol("WM_DELETE_WINDOW", self._request_close)
+        self.bind("<Escape>", self._request_close)
 
     def _apply_window_icon(self):
         icon_path = _resource_path("assets/official/app_icon.ico")
@@ -423,8 +445,12 @@ class PropertyEditModal(ctk.CTkToplevel):
 
     def setup_ui(self):
         self.configure(fg_color=(ModernTheme.BG_LIGHT, ModernTheme.BG_DARK))
-        self.scroll_form = ctk.CTkScrollableFrame(self, fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK), corner_radius=10)
-        self.scroll_form.pack(fill="both", expand=True, padx=20, pady=(20, 10))
+        # A scrollable frame packs its outer wrapper, not the inner canvas child.
+        # Use our own packed sibling as the status banner's insertion anchor.
+        scroll_host = ctk.CTkFrame(self, fg_color="transparent")
+        scroll_host.pack(fill="both", expand=True, padx=20, pady=(20, 10))
+        self.scroll_form = ctk.CTkScrollableFrame(scroll_host, fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK), corner_radius=10)
+        self.scroll_form.pack(fill="both", expand=True)
 
         fields = [
             ("TD Number", "td_number"),
@@ -534,6 +560,7 @@ class PropertyEditModal(ctk.CTkToplevel):
             self._last_input = entry
             self._field_entries.append(entry)
             self._field_entries_by_key[key] = entry
+            self.vars[key].trace_add("write", lambda *args, field=key: self._clear_save_feedback_for(field))
 
         if not self.payment_mode and auth.get_user_role(self.user) == "admin":
             enabled = bool(self.duplicate_policy.get("enabled"))
@@ -607,17 +634,29 @@ class PropertyEditModal(ctk.CTkToplevel):
 
         footer = ctk.CTkFrame(self, fg_color="transparent")
         footer.pack(fill="x", padx=20, pady=20)
-        self.cancel_btn = ctk.CTkButton(footer, text="CANCEL", command=self.destroy, fg_color="#95a5a6", width=120)
+        self.cancel_btn = ctk.CTkButton(footer, text="CANCEL", command=self._request_close, fg_color="#95a5a6", width=120)
         self.cancel_btn.pack(side="left")
         self.save_btn = ctk.CTkButton(footer, text="SAVE PROPERTY", command=self.save, fg_color="#2ecc71", width=200, state="disabled")
         self.save_btn.pack(side="right")
+        self._save_banner = OperationBanner(
+            self, before=footer if self.payment_mode else scroll_host, padx=20
+        )
+        cancel_focus = bind_keyboard_activation(self.cancel_btn, self._request_close)
+        cancel_focus.bind("<KP_Enter>", self._request_close)
+        action_focus = self._save_banner.action_focus
+        action_focus.bind("<Tab>", lambda e: self._focus_widget(cancel_focus))
+        action_focus.bind("<Shift-Tab>", lambda e: self._focus_widget(self._last_input))
 
         if self._last_input:
-            self._last_input.bind("<Tab>", lambda e: self._focus_widget(self.cancel_btn))
-        self.cancel_btn.bind("<Tab>", lambda e: self._focus_widget(self.save_btn))
-        self.cancel_btn.bind("<Shift-Tab>", lambda e: self._focus_widget(self._last_input))
+            self._last_input.bind("<Tab>", lambda e: self._focus_widget(
+                action_focus if self._save_banner.has_action else cancel_focus
+            ))
+        cancel_focus.bind("<Tab>", lambda e: self._focus_widget(self.save_btn))
+        cancel_focus.bind("<Shift-Tab>", lambda e: self._focus_widget(
+            action_focus if self._save_banner.has_action else self._last_input
+        ))
         self.save_btn.bind("<Tab>", lambda e: self._focus_widget(self._first_input))
-        self.save_btn.bind("<Shift-Tab>", lambda e: self._focus_widget(self.cancel_btn))
+        self.save_btn.bind("<Shift-Tab>", lambda e: self._focus_widget(cancel_focus))
         self.save_btn.bind("<Return>", lambda e: self._submit_from_keyboard())
         self.save_btn.bind("<KP_Enter>", lambda e: self._submit_from_keyboard())
         self._bind_enter_navigation()
@@ -933,20 +972,113 @@ class PropertyEditModal(ctk.CTkToplevel):
         valid = bool(self.vars["td_number"].get().strip() and self.vars["owner_name"].get().strip() and self.vars["assessed_value"].get().strip())
         if self.payment_mode:
             valid = valid and self._payment_can_save()
+        if getattr(self, "_save_locked", False):
+            valid = False
         self.save_btn.configure(state="normal" if valid else "disabled")
 
     def destroy(self):
-        for timer in (self._payment_preview_timer, self._payment_poll_timer):
+        for timer in (self._payment_preview_timer, self._payment_poll_timer, self._duplicate_check_timer):
             if timer is not None:
                 self.after_cancel(timer)
         super().destroy()
 
+    def _form_input_values(self):
+        if self.payment_mode:
+            # Server suggestions alone are not unsaved operator input.
+            keys = ("tax_year", "or_number", "or_date", "remarks")
+        else:
+            keys = self.vars
+        return tuple(self.vars[key].get() for key in keys) + (self.duplicate_td_var.get(),)
+
+    def _request_close(self, _event=None):
+        if self._form_input_values() != self._initial_input_values:
+            if not confirm_action(
+                self, "Discard unsaved input?",
+                "Close the form and discard the values you entered. This does not undo any action already saved on the server.",
+                action="Discard Input", destructive=True,
+            ):
+                return "break"
+        self.destroy()
+        return "break"
+
+    def _clear_save_feedback_for(self, field):
+        feedback = self._save_feedback
+        if feedback and not self._save_locked and (
+            feedback.field == field
+            or (feedback.title == "Payment already recorded" and field in {"or_number", "or_date", "tax_year"})
+        ):
+            self._save_feedback = None
+            self._save_banner.clear()
+            if self._save_field_hint is not None:
+                self._save_field_hint.destroy()
+                self._save_field_hint = None
+
+    def _show_save_feedback(self, feedback, *, entry=None):
+        self._save_feedback = feedback
+        if self._save_field_hint is not None:
+            self._save_field_hint.destroy()
+            self._save_field_hint = None
+        field_widget = self._field_entries_by_key.get(feedback.field)
+        if field_widget is not None:
+            self._save_field_hint = ctk.CTkLabel(
+                self.scroll_form, text=feedback.detail, text_color=PALETTES[feedback.level][1],
+                wraplength=475, anchor="w", justify="left",
+            )
+            self._save_field_hint.pack(after=field_widget, fill="x", padx=10, pady=(0, 6))
+            self._focus_and_select_field(feedback.field)
+        action = None
+        message = "Review the highlighted field before saving." if field_widget is not None else feedback.detail
+        if feedback.duplicate_id and entry is not None:
+            action = ("View Existing Payment", lambda: self._view_duplicate_payment(feedback, entry))
+        elif feedback.title == "Payment already recorded":
+            message += " Search for this OR in the ledger."
+        self._save_banner.show(feedback.level, feedback.title, message, action=action)
+
+    def _view_duplicate_payment(self, feedback, entry):
+        if self._duplicate_check_timer is not None:
+            return
+        account_id, or_number, date, years = entry
+        inbox = SimpleQueue()
+
+        def fetch():
+            try:
+                detail = payment_svc.get_payment_receipt_details(feedback.duplicate_id, require_fresh=True)
+                if (
+                    str(detail.get("payment_id")) != str(feedback.duplicate_id)
+                    or str(detail.get("property_id")) != str(account_id)
+                    or str(detail.get("or_number")) != or_number
+                    or str(detail.get("date_paid") or "")[:10] != date
+                    or normalize_tax_years(detail.get("tax_year")) != years
+                ):
+                    raise ValueError("Receipt identity did not match the submitted entry")
+                amount = Decimal(str(detail.get("amount")))
+                if not amount.is_finite():
+                    raise ValueError("Invalid stored amount")
+                inbox.put(
+                    f"On file: OR {or_number} · {date} · Tax year {', '.join(years)}\n"
+                    f"Account #{account_id} · Recorded amount ₱{amount:,.2f}. No new payment was saved."
+                )
+            except Exception:
+                inbox.put("No new payment was saved. The existing entry could not be verified here; review the ledger for this OR.")
+
+        def poll():
+            self._duplicate_check_timer = None
+            if self._save_feedback is not feedback:
+                return
+            try:
+                detail = inbox.get_nowait()
+            except Empty:
+                self._duplicate_check_timer = self.after(60, poll)
+                return
+            self._save_banner.show("warning", feedback.title, detail)
+
+        self._save_banner.show("warning", feedback.title, "Checking the existing payment…")
+        self._duplicate_check_timer = self.after(60, poll)
+        threading.Thread(target=fetch, daemon=True).start()
+
     def load_data(self):
         try:
-            if self.payment_mode:
-                prop = prop_svc.get_property_by_id(self.property_id, require_fresh=True)
-            else:
-                prop = prop_svc.get_property_by_id(self.property_id)
+            prop = prop_svc.get_property_by_id(self.property_id, require_fresh=True)
             if not prop:
                 return None
             self._apply_property_data(prop)
@@ -1055,6 +1187,8 @@ class PropertyEditModal(ctk.CTkToplevel):
         return selected["id"]
 
     def save(self):
+        if getattr(self, "_save_locked", False):
+            return
         if self.payment_mode and not self._payment_can_save():
             return
         # Map the internal var keys to the Title Case keys the backend expects
@@ -1097,11 +1231,11 @@ class PropertyEditModal(ctk.CTkToplevel):
         prev_td = data.get("Previous TD Number", "").strip()
         td_number = data.get("TD Number", "").strip()
         if prev_td and td_number and prev_td.upper() == td_number.upper():
-            messagebox.showerror(
-                "Invalid Previous TD",
+            self._show_save_feedback(SaveFeedback(
+                "error", "Invalid Previous TD",
                 "Previous TD cannot be the same as the new TD number.",
-                parent=self,
-            )
+                "prev_td_number",
+            ))
             return
 
         if prev_td and prev_td.upper() != self._original_prev_td:
@@ -1121,11 +1255,11 @@ class PropertyEditModal(ctk.CTkToplevel):
             elif len(previous_matches) == 1:
                 self._selected_previous_property_id = previous_matches[0]["id"]
             else:
-                proceed = messagebox.askyesno(
-                    "Previous TD Not Found",
+                proceed = confirm_action(
+                    self, "Previous TD not found",
                     "The Previous TD was not found in the system.\n\n"
-                    "Continue saving anyway?",
-                    parent=self,
+                    "Continue without linking a previous property account?",
+                    action="Continue Saving",
                 )
                 if not proceed:
                     return
@@ -1151,41 +1285,40 @@ class PropertyEditModal(ctk.CTkToplevel):
         if duplicate_matches and not unchanged_verified:
             pilot_td = str(self.duplicate_policy.get("pilot_td") or "").strip().upper()
             if pilot_td and td_number.upper() != pilot_td:
-                messagebox.showerror(
-                    "Duplicate TD Pilot Restriction",
+                self._show_save_feedback(SaveFeedback(
+                    "warning", "Duplicate TD pilot restriction",
                     f"The controlled pilot currently allows only TD {pilot_td}.\n\n"
                     f"TD {td_number.upper()} remains blocked until the pilot is accepted and rollout is expanded.",
-                    parent=self,
-                )
+                    "td_number",
+                ))
                 return
             if not self.duplicate_td_var.get():
-                messagebox.showerror(
-                    "Duplicate TD Requires Authorization",
+                self._show_save_feedback(SaveFeedback(
+                    "warning", "Duplicate TD requires authorization",
                     f"{len(duplicate_matches)} active property account(s) already use TD {td_number}.\n\n"
                     "An administrator must select AUTHORIZED DUPLICATE TD and complete the reference and reason.",
-                    parent=self,
-                )
+                    "td_number",
+                ))
                 return
             reference = self.vars["duplicate_td_reference"].get().strip()
             reason = self.vars["duplicate_td_reason"].get().strip()
             if len(reference) < 3 or len(reason) < 10:
-                messagebox.showerror(
-                    "Incomplete Duplicate Authorization",
+                self._show_save_feedback(SaveFeedback(
+                    "error", "Incomplete duplicate authorization",
                     "Enter the Assessor reference and a reason of at least 10 characters.",
-                    parent=self,
-                )
+                ))
                 return
             existing_summary = "\n".join(
                 f"• Record #{item['id']} — {item.get('owner_name') or 'UNKNOWN OWNER'}"
                 for item in duplicate_matches[:8]
             )
-            confirmed = messagebox.askyesno(
-                "Confirm Verified Duplicate TD",
+            confirmed = confirm_action(
+                self, "Confirm verified duplicate TD",
                 f"You are authorizing another active account with TD {td_number}.\n\n"
                 f"Existing account(s):\n{existing_summary}\n\n"
                 f"Assessor reference: {reference}\nReason: {reason}\n\n"
-                "Payments, billings, and documents will remain separate by property account. Continue?",
-                parent=self,
+                "Payments, billings, and documents will remain separate by property account.",
+                action="Authorize Duplicate TD",
             )
             if not confirmed:
                 return
@@ -1201,11 +1334,11 @@ class PropertyEditModal(ctk.CTkToplevel):
             prior_value = data.get("Prior Assessed Value", "").strip()
             prior_year = data.get("Prior Effectivity Year", "").strip()
             if bool(prior_value) != bool(prior_year):
-                messagebox.showerror(
-                    "Incomplete Prior Assessment",
+                self._show_save_feedback(SaveFeedback(
+                    "error", "Incomplete prior assessment",
                     "Enter both Prior AV and Prior AV effective year, or leave both blank.",
-                    parent=self,
-                )
+                    "prior_effectivity_year" if prior_value else "prior_assessed_value",
+                ))
                 return
             if prior_value:
                 try:
@@ -1215,22 +1348,22 @@ class PropertyEditModal(ctk.CTkToplevel):
                     if prior_amount <= 0 or prior_year_num >= current_year_num:
                         raise ValueError
                 except (TypeError, ValueError):
-                    messagebox.showerror(
-                        "Invalid Prior Assessment",
+                    self._show_save_feedback(SaveFeedback(
+                        "error", "Invalid prior assessment",
                         "Prior AV must be positive, and its year must be earlier than the current Effectivity year.",
-                        parent=self,
-                    )
+                        "prior_assessed_value",
+                    ))
                     return
 
         if self.payment_mode:
             required_payment_fields = ("OR Number", "OR Date", "Tax Year", "Amount Paid")
             missing = [field for field in required_payment_fields if not data.get(field, "").strip()]
             if missing:
-                messagebox.showerror(
-                    "Missing Payment Details",
+                self._show_save_feedback(SaveFeedback(
+                    "error", "Missing payment details",
                     f"Please fill in: {', '.join(missing)}.",
-                    parent=self,
-                )
+                    missing[0].lower().replace(" ", "_"),
+                ))
                 return
 
         # Normalize Date
@@ -1238,7 +1371,9 @@ class PropertyEditModal(ctk.CTkToplevel):
         if raw_date:
             clean_date = normalize_date_input(raw_date)
             if not clean_date:
-                messagebox.showerror("Invalid Date", f"Format '{raw_date}' not recognized. Use YYYY-MM-DD.", parent=self)
+                self._show_save_feedback(SaveFeedback(
+                    "error", "Invalid OR Date", "Enter a valid date, such as YYYY-MM-DD.", "or_date"
+                ))
                 return
             data["OR Date"] = clean_date
 
@@ -1250,26 +1385,55 @@ class PropertyEditModal(ctk.CTkToplevel):
             key = self._idempotency_key if has_payment else None
 
             result = prop_svc.save_property(data, editing_id=self.property_id, user=self.user, idempotency_key=key)
-            success_msg = "Payment saved successfully." if self.payment_mode else "Property record saved successfully."
-            if self.payment_mode and isinstance(result, dict) and result.get("target_changed"):
-                success_msg += (
-                    f"\n\nApplied to TD {result.get('td_number')} because that TD is effective "
-                    f"for tax year {data.get('Tax Year')}."
-                )
-            prior_sync = result.get("prior_assessment_sync", {}) if isinstance(result, dict) else {}
-            corrected_years = prior_sync.get("years", [])
-            if corrected_years:
-                success_msg += (
-                    "\n\nHistorical billing AV corrected for: "
-                    + ", ".join(str(year) for year in corrected_years)
-                    + ". Payment records were not changed."
-                )
-            messagebox.showinfo("Success", success_msg, parent=self)
+            if not isinstance(result, dict) or result.get("ok") is not True:
+                raise ValueError("The server did not confirm the save")
+        except Exception as e:
+            feedback = save_failure_feedback(e, payment=self.payment_mode)
+            if feedback.uncertain:
+                self._save_locked = True
+                self.validate()
+            entry = (
+                self.property_id, data.get("OR Number"), data.get("OR Date"),
+                normalize_tax_years(data.get("Tax Year")),
+            ) if self.payment_mode else None
+            self._show_save_feedback(feedback, entry=entry)
+            return
+
+        # UI refresh is not part of the write. Never turn a refresh failure into
+        # a misleading "not saved" message or leave the form ready to resubmit.
+        self._save_locked = True
+        self.save_btn.configure(state="disabled")
+        td_number = result.get("td_number") or td_number
+        if self.payment_mode:
+            title = "Payment saved"
+            try:
+                amount = f"₱{Decimal(data['Amount Paid'].replace(',', '')):,.2f}"
+            except (InvalidOperation, ValueError):
+                amount = ""
+            summary = " · ".join(filter(None, (f"OR {data['OR Number']}", amount, f"TD {td_number}")))
+            if result.get("target_changed"):
+                summary += f"\nApplied to the effective account for tax year {data.get('Tax Year')}."
+        else:
+            title = "Property updated" if self.property_id is not None else "Property added"
+            summary = f"TD {td_number}"
+        prior_sync = result.get("prior_assessment_sync")
+        corrected_years = prior_sync.get("years") if isinstance(prior_sync, dict) else None
+        if isinstance(corrected_years, list) and corrected_years:
+            summary += (
+                "\nHistorical billing AV corrected for: " + ", ".join(map(str, corrected_years))
+                + ". Payment records were not changed."
+            )
+        on_saved = getattr(self, "on_saved", None)
+        if on_saved:
+            record = SavedRecord(title, summary, result.get("property_id") or self.property_id, td_number)
+            self.destroy()
+            on_saved(record)
+        else:
+            # Other screens still use the original callback contract.
+            messagebox.showinfo(title, summary, parent=self)
+            self.destroy()
             if self.callback:
                 self.callback()
-            self.destroy()
-        except Exception as e:
-            messagebox.showerror("Error", str(e), parent=self)
 
 
 class BulkBarangayUpdateModal(ctk.CTkToplevel):
