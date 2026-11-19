@@ -553,8 +553,8 @@ def _one_active_property_by_td(td_number, db_session: Session, exclude_id=None):
     return matches[0] if matches else None
 
 
-def _td_chain_for_property(seed_prop, db_session: Session):
-    """Return all active TD records connected by Previous TD, oldest to newest."""
+def _td_chain_for_property(seed_prop, db_session: Session, *, include_successors=True):
+    """Return validated ancestors, optionally including connected successors."""
     if not seed_prop:
         return []
 
@@ -590,6 +590,15 @@ def _td_chain_for_property(seed_prop, db_session: Session):
         by_id[parent.id] = parent
         visited.add(parent.id)
         current = parent
+
+    if not include_successors:
+        # An exact account with an existing obligation is already selected.
+        # Its ancestors still need validation, but sibling parcels are not
+        # competing payment targets and must not be merged into its preview.
+        return sorted(
+            by_id.values(),
+            key=lambda prop: (_property_effectivity_year(prop) or 0, prop.id or 0),
+        )
 
     # Walk forwards through replacement links. Refuse to choose automatically
     # when a former TD has several successors (for example, a subdivision).
@@ -811,18 +820,46 @@ def resolve_payment_property_for_tax_year(
 
 
 def resolve_payment_target(td_number, tax_year, db_session: Session, property_id=None):
+    selected = None
+    if property_id is not None:
+        selected = get_property_by_id(int(property_id), db_session)
+        if not selected:
+            return None
+        if _td_text(selected.td_number) != _td_text(td_number):
+            raise HTTPException(
+                status_code=409,
+                detail="The selected property account does not match the requested TD. Reload the selected account before continuing.",
+            )
     target = resolve_payment_property_for_tax_year(
         td_number, tax_year, db_session, property_id=property_id
     )
     if not target:
         return None
-    chain = _td_chain_for_property(target, db_session)
+    exact_existing_obligation = bool(
+        selected is not None
+        and target.id == selected.id
+        and db_session.query(PropertyBilling.id)
+        .filter(
+            PropertyBilling.property_id == selected.id,
+            PropertyBilling.tax_year == int(str(tax_year).strip()[:4]),
+            PropertyBilling.is_archived == False,
+        )
+        .first()
+    )
+    chain = _td_chain_for_property(
+        target, db_session, include_successors=not exact_existing_obligation
+    )
     return {
         "id": target.id,
         "td_number": target.td_number,
         "owner_name": target.owner_name,
         "effectivity_date": target.effectivity_date,
         "effectivity_year": _property_effectivity_year(target),
+        "chain_scope": (
+            "selected_account_ancestors"
+            if exact_existing_obligation
+            else "connected_history"
+        ),
         "chain": [
             {
                 "id": prop.id,
