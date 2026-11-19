@@ -1,4 +1,4 @@
-# Selected-account preview for branched TD history
+# MTO v2.1.30 — Selected-account preview for branched TD history
 
 ## Root cause
 
@@ -45,3 +45,9 @@ update, any source publication or release tag, and an authorized server window
 require separate approval. Preserve v2.1.27 server evidence and the v2.1.29
 client package. No replacement client or manual financial correction is needed
 merely to use this resolver change after an approved API update.
+
+The supported server upgrade is v2.1.27 to v2.1.30. Versions v2.1.28 and
+v2.1.29 were client-only updates; they did not activate a server publisher
+transition. The v2.1.30 publisher bridge therefore verifies the existing
+v2.1.27 approval, preserving its four triggers and publication evidence.
+Product version changes to 2.1.30; API and minimum-client contracts remain 1.0.
