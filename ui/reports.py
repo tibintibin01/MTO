@@ -161,7 +161,10 @@ class ReportsPage:
         label = ctk.CTkLabel(parent, text="", anchor="w", justify="left",
                              font=ModernTheme.BODY_SMALL, wraplength=900)
         label.pack(fill="x", pady=(0, 10))
-        label.bind("<Configure>", lambda e: self._wrap_report_label(label, e.width))
+        # CTkLabel.bind targets its inner text widget. Measuring that widget
+        # while changing its wrapping width feeds text geometry back into
+        # itself, which can keep resizing at higher display scaling.
+        parent.bind("<Configure>", lambda e: self._wrap_report_label(label, e.width), add="+")
         self._workspace_labels[kind] = label
         for widget in widgets:
             variable = tk.StringVar(value=widget.get())
@@ -226,8 +229,14 @@ class ReportsPage:
         state = getattr(self, "_workspace_states", {}).get(kind)
         if state is None:
             return True  # Legacy test/view callers without workspace controls.
-        if state.selected != self._selected_filters(kind) or not state.can_export or (kind == "collection" and state.selected[2]):
+        if state.selected != self._selected_filters(kind) or not state.can_export:
             messagebox.showinfo("Refresh required", "Load the report for the selected filters before exporting.")
+            return False
+        if kind == "collection" and state.selected[2]:
+            messagebox.showinfo(
+                "Clear search to export",
+                "Collection Excel and COA RCD export the whole selected period, not a search subset. Clear search and choose Generate before exporting.",
+            )
             return False
         return True
 
@@ -262,7 +271,7 @@ class ReportsPage:
         self.brgy_columns_btn.configure(text="Key columns" if self._brgy_all_columns else "Show all columns")
 
     @staticmethod
-    def _metric_cards(parent, entries):
+    def _metric_cards(parent, entries, compact=False):
         grid = ctk.CTkFrame(parent, fg_color="transparent")
         grid.pack(fill="x", pady=(0, 12))
         grid.grid_columnconfigure((0, 1, 2), weight=1, uniform="report_metrics")
@@ -272,12 +281,16 @@ class ReportsPage:
                                 fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK),
                                 border_color=(ModernTheme.BORDER_LIGHT, ModernTheme.BORDER_DARK))
             card.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 4, 0 if column == 2 else 4))
-            ctk.CTkLabel(card, text=title, anchor="w", font=ModernTheme.BODY_SMALL).pack(fill="x", padx=12, pady=(12, 4))
-            label = ctk.CTkLabel(card, text=value, anchor="w", font=("Inter", 20, "bold"))
+            ctk.CTkLabel(card, text=title, anchor="w", height=16 if compact else 28, font=ModernTheme.BODY_SMALL).pack(fill="x", padx=12, pady=(8, 2) if compact else (12, 4))
+            label = ctk.CTkLabel(card, text=value, anchor="w", height=26 if compact else 28, font=("Inter", 20, "bold"))
             label.pack(fill="x", padx=12)
-            sub = ctk.CTkLabel(card, text=subtitle, anchor="w", justify="left", font=ModernTheme.BODY_SMALL, wraplength=230)
-            sub.pack(fill="x", padx=12, pady=(4, 12))
-            sub.bind("<Configure>", lambda e, w=sub: ReportsPage._wrap_report_label(w, e.width))
+            sub = ctk.CTkLabel(card, text=subtitle, anchor="w", height=18 if compact else 28, justify="left", font=ModernTheme.BODY_SMALL, wraplength=230)
+            sub.pack(fill="x", padx=12, pady=(2, 8) if compact else (4, 12))
+            card.bind(
+                "<Configure>",
+                lambda e, w=sub: ReportsPage._wrap_report_label(w, e.width - 24 * w._get_widget_scaling()),
+                add="+",
+            )
             labels.append(label)
         return labels
 
@@ -471,20 +484,29 @@ class ReportsPage:
         collection_fr = ctk.CTkFrame(self.collection_tab, fg_color="transparent")
         collection_fr.pack(fill="both", expand=True, padx=10, pady=10)
 
-        title_fr = ctk.CTkFrame(collection_fr, fg_color="transparent")
-        title_fr.pack(fill="x", pady=(0, 10))
+        # Reserve the footer before the growing table or any header content.
+        # Packing it last allowed the table's requested height to consume the
+        # remaining cavity, hiding navigation on shorter/high-DPI displays.
+        self._setup_collection_pagination(collection_fr)
+
+        # Let the controls/summary scroll independently when the content pane
+        # is short. The receipt table and bottom pager keep their own space.
+        controls_fr = ctk.CTkScrollableFrame(collection_fr, fg_color="transparent", corner_radius=0, height=300)
+        controls_fr.pack(fill="x", pady=(0, 8))
+        self.coll_controls_fr = controls_fr
+        self.coll_body_fr = collection_fr
+        collection_fr.bind("<Configure>", self._fit_collection_controls, add="+")
+        controls_fr.bind("<Configure>", self._fit_collection_controls, add="+")
+
+        title_fr = ctk.CTkFrame(controls_fr, fg_color="transparent")
+        title_fr.pack(fill="x", pady=(0, 8))
         ctk.CTkLabel(
             title_fr, text="OFFICIAL COLLECTION REGISTER",
-            font=ModernTheme.H3, text_color=ModernTheme.PRIMARY,
+            height=24, font=ModernTheme.H3, text_color=ModernTheme.PRIMARY,
         ).pack(anchor="w")
-        ctk.CTkLabel(
-            title_fr,
-            text="Payment and receipt activity for the selected reporting period",
-            font=ModernTheme.BODY_SMALL, text_color=ModernTheme.TEXT_GRAY,
-        ).pack(anchor="w", pady=(2, 0))
 
         filter_fr = ctk.CTkFrame(
-            collection_fr,
+            controls_fr,
             fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK),
             corner_radius=8, border_width=1,
             border_color=(ModernTheme.BORDER_LIGHT, ModernTheme.BORDER_DARK),
@@ -524,7 +546,7 @@ class ReportsPage:
             hover_color=ModernTheme.PRIMARY_SURFACE_HOVER, height=34, width=110,
         ).pack(side="left", padx=(0, 8), pady=10)
 
-        actions_fr = ctk.CTkFrame(collection_fr, fg_color="transparent")
+        actions_fr = ctk.CTkFrame(controls_fr, fg_color="transparent")
         actions_fr.pack(fill="x", pady=(0, 10))
         search_fr = ctk.CTkFrame(actions_fr, fg_color="transparent")
         search_fr.grid(row=0, column=0, sticky="w")
@@ -532,10 +554,23 @@ class ReportsPage:
         utility_fr.grid(row=0, column=1, sticky="e")
         actions_fr.grid_columnconfigure(0, weight=1)
         def fit_actions(event):
-            narrow = event.width / actions_fr._get_widget_scaling() < 700
-            if getattr(actions_fr, "_workspace_narrow", None) != narrow:
-                actions_fr._workspace_narrow = narrow
+            width = event.width / actions_fr._get_widget_scaling()
+            utility_width = sum(button.cget("width") + 8 for button in utility_buttons)
+            narrow = width < 350 + utility_width
+            wrapped = width < utility_width
+            layout = (narrow, wrapped)
+            if getattr(actions_fr, "_workspace_layout", None) != layout:
+                actions_fr._workspace_layout = layout
                 utility_fr.grid(row=1 if narrow else 0, column=0 if narrow else 1, sticky="e", pady=(8, 0) if narrow else 0)
+                for index, button in enumerate(utility_buttons):
+                    if wrapped:
+                        # Keep the register on its own row; RCD and deposits
+                        # can share a second row even at the smaller widths.
+                        row, column = (0, 0) if index == 0 else (1, index - 1)
+                        span = max(1, len(utility_buttons) - 1) if index == 0 else 1
+                    else:
+                        row, column, span = 0, index, 1
+                    button.grid(row=row, column=column, columnspan=span, sticky="e", padx=(8, 0), pady=(4 if row else 0, 0))
         actions_fr.bind("<Configure>", fit_actions)
         self.coll_search = ctk.CTkEntry(search_fr, placeholder_text="Search OR, TD or owner", width=210, height=34)
         self.coll_search.pack(side="left", padx=(0, 8))
@@ -550,7 +585,6 @@ class ReportsPage:
             font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.SECONDARY,
             hover_color=ModernTheme.SECONDARY_HOVER, height=34, width=150,
         )
-        self.manage_dep_btn.pack(side="right", padx=(8, 0))
 
         self.export_rcd_btn = ctk.CTkButton(
             utility_fr, text="EXPORT COA RCD", command=self.open_export_signatories,
@@ -558,17 +592,34 @@ class ReportsPage:
             height=34, width=150,
         )
         role = str(self.user.get("role", "")).strip().lower() if isinstance(self.user, dict) else ""
+        self.export_collection_btn = ctk.CTkButton(
+            utility_fr, text="EXPORT COLLECTION EXCEL", command=self._export_collection_excel,
+            font=ModernTheme.BUTTON_SMALL, fg_color=ModernTheme.PRIMARY_SURFACE,
+            hover_color=ModernTheme.PRIMARY_SURFACE_HOVER, height=34, width=210,
+        )
+        utility_buttons = [self.export_collection_btn]
         if role == "admin":
-            self.export_rcd_btn.pack(side="right", padx=(8, 0))
+            utility_buttons.append(self.export_rcd_btn)
+        utility_buttons.append(self.manage_dep_btn)
+        for column, button in enumerate(utility_buttons):
+            button.grid(row=0, column=column, sticky="e", padx=(8, 0))
 
-        self._workspace_register("collection", collection_fr, (self.month_cb, self.year_cb, self.coll_search, self.coll_order_cb), (self.export_rcd_btn,))
+        self._workspace_register("collection", controls_fr, (self.month_cb, self.year_cb, self.coll_search, self.coll_order_cb), (self.export_collection_btn, self.export_rcd_btn))
         if role == "admin":
-            daily_rcd_fr = ctk.CTkFrame(collection_fr, fg_color="transparent")
+            daily_rcd_fr = ctk.CTkFrame(controls_fr, fg_color="transparent")
             daily_rcd_fr.pack(fill="x", pady=(0, 8))
             ctk.CTkButton(daily_rcd_fr, text="DAILY RCD (100 / 200)", command=self.open_daily_rcd, width=205, height=34).pack(side="left", padx=(0, 12))
-            ctk.CTkLabel(daily_rcd_fr, text="Automatic collections by OR date and registered booklet owner.", wraplength=430, justify="left").pack(side="left")
-        self.coll_metrics = self._metric_cards(collection_fr, (("Recorded cash", "—", "Whole selected period / search"), ("Receipts", "—", "Whole selected period / search"), ("This page", "—", "Up to 100 receipts; chosen posted order")))
-        ctk.CTkLabel(collection_fr, text="COA RCD exports the whole period. Clear the search before exporting it.", anchor="w", font=ModernTheme.BODY_SMALL).pack(fill="x", pady=(0, 8))
+            daily_help = ctk.CTkLabel(daily_rcd_fr, text="Automatic collections by OR date and registered booklet owner.", wraplength=430, justify="left")
+            daily_help.pack(side="left", fill="x", expand=True)
+            daily_rcd_fr.bind("<Configure>", lambda e: self._wrap_report_label(daily_help, e.width - 217 * daily_help._get_widget_scaling()), add="+")
+        self.coll_metrics = self._metric_cards(controls_fr, (("Recorded cash", "—", "Whole selected period / search"), ("Receipts", "—", "Whole selected period / search"), ("This page", "—", "Up to 100 receipts; chosen posted order")), compact=True)
+        export_help = ctk.CTkLabel(
+            controls_fr,
+            text="Excel and COA RCD export the whole selected receipt-date period, not just this page. Clear search and Generate first. Later entry can change totals.",
+            height=18, anchor="w", justify="left", wraplength=900, font=ModernTheme.BODY_SMALL,
+        )
+        export_help.pack(fill="x", pady=(0, 8))
+        controls_fr.bind("<Configure>", lambda e: self._wrap_report_label(export_help, e.width), add="+")
 
         self._coll_page_size = 100
         self._coll_cursors = [None]
@@ -604,6 +655,7 @@ class ReportsPage:
         scrollx.pack(side="bottom", fill="x")
         self.coll_tree = ttk.Treeview(
             tree_container, columns=cols, show="headings",
+            height=6,
             yscrollcommand=scrolly.set, xscrollcommand=scrollx.set,
             style="Collection.Treeview",
         )
@@ -623,13 +675,25 @@ class ReportsPage:
             title="Ready to generate",
         )
 
+    def _fit_collection_controls(self, event=None):
+        controls = self.coll_controls_fr
+        scale = controls._get_widget_scaling()
+        # Reserve 110 logical pixels for the table plus footer/paddings.
+        room = self.coll_body_fr.winfo_height() - self.coll_pagination_fr.winfo_reqheight() - 126 * scale
+        natural = controls.winfo_reqheight() / scale
+        height = max(80, min(int(natural), int(room / scale)))
+        if controls.cget("height") != height:
+            controls.configure(height=height)
+
+    def _setup_collection_pagination(self, parent):
         pag_fr = ctk.CTkFrame(
-            collection_fr,
+            parent,
             fg_color=(ModernTheme.CARD_LIGHT, ModernTheme.CARD_DARK),
             corner_radius=8, border_width=1,
             border_color=(ModernTheme.BORDER_LIGHT, ModernTheme.BORDER_DARK),
         )
-        pag_fr.pack(fill="x", pady=(8, 0))
+        pag_fr.pack(side="bottom", fill="x", pady=(8, 0))
+        self.coll_pagination_fr = pag_fr
         self._coll_prev_btn = ctk.CTkButton(
             pag_fr, text="PREVIOUS", command=self._coll_prev_page,
             width=120, height=32, font=ModernTheme.BUTTON_SMALL,
@@ -2159,9 +2223,14 @@ class ReportsPage:
         # Update pagination controls
         page_num = self._coll_page + 1
         count = len(items)
-        self._coll_page_lbl.configure(
-            text=f"Page {page_num}  ·  {count} records shown"
-        )
+        total = data.get("total_count") if isinstance(data, dict) else None
+        if type(total) is int and total >= 0:
+            first = self._coll_page * self._coll_page_size + 1 if count else 0
+            last = first + count - 1 if count else 0
+            page_text = f"Page {page_num}  ·  {first:,}–{last:,} of {total:,} receipts"
+        else:
+            page_text = f"Page {page_num}  ·  {count} records shown"
+        self._coll_page_lbl.configure(text=page_text)
         self._coll_prev_btn.configure(
             state="normal" if self._coll_page > 0 else "disabled"
         )
@@ -2533,6 +2602,20 @@ class ReportsPage:
         self._export_with_feedback(
             self.receiv_export_excel_btn,
             lambda: billing.export_report_excel("receivables", year=year),
+            "excel",
+        )
+
+    def _export_collection_excel(self):
+        if not self._workspace_export_allowed("collection"):
+            return
+        if getattr(self.export_collection_btn, "_workspace_export_busy", False):
+            return
+        # Capture the period on the UI thread. The existing API exports all
+        # receipts in that period, not the current cursor/page or search subset.
+        month, year = self.month_cb.get(), self.year_cb.get()
+        self._export_with_feedback(
+            self.export_collection_btn,
+            lambda: billing.export_report_excel("collections", month=month, year=year),
             "excel",
         )
 
