@@ -11,3 +11,8 @@ RECORDED_CREDIT_BALANCE_HELP = (
     "Credits do not automatically settle other accounts or years. "
     "Not a discount or approved refund."
 )
+BARANGAY_APPLIED_RATE_HELP = (
+    "Applied / Due = payments applied divided by total due, not remaining unpaid. "
+    "Credits stay separate and do not settle other billings. Payments include credits, so the "
+    "rate can exceed 100%. A dash means there is no positive total due."
+)

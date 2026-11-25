@@ -288,6 +288,84 @@ def test_fiscal_barangay_cutoff_and_credit_totals_match_summary(db):
     assert report["barangays"][0][7] == report["summary"]["ending_credit"] == 500
 
 
+def test_barangay_rate_basis_can_include_prior_year_payments_and_separate_credits(db):
+    paid_prop, paid_billing = account(db, "RATE-PAID", year=2025)
+    account(db, "RATE-UNPAID", year=2025)
+    receipt(db, paid_prop, paid_billing, 2500, datetime(2025, 5, 1))
+    report = build_receivables_report(2026, db)
+    row = report["barangays"][0]
+    # Two 2,000 billings, one paid 2,500: no cross-account credit netting.
+    assert row[2] == 4000
+    assert row[5:8] == (2500, 2000, 500)
+    assert row[2] + row[7] == row[5] + row[6]
+    assert reports_ui.barangay_receivables_comparison(row)[-1] == 62.5
+    assert report["summary"]["collections"] == 0
+    assert report["summary"]["ending_receivable"] == 2000
+    assert report["summary"]["ending_credit"] == 500
+    # All report generation above is read-only; existing stored values stay intact.
+    db.expire_all()
+    assert db.get(PropertyBilling, paid_billing.id).amount_paid == Decimal("2500.00")
+    assert db.query(Payment).count() == db.query(PaymentBilling).count() == 1
+
+
+@pytest.mark.parametrize("zero_due", [False, True])
+def test_reconciliation_working_paper_shows_due_unpaid_credit_and_same_rate(
+    db, tmp_path, zero_due
+):
+    prop, row = account(db, "WORKING-PAPER-RATE", assessed=0 if zero_due else 100000)
+    if not zero_due:
+        account(db, "WORKING-PAPER-UNPAID")
+    receipt(db, prop, row, 500 if zero_due else 2500, datetime(2026, 5, 1))
+    report = build_receivables_report(2026, db, diagnostics=True)
+    page = ReportsPage.__new__(ReportsPage)
+    page.recon_year_cb = SimpleNamespace(get=lambda: "2026")
+    payload = page._build_reconciliation_payload(
+        report["summary"], report["barangays"], report["metrics"], report["diagnostics"]
+    )
+    destination = tmp_path / "synthetic-working-paper.xlsx"
+    page._write_reconciliation_excel(payload, str(destination))
+    sheet = openpyxl.load_workbook(destination, data_only=True)["Barangay Review"]
+    assert [sheet.cell(8, col).value for col in range(1, 7)] == [
+        "Barangay",
+        "Total Due",
+        "Payments Applied",
+        "Remaining Unpaid",
+        RECORDED_CREDIT_BALANCE_LABEL,
+        "Applied / Due",
+    ]
+    assert sheet["B9"].value == (0 if zero_due else 4000)
+    assert sheet["C9"].value == (500 if zero_due else 2500)
+    assert sheet["D9"].value == (0 if zero_due else 2000)
+    assert sheet["E9"].value == 500
+    assert sheet["F9"].value == (None if zero_due else 0.625)
+    assert sheet["F9"].number_format == "0.0%"
+    assert "divided by total due" in sheet["A5"].value
+    assert "All billing years through 2026" in sheet["A5"].value
+    assert "not only cash received in 2026" in sheet["A5"].value
+    assert sheet.auto_filter.ref == "A8:F9"
+    merged_ranges = {str(cell_range) for cell_range in sheet.merged_cells.ranges}
+    assert "A5:H5" in merged_ranges
+    assert "A5:F5" not in merged_ranges
+
+
+def test_older_working_paper_row_does_not_invent_a_credit_amount(db, tmp_path):
+    prop, row = account(db, "OLDER-WORKING-PAPER")
+    receipt(db, prop, row, 1000, datetime(2026, 5, 1))
+    report = build_receivables_report(2026, db, diagnostics=True)
+    page = ReportsPage.__new__(ReportsPage)
+    page.recon_year_cb = SimpleNamespace(get=lambda: "2026")
+    payload = page._build_reconciliation_payload(
+        report["summary"], report["barangays"], report["metrics"], report["diagnostics"]
+    )
+    payload["top_barangays"] = [("SYNTHETIC", 2000, 1000, 1000, 50)]
+    original = list(payload["top_barangays"])
+    destination = tmp_path / "older-synthetic-working-paper.xlsx"
+    page._write_reconciliation_excel(payload, str(destination))
+    sheet = openpyxl.load_workbook(destination, data_only=True)["Barangay Review"]
+    assert sheet["E9"].value is None and sheet["F9"].value == 0.5
+    assert payload["top_barangays"] == original
+
+
 def test_barangay_ranking_does_not_deduct_discount_twice(db):
     a, ba = account(db, "RANK-A", barangay="A")
     account(db, "RANK-B", barangay="B", assessed=90000)
@@ -536,6 +614,7 @@ def test_summary_screen_explains_prepaid_credits(db):
         patch.object(reports_ui.ctk, "CTkProgressBar", return_value=MagicMock()),
         patch.object(reports_ui.ctk, "CTkButton", return_value=MagicMock()),
         patch.object(reports_ui.ttk, "Treeview", return_value=MagicMock()),
+        patch.object(reports_ui.ttk, "Scrollbar", return_value=MagicMock()),
     ):
         page._update_receiv_summary(summary, [])
     equation = next(text for text in labels if "ending receivable" in text)
