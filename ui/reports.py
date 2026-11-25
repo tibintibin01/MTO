@@ -19,7 +19,25 @@ from utils.report_labels import (
     RECEIVABLES_COVERAGE_HELP,
     RECORDED_CREDIT_BALANCE_LABEL,
     RECORDED_CREDIT_BALANCE_HELP,
+    BARANGAY_APPLIED_RATE_HELP,
 )
+
+
+def barangay_receivables_comparison(row):
+    """Present existing report totals; never recompute charges or net accounts.
+
+    The percentage retains the report's payments / total-due basis. Remaining
+    unpaid and recorded credits are separate per-billing balances. Older API
+    rows without a credit column must not silently invent a zero credit.
+    """
+    if len(row) < 7:
+        raise ValueError("Barangay report row is missing required totals.")
+    due = float(row[2] or 0)
+    paid = float(row[5] or 0)
+    remaining = float(row[6] or 0)
+    credit = float(row[7] or 0) if len(row) > 7 else None
+    rate = (paid / due * 100) if due > 0 else None
+    return row[0], due, paid, remaining, credit, rate
 
 
 def report_export_dialog_options(path, export_format):
@@ -1335,20 +1353,47 @@ class ReportsPage:
             review = ctk.CTkFrame(self.recon_content, fg_color=("#e2e8f0", "#111827"), corner_radius=8, border_width=1, border_color=("#cbd5e1", "#243244"))
             review.pack(fill="both", expand=True)
             ctk.CTkLabel(review, text="TOP BARANGAYS TO REVIEW", font=("Inter", 11, "bold"), text_color=ModernTheme.TEXT_GRAY).pack(anchor="w", padx=16, pady=(14, 8))
-            cols = ("Barangay", "Tax Due", "Collected", "Receivable", "Rate")
-            tree = ttk.Treeview(review, columns=cols, show="headings", height=6)
-            for col in cols:
-                tree.heading(col, text=col.upper())
-                tree.column(col, anchor="center", width=120)
-            tree.column("Barangay", anchor="w", width=200)
-            tree.pack(fill="both", expand=True, padx=16, pady=(0, 14))
-            top_rows = sorted(brgy_rows, key=lambda row: float(row[6] or 0), reverse=True)[:6]
-            for idx, row in enumerate(top_rows):
-                due = float(row[2] or 0)
-                collected = float(row[5] or 0)
-                receivable = float(row[6] or 0)
-                rate = (collected / due * 100) if due > 0 else 0
-                tree.insert("", "end", values=(row[0], money(due), money(collected), money(receivable), f"{rate:.1f}%"))
+            self._render_barangay_comparison(review, brgy_rows, year=year, limit=6)
+
+    def _render_barangay_comparison(self, parent, rows, *, year, limit=7):
+        """Show the denominator and separate credit beside the applied rate."""
+        cols = ("Barangay", "Total Due", "Payments Applied", "Remaining Unpaid", "Recorded Credit", "Applied / Due")
+        widths = (140, 125, 145, 145, 165, 105)
+        host = ctk.CTkFrame(parent, fg_color="transparent")
+        host.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+        tree = ttk.Treeview(host, columns=cols, show="headings", height=limit)
+        for col, width in zip(cols, widths):
+            tree.heading(col, text=col.upper())
+            tree.column(col, anchor="e", width=width, minwidth=width, stretch=False)
+        tree.column("Barangay", anchor="w")
+        tree.column("Applied / Due", anchor="center")
+        scroll = ttk.Scrollbar(host, orient="horizontal", command=tree.xview)
+        tree.configure(xscrollcommand=scroll.set)
+        scroll.pack(side="bottom", fill="x")
+        tree.pack(side="top", fill="both", expand=True)
+        tree.tag_configure("oddrow", background="#1e293b", foreground="#cbd5e1")
+        tree.tag_configure("evenrow", background="#162032", foreground="#cbd5e1")
+        for index, row in enumerate(sorted(rows, key=lambda item: float(item[6] or 0), reverse=True)[:limit]):
+            name, due, paid, remaining, credit, rate = barangay_receivables_comparison(row)
+            tree.insert("", "end", values=(
+                name, format_curr(due), format_curr(paid), format_curr(remaining),
+                format_curr(credit) if credit is not None else "Not supplied",
+                f"{rate:.1f}%" if rate is not None else "—",
+            ), tags=("evenrow" if index % 2 == 0 else "oddrow",))
+        basis = (
+            f"All billing years through {year}; payments through that fiscal-year cutoff, "
+            f"not only cash received in {year}. "
+            if str(year).isdigit()
+            else "All available billing years and recorded payment dates. "
+        )
+        note = ctk.CTkLabel(parent, text="Amounts in PHP. " + basis + BARANGAY_APPLIED_RATE_HELP,
+                           font=("Inter", 10), text_color=ModernTheme.TEXT_GRAY,
+                           wraplength=620, justify="left", anchor="w")
+        note.pack(fill="x", padx=16, pady=(0, 14))
+        # Bind the containing card, not CTkLabel's internal text/canvas. Text
+        # reflow itself changes those child widths and can otherwise loop.
+        parent.bind("<Configure>", lambda event: self._wrap_report_label(note, event.width - 32, minimum=180))
+        return tree
 
     def _recon_money(self, value):
         return f"P {float(value or 0):,.2f}"
@@ -1450,11 +1495,7 @@ class ReportsPage:
 
         top_barangays = []
         for row in sorted(brgy_rows, key=lambda item: float(item[6] or 0), reverse=True)[:20]:
-            due = float(row[2] or 0)
-            collected = float(row[5] or 0)
-            receivable = float(row[6] or 0)
-            rate = (collected / due * 100) if due > 0 else 0
-            top_barangays.append((row[0], due, collected, receivable, rate))
+            top_barangays.append(barangay_receivables_comparison(row))
 
         return {
             "year": year,
@@ -1820,23 +1861,33 @@ class ReportsPage:
         brgy = wb.create_sheet("Barangay Review")
         setup_sheet(brgy, tab_color=green)
         write_header(brgy, "Top barangays sorted by ending receivable")
-        for col, width in {"A": 28, "B": 18, "C": 18, "D": 18, "E": 16}.items():
+        for col, width in {"A": 28, "B": 18, "C": 22, "D": 23, "E": 25, "F": 18}.items():
             brgy.column_dimensions[col].width = width
-        merge_label(brgy, "A7:E7", "TOP BARANGAYS TO REVIEW", fill_color=green)
-        brgy.append(["Barangay", "Tax Due", "Collected", "Receivable", "Collection Rate"])
+        brgy["A5"] = (
+            f"All billing years through {payload['year']}; payments through that fiscal-year cutoff, "
+            f"not only cash received in {payload['year']}. " + BARANGAY_APPLIED_RATE_HELP
+        )
+        brgy["A5"].alignment = Alignment(wrap_text=True, vertical="top")
+        brgy.row_dimensions[5].height = 48
+        merge_label(brgy, "A7:F7", "TOP BARANGAYS TO REVIEW", fill_color=green)
+        brgy.append(["Barangay", "Total Due", "Payments Applied", "Remaining Unpaid", RECORDED_CREDIT_BALANCE_LABEL, "Applied / Due"])
         for row in payload["top_barangays"]:
-            brgy.append(list(row))
+            # Older, in-memory five-column working papers have no credit value.
+            # Leave that unavailable rather than pretending it is zero.
+            brgy.append(list(row) if len(row) == 6 else [*row[:4], None, row[4]])
         for cell in brgy[8]:
             cell.font = Font(bold=True, color=white)
             cell.fill = PatternFill("solid", fgColor=navy)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-        brgy.auto_filter.ref = f"A8:E{max(8, brgy.max_row)}"
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        brgy.row_dimensions[8].height = 30
+        brgy.auto_filter.ref = f"A8:F{max(8, brgy.max_row)}"
         brgy.freeze_panes = "A9"
         for row in brgy.iter_rows(min_row=9):
-            for cell in row[1:4]:
+            for cell in row[1:5]:
                 cell.number_format = money_fmt
-            row[4].number_format = '0.0%'
-            row[4].value = (row[4].value or 0) / 100
+            row[5].number_format = '0.0%'
+            if row[5].value is not None:
+                row[5].value /= 100
             for cell in row:
                 cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
 
@@ -2347,33 +2398,12 @@ class ReportsPage:
         brgy_fr.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
         ctk.CTkLabel(
             brgy_fr,
-            text="TOP RECEIVABLE BARANGAYS",
+            text="TOP BARANGAYS BY REMAINING UNPAID",
             font=("Inter", 11, "bold"),
             text_color=ModernTheme.TEXT_GRAY,
         ).pack(anchor="w", padx=16, pady=(14, 8))
 
-        cols = ("Barangay", "Collected", "Receivable", "Rate")
-        tree = ttk.Treeview(brgy_fr, columns=cols, show="headings", height=7)
-        for col in cols:
-            tree.heading(col, text=col.upper())
-            tree.column(col, anchor="center", width=110)
-        tree.column("Barangay", anchor="w", width=170)
-        tree.pack(fill="both", expand=True, padx=16, pady=(0, 14))
-        tree.tag_configure("oddrow", background="#1e293b", foreground="#cbd5e1")
-        tree.tag_configure("evenrow", background="#162032", foreground="#cbd5e1")
-
-        top_rows = sorted(brgy_rows, key=lambda row: float(row[6] or 0), reverse=True)[:7]
-        for idx, row in enumerate(top_rows):
-            collected = float(row[5] or 0)
-            receivable = float(row[6] or 0)
-            due = float(row[2] or 0)
-            rate = (collected / due * 100) if due > 0 else 0
-            tree.insert(
-                "",
-                "end",
-                values=(row[0], money(collected), money(receivable), f"{rate:.1f}%"),
-                tags=("evenrow" if idx % 2 == 0 else "oddrow",),
-            )
+        self._render_barangay_comparison(brgy_fr, brgy_rows, year=year)
 
     def generate_barangay_receivables(self):
         selected = self.brgy_year_cb.get()
